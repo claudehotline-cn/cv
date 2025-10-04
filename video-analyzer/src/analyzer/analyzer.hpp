@@ -22,9 +22,11 @@ public:
     void setRenderer(std::shared_ptr<IRenderer> renderer);
     void setUseGpuHint(bool value);
 
-    bool analyze(const core::Frame& in, core::Frame& out);
+    bool analyze(const core::Frame& in,
+                 core::Frame& out,
+                 core::FrameSurface* gpu_out = nullptr);
 
-    bool process(const core::Frame& in, core::Frame& out) override { return analyze(in, out); }
+    bool process(const core::Frame& in, core::Frame& out) override { return analyze(in, out, nullptr); }
 
     bool switchModel(const std::string& model_id);
     bool switchTask(const std::string& task_id);

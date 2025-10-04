@@ -42,3 +42,37 @@ export interface WebSocketMessage {
   data: any;
   timestamp: number;
 }
+
+export interface EngineRuntimeStatus {
+  provider: string;
+  gpu_active: boolean;
+  io_binding: boolean;
+  device_binding: boolean;
+  cpu_fallback: boolean;
+}
+
+export interface EngineOptions {
+  use_io_binding: boolean;
+  prefer_pinned_memory: boolean;
+  allow_cpu_fallback: boolean;
+  enable_profiling: boolean;
+  tensorrt_fp16: boolean;
+  tensorrt_int8: boolean;
+  tensorrt_workspace_mb: number;
+  io_binding_input_bytes: number;
+  io_binding_output_bytes: number;
+}
+
+export interface SystemEngineInfo {
+  type: string;
+  device: string;
+  options: Partial<EngineOptions>;
+}
+
+export interface SystemInfo {
+  engine?: SystemEngineInfo;
+  engine_runtime?: EngineRuntimeStatus;
+  model_count?: number;
+  profile_count?: number;
+  [key: string]: unknown;
+}

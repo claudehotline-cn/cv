@@ -108,6 +108,12 @@ bool Application::initialize(const std::string& config_dir) {
     if (app_config_.engine.options.io_binding_output_bytes > 0) {
         descriptor.options["io_binding_output_bytes"] = std::to_string(app_config_.engine.options.io_binding_output_bytes);
     }
+    if (app_config_.engine.options.tensor_host_pool_bytes > 0) {
+        descriptor.options["tensor_host_pool_bytes"] = std::to_string(app_config_.engine.options.tensor_host_pool_bytes);
+    }
+    if (app_config_.engine.options.tensor_device_pool_bytes > 0) {
+        descriptor.options["tensor_device_pool_bytes"] = std::to_string(app_config_.engine.options.tensor_device_pool_bytes);
+    }
     engine_manager_.setEngine(std::move(descriptor));
 
     va::server::RestServerOptions rest_options;
@@ -521,6 +527,8 @@ va::core::FilterConfig Application::buildFilterConfig(const std::string& stream_
     cfg.tensorrt_min_subgraph_size = getIntOption("trt_min_subgraph_size", cfg.tensorrt_min_subgraph_size);
     cfg.io_binding_input_bytes = getSizeOption("io_binding_input_bytes", cfg.io_binding_input_bytes);
     cfg.io_binding_output_bytes = getSizeOption("io_binding_output_bytes", cfg.io_binding_output_bytes);
+    cfg.tensor_host_pool_bytes = getSizeOption("tensor_host_pool_bytes", cfg.tensor_host_pool_bytes);
+    cfg.tensor_device_pool_bytes = getSizeOption("tensor_device_pool_bytes", cfg.tensor_device_pool_bytes);
 
     if (cfg.input_width == 0) {
         cfg.input_width = 640;

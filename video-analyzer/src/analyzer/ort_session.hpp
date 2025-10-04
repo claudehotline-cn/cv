@@ -3,6 +3,7 @@
 #include "analyzer/interfaces.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -11,6 +12,14 @@ namespace va::analyzer {
 
 class OrtModelSession : public IModelSession {
 public:
+    struct RuntimeInfo {
+        std::string provider {"cpu"};
+        bool gpu_active {false};
+        bool io_binding_active {false};
+        bool device_binding_active {false};
+        bool cpu_fallback {false};
+    };
+
 #ifdef USE_ONNXRUNTIME
     struct Options {
         std::string provider {"cpu"};
@@ -26,18 +35,14 @@ public:
         int tensorrt_min_subgraph_size {0};
         size_t io_binding_input_bytes {0};
         size_t io_binding_output_bytes {0};
+        bool stage_device_outputs {false};
+        size_t tensor_host_pool_bytes {0};
+        size_t tensor_device_pool_bytes {0};
+        std::function<void(const RuntimeInfo&)> runtime_callback;
     };
 
     void setOptions(const Options& options);
 #endif
-
-    struct RuntimeInfo {
-        std::string provider {"cpu"};
-        bool gpu_active {false};
-        bool io_binding_active {false};
-        bool device_binding_active {false};
-        bool cpu_fallback {false};
-    };
 
     OrtModelSession();
     ~OrtModelSession() override;

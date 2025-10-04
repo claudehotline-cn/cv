@@ -4,6 +4,22 @@
 
 namespace va::analyzer {
 
+namespace {
+
+void ensureTensorHandle(core::TensorView& tensor) {
+    tensor.handle.host_ptr = tensor.data;
+    tensor.handle.device_ptr = tensor.device_data;
+    tensor.handle.bytes = tensor.bytes;
+    tensor.handle.pitch = 0;
+    tensor.handle.width = 0;
+    tensor.handle.height = 0;
+    tensor.handle.stream = nullptr;
+    tensor.handle.location = tensor.on_gpu ? core::MemoryLocation::Device : core::MemoryLocation::Host;
+    tensor.handle.format = core::PixelFormat::Unknown;
+}
+
+} // namespace
+
 Analyzer::Analyzer() = default;
 
 void Analyzer::setPreprocessor(std::shared_ptr<IPreprocessor> preprocessor) {
@@ -26,20 +42,34 @@ void Analyzer::setUseGpuHint(bool value) {
     use_gpu_hint_ = value;
 }
 
-bool Analyzer::analyze(const core::Frame& in, core::Frame& out) {
+bool Analyzer::analyze(const core::Frame& in,
+                       core::Frame& out,
+                       core::FrameSurface* gpu_out) {
     if (!preprocessor_ || !session_ || !postprocessor_ || !renderer_) {
         return false;
     }
 
+    if (gpu_out) {
+        *gpu_out = {};
+    }
+
+    const core::FrameSurface input_surface = va::core::makeSurfaceFromFrame(in);
+
     core::TensorView tensor;
     core::LetterboxMeta meta;
-    if (!preprocessor_->run(in, tensor, meta)) {
-        return false;
+    if (!preprocessor_->run(input_surface, tensor, meta)) {
+        if (!preprocessor_->run(in, tensor, meta)) {
+            return false;
+        }
     }
+    ensureTensorHandle(tensor);
 
     std::vector<core::TensorView> outputs;
     if (!session_->run(tensor, outputs)) {
         return false;
+    }
+    for (auto& view : outputs) {
+        ensureTensorHandle(view);
     }
 
     core::ModelOutput model_output;
@@ -53,7 +83,25 @@ bool Analyzer::analyze(const core::Frame& in, core::Frame& out) {
         }
     }
 
-    return renderer_->draw(in, model_output, out);
+    core::FrameSurface gpu_render_surface;
+    if (renderer_->draw(input_surface, model_output, gpu_render_surface)) {
+        if (gpu_out) {
+            *gpu_out = gpu_render_surface;
+            return true;
+        }
+        if (va::core::surfaceToFrame(gpu_render_surface, out)) {
+            return true;
+        }
+    }
+
+    if (!renderer_->draw(in, model_output, out)) {
+        return false;
+    }
+
+    if (gpu_out) {
+        *gpu_out = va::core::makeSurfaceFromFrame(out);
+    }
+    return true;
 }
 
 bool Analyzer::switchModel(const std::string& model_id) {

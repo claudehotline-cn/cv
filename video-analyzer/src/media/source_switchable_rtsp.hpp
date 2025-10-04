@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/source.hpp"
+#include "core/buffer_pool.hpp"
 
 #include <mutex>
 #include <string>
@@ -33,6 +34,9 @@ private:
     std::chrono::steady_clock::time_point started_at_;
     std::chrono::steady_clock::time_point last_frame_time_;
     double avg_latency_ms_ {0.0};
+
+    std::size_t pool_block_bytes_ {0};
+    std::shared_ptr<va::core::HostBufferPool> host_pool_;
 };
 
 } // namespace va::media

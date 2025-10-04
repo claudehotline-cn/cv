@@ -54,7 +54,7 @@ public:
 private:
     void run();
     bool pullFrame(core::Frame& frame);
-    bool processFrame(const core::Frame& in);
+    bool processFrame(core::Frame& in);
 
     std::shared_ptr<va::media::ISwitchableSource> source_;
     std::shared_ptr<va::analyzer::Analyzer> analyzer_;

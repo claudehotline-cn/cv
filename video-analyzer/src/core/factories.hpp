@@ -45,6 +45,8 @@ struct FilterConfig {
     int tensorrt_min_subgraph_size {0};
     std::size_t io_binding_input_bytes {0};
     std::size_t io_binding_output_bytes {0};
+    std::size_t tensor_host_pool_bytes {0};
+    std::size_t tensor_device_pool_bytes {0};
 };
 
 struct EncoderConfig {

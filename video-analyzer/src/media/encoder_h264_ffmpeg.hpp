@@ -24,6 +24,7 @@ public:
 
     bool open(const Settings& settings) override;
     bool encode(const core::Frame& frame, Packet& out_packet) override;
+    bool encode(const core::FrameSurface& surface, Packet& out_packet) override;
     void close() override;
 
 private:

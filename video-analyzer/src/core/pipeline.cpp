@@ -149,31 +149,57 @@ bool Pipeline::pullFrame(core::Frame& frame) {
         return false;
     }
     bool ok = source_->read(frame);
-    if (ok) {
+    if (ok && frame.pts_ms <= 0.0) {
         frame.pts_ms = ms_now();
     }
     return ok;
 }
 
-bool Pipeline::processFrame(const core::Frame& in) {
+namespace {
+
+void releaseSurface(core::Frame& frame) {
+    if (frame.surface_recycle && surfaceHasData(frame.surface)) {
+        frame.surface_recycle(std::move(frame.surface.handle));
+    }
+    frame.surface = {};
+    frame.has_surface = false;
+    frame.surface_recycle = nullptr;
+}
+
+} // namespace
+
+bool Pipeline::processFrame(core::Frame& in) {
     if (!analyzer_) {
         return false;
     }
 
     core::Frame analyzed;
-    if (!analyzer_->analyze(in, analyzed)) {
+    core::FrameSurface analyzed_surface;
+    if (!analyzer_->analyze(in, analyzed, &analyzed_surface)) {
+        releaseSurface(in);
         return false;
     }
 
     va::media::IEncoder::Packet packet;
     if (encoder_) {
-        if (!encoder_->encode(analyzed, packet)) {
+        bool encoded = false;
+        if (va::core::surfaceHasData(analyzed_surface)) {
+            encoded = encoder_->encode(analyzed_surface, packet);
+        }
+        if (!encoded) {
+            encoded = encoder_->encode(analyzed, packet);
+        }
+        if (!encoded) {
+            releaseSurface(analyzed);
+            releaseSurface(in);
             return false;
         }
         if (transport_ && !packet.data.empty()) {
             transport_->send(track_id_, packet.data.data(), packet.data.size());
         }
     }
+    releaseSurface(analyzed);
+    releaseSurface(in);
     return true;
 }
 

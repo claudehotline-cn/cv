@@ -206,6 +206,8 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
                 opts.tensorrt_min_subgraph_size);
             opts.io_binding_input_bytes = parseByteOption(options_node, "io_binding_input_bytes", "io_binding_input_mb", opts.io_binding_input_bytes);
             opts.io_binding_output_bytes = parseByteOption(options_node, "io_binding_output_bytes", "io_binding_output_mb", opts.io_binding_output_bytes);
+            opts.tensor_host_pool_bytes = parseByteOption(options_node, "tensor_host_pool_bytes", "tensor_host_pool_mb", opts.tensor_host_pool_bytes);
+            opts.tensor_device_pool_bytes = parseByteOption(options_node, "tensor_device_pool_bytes", "tensor_device_pool_mb", opts.tensor_device_pool_bytes);
         }
     }
     const auto sfu_node = v["sfu"];

@@ -32,6 +32,13 @@ public:
     };
 
     virtual bool encode(const core::Frame& frame, Packet& out_packet) = 0;
+    virtual bool encode(const core::FrameSurface& surface, Packet& out_packet) {
+        core::Frame frame;
+        if (!core::surfaceToFrame(surface, frame)) {
+            return false;
+        }
+        return encode(frame, out_packet);
+    }
     virtual void close() = 0;
 };
 

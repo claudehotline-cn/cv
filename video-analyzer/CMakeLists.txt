@@ -59,13 +59,49 @@ endif()
 
 # Optional: CUDA support
 option(USE_CUDA "Enable CUDA support for GPU inference" ON)
+set(CUDA_OBJECTS "")
 if(USE_CUDA)
+    if(NOT CUDAToolkit_ROOT AND EXISTS "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.9")
+        set(CUDAToolkit_ROOT "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.9")
+    endif()
     find_package(CUDAToolkit QUIET)
-    if(CUDAToolkit_FOUND)
+    if(CUDAToolkit_FOUND AND CUDAToolkit_NVCC_EXECUTABLE)
         add_definitions(-DUSE_CUDA)
-        message(STATUS "CUDA found: ${CUDAToolkit_VERSION} - GPU inference enabled")
+        file(GLOB_RECURSE CUDA_SOURCE_FILES "src/*.cu")
+        if(CUDA_SOURCE_FILES)
+            set(CUDA_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/cuda")
+            file(MAKE_DIRECTORY "${CUDA_BUILD_DIR}")
+
+            set(CUDA_NVCC_ARGS --std=c++17 -Xcompiler "/MD /EHsc" -I "${CMAKE_CURRENT_SOURCE_DIR}/src" -I "${CMAKE_CURRENT_SOURCE_DIR}/include")
+            if(ONNXRUNTIME_INCLUDE_DIR)
+                list(APPEND CUDA_NVCC_ARGS -I "${ONNXRUNTIME_INCLUDE_DIR}")
+            endif()
+            if(CUDAToolkit_INCLUDE_DIRS)
+                foreach(cuda_inc IN LISTS CUDAToolkit_INCLUDE_DIRS)
+                    list(APPEND CUDA_NVCC_ARGS -I "${cuda_inc}")
+                endforeach()
+            endif()
+            set(VA_CUDA_ARCH "90" CACHE STRING "CUDA compute capability (e.g. 75, 86, 90, 120)")
+            if(VA_CUDA_ARCH)
+                list(APPEND CUDA_NVCC_ARGS -gencode "arch=compute_${VA_CUDA_ARCH},code=sm_${VA_CUDA_ARCH}")
+            endif()
+
+            foreach(CUDA_FILE IN LISTS CUDA_SOURCE_FILES)
+                get_filename_component(CUDA_BASENAME "${CUDA_FILE}" NAME_WE)
+                set(CUDA_OBJECT "${CUDA_BUILD_DIR}/${CUDA_BASENAME}.obj")
+                add_custom_command(
+                    OUTPUT "${CUDA_OBJECT}"
+                    COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" -c "${CUDA_FILE}" -o "${CUDA_OBJECT}" ${CUDA_NVCC_ARGS}
+                    DEPENDS "${CUDA_FILE}"
+                    COMMENT "Building CUDA object ${CUDA_BASENAME}.obj"
+                    VERBATIM
+                )
+                list(APPEND CUDA_OBJECTS "${CUDA_OBJECT}")
+            endforeach()
+        endif()
+        message(STATUS "CUDA found: ${CUDAToolkit_VERSION} - GPU inference enabled (nvcc compile)")
     else()
-        message(WARNING "CUDA not found - GPU inference disabled")
+        message(WARNING "CUDA toolkit not found or nvcc unavailable - GPU inference disabled")
     endif()
 endif()
 
@@ -112,11 +148,14 @@ if(ONNXRUNTIME_INCLUDE_DIR)
     include_directories(${ONNXRUNTIME_INCLUDE_DIR})
     add_definitions(-DUSE_ONNXRUNTIME)
 endif()
+if(CUDAToolkit_FOUND)
+    include_directories(${CUDAToolkit_INCLUDE_DIRS})
+endif()
 
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 file(GLOB_RECURSE HEADERS "include/*.h" "src/*.hpp")
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_OBJECTS})
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
 
@@ -154,6 +193,10 @@ endif()
 
 if(ONNXRUNTIME_LIB)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_LIB})
+endif()
+
+if(USE_CUDA AND CUDAToolkit_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cudart)
 endif()
 
 function(target_link_vcpkg_library target debug_path release_path)

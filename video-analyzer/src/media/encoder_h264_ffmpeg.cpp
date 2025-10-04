@@ -259,6 +259,73 @@ bool FfmpegH264Encoder::encode(const core::Frame& frame, Packet& out_packet) {
 #endif
 }
 
+bool FfmpegH264Encoder::encode(const core::FrameSurface& surface, Packet& out_packet) {
+#ifdef USE_FFMPEG
+    if (!opened_) {
+        return false;
+    }
+
+    if (surface.handle.host_ptr && surface.handle.format == core::PixelFormat::BGR24) {
+        const int width = surface.width;
+        const int height = surface.height;
+        if (width <= 0 || height <= 0) {
+            return false;
+        }
+        const int pitch = surface.handle.pitch > 0 ? static_cast<int>(surface.handle.pitch)
+                                                   : width * 3;
+        cv::Mat src(height, width, CV_8UC3, const_cast<void*>(surface.handle.host_ptr), pitch);
+
+        if (use_jpeg_) {
+            std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, jpeg_quality_};
+            if (!cv::imencode(".jpg", src, out_packet.data, params)) {
+                return false;
+            }
+            out_packet.keyframe = true;
+            out_packet.pts_ms = surface.pts_ms;
+            return true;
+        }
+
+        if (width != width_ || height != height_ || !codec_ctx_ || !frame_) {
+            core::Frame fallback;
+            if (!core::surfaceToFrame(surface, fallback)) {
+                return false;
+            }
+            return encode(fallback, out_packet);
+        }
+
+        const uint8_t* src_slices[1] = { src.data };
+        int src_stride[1] = { pitch };
+        sws_scale(sws_ctx_, src_slices, src_stride, 0, height_, frame_->data, frame_->linesize);
+
+        frame_->pts = pts_++;
+
+        int ret = avcodec_send_frame(codec_ctx_, frame_);
+        if (ret < 0) {
+            return false;
+        }
+
+        ret = avcodec_receive_packet(codec_ctx_, packet_);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            out_packet.data.clear();
+            out_packet.keyframe = false;
+            out_packet.pts_ms = surface.pts_ms;
+            return true;
+        }
+        if (ret < 0) {
+            return false;
+        }
+
+        out_packet.data.assign(packet_->data, packet_->data + packet_->size);
+        out_packet.keyframe = (packet_->flags & AV_PKT_FLAG_KEY) != 0;
+        out_packet.pts_ms = surface.pts_ms;
+        av_packet_unref(packet_);
+        return true;
+    }
+#endif
+
+    return IEncoder::encode(surface, out_packet);
+}
+
 void FfmpegH264Encoder::close() {
 #ifdef USE_FFMPEG
     if (packet_) {

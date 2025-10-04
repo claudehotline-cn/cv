@@ -8,22 +8,53 @@
 #include "analyzer/postproc_yolo_seg.hpp"
 #include "analyzer/postproc_detr.hpp"
 #include "analyzer/renderer_passthrough.hpp"
+#ifdef USE_CUDA
+#include "analyzer/cuda/renderer_overlay_cuda.hpp"
+#endif
 #include "core/engine_manager.hpp"
 #include "media/encoder_h264_ffmpeg.hpp"
+#ifdef USE_FFMPEG
+#include "media/cuda/encoder_h264_nvenc.hpp"
+#endif
 #include "media/source_switchable_rtsp.hpp"
+#ifdef USE_FFMPEG
+#include "media/cuda/source_nvdec.hpp"
+#endif
 #include "media/transport_webrtc_datachannel.hpp"
-
 #include "core/logger.hpp"
 
 #include <algorithm>
+#include <utility>
 
 namespace va {
 
 va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
     va::core::Factories factories;
 
-    factories.make_source = [](const va::core::SourceConfig& cfg) {
-        return std::make_shared<va::media::SwitchableRtspSource>(cfg.uri);
+    factories.make_source = [&engine_manager](const va::core::SourceConfig& cfg) {
+#ifdef USE_FFMPEG
+        auto engine = engine_manager.currentEngine();
+        std::string provider_lower = engine.provider;
+        std::transform(provider_lower.begin(), provider_lower.end(), provider_lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+        const bool prefer_nvdec = provider_lower.find("cuda") != std::string::npos
+                                   || provider_lower.find("gpu") != std::string::npos
+                                   || provider_lower.find("tensorrt") != std::string::npos;
+
+        if (prefer_nvdec) {
+            auto nvdec_source = std::make_shared<va::media::cuda::NvdecRtspSource>(cfg.uri);
+            if (nvdec_source->start()) {
+                nvdec_source->stop();
+                VA_LOG_INFO() << "[Factories] Using NVDEC source for URI " << cfg.uri;
+                return std::static_pointer_cast<va::media::ISwitchableSource>(nvdec_source);
+            }
+            VA_LOG_WARN() << "[Factories] NVDEC source initialization failed, falling back to OpenCV.";
+        }
+#endif
+        auto fallback = std::make_shared<va::media::SwitchableRtspSource>(cfg.uri);
+        return std::static_pointer_cast<va::media::ISwitchableSource>(fallback);
     };
 
     factories.make_filter = [&engine_manager](const va::core::FilterConfig& cfg) {
@@ -61,6 +92,21 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         options.tensorrt_min_subgraph_size = cfg.tensorrt_min_subgraph_size;
         options.io_binding_input_bytes = cfg.io_binding_input_bytes;
         options.io_binding_output_bytes = cfg.io_binding_output_bytes;
+        options.tensor_host_pool_bytes = cfg.tensor_host_pool_bytes;
+        options.tensor_device_pool_bytes = cfg.tensor_device_pool_bytes;
+        // 当开启 IoBinding 时，为保证后处理可读，默认启用设备输出的 Host 侧分阶段拷贝
+        if (options.use_io_binding) {
+            options.stage_device_outputs = true;
+        }
+        options.runtime_callback = [&engine_manager](const va::analyzer::OrtModelSession::RuntimeInfo& info) {
+            va::core::EngineRuntimeStatus status;
+            status.provider = info.provider;
+            status.gpu_active = info.gpu_active;
+            status.io_binding = info.io_binding_active;
+            status.device_binding = info.device_binding_active;
+            status.cpu_fallback = info.cpu_fallback;
+            engine_manager.updateRuntimeStatus(std::move(status));
+        };
         session->setOptions(options);
 #endif
 
@@ -102,7 +148,15 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         }
         analyzer->setPostprocessor(postprocessor);
 
-        auto renderer = std::make_shared<va::analyzer::PassthroughRenderer>();
+        std::shared_ptr<va::analyzer::IRenderer> renderer;
+#ifdef USE_CUDA
+        if (hint_gpu) {
+            renderer = std::make_shared<va::analyzer::cuda::OverlayRendererCUDA>();
+        } else
+#endif
+        {
+            renderer = std::make_shared<va::analyzer::PassthroughRenderer>();
+        }
         analyzer->setRenderer(renderer);
 
         auto params = std::make_shared<va::analyzer::AnalyzerParams>();

@@ -1,8 +1,10 @@
 #include "media/source_switchable_rtsp.hpp"
 
+#include <cstring>
 #include <opencv2/imgproc.hpp>
 
 #include "core/logger.hpp"
+#include "core/utils.hpp"
 
 namespace va::media {
 
@@ -63,7 +65,41 @@ bool SwitchableRtspSource::read(core::Frame& frame) {
     if (!mat.isContinuous()) {
         mat = mat.clone();
     }
-    frame.bgr.assign(mat.datastart, mat.dataend);
+    const std::size_t required_bytes = mat.total() * mat.elemSize();
+    const int pitch = static_cast<int>(mat.step);
+
+    if (!host_pool_ || pool_block_bytes_ < required_bytes) {
+        host_pool_ = std::make_shared<va::core::HostBufferPool>(required_bytes, 8, true);
+        pool_block_bytes_ = required_bytes;
+    }
+
+    auto handle = host_pool_->acquire();
+    if (!handle.host_ptr || handle.bytes < required_bytes) {
+        host_pool_->release(std::move(handle));
+        return false;
+    }
+
+    std::memcpy(handle.host_ptr, mat.data, required_bytes);
+    handle.bytes = required_bytes;
+    handle.pitch = pitch;
+    handle.width = frame.width;
+    handle.height = frame.height;
+    handle.location = va::core::MemoryLocation::Host;
+    handle.format = va::core::PixelFormat::BGR24;
+    handle.device_ptr = nullptr;
+    handle.device_owner.reset();
+
+    frame.bgr.clear();
+    frame.surface.handle = std::move(handle);
+    frame.surface.width = frame.width;
+    frame.surface.height = frame.height;
+    frame.surface.pts_ms = frame.pts_ms;
+    frame.has_surface = true;
+    frame.surface_recycle = [pool = std::weak_ptr<va::core::HostBufferPool>(host_pool_)](va::core::MemoryHandle&& handle) mutable {
+        if (auto locked = pool.lock()) {
+            locked->release(std::move(handle));
+        }
+    };
 
     return true;
 }

@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { AnalysisResult, AnalysisType } from "@/types";
+import type {
+  AnalysisResult,
+  AnalysisType,
+  EngineRuntimeStatus,
+  SystemInfo,
+} from "@/types";
 
 const ANALYSIS_API_BASE = "/api/analyzer";
 
@@ -43,6 +48,12 @@ export const useAnalysisStore = defineStore("analysis", () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
+  const systemInfo = ref<SystemInfo | null>(null);
+
+  const engineRuntimeStatus = computed<EngineRuntimeStatus | null>(() => {
+    return systemInfo.value?.engine_runtime ?? null;
+  });
+
   const selectedModelId = ref<string>("");
   const selectedAnalysisType = ref<string>("object_detection");
 
@@ -72,12 +83,16 @@ export const useAnalysisStore = defineStore("analysis", () => {
   );
 
   // API调用方法
-  const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+  const apiCall = async (
+    endpoint: string,
+    options: RequestInit = {},
+    baseUrl: string = ANALYSIS_API_BASE,
+  ) => {
     loading.value = true;
     error.value = null;
 
     try {
-      const response = await fetch(`${ANALYSIS_API_BASE}${endpoint}`, {
+      const response = await fetch(`${baseUrl}${endpoint}`, {
         headers: {
           "Content-Type": "application/json",
           ...options.headers,
@@ -312,16 +327,27 @@ export const useAnalysisStore = defineStore("analysis", () => {
   // 系统信息和统计
   const getSystemInfo = async () => {
     try {
-      return await apiCall("/system/info");
+      const data = await apiCall("/system/info", {}, "/api");
+      systemInfo.value = data ?? null;
+      return data;
     } catch (err) {
       console.error("获取系统信息失败:", err);
+      systemInfo.value = null;
       throw err;
+    }
+  };
+
+  const refreshSystemInfo = async () => {
+    try {
+      await getSystemInfo();
+    } catch (err) {
+      // already logged in getSystemInfo
     }
   };
 
   const getPerformanceStats = async () => {
     try {
-      return await apiCall("/system/stats");
+      return await apiCall("/system/stats", {}, "/api");
     } catch (err) {
       console.error("获取性能统计失败:", err);
       throw err;
@@ -365,6 +391,7 @@ export const useAnalysisStore = defineStore("analysis", () => {
     ]);
 
     // 设置默认选择的模型
+    await refreshSystemInfo();
     if (availableModels.value.length > 0 && !selectedModelId.value) {
       selectedModelId.value = availableModels.value[0].id;
     }
@@ -377,6 +404,8 @@ export const useAnalysisStore = defineStore("analysis", () => {
     availableModels,
     analysisSources,
     analysisTypes,
+    systemInfo,
+    engineRuntimeStatus,
     loading,
     error,
     selectedModelId,
@@ -408,6 +437,7 @@ export const useAnalysisStore = defineStore("analysis", () => {
 
     // 系统信息
     getSystemInfo,
+    refreshSystemInfo,
     getPerformanceStats,
 
     // 工具方法

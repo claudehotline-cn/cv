@@ -153,6 +153,67 @@
               :closable="false"
               size="small"
             />
+            <el-divider content-position="left">运行时状态</el-divider>
+            <el-descriptions
+              v-if="engineRuntime"
+              :column="1"
+              border
+              size="small"
+            >
+              <el-descriptions-item label="执行 Provider">
+                <el-tag size="small">{{ runtimeProviderLabel }}</el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="GPU 加速">
+                <el-tag
+                  size="small"
+                  :type="runtimeStatusTagType(runtimeFlags.gpu)"
+                >
+                  {{ runtimeBooleanLabel(runtimeFlags.gpu, "已启用", "未启用") }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="IO 绑定">
+                <el-tag
+                  size="small"
+                  :type="runtimeStatusTagType(runtimeFlags.io)"
+                >
+                  {{ runtimeBooleanLabel(runtimeFlags.io, "已启用", "未启用") }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="零拷贝">
+                <el-tag
+                  size="small"
+                  :type="runtimeStatusTagType(runtimeFlags.device)"
+                >
+                  {{ runtimeBooleanLabel(runtimeFlags.device, "激活", "未激活") }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="CPU 回退">
+                <el-tag
+                  size="small"
+                  :type="runtimeStatusTagType(runtimeFlags.fallback, 'danger', 'success')"
+                >
+                  {{ runtimeBooleanLabel(runtimeFlags.fallback, "已回退", "正常") }}
+                </el-tag>
+              </el-descriptions-item>
+            </el-descriptions>
+            <el-alert
+              v-else
+              title="尚未获取运行状态"
+              type="info"
+              :closable="false"
+              show-icon
+            />
+            <div class="runtime-actions">
+              <el-button
+                size="small"
+                type="primary"
+                link
+                :loading="refreshingRuntime"
+                @click="refreshRuntimeInfo"
+              >
+                刷新运行状态
+              </el-button>
+            </div>
           </div>
         </el-card>
       </el-col>
@@ -295,6 +356,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { useVideoStore } from "@/stores/videoStore";
+import { useAnalysisStore } from "@/stores/analysisStore";
 import type { DetectionResult } from "@/types";
 import { CaretRight, VideoPause, Camera } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
@@ -302,6 +364,62 @@ import JpegVideoPlayer from "@/components/JpegVideoPlayer.vue";
 
 const router = useRouter();
 const videoStore = useVideoStore();
+const analysisStore = useAnalysisStore();
+
+const engineRuntime = computed(() => analysisStore.engineRuntimeStatus);
+const runtimeFlags = computed(() => ({
+  gpu: engineRuntime.value?.gpu_active ?? false,
+  io: engineRuntime.value?.io_binding ?? false,
+  device: engineRuntime.value?.device_binding ?? false,
+  fallback: engineRuntime.value?.cpu_fallback ?? false,
+}));
+
+const runtimeProviderLabel = computed(() => {
+  const provider = engineRuntime.value?.provider ?? "cpu";
+  const normalized = provider.toLowerCase();
+  if (normalized.includes("tensorrt")) {
+    return "TensorRT";
+  }
+  if (normalized.includes("cuda")) {
+    return "CUDA";
+  }
+  if (normalized.includes("gpu")) {
+    return "GPU";
+  }
+  return normalized.toUpperCase();
+});
+
+const runtimeStatusTagType = (
+  value: boolean,
+  positiveType: "success" | "info" | "warning" | "danger" = "success",
+  negativeType: "success" | "info" | "warning" | "danger" = "info",
+) => {
+  return value ? positiveType : negativeType;
+};
+
+const runtimeBooleanLabel = (
+  value: boolean,
+  positiveLabel: string,
+  negativeLabel: string,
+) => {
+  return value ? positiveLabel : negativeLabel;
+};
+
+const refreshingRuntime = ref(false);
+const refreshRuntimeInfo = async () => {
+  if (refreshingRuntime.value) return;
+  refreshingRuntime.value = true;
+  try {
+    await analysisStore.refreshSystemInfo();
+    ElMessage.success("运行状态已刷新");
+  } catch (error) {
+    ElMessage.error(
+      `刷新运行状态失败: ${(error as Error).message ?? "未知错误"}`,
+    );
+  } finally {
+    refreshingRuntime.value = false;
+  }
+};
 
 // 数据
 const videoElement = ref<HTMLVideoElement | null>(null);
@@ -512,6 +630,7 @@ watch(
 // 生命周期
 onMounted(async () => {
   console.log("🎬 VideoAnalysis组件已挂载");
+  analysisStore.refreshSystemInfo().catch(() => {});
   videoStore.init();
 
   // 等待WebRTC连接建立和DOM更新
@@ -656,6 +775,12 @@ onUnmounted(() => {
 
 .connection-status {
   margin-top: 20px;
+}
+
+.runtime-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .model-option {

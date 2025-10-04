@@ -1,5 +1,9 @@
 #include "analyzer/postproc_yolo_det.hpp"
 
+#if defined(USE_CUDA)
+#  include "analyzer/cuda/postproc_yolo_det_cuda.hpp"
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -68,6 +72,14 @@ void nonMaxSuppression(std::vector<va::core::Box>& boxes) {
 
 namespace va::analyzer {
 
+YoloDetectionPostprocessor::YoloDetectionPostprocessor() {
+#if defined(USE_CUDA)
+    gpu_impl_ = std::make_unique<cuda::YoloPostprocessorCUDA>();
+#endif
+}
+
+YoloDetectionPostprocessor::~YoloDetectionPostprocessor() = default;
+
 bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_outputs,
                                      const core::LetterboxMeta& meta,
                                      core::ModelOutput& output) {
@@ -79,11 +91,37 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
     }
 
     const core::TensorView& tensor = raw_outputs.front();
-    if (!tensor.data || tensor.shape.size() < 3) {
+    if (tensor.shape.size() < 3) {
         return false;
     }
 
     const float* data = static_cast<const float*>(tensor.data);
+
+#if defined(USE_CUDA)
+    if (tensor.on_gpu && tensor.device_data && gpu_impl_) {
+        std::vector<core::Box> gpu_boxes;
+        if (gpu_impl_->decode(tensor, meta, gpu_boxes)) {
+            if (!gpu_boxes.empty()) {
+                nonMaxSuppression(gpu_boxes);
+                output.boxes = std::move(gpu_boxes);
+            } else {
+                output.boxes.clear();
+            }
+            return true;
+        }
+    }
+#endif
+
+    if (!data && tensor.handle.device_ptr) {
+        auto& handle = const_cast<core::MemoryHandle&>(tensor.handle);
+        if (handle.ensureHost()) {
+            data = static_cast<const float*>(handle.host_ptr);
+        }
+    }
+
+    if (!data) {
+        return false;
+    }
     int64_t dim0 = tensor.shape[0];
     int64_t dim1 = tensor.shape[1];
     int64_t dim2 = tensor.shape[2];
