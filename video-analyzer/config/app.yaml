@@ -2,6 +2,9 @@ engine:
   type: ort-cuda
   device: 0
   options:
+    # Default to FFmpeg RTSP source for better stability on Windows
+    use_ffmpeg_source: true
+    use_nvdec: false
     trt_fp16: true
     trt_workspace_mb: 2048
 sfu:

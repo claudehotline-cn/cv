@@ -34,12 +34,9 @@ private:
     std::chrono::steady_clock::time_point last_frame_time_;
     double avg_latency_ms_ {0.0};
 
-    // reopen backoff control
-    std::chrono::steady_clock::time_point next_reopen_time_{};
-    int backoff_ms_ {0}; // grows up to a cap
     // Reopen/backoff on continuous read failures
     int consecutive_fail_read_ {0};
-    int backoff_ms_ {0};
+    int backoff_ms_ {0}; // grows up to a cap
     std::chrono::steady_clock::time_point next_reopen_time_ {};
 };
 

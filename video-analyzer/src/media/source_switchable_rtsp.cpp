@@ -130,7 +130,6 @@ bool SwitchableRtspSource::openCapture() {
         }
     } catch (...) {}
     // Prefer TCP and low-latency options via FFmpeg URL parameters
-    std::string open_uri = uri_;
     if (open_uri.rfind("rtsp://", 0) == 0) {
         const bool has_query = (open_uri.find('?') != std::string::npos);
         open_uri.push_back(has_query ? '&' : '?');
