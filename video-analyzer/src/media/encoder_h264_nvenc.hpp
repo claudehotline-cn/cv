@@ -2,6 +2,7 @@
 
 #include "media/encoder.hpp"
 #include "media/encoder_h264_ffmpeg.hpp"
+#include "core/factories.hpp"
 
 // Lightweight NVENC wrapper using FFmpeg's h264_nvenc encoder.
 // Keeps the same IEncoder interface and delegates most logic to the
@@ -25,4 +26,3 @@ private:
 std::shared_ptr<IEncoder> makeNvencEncoder(const va::core::EncoderConfig& cfg);
 
 } // namespace va::media
-

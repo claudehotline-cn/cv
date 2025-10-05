@@ -19,7 +19,7 @@ bool NvdecRtspSource::read(va::core::Frame& frame) {
     return cpu_fallback_.read(frame);
 }
 
-ISwitchableSource::SourceStats NvdecRtspSource::stats() const {
+SourceStats NvdecRtspSource::stats() const {
     return cpu_fallback_.stats();
 }
 
@@ -32,4 +32,3 @@ std::shared_ptr<ISwitchableSource> makeNvdecSource(const std::string& uri) {
 }
 
 } // namespace va::media
-

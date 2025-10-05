@@ -108,13 +108,6 @@ bool Application::initialize(const std::string& config_dir) {
     if (app_config_.engine.options.io_binding_output_bytes > 0) {
         descriptor.options["io_binding_output_bytes"] = std::to_string(app_config_.engine.options.io_binding_output_bytes);
     }
-    // Optional staging and host pool sizing for IoBinding outputs
-    if (app_config_.engine.options.stage_device_outputs) {
-        descriptor.options["stage_device_outputs"] = "true";
-    }
-    if (app_config_.engine.options.tensor_host_pool_bytes > 0) {
-        descriptor.options["tensor_host_pool_bytes"] = std::to_string(app_config_.engine.options.tensor_host_pool_bytes);
-    }
     engine_manager_.setEngine(std::move(descriptor));
 
     va::server::RestServerOptions rest_options;

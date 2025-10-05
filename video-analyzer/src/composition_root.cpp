@@ -8,6 +8,7 @@
 #include "analyzer/postproc_yolo_seg.hpp"
 #include "analyzer/postproc_detr.hpp"
 #include "analyzer/renderer_passthrough.hpp"
+#include "analyzer/renderer_overlay_cpu.hpp"
 #include "core/engine_manager.hpp"
 #include "media/encoder_h264_ffmpeg.hpp"
 #include "media/source_switchable_rtsp.hpp"

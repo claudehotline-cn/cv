@@ -393,6 +393,41 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
 
             bool bound_device_input = false;
 
+#if VA_HAS_CUDA_RUNTIME
+            if (impl_->use_gpu && impl_->options.use_io_binding) {
+                // Stage host F32 tensor to device buffer if needed
+                const size_t bytes = element_count * sizeof(float);
+                if (ensureCudaCapacity(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes, bytes)) {
+                    void* dev_ptr = impl_->io_input_device_buffer;
+                    if (!input.on_gpu) {
+                        cudaError_t err = cudaMemcpy(dev_ptr, input.data, bytes, cudaMemcpyHostToDevice);
+                        if (err != cudaSuccess) {
+                            VA_LOG_WARN() << "cudaMemcpy H2D failed: " << cudaGetErrorString(err) << ", falling back to CPU input bind";
+                        } else {
+                            Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
+                            input_holders.emplace_back(Ort::Value::CreateTensor<float>(
+                                input_mem_dev,
+                                static_cast<float*>(dev_ptr),
+                                element_count,
+                                const_cast<int64_t*>(input.shape.data()),
+                                input.shape.size()));
+                            bound_device_input = true;
+                        }
+                    } else {
+                        // Caller-provided device pointer (best-effort)
+                        Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
+                        input_holders.emplace_back(Ort::Value::CreateTensor<float>(
+                            input_mem_dev,
+                            static_cast<float*>(input.data),
+                            element_count,
+                            const_cast<int64_t*>(input.shape.data()),
+                            input.shape.size()));
+                        bound_device_input = true;
+                    }
+                }
+            }
+#endif
+
             if (!bound_device_input) {
                 Ort::MemoryInfo input_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
                 if (impl_->options.use_io_binding && impl_->use_gpu && impl_->options.prefer_pinned_memory) {
