@@ -1,6 +1,7 @@
 #include "analyzer/ort_session.hpp"
 
 #include "core/logger.hpp"
+#include "core/buffer_pool.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -100,6 +101,10 @@ struct OrtModelSession::Impl {
     bool io_binding_enabled {false};
     bool device_binding_active {false};
     bool cpu_fallback {false};
+    // host staging
+    std::unique_ptr<va::core::HostBufferPool> host_pool;
+    std::size_t host_pool_block_bytes {0};
+    std::vector<va::core::HostBufferPool::Memory> staged_outputs;
 };
 
 OrtModelSession::OrtModelSession() = default;
