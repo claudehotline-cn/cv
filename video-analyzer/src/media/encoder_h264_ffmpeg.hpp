@@ -9,6 +9,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/opt.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/hwcontext.h>
 #include <libswscale/swscale.h>
 }
 #endif
@@ -36,9 +37,13 @@ private:
     int jpeg_quality_ {80};
 #ifdef USE_FFMPEG
     AVCodecContext* codec_ctx_ {nullptr};
-    AVFrame* frame_ {nullptr};
+    AVFrame* frame_ {nullptr}; // software frame (YUV/NV12)
     AVPacket* packet_ {nullptr};
     SwsContext* sws_ctx_ {nullptr};
+    // CUDA hwframes (NVENC path)
+    bool use_hwframes_ {false};
+    AVBufferRef* hw_device_ctx_ {nullptr};
+    AVBufferRef* hw_frames_ctx_ {nullptr};
 #endif
 };
 

@@ -151,7 +151,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         }
         // libopenh264 ignores unknown profiles; avoid setting unsupported ones
     } else if (encoder_name.find("nvenc") != std::string::npos) {
-        // FFmpeg NVENC options
+        // FFmpeg NVENC options + prepare CUDA hwframes; keep CPU fallback if setup fails
         const char* preset = settings.preset.empty() ? "p5" : settings.preset.c_str();
         av_opt_set(codec_ctx_->priv_data, "preset", preset, 0);
         if (settings.zero_latency) {
@@ -160,6 +160,29 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         }
         if (!settings.profile.empty()) {
             av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
+        }
+        // Use NV12 for NVENC path
+        codec_ctx_->pix_fmt = AV_PIX_FMT_NV12;
+        // Try to create CUDA hwdevice/hwframes before open
+        AVBufferRef* device = nullptr;
+        if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_CUDA, nullptr, nullptr, 0) == 0) {
+            hw_device_ctx_ = device;
+            AVBufferRef* frames_ref = av_hwframe_ctx_alloc(hw_device_ctx_);
+            if (frames_ref) {
+                AVHWFramesContext* frames_ctx = (AVHWFramesContext*)frames_ref->data;
+                frames_ctx->format = AV_PIX_FMT_CUDA;
+                frames_ctx->sw_format = codec_ctx_->pix_fmt; // NV12
+                frames_ctx->width = settings.width;
+                frames_ctx->height = settings.height;
+                frames_ctx->initial_pool_size = 3;
+                if (av_hwframe_ctx_init(frames_ref) == 0) {
+                    hw_frames_ctx_ = frames_ref;
+                    codec_ctx_->hw_frames_ctx = av_buffer_ref(hw_frames_ctx_);
+                    use_hwframes_ = true;
+                } else {
+                    av_buffer_unref(&frames_ref);
+                }
+            }
         }
     }
 
@@ -183,12 +206,14 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         return false;
     }
 
+    // Select target sws format by encoder pix_fmt (YUV420P or NV12)
+    enum AVPixelFormat dst_fmt = codec_ctx_->pix_fmt == AV_PIX_FMT_NV12 ? AV_PIX_FMT_NV12 : AV_PIX_FMT_YUV420P;
     sws_ctx_ = sws_getContext(settings.width,
                               settings.height,
                               AV_PIX_FMT_BGR24,
                               settings.width,
                               settings.height,
-                              AV_PIX_FMT_YUV420P,
+                              dst_fmt,
                               SWS_BILINEAR,
                               nullptr,
                               nullptr,
@@ -252,7 +277,28 @@ bool FfmpegH264Encoder::encode(const core::Frame& frame, Packet& out_packet) {
 
     frame_->pts = pts_++;
 
-    int ret = avcodec_send_frame(codec_ctx_, frame_);
+    int ret = 0;
+    if (use_hwframes_ && hw_frames_ctx_) {
+        // Allocate a device frame and upload
+        AVFrame* hwf = av_frame_alloc();
+        if (!hwf) return false;
+        hwf->format = AV_PIX_FMT_CUDA;
+        hwf->width = frame_->width;
+        hwf->height = frame_->height;
+        hwf->hw_frames_ctx = av_buffer_ref(hw_frames_ctx_);
+        if (av_hwframe_get_buffer(hw_frames_ctx_, hwf, 0) < 0) {
+            av_frame_free(&hwf);
+            return false;
+        }
+        if (av_hwframe_transfer_data(hwf, frame_, 0) < 0) {
+            av_frame_free(&hwf);
+            return false;
+        }
+        ret = avcodec_send_frame(codec_ctx_, hwf);
+        av_frame_free(&hwf);
+    } else {
+        ret = avcodec_send_frame(codec_ctx_, frame_);
+    }
     if (ret < 0) {
         return false;
     }
@@ -311,6 +357,8 @@ void FfmpegH264Encoder::close() {
         sws_freeContext(sws_ctx_);
         sws_ctx_ = nullptr;
     }
+    if (hw_frames_ctx_) { av_buffer_unref(&hw_frames_ctx_); hw_frames_ctx_ = nullptr; }
+    if (hw_device_ctx_) { av_buffer_unref(&hw_device_ctx_); hw_device_ctx_ = nullptr; }
 #endif
     width_ = 0;
     height_ = 0;
