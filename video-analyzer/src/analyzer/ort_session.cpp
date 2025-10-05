@@ -408,10 +408,8 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             impl_->io_binding->BindInput(input_name, input_holders.front());
 
             for (const char* output_name : impl_->output_names) {
+                // Safe baseline: bind outputs to CPU; let ORT stage device->host internally.
                 Ort::MemoryInfo out_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-                if (impl_->options.use_io_binding && impl_->use_gpu && impl_->options.prefer_pinned_memory) {
-                    out_mem = Ort::MemoryInfo("CudaPinned", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeCPUOutput);
-                }
                 impl_->io_binding->BindOutput(output_name, out_mem);
             }
 
