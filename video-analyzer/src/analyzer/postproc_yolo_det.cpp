@@ -182,14 +182,67 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 #ifdef USE_CUDA
 #include "analyzer/postproc_yolo_det.hpp"
 
+#if defined(__has_include)
+#  if __has_include(<cuda_runtime.h>)
+#    include <cuda_runtime.h>
+#    define VA_HAS_CUDA_RUNTIME 1
+#  else
+#    define VA_HAS_CUDA_RUNTIME 0
+#  endif
+#else
+#  include <cuda_runtime.h>
+#  define VA_HAS_CUDA_RUNTIME 1
+#endif
+
 namespace va::analyzer {
 
 bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& raw_outputs,
                                          const core::LetterboxMeta& meta,
                                          core::ModelOutput& output) {
-    // For now, fallback to CPU implementation until device outputs are wired end-to-end.
+    // If no outputs or not a tensor-like shape, fallback
+    if (raw_outputs.empty()) {
+        return false;
+    }
+    const core::TensorView& t = raw_outputs.front();
+    if (t.shape.size() < 3) {
+        YoloDetectionPostprocessor cpu;
+        return cpu.run(raw_outputs, meta, output);
+    }
+
+    // If already on CPU, reuse CPU implementation
+    if (!t.on_gpu) {
+        YoloDetectionPostprocessor cpu;
+        return cpu.run(raw_outputs, meta, output);
+    }
+
+#if VA_HAS_CUDA_RUNTIME
+    // Copy device tensor to host buffer, then reuse CPU decoder on the host view
+    size_t count = 1;
+    for (auto d : t.shape) { count *= static_cast<size_t>(d > 0 ? d : 1); }
+    if (count == 0) {
+        return false;
+    }
+    std::vector<float> host(count);
+    cudaError_t err = cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        // If D2H fails, fallback to CPU impl which will fail on device pointer; return false instead
+        return false;
+    }
+
+    core::TensorView host_view;
+    host_view.data = host.data();
+    host_view.shape = t.shape;
+    host_view.dtype = core::DType::F32;
+    host_view.on_gpu = false;
+
+    std::vector<core::TensorView> wrapped{host_view};
     YoloDetectionPostprocessor cpu;
-    return cpu.run(raw_outputs, meta, output);
+    const bool ok = cpu.run(wrapped, meta, output);
+    return ok;
+#else
+    // No CUDA runtime – cannot D2H; fallback to CPU decoder (will fail on device ptr), so return false
+    return false;
+#endif
 }
 
 } // namespace va::analyzer
