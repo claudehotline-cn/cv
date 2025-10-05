@@ -178,3 +178,19 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 }
 
 } // namespace va::analyzer
+
+#ifdef USE_CUDA
+#include "analyzer/postproc_yolo_det.hpp"
+
+namespace va::analyzer {
+
+bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& raw_outputs,
+                                         const core::LetterboxMeta& meta,
+                                         core::ModelOutput& output) {
+    // For now, fallback to CPU implementation until device outputs are wired end-to-end.
+    YoloDetectionPostprocessor cpu;
+    return cpu.run(raw_outputs, meta, output);
+}
+
+} // namespace va::analyzer
+#endif

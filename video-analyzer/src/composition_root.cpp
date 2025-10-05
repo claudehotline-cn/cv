@@ -9,6 +9,7 @@
 #include "analyzer/postproc_detr.hpp"
 #include "analyzer/renderer_passthrough.hpp"
 #include "analyzer/renderer_overlay_cpu.hpp"
+#include "analyzer/renderer_overlay_cuda.hpp"
 #include "core/engine_manager.hpp"
 #include "media/encoder_h264_ffmpeg.hpp"
 #include "media/source_switchable_rtsp.hpp"
@@ -131,18 +132,37 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         } else if (cfg.task == "detr") {
             postprocessor = std::make_shared<va::analyzer::DetrPostprocessor>();
         } else {
-            postprocessor = std::make_shared<va::analyzer::YoloDetectionPostprocessor>();
+            const char* use_cuda_nms = std::getenv("VA_USE_CUDA_NMS");
+#ifdef USE_CUDA
+            if (use_cuda_nms && (std::string(use_cuda_nms)=="1" || std::string(use_cuda_nms)=="true")) {
+                postprocessor = std::make_shared<va::analyzer::YoloDetectionPostprocessorCUDA>();
+            }
+#endif
+            if (!postprocessor) {
+                postprocessor = std::make_shared<va::analyzer::YoloDetectionPostprocessor>();
+            }
         }
         analyzer->setPostprocessor(postprocessor);
 
-        // Prefer overlay rendering by default; allow opt-out via env
+        // Rendering selection: default CPU overlay; allow passthrough or CUDA
         const char* passthrough = std::getenv("VA_RENDER_PASSTHROUGH");
+        const char* render_cuda = std::getenv("VA_RENDER_CUDA");
         if (passthrough && (std::string(passthrough) == "1" || std::string(passthrough) == "true")) {
             auto renderer = std::make_shared<va::analyzer::PassthroughRenderer>();
             analyzer->setRenderer(renderer);
         } else {
-            auto renderer = std::make_shared<va::analyzer::OverlayRendererCPU>();
-            analyzer->setRenderer(renderer);
+            bool set = false;
+#ifdef USE_CUDA
+            if (render_cuda && (std::string(render_cuda)=="1" || std::string(render_cuda)=="true")) {
+                auto renderer_cuda = std::make_shared<va::analyzer::OverlayRendererCUDA>();
+                analyzer->setRenderer(renderer_cuda);
+                set = true;
+            }
+#endif
+            if (!set) {
+                auto renderer = std::make_shared<va::analyzer::OverlayRendererCPU>();
+                analyzer->setRenderer(renderer);
+            }
         }
 
         auto params = std::make_shared<va::analyzer::AnalyzerParams>();
