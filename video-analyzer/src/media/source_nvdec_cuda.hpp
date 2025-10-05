@@ -2,16 +2,25 @@
 
 #include "media/source_switchable_rtsp.hpp"
 
-// NOTE: This is a scaffolding implementation for a future NVDEC-based source.
-// It preserves the existing ISwitchableSource interface and safely falls back
-// to CPU/OpenCV decoding until real NVDEC is wired in.
+#ifdef USE_FFMPEG
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/hwcontext.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+}
+#endif
 
+#include <mutex>
+
+// NVDEC-based RTSP/File source (safe fallback to CPU if unavailable)
 namespace va::media {
 
 class NvdecRtspSource : public ISwitchableSource {
 public:
     explicit NvdecRtspSource(std::string uri);
-    ~NvdecRtspSource() override = default;
+    ~NvdecRtspSource() override;
 
     bool start() override;
     void stop() override;
@@ -20,8 +29,32 @@ public:
     bool switchUri(const std::string& uri) override;
 
 private:
-    // Temporary CPU fallback path reused internally
+    bool openImpl();
+    void closeImpl();
+    bool readImpl(va::core::Frame& frame);
+
+private:
+    std::string uri_;
+    mutable std::mutex mutex_;
+    bool running_ {false};
+    uint64_t frame_counter_ {0};
+    double avg_latency_ms_ {0.0};
+    std::chrono::steady_clock::time_point started_at_;
+    std::chrono::steady_clock::time_point last_frame_time_;
+
+    // CPU fallback path
     SwitchableRtspSource cpu_fallback_;
+
+#ifdef USE_FFMPEG
+    AVFormatContext* fmt_ctx_ {nullptr};
+    AVCodecContext* dec_ctx_ {nullptr};
+    AVBufferRef* hw_device_ctx_ {nullptr};
+    SwsContext* sws_ {nullptr};
+    int video_stream_ {-1};
+    AVPixelFormat sw_pix_fmt_ {AV_PIX_FMT_BGR24};
+    int width_ {0};
+    int height_ {0};
+#endif
 };
 
 } // namespace va::media
@@ -30,4 +63,3 @@ private:
 namespace va::media {
     std::shared_ptr<ISwitchableSource> makeNvdecSource(const std::string& uri);
 }
-
