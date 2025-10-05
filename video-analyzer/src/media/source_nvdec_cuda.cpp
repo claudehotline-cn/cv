@@ -147,7 +147,22 @@ bool NvdecRtspSource::readImpl(va::core::Frame& frame) {
 
             AVFrame* src = f;
             if (f->format == AV_PIX_FMT_CUDA) {
-                // transfer to CPU
+                // Fill device surface metadata for downstream GPU preproc (NV12 fast path)
+                if (f->hw_frames_ctx) {
+                    auto* hwfc = reinterpret_cast<AVHWFramesContext*>(f->hw_frames_ctx->data);
+                    if (hwfc && hwfc->sw_format == AV_PIX_FMT_NV12 && f->data[0] && f->data[1]) {
+                        frame.has_device_surface = true;
+                        frame.device.on_gpu = true;
+                        frame.device.fmt = va::core::PixelFormat::NV12;
+                        frame.device.width = f->width;
+                        frame.device.height = f->height;
+                        frame.device.data0 = f->data[0];
+                        frame.device.data1 = f->data[1];
+                        frame.device.pitch0 = f->linesize[0];
+                        frame.device.pitch1 = f->linesize[1];
+                    }
+                }
+                // transfer to CPU for BGR copy used by renderer/encoder fallback
                 if (av_hwframe_transfer_data(sw, f, 0) < 0) {
                     continue;
                 }
