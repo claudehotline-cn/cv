@@ -2,6 +2,7 @@
 
 #include "core/logger.hpp"
 #include "core/buffer_pool.hpp"
+#include "core/gpu_buffer_pool.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -96,6 +97,7 @@ struct OrtModelSession::Impl {
 #if VA_HAS_CUDA_RUNTIME
     void* io_input_device_buffer {nullptr};
     size_t io_input_capacity_bytes {0};
+    std::unique_ptr<va::core::GpuBufferPool> device_pool;
 #endif
     std::string resolved_provider {"cpu"};
     bool io_binding_enabled {false};
@@ -113,6 +115,7 @@ OrtModelSession::~OrtModelSession() {
     if (impl_) {
         std::scoped_lock lock(impl_->mutex);
         releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+        impl_->device_pool.reset();
     }
 #endif
 }
@@ -313,13 +316,8 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
                           << (provider_appended ? provider : "cpu")
                           << ")";
 #if VA_HAS_CUDA_RUNTIME
-            if (impl_->options.io_binding_input_bytes > 0) {
-                ensureCudaCapacity(impl_->io_input_device_buffer,
-                                   impl_->io_input_capacity_bytes,
-                                   impl_->options.io_binding_input_bytes);
-            } else {
-                releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
-            }
+            // Initialize GPU buffer pool for input staging (optional initial hint)
+            impl_->device_pool = std::make_unique<va::core::GpuBufferPool>(impl_->options.io_binding_input_bytes, 4);
 #endif
             impl_->io_binding_enabled = true;
         } catch (const std::exception& ex) {
@@ -327,6 +325,7 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
             impl_->io_binding.reset();
 #if VA_HAS_CUDA_RUNTIME
             releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+            impl_->device_pool.reset();
 #endif
             impl_->io_binding_enabled = false;
             impl_->device_binding_active = false;
@@ -335,6 +334,7 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
         impl_->io_binding.reset();
 #if VA_HAS_CUDA_RUNTIME
         releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+        impl_->device_pool.reset();
 #endif
         impl_->io_binding_enabled = false;
         impl_->device_binding_active = false;
@@ -392,18 +392,31 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             input_holders.reserve(1);
 
             bool bound_device_input = false;
+#if VA_HAS_CUDA_RUNTIME
+            va::core::GpuBufferPool::Memory pooled_input_mem{};
+#endif
 
 #if VA_HAS_CUDA_RUNTIME
             if (impl_->use_gpu && impl_->options.use_io_binding) {
                 // Stage host F32 tensor to device buffer if needed
                 const size_t bytes = element_count * sizeof(float);
-                if (ensureCudaCapacity(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes, bytes)) {
-                    void* dev_ptr = impl_->io_input_device_buffer;
-                    if (!input.on_gpu) {
+                if (!input.on_gpu) {
+                    void* dev_ptr = nullptr;
+#if VA_HAS_CUDA_RUNTIME
+                    if (impl_->device_pool) {
+                        pooled_input_mem = impl_->device_pool->acquire(bytes);
+                        dev_ptr = pooled_input_mem.ptr;
+                    }
+#endif
+                    if (!dev_ptr) {
+                        if (ensureCudaCapacity(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes, bytes)) {
+                            dev_ptr = impl_->io_input_device_buffer;
+                        }
+                    }
+#if VA_HAS_CUDA_RUNTIME
+                    if (dev_ptr) {
                         cudaError_t err = cudaMemcpy(dev_ptr, input.data, bytes, cudaMemcpyHostToDevice);
-                        if (err != cudaSuccess) {
-                            VA_LOG_WARN() << "cudaMemcpy H2D failed: " << cudaGetErrorString(err) << ", falling back to CPU input bind";
-                        } else {
+                        if (err == cudaSuccess) {
                             Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
                             input_holders.emplace_back(Ort::Value::CreateTensor<float>(
                                 input_mem_dev,
@@ -412,18 +425,21 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
                                 const_cast<int64_t*>(input.shape.data()),
                                 input.shape.size()));
                             bound_device_input = true;
+                        } else {
+                            VA_LOG_WARN() << "cudaMemcpy H2D failed: " << cudaGetErrorString(err) << ", falling back to CPU input bind";
                         }
-                    } else {
-                        // Caller-provided device pointer (best-effort)
-                        Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
-                        input_holders.emplace_back(Ort::Value::CreateTensor<float>(
-                            input_mem_dev,
-                            static_cast<float*>(input.data),
-                            element_count,
-                            const_cast<int64_t*>(input.shape.data()),
-                            input.shape.size()));
-                        bound_device_input = true;
                     }
+#endif
+                } else {
+                    // Caller-provided device pointer (best-effort)
+                    Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
+                    input_holders.emplace_back(Ort::Value::CreateTensor<float>(
+                        input_mem_dev,
+                        static_cast<float*>(input.data),
+                        element_count,
+                        const_cast<int64_t*>(input.shape.data()),
+                        input.shape.size()));
+                    bound_device_input = true;
                 }
             }
 #endif
@@ -537,6 +553,11 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
 
             impl_->io_binding->ClearBoundInputs();
             impl_->io_binding->ClearBoundOutputs();
+#if VA_HAS_CUDA_RUNTIME
+            if (pooled_input_mem.ptr && impl_->device_pool) {
+                impl_->device_pool->release(std::move(pooled_input_mem));
+            }
+#endif
         } else {
             Ort::MemoryInfo input_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
             Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
