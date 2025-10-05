@@ -5,6 +5,21 @@
 
 #include <opencv2/core.hpp>
 #include "core/logger.hpp"
+#if defined(USE_CUDA)
+#  if defined(__has_include)
+#    if __has_include(<cuda_runtime.h>)
+#      include <cuda_runtime.h>
+#      define VA_HAS_CUDA_RUNTIME 1
+#    else
+#      define VA_HAS_CUDA_RUNTIME 0
+#    endif
+#  else
+#    include <cuda_runtime.h>
+#    define VA_HAS_CUDA_RUNTIME 1
+#  endif
+#else
+#  define VA_HAS_CUDA_RUNTIME 0
+#endif
 
 #ifdef USE_FFMPEG
 #include <stdexcept>
@@ -261,7 +276,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
 #endif
 }
 
-bool FfmpegH264Encoder::encode(const core::Frame& frame, Packet& out_packet) {
+bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet) {
 #ifdef USE_FFMPEG
     if (!opened_ || !codec_ctx_ || !frame_) {
         if (!use_jpeg_) {
@@ -291,14 +306,54 @@ bool FfmpegH264Encoder::encode(const core::Frame& frame, Packet& out_packet) {
         return false;
     }
 
-    const uint8_t* src_slices[1] = { frame.bgr.data() };
-    int src_stride[1] = { frame.width * 3 };
-    sws_scale(sws_ctx_, src_slices, src_stride, 0, height_, frame_->data, frame_->linesize);
+    bool fed_device_nv12 = false;
+#if VA_HAS_CUDA_RUNTIME
+    if (use_hwframes_ && hw_frames_ctx_ && frame.has_device_surface && frame.device.on_gpu &&
+        frame.device.fmt == va::core::PixelFormat::NV12 && frame.device.data0 && frame.device.data1) {
+        AVFrame* hwf = av_frame_alloc();
+        if (hwf) {
+            hwf->format = AV_PIX_FMT_CUDA;
+            hwf->width = frame_->width;
+            hwf->height = frame_->height;
+            hwf->hw_frames_ctx = av_buffer_ref(hw_frames_ctx_);
+            if (av_hwframe_get_buffer(hw_frames_ctx_, hwf, 0) >= 0) {
+                uint8_t* dstY = hwf->data[0];
+                uint8_t* dstUV = hwf->data[1];
+                const uint8_t* srcY = static_cast<const uint8_t*>(frame.device.data0);
+                const uint8_t* srcUV = static_cast<const uint8_t*>(frame.device.data1);
+                const size_t srcPitchY = static_cast<size_t>(frame.device.pitch0);
+                const size_t srcPitchUV = static_cast<size_t>(frame.device.pitch1);
+                const size_t dstPitchY = static_cast<size_t>(hwf->linesize[0]);
+                const size_t dstPitchUV = static_cast<size_t>(hwf->linesize[1]);
+                cudaError_t e1 = cudaMemcpy2D(dstY, dstPitchY, srcY, srcPitchY,
+                                              static_cast<size_t>(frame.width), static_cast<size_t>(frame.height),
+                                              cudaMemcpyDeviceToDevice);
+                if (e1 == cudaSuccess) {
+                    cudaError_t e2 = cudaMemcpy2D(dstUV, dstPitchUV, srcUV, srcPitchUV,
+                                                  static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
+                                                  cudaMemcpyDeviceToDevice);
+                    if (e2 == cudaSuccess) {
+                        if (avcodec_send_frame(codec_ctx_, hwf) == 0) {
+                            fed_device_nv12 = true;
+                        }
+                    }
+                }
+            }
+            av_frame_free(&hwf);
+        }
+    }
+#endif
+
+    if (!fed_device_nv12) {
+        const uint8_t* src_slices[1] = { frame.bgr.data() };
+        int src_stride[1] = { frame.width * 3 };
+        sws_scale(sws_ctx_, src_slices, src_stride, 0, height_, frame_->data, frame_->linesize);
+    }
 
     frame_->pts = pts_++;
 
     int ret = 0;
-    if (use_hwframes_ && hw_frames_ctx_) {
+    if (!fed_device_nv12 && use_hwframes_ && hw_frames_ctx_) {
         // Allocate a device frame and upload
         AVFrame* hwf = av_frame_alloc();
         if (!hwf) return false;
@@ -316,7 +371,7 @@ bool FfmpegH264Encoder::encode(const core::Frame& frame, Packet& out_packet) {
         }
         ret = avcodec_send_frame(codec_ctx_, hwf);
         av_frame_free(&hwf);
-    } else {
+    } else if (!fed_device_nv12) {
         ret = avcodec_send_frame(codec_ctx_, frame_);
     }
     if (ret < 0) {
@@ -389,3 +444,4 @@ void FfmpegH264Encoder::close() {
 }
 
 } // namespace va::media
+
