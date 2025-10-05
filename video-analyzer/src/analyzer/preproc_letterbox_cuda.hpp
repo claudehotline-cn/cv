@@ -14,12 +14,16 @@ public:
 private:
     bool ensureDeviceCapacity(std::size_t bytes);
     void releaseDevice();
+    bool ensureInputCapacity(std::size_t bytes);
+    void releaseInput();
 
     int input_width_;
     int input_height_;
 
     void* device_ptr_ {nullptr};
     std::size_t capacity_bytes_ {0};
+    void* input_device_ptr_ {nullptr};
+    std::size_t input_capacity_bytes_ {0};
 };
 
 } // namespace va::analyzer

@@ -65,8 +65,11 @@ if(USE_CUDA)
     find_package(CUDAToolkit QUIET)
     if(CUDAToolkit_FOUND)
         add_definitions(-DUSE_CUDA)
-        message(STATUS "CUDA found: ${CUDAToolkit_VERSION} - GPU inference enabled")
+        # Build without .cu kernels in this environment; use runtime CUDA API only
+        set(HAVE_CUDA_KERNELS OFF)
+        message(STATUS "CUDA found: ${CUDAToolkit_VERSION} - building without NVCC kernels")
     else()
+        set(HAVE_CUDA_KERNELS OFF)
         message(WARNING "CUDA not found - GPU inference disabled")
     endif()
 endif()
@@ -117,8 +120,14 @@ endif()
 
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 file(GLOB_RECURSE HEADERS "include/*.h" "src/*.hpp")
+if (HAVE_CUDA_KERNELS)
+    file(GLOB_RECURSE CUDA_SOURCES "src/*.cu")
+endif()
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
+if (HAVE_CUDA_KERNELS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAS_CUDA_KERNELS)
+endif()
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
 
@@ -164,6 +173,9 @@ endif()
 
 if(ONNXRUNTIME_LIB)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_LIB})
+endif()
+if (CUDAToolkit_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cudart)
 endif()
 
 function(target_link_vcpkg_library target debug_path release_path)
