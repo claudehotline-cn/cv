@@ -32,31 +32,48 @@ float iou(const va::core::Box& a, const va::core::Box& b) {
 }
 
 void nonMaxSuppression(std::vector<va::core::Box>& boxes) {
-    std::vector<size_t> order(boxes.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](size_t lhs, size_t rhs) {
-        return boxes[lhs].score > boxes[rhs].score;
-    });
+    if (boxes.empty()) return;
+    // Precompute areas
+    std::vector<float> areas(boxes.size());
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        areas[i] = std::max(0.0f, boxes[i].x2 - boxes[i].x1) * std::max(0.0f, boxes[i].y2 - boxes[i].y1);
+    }
+
+    // Group indices by class
+    std::unordered_map<int, std::vector<size_t>> by_class;
+    by_class.reserve(32);
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        by_class[boxes[i].cls].push_back(i);
+    }
 
     std::vector<bool> suppressed(boxes.size(), false);
     std::vector<va::core::Box> result;
-    for (size_t i = 0; i < order.size(); ++i) {
-        const size_t idx = order[i];
-        if (suppressed[idx]) {
-            continue;
-        }
-        const va::core::Box& candidate = boxes[idx];
-        result.push_back(candidate);
-        for (size_t j = i + 1; j < order.size(); ++j) {
-            const size_t idx2 = order[j];
-            if (suppressed[idx2]) {
-                continue;
-            }
-            if (candidate.cls != boxes[idx2].cls) {
-                continue;
-            }
-            if (iou(candidate, boxes[idx2]) > kNMSThreshold) {
-                suppressed[idx2] = true;
+    result.reserve(boxes.size());
+
+    for (auto& kv : by_class) {
+        auto& idxs = kv.second;
+        // Sort indices by score desc within class
+        std::sort(idxs.begin(), idxs.end(), [&](size_t a, size_t b){ return boxes[a].score > boxes[b].score; });
+        for (size_t ii = 0; ii < idxs.size(); ++ii) {
+            size_t i = idxs[ii];
+            if (suppressed[i]) continue;
+            const auto& bi = boxes[i];
+            result.push_back(bi);
+            // suppress lower-score boxes with IoU > thr
+            for (size_t jj = ii + 1; jj < idxs.size(); ++jj) {
+                size_t j = idxs[jj];
+                if (suppressed[j]) continue;
+                const auto& bj = boxes[j];
+                float x1 = std::max(bi.x1, bj.x1);
+                float y1 = std::max(bi.y1, bj.y1);
+                float x2 = std::min(bi.x2, bj.x2);
+                float y2 = std::min(bi.y2, bj.y2);
+                float w = std::max(0.0f, x2 - x1);
+                float h = std::max(0.0f, y2 - y1);
+                float inter = w * h;
+                float uni = areas[i] + areas[j] - inter;
+                float ov = uni > 0.0f ? inter / uni : 0.0f;
+                if (ov > kNMSThreshold) suppressed[j] = true;
             }
         }
     }

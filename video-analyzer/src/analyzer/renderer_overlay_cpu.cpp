@@ -25,6 +25,30 @@ bool OverlayRendererCPU::draw(const core::Frame& in, const core::ModelOutput& ou
     const int thickness = std::max(2, base / 400);
     const double fontScale = std::max(0.4, base / 1000.0);
 
+    // Optional semi-transparent fill
+    double alpha = 0.0;
+    if (const char* a = std::getenv("VA_OVERLAY_ALPHA")) {
+        try { alpha = std::stod(a); } catch (...) { alpha = 0.0; }
+        if (alpha < 0.0) alpha = 0.0; if (alpha > 1.0) alpha = 1.0;
+    }
+    if (alpha > 0.0) {
+        cv::Mat overlay = img.clone();
+        for (const auto& b : output.boxes) {
+            cv::Rect r((int)std::round(b.x1), (int)std::round(b.y1), (int)std::round(b.x2 - b.x1), (int)std::round(b.y2 - b.y1));
+            r &= cv::Rect(0,0,img.cols,img.rows);
+            if (r.width<=0 || r.height<=0) continue;
+            cv::Scalar color(((233*b.cls + 53)%255), ((17*b.cls + 199)%255), ((37*b.cls + 97)%255));
+            cv::rectangle(overlay, r, color, cv::FILLED);
+        }
+        cv::addWeighted(overlay, alpha, img, 1.0 - alpha, 0.0, img);
+    }
+
+    bool draw_labels = true;
+    if (const char* dl = std::getenv("VA_OVERLAY_DRAW_LABELS")) {
+        std::string v = dl; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);});
+        draw_labels = !(v=="0"||v=="false"||v=="no"||v=="off");
+    }
+
     for (const auto& box : output.boxes) {
         const int x1 = std::max(0, static_cast<int>(std::round(box.x1)));
         const int y1 = std::max(0, static_cast<int>(std::round(box.y1)));
@@ -34,20 +58,21 @@ bool OverlayRendererCPU::draw(const core::Frame& in, const core::ModelOutput& ou
         const cv::Scalar color = colorForClass(box.cls);
         cv::rectangle(img, cv::Point(x1, y1), cv::Point(x2, y2), color, thickness, cv::LINE_AA);
 
-        char label[64];
-        std::snprintf(label, sizeof(label), "id:%d %.0f%%", box.cls, box.score * 100.0f);
-        int baseline = 0;
-        cv::Size sz = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
-        int lx1 = x1;
-        int ly1 = std::max(0, y1 - sz.height - 6);
-        int lx2 = std::min(out.width - 1, x1 + sz.width + 6);
-        int ly2 = std::max(0, y1);
-        cv::rectangle(img, cv::Point(lx1, ly1), cv::Point(lx2, ly2), color, cv::FILLED);
-        cv::putText(img, label, cv::Point(x1 + 3, y1 - 3), cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(255,255,255), thickness, cv::LINE_AA);
+        if (draw_labels) {
+            char label[64];
+            std::snprintf(label, sizeof(label), "id:%d %.0f%%", box.cls, box.score * 100.0f);
+            int baseline = 0;
+            cv::Size sz = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+            int lx1 = x1;
+            int ly1 = std::max(0, y1 - sz.height - 6);
+            int lx2 = std::min(out.width - 1, x1 + sz.width + 6);
+            int ly2 = std::max(0, y1);
+            cv::rectangle(img, cv::Point(lx1, ly1), cv::Point(lx2, ly2), color, cv::FILLED);
+            cv::putText(img, label, cv::Point(x1 + 3, y1 - 3), cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(255,255,255), thickness, cv::LINE_AA);
+        }
     }
 
     return true;
 }
 
 } // namespace va::analyzer
-
