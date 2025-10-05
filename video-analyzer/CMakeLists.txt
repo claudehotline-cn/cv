@@ -59,6 +59,8 @@ endif()
 
 # Optional: CUDA support
 option(USE_CUDA "Enable CUDA support for GPU inference" ON)
+option(WITH_NVDEC "Build NVDEC-based RTSP source (scaffold)" OFF)
+option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
 if(USE_CUDA)
     find_package(CUDAToolkit QUIET)
     if(CUDAToolkit_FOUND)
@@ -146,6 +148,14 @@ if(FFMPEG_FOUND)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_FFMPEG)
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE NO_FFMPEG)
+endif()
+
+# Feature toggles for scaffold files
+if (USE_CUDA AND WITH_NVDEC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_NVDEC)
+endif()
+if (USE_CUDA AND WITH_NVENC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_NVENC)
 endif()
 
 if(JSONCPP_LIBRARY)

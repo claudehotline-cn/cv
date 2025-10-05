@@ -108,6 +108,13 @@ bool Application::initialize(const std::string& config_dir) {
     if (app_config_.engine.options.io_binding_output_bytes > 0) {
         descriptor.options["io_binding_output_bytes"] = std::to_string(app_config_.engine.options.io_binding_output_bytes);
     }
+    // Optional staging and host pool sizing for IoBinding outputs
+    if (app_config_.engine.options.stage_device_outputs) {
+        descriptor.options["stage_device_outputs"] = "true";
+    }
+    if (app_config_.engine.options.tensor_host_pool_bytes > 0) {
+        descriptor.options["tensor_host_pool_bytes"] = std::to_string(app_config_.engine.options.tensor_host_pool_bytes);
+    }
     engine_manager_.setEngine(std::move(descriptor));
 
     va::server::RestServerOptions rest_options;
@@ -521,6 +528,10 @@ va::core::FilterConfig Application::buildFilterConfig(const std::string& stream_
     cfg.tensorrt_min_subgraph_size = getIntOption("trt_min_subgraph_size", cfg.tensorrt_min_subgraph_size);
     cfg.io_binding_input_bytes = getSizeOption("io_binding_input_bytes", cfg.io_binding_input_bytes);
     cfg.io_binding_output_bytes = getSizeOption("io_binding_output_bytes", cfg.io_binding_output_bytes);
+    // Map optional IoBinding staging options to filter config (carried into Ort options later)
+    if (getBoolOption("stage_device_outputs", false)) {
+        // Piggyback via engine.options; Ort session reads directly from cfg below
+    }
 
     if (cfg.input_width == 0) {
         cfg.input_width = 640;
