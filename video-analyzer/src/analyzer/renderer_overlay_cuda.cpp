@@ -1,5 +1,7 @@
 #include "analyzer/renderer_overlay_cuda.hpp"
 #include "analyzer/renderer_overlay_cpu.hpp"
+#include <opencv2/imgproc.hpp>
+#include <opencv2/core.hpp>
 #if defined(VA_HAS_CUDA_KERNELS)
 #include "analyzer/cuda/overlay_kernels.hpp"
 #endif
@@ -34,6 +36,19 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
         if (d_cls) cudaFree(d_cls);
         if (d_boxes) cudaFree(d_boxes);
         cudaFree(d_img);
+        // Draw labels on CPU for clarity (class id and score)
+        cv::Mat img(h, w, CV_8UC3, out.bgr.data());
+        for (const auto& b : output.boxes) {
+            char label[64];
+            std::snprintf(label, sizeof(label), "id:%d %.0f%%", b.cls, b.score*100.0f);
+            // color formula consistent with CUDA path
+            cv::Scalar color(((233*b.cls + 53)%255), ((17*b.cls + 199)%255), ((37*b.cls + 97)%255)); // BGR
+            int baseline=0; auto sz = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+            int x = std::max(0, (int)std::round(b.x1));
+            int y = std::max(0, (int)std::round(b.y1) - 4);
+            cv::rectangle(img, cv::Rect(x, std::max(0,y - sz.height - 4), sz.width + 6, sz.height + 6), color, cv::FILLED);
+            cv::putText(img, label, cv::Point(x+3, std::max(0,y - 3)), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1, cv::LINE_AA);
+        }
         return true;
     }
 CLEAN_CLS:
