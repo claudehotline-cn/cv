@@ -66,7 +66,16 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
             codec = avcodec_find_encoder(codec_id);
         }
     } else {
-        codec = avcodec_find_encoder_by_name("libx264");
+        // Try explicit encoder name first (e.g., h264_nvenc)
+        if (!codec_lower.empty()) {
+            const AVCodec* by_name = avcodec_find_encoder_by_name(codec_lower.c_str());
+            if (by_name) {
+                codec = by_name;
+            }
+        }
+        if (!codec) {
+            codec = avcodec_find_encoder_by_name("libx264");
+        }
         if (!codec) {
             codec = avcodec_find_encoder_by_name("libopenh264");
         }
@@ -127,6 +136,17 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
             }
         }
         // libopenh264 ignores unknown profiles; avoid setting unsupported ones
+    } else if (encoder_name.find("nvenc") != std::string::npos) {
+        // FFmpeg NVENC options
+        const char* preset = settings.preset.empty() ? "p5" : settings.preset.c_str();
+        av_opt_set(codec_ctx_->priv_data, "preset", preset, 0);
+        if (settings.zero_latency) {
+            av_opt_set(codec_ctx_->priv_data, "rc-lookahead", "0", 0);
+            av_opt_set(codec_ctx_->priv_data, "delay", "0", 0);
+        }
+        if (!settings.profile.empty()) {
+            av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
+        }
     }
 
     if (avcodec_open2(codec_ctx_, codec, nullptr) < 0) {
