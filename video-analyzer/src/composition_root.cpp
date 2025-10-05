@@ -134,8 +134,15 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         }
         analyzer->setPostprocessor(postprocessor);
 
-        auto renderer = std::make_shared<va::analyzer::PassthroughRenderer>();
-        analyzer->setRenderer(renderer);
+        // Prefer overlay rendering by default; allow opt-out via env
+        const char* passthrough = std::getenv("VA_RENDER_PASSTHROUGH");
+        if (passthrough && (std::string(passthrough) == "1" || std::string(passthrough) == "true")) {
+            auto renderer = std::make_shared<va::analyzer::PassthroughRenderer>();
+            analyzer->setRenderer(renderer);
+        } else {
+            auto renderer = std::make_shared<va::analyzer::OverlayRendererCPU>();
+            analyzer->setRenderer(renderer);
+        }
 
         auto params = std::make_shared<va::analyzer::AnalyzerParams>();
         params->confidence_threshold = cfg.confidence_threshold;
