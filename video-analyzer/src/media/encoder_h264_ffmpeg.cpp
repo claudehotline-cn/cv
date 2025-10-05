@@ -114,6 +114,20 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         if (!settings.profile.empty()) {
             av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
         }
+    } else if (encoder_name.find("nvenc") != std::string::npos) {
+        // NVENC low-latency defaults; can be overridden via preset/tune/profile from settings
+        const char* preset = settings.preset.empty() ? "p4" : settings.preset.c_str();
+        av_opt_set(codec_ctx_->priv_data, "preset", preset, 0);
+        av_opt_set(codec_ctx_->priv_data, "rc", "cbr", 0);
+        if (settings.zero_latency) {
+            av_opt_set(codec_ctx_->priv_data, "tune", settings.tune.empty() ? "ll" : settings.tune.c_str(), 0);
+            av_opt_set(codec_ctx_->priv_data, "zerolatency", "1", 0);
+        } else if (!settings.tune.empty()) {
+            av_opt_set(codec_ctx_->priv_data, "tune", settings.tune.c_str(), 0);
+        }
+        if (!settings.profile.empty()) {
+            av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
+        }
     } else if (encoder_name == "libopenh264") {
         if (settings.zero_latency) {
             av_opt_set(codec_ctx_->priv_data, "skip_frame", "default", 0);
