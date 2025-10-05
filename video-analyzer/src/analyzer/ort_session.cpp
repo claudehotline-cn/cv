@@ -447,10 +447,21 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             const char* input_name = impl_->input_names.empty() ? "input" : impl_->input_names.front();
             impl_->io_binding->BindInput(input_name, input_holders.front());
 
+            const bool bind_outputs_to_device = impl_->options.use_io_binding && impl_->use_gpu && impl_->options.stage_device_outputs;
             for (const char* output_name : impl_->output_names) {
-                // Safe baseline: bind outputs to CPU; let ORT stage device->host internally.
-                Ort::MemoryInfo out_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-                impl_->io_binding->BindOutput(output_name, out_mem);
+                if (bind_outputs_to_device) {
+#if VA_HAS_CUDA_RUNTIME
+                    Ort::MemoryInfo out_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
+                    impl_->io_binding->BindOutput(output_name, out_mem_dev);
+#else
+                    Ort::MemoryInfo out_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                    impl_->io_binding->BindOutput(output_name, out_mem);
+#endif
+                } else {
+                    // Safe baseline: bind outputs to CPU; let ORT stage device->host internally.
+                    Ort::MemoryInfo out_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                    impl_->io_binding->BindOutput(output_name, out_mem);
+                }
             }
 
             Ort::RunOptions run_opts;
@@ -460,8 +471,68 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             impl_->last_outputs = impl_->io_binding->GetOutputValues();
             outputs.clear();
             outputs.reserve(impl_->last_outputs.size());
-            for (auto& value : impl_->last_outputs) {
-                outputs.emplace_back(makeTensorView(value, false));
+            impl_->staged_outputs.clear();
+
+            const bool stage_outputs = impl_->options.stage_device_outputs && impl_->use_gpu && impl_->options.use_io_binding;
+            if (stage_outputs) {
+                if (!impl_->host_pool) {
+                    impl_->host_pool_block_bytes = impl_->options.tensor_host_pool_bytes;
+                    if (impl_->host_pool_block_bytes == 0 && !impl_->last_outputs.empty()) {
+                        try {
+                            Ort::TensorTypeAndShapeInfo info = impl_->last_outputs.front().GetTensorTypeAndShapeInfo();
+                            auto shape = info.GetShape();
+                            size_t count = 1;
+                            for (auto d : shape) count *= static_cast<size_t>(d > 0 ? d : 1);
+                            impl_->host_pool_block_bytes = count * sizeof(float);
+                        } catch (...) {
+                            impl_->host_pool_block_bytes = 0;
+                        }
+                    }
+                    impl_->host_pool = std::make_unique<va::core::HostBufferPool>(impl_->host_pool_block_bytes, 8);
+                }
+
+                for (auto& value : impl_->last_outputs) {
+                    if (!value.IsTensor()) { outputs.emplace_back(makeTensorView(value, false)); continue; }
+                    Ort::TensorTypeAndShapeInfo info = value.GetTensorTypeAndShapeInfo();
+                    auto shape = info.GetShape();
+                    size_t count = 1;
+                    for (auto d : shape) count *= static_cast<size_t>(d > 0 ? d : 1);
+                    size_t bytes = count * sizeof(float);
+
+                    auto mem = impl_->host_pool->acquire(bytes);
+                    if (!mem.ptr || mem.bytes < bytes) {
+                        outputs.emplace_back(makeTensorView(value, false));
+                        continue;
+                    }
+#if VA_HAS_CUDA_RUNTIME
+                    if (bind_outputs_to_device) {
+                        const void* src_dev = value.GetTensorRawData();
+                        cudaError_t err = cudaMemcpy(mem.ptr, src_dev, bytes, cudaMemcpyDeviceToHost);
+                        if (err != cudaSuccess) {
+                            outputs.emplace_back(makeTensorView(value, false));
+                            continue;
+                        }
+                    } else
+#endif
+                    {
+                        const float* src = nullptr;
+                        try { src = value.GetTensorData<float>(); } catch (...) { src = nullptr; }
+                        if (!src) { outputs.emplace_back(makeTensorView(value, false)); continue; }
+                        std::memcpy(mem.ptr, src, bytes);
+                    }
+
+                    core::TensorView view;
+                    view.data = mem.ptr;
+                    view.shape = std::move(shape);
+                    view.dtype = core::DType::F32;
+                    view.on_gpu = false;
+                    outputs.emplace_back(view);
+                    impl_->staged_outputs.emplace_back(std::move(mem));
+                }
+            } else {
+                for (auto& value : impl_->last_outputs) {
+                    outputs.emplace_back(makeTensorView(value, false));
+                }
             }
 
             impl_->io_binding->ClearBoundInputs();
