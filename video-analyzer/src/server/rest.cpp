@@ -671,22 +671,65 @@ struct RestServer::Impl {
         Json::Value data(Json::objectValue);
 
         const auto& config = app.appConfig();
+        // Current engine (dynamic)
+        auto cur = app.currentEngine();
         Json::Value engine(Json::objectValue);
-        engine["type"] = config.engine.type;
-        engine["device"] = config.engine.device;
+        engine["type"] = cur.name;
+        engine["device"] = cur.device_index;
+
+        auto getBool = [&](const char* key, bool fallback){
+            auto it = cur.options.find(key);
+            if (it == cur.options.end()) return fallback;
+            std::string v = toLower(it->second);
+            if (v=="1"||v=="true"||v=="yes"||v=="on") return true;
+            if (v=="0"||v=="false"||v=="no"||v=="off") return false;
+            return fallback;
+        };
+        auto getInt = [&](const char* key, int fallback){
+            auto it = cur.options.find(key);
+            if (it == cur.options.end()) return fallback;
+            try { return std::stoi(it->second); } catch (...) { return fallback; }
+        };
+        auto getU64 = [&](const char* key, uint64_t fallback){
+            auto it = cur.options.find(key);
+            if (it == cur.options.end()) return fallback;
+            try { return static_cast<uint64_t>(std::stoll(it->second)); } catch (...) { return fallback; }
+        };
 
         Json::Value engine_options(Json::objectValue);
-        engine_options["use_io_binding"] = config.engine.options.use_io_binding;
-        engine_options["prefer_pinned_memory"] = config.engine.options.prefer_pinned_memory;
-        engine_options["allow_cpu_fallback"] = config.engine.options.allow_cpu_fallback;
-        engine_options["enable_profiling"] = config.engine.options.enable_profiling;
-        engine_options["tensorrt_fp16"] = config.engine.options.tensorrt_fp16;
-        engine_options["tensorrt_int8"] = config.engine.options.tensorrt_int8;
-        engine_options["tensorrt_workspace_mb"] = config.engine.options.tensorrt_workspace_mb;
-        engine_options["io_binding_input_bytes"] = static_cast<Json::UInt64>(config.engine.options.io_binding_input_bytes);
-        engine_options["io_binding_output_bytes"] = static_cast<Json::UInt64>(config.engine.options.io_binding_output_bytes);
+        engine_options["use_io_binding"] = getBool("use_io_binding", config.engine.options.use_io_binding);
+        engine_options["prefer_pinned_memory"] = getBool("prefer_pinned_memory", config.engine.options.prefer_pinned_memory);
+        engine_options["allow_cpu_fallback"] = getBool("allow_cpu_fallback", config.engine.options.allow_cpu_fallback);
+        engine_options["enable_profiling"] = getBool("enable_profiling", config.engine.options.enable_profiling);
+        engine_options["tensorrt_fp16"] = getBool("trt_fp16", config.engine.options.tensorrt_fp16);
+        engine_options["tensorrt_int8"] = getBool("trt_int8", config.engine.options.tensorrt_int8);
+        engine_options["tensorrt_workspace_mb"] = getInt("trt_workspace_mb", config.engine.options.tensorrt_workspace_mb);
+        engine_options["io_binding_input_bytes"] = static_cast<Json::UInt64>(getU64("io_binding_input_bytes", config.engine.options.io_binding_input_bytes));
+        engine_options["io_binding_output_bytes"] = static_cast<Json::UInt64>(getU64("io_binding_output_bytes", config.engine.options.io_binding_output_bytes));
+        // Source/decoder toggles
+        engine_options["use_ffmpeg_source"] = getBool("use_ffmpeg_source", false);
+        engine_options["use_nvdec"] = getBool("use_nvdec", false);
+        engine_options["use_nvenc"] = getBool("use_nvenc", false);
+
         engine["options"] = engine_options;
         data["engine"] = engine;
+
+        // Also expose static config as engine_config for reference
+        Json::Value engine_cfg(Json::objectValue);
+        engine_cfg["type"] = config.engine.type;
+        engine_cfg["device"] = config.engine.device;
+        Json::Value cfg_opts(Json::objectValue);
+        cfg_opts["use_io_binding"] = config.engine.options.use_io_binding;
+        cfg_opts["prefer_pinned_memory"] = config.engine.options.prefer_pinned_memory;
+        cfg_opts["allow_cpu_fallback"] = config.engine.options.allow_cpu_fallback;
+        cfg_opts["enable_profiling"] = config.engine.options.enable_profiling;
+        cfg_opts["tensorrt_fp16"] = config.engine.options.tensorrt_fp16;
+        cfg_opts["tensorrt_int8"] = config.engine.options.tensorrt_int8;
+        cfg_opts["tensorrt_workspace_mb"] = config.engine.options.tensorrt_workspace_mb;
+        cfg_opts["io_binding_input_bytes"] = static_cast<Json::UInt64>(config.engine.options.io_binding_input_bytes);
+        cfg_opts["io_binding_output_bytes"] = static_cast<Json::UInt64>(config.engine.options.io_binding_output_bytes);
+        engine_cfg["options"] = cfg_opts;
+        data["engine_config"] = engine_cfg;
 
         Json::Value observability(Json::objectValue);
         observability["log_level"] = config.observability.log_level;
@@ -803,15 +846,21 @@ struct RestServer::Impl {
             const std::string stream_id = *stream_opt;
             const std::string profile = *profile_opt;
             const std::string uri = *uri_opt;
+
+            VA_LOG_INFO() << "[REST] subscribe request stream=" << stream_id
+                          << " profile=" << profile
+                          << " uri=" << uri;
             std::optional<std::string> model_override;
             if (body.isMember("model_id") && body["model_id"].isString()) {
                 model_override = body["model_id"].asString();
             }
 
+            VA_LOG_INFO() << "[REST] subscribe -> building pipeline...";
             auto result = app.subscribeStream(stream_id, profile, uri, model_override);
             if (!result) {
                 return errorResponse(app.lastError(), 400);
             }
+            VA_LOG_INFO() << "[REST] subscribe -> pipeline created key=" << *result;
 
             Json::Value payload = successPayload();
             Json::Value data(Json::objectValue);

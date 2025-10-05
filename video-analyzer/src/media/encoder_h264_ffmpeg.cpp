@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include <opencv2/core.hpp>
+#include "core/logger.hpp"
 
 #ifdef USE_FFMPEG
 #include <stdexcept>
@@ -46,6 +47,8 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
     });
 
     if (codec_lower == "jpeg" || codec_lower == "jpg" || codec_lower == "mjpeg") {
+        VA_LOG_INFO() << "[Encoder] using JPEG passthrough mode "
+                      << settings.width << "x" << settings.height << "@" << settings.fps;
         use_jpeg_ = true;
         width_ = settings.width;
         height_ = settings.height;
@@ -84,11 +87,13 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         }
     }
     if (!codec) {
+        VA_LOG_ERROR() << "[Encoder] failed to find encoder for codec=" << codec_name;
         return false;
     }
 
     codec_ctx_ = avcodec_alloc_context3(codec);
     if (!codec_ctx_) {
+        VA_LOG_ERROR() << "[Encoder] avcodec_alloc_context3 failed";
         return false;
     }
 
@@ -104,6 +109,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
 
     std::string encoder_name = codec && codec->name ? codec->name : "";
 
+    VA_LOG_INFO() << "[Encoder] selected encoder name='" << encoder_name << "'";
     if (encoder_name == "libx264") {
         const char* preset = settings.preset.empty() ? "veryfast" : settings.preset.c_str();
         av_opt_set(codec_ctx_->priv_data, "preset", preset, 0);
@@ -115,16 +121,29 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
             av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
         }
     } else if (encoder_name.find("nvenc") != std::string::npos) {
-        // NVENC low-latency defaults; can be overridden via preset/tune/profile from settings
-        const char* preset = settings.preset.empty() ? "p4" : settings.preset.c_str();
-        av_opt_set(codec_ctx_->priv_data, "preset", preset, 0);
+        // NVENC mapping: translate x264-style preset/tune to NVENC-safe options
+        auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); }); return v; };
+        std::string preset_in = toLower(settings.preset);
+        const char* nv_preset = "p4"; // default balanced
+        if (preset_in == "ultrafast" || preset_in == "superfast") nv_preset = "p1";
+        else if (preset_in == "veryfast") nv_preset = "p3";
+        else if (preset_in == "faster" || preset_in == "fast") nv_preset = "p4";
+        else if (preset_in == "medium") nv_preset = "p5";
+        else if (preset_in == "slow") nv_preset = "p6";
+        else if (preset_in == "slower" || preset_in == "veryslow") nv_preset = "p7";
+        // If user already passed NVENC preset like p1..p7, keep it
+        if (preset_in.size() == 2 && preset_in[0] == 'p' && preset_in[1] >= '1' && preset_in[1] <= '7') {
+            nv_preset = settings.preset.c_str();
+        }
+        av_opt_set(codec_ctx_->priv_data, "preset", nv_preset, 0);
         av_opt_set(codec_ctx_->priv_data, "rc", "cbr", 0);
         if (settings.zero_latency) {
-            av_opt_set(codec_ctx_->priv_data, "tune", settings.tune.empty() ? "ll" : settings.tune.c_str(), 0);
-            av_opt_set(codec_ctx_->priv_data, "zerolatency", "1", 0);
-        } else if (!settings.tune.empty()) {
-            av_opt_set(codec_ctx_->priv_data, "tune", settings.tune.c_str(), 0);
+            // NVENC low-latency settings
+            av_opt_set(codec_ctx_->priv_data, "rc-lookahead", "0", 0);
+            av_opt_set(codec_ctx_->priv_data, "delay", "0", 0);
         }
+        VA_LOG_INFO() << "[Encoder][nvenc] mapped preset=" << nv_preset
+                      << " rc=cbr" << (settings.zero_latency ? " lookahead=0 delay=0" : "");
         if (!settings.profile.empty()) {
             av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
         }
@@ -151,16 +170,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         }
         // libopenh264 ignores unknown profiles; avoid setting unsupported ones
     } else if (encoder_name.find("nvenc") != std::string::npos) {
-        // FFmpeg NVENC options + prepare CUDA hwframes; keep CPU fallback if setup fails
-        const char* preset = settings.preset.empty() ? "p5" : settings.preset.c_str();
-        av_opt_set(codec_ctx_->priv_data, "preset", preset, 0);
-        if (settings.zero_latency) {
-            av_opt_set(codec_ctx_->priv_data, "rc-lookahead", "0", 0);
-            av_opt_set(codec_ctx_->priv_data, "delay", "0", 0);
-        }
-        if (!settings.profile.empty()) {
-            av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
-        }
+        // FFmpeg NVENC: prepare CUDA hwframes; mapping already applied above
         // Use NV12 for NVENC path
         codec_ctx_->pix_fmt = AV_PIX_FMT_NV12;
         // Try to create CUDA hwdevice/hwframes before open
@@ -179,6 +189,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
                     hw_frames_ctx_ = frames_ref;
                     codec_ctx_->hw_frames_ctx = av_buffer_ref(hw_frames_ctx_);
                     use_hwframes_ = true;
+                    VA_LOG_INFO() << "[Encoder][nvenc] using CUDA hwframes (NV12)";
                 } else {
                     av_buffer_unref(&frames_ref);
                 }
@@ -186,7 +197,12 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         }
     }
 
+    VA_LOG_INFO() << "[Encoder] avcodec_open2 w=" << codec_ctx_->width
+                  << " h=" << codec_ctx_->height
+                  << " fps=" << codec_ctx_->framerate.num << "/" << codec_ctx_->framerate.den
+                  << " pix_fmt=" << (int)codec_ctx_->pix_fmt;
     if (avcodec_open2(codec_ctx_, codec, nullptr) < 0) {
+        VA_LOG_ERROR() << "[Encoder] avcodec_open2 failed";
         close();
         return false;
     }
@@ -194,6 +210,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
     frame_ = av_frame_alloc();
     packet_ = av_packet_alloc();
     if (!frame_ || !packet_) {
+        VA_LOG_ERROR() << "[Encoder] av_frame_alloc/av_packet_alloc failed";
         close();
         return false;
     }
@@ -202,6 +219,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
     frame_->width = codec_ctx_->width;
     frame_->height = codec_ctx_->height;
     if (av_frame_get_buffer(frame_, 32) < 0) {
+        VA_LOG_ERROR() << "[Encoder] av_frame_get_buffer failed";
         close();
         return false;
     }
@@ -219,6 +237,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
                               nullptr,
                               nullptr);
     if (!sws_ctx_) {
+        VA_LOG_ERROR() << "[Encoder] sws_getContext failed";
         close();
         return false;
     }
@@ -228,6 +247,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
     fps_ = settings.fps;
     pts_ = 0;
     opened_ = true;
+    VA_LOG_INFO() << "[Encoder] open OK (codec='" << encoder_name << "')";
     return true;
 #else
     (void)settings;

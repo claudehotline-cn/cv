@@ -88,26 +88,29 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8082")
     ap.add_argument("--engine", default="ort-cpu")
-    ap.add_argument("--no-set-engine", action="store_true")
     ap.add_argument("--profile", default="det_720p")
     ap.add_argument("--url", required=True)
     ap.add_argument("--duration-sec", type=int, default=12)
     ap.add_argument("--warmup-sec", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=10)
     ap.add_argument("--opts", nargs="*", default=[])
+    ap.add_argument("--no-set-engine", action="store_true",
+                    help="Do not call /api/engine/set; assume engine already set")
+    ap.add_argument("--no-unsubscribe", action="store_true",
+                    help="Do not unsubscribe at the end (keep pipeline alive)")
     args = ap.parse_args()
 
     opts = parse_opts(args.opts)
 
-    # readiness and engine set (optional)
-    wait_ready(args.base, args.timeout, max_wait=8)
+    # readiness and optional engine set
+    wait_ready(args.base, args.timeout, max_wait=5)
     if not args.no_set_engine:
         try:
             set_engine(args.base, args.engine, opts, args.timeout)
         except Exception as e:
             print(f"[ERR] set_engine failed: {e}")
             return 2
-        if not wait_ready(args.base, args.timeout, max_wait=8):
+        if not wait_ready(args.base, args.timeout, max_wait=6):
             print("[ERR] backend not ready after engine set")
             return 2
 
@@ -158,8 +161,10 @@ def main():
         print("[FAIL] no frames gained")
         return 2
     finally:
-        unsubscribe(args.base, stream_id, args.profile, args.timeout)
+        if not args.no_unsubscribe:
+            unsubscribe(args.base, stream_id, args.profile, args.timeout)
 
 
 if __name__ == "__main__":
     sys.exit(main())
+

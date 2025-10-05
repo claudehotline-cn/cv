@@ -34,10 +34,10 @@ security:
     source_per_stream_per_sec: 0.2
     model_per_stream_per_sec: 0.5
 observability:
-  log_level: info
+  log_level: debug
   console: true
   file:
-    path: logs/video-analyzer.log
+    path: D:\Projects\ai\cv\logs\video-analyzer-release.log
     max_size_kb: 10240
     max_files: 5
   pipeline_metrics:

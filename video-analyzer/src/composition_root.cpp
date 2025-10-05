@@ -13,6 +13,7 @@
 #include "core/engine_manager.hpp"
 #include "media/encoder_h264_ffmpeg.hpp"
 #include "media/source_switchable_rtsp.hpp"
+#include "media/source_ffmpeg_rtsp.hpp"
 #include "media/transport_webrtc_datachannel.hpp"
 
 #include "core/logger.hpp"
@@ -30,23 +31,54 @@ namespace va {
 va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
     va::core::Factories factories;
 
-    // Snapshot engine options at factory build time (may not update until next init)
-    auto engine_desc_global = engine_manager.currentEngine();
-    auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
-    auto findBoolGlobal = [&](const char* key){ auto it=engine_desc_global.options.find(key); if (it==engine_desc_global.options.end()) return false; auto v=toLower(it->second); return v=="1"||v=="true"||v=="yes"||v=="on"; };
-
-    factories.make_source = [findBoolGlobal](const va::core::SourceConfig& cfg) -> std::shared_ptr<va::media::ISwitchableSource> {
+    factories.make_source = [&engine_manager](const va::core::SourceConfig& cfg) -> std::shared_ptr<va::media::ISwitchableSource> {
+        // Evaluate engine options at call time to support /api/engine/set hot switch
+        auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+        auto findBool = [&](const char* key){
+            const auto eng = engine_manager.currentEngine();
+            auto it = eng.options.find(key);
+            if (it == eng.options.end()) return false;
+            auto v = toLower(it->second);
+            return v=="1"||v=="true"||v=="yes"||v=="on";
+        };
+#ifdef USE_FFMPEG
+        // Explicit FFmpeg source switch
+        const char* use_ffsrc = std::getenv("VA_USE_FFMPEG_SOURCE");
+        const bool ffsrc_flag = findBool("use_ffmpeg_source") || (use_ffsrc && (std::string(use_ffsrc) == "1" || std::string(use_ffsrc) == "true"));
+        if (ffsrc_flag) {
+            VA_LOG_INFO() << "[Factories] FFmpeg RTSP source selected for URI " << cfg.uri;
+            try {
+                return std::static_pointer_cast<va::media::ISwitchableSource>(
+                    std::make_shared<va::media::FfmpegRtspSource>(cfg.uri));
+            } catch (const std::exception& ex) {
+                VA_LOG_WARN() << "[Factories] FFmpeg source construction threw: " << ex.what() << ", fallback to other sources.";
+            } catch (...) {
+                VA_LOG_WARN() << "[Factories] FFmpeg source construction unknown error, fallback.";
+            }
+        }
+#endif
 #ifdef USE_CUDA
 #if defined(WITH_NVDEC)
         // Opt-in via environment to avoid surprising runtime changes
         const char* use_nvdec = std::getenv("VA_USE_NVDEC");
-        if (findBoolGlobal("use_nvdec") || (use_nvdec && (std::string(use_nvdec) == "1" || std::string(use_nvdec) == "true"))) {
-            if (auto src = va::media::makeNvdecSource(cfg.uri)) {
-                return src;
+        const bool nvdec_flag = findBool("use_nvdec") || (use_nvdec && (std::string(use_nvdec) == "1" || std::string(use_nvdec) == "true"));
+        if (nvdec_flag) {
+            VA_LOG_INFO() << "[Factories] NVDEC preferred for URI " << cfg.uri;
+            try {
+                if (auto src = va::media::makeNvdecSource(cfg.uri)) {
+                    VA_LOG_INFO() << "[Factories] NVDEC source constructed.";
+                    return src;
+                }
+                VA_LOG_WARN() << "[Factories] NVDEC makeNvdecSource returned null, fallback to CPU source.";
+            } catch (const std::exception& ex) {
+                VA_LOG_WARN() << "[Factories] NVDEC source construction threw: " << ex.what() << ", fallback to CPU source.";
+            } catch (...) {
+                VA_LOG_WARN() << "[Factories] NVDEC source construction unknown error, fallback to CPU source.";
             }
         }
 #endif // WITH_NVDEC
 #endif // USE_CUDA
+        VA_LOG_INFO() << "[Factories] using OpenCV RTSP source for URI " << cfg.uri;
         return std::static_pointer_cast<va::media::ISwitchableSource>(
             std::make_shared<va::media::SwitchableRtspSource>(cfg.uri));
     };
@@ -197,11 +229,14 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         return analyzer;
     };
 
-    // Resolve NVENC preference once (engine options at factory build time)
-    const bool prefer_nvenc = findBoolGlobal("use_nvenc");
-
-    factories.make_encoder = [prefer_nvenc](const va::core::EncoderConfig& cfg) -> std::shared_ptr<va::media::IEncoder> {
+    factories.make_encoder = [&engine_manager](const va::core::EncoderConfig& cfg) -> std::shared_ptr<va::media::IEncoder> {
 #if defined(USE_CUDA) && defined(WITH_NVENC)
+        auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+        auto eng = engine_manager.currentEngine();
+        bool prefer_nvenc = false;
+        if (auto it = eng.options.find("use_nvenc"); it != eng.options.end()) {
+            auto v = toLower(it->second); prefer_nvenc = (v=="1"||v=="true"||v=="yes"||v=="on");
+        }
         const char* use_nvenc = std::getenv("VA_USE_NVENC");
         if (prefer_nvenc || (use_nvenc && (std::string(use_nvenc) == "1" || std::string(use_nvenc) == "true"))) {
             if (auto enc = va::media::makeNvencEncoder(cfg)) {

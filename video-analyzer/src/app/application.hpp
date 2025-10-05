@@ -73,6 +73,7 @@ public:
     const std::string& lastError() const { return last_error_; }
 
     va::core::EngineRuntimeStatus engineRuntimeStatus() const;
+    va::core::EngineDescriptor currentEngine() const { return engine_manager_.currentEngine(); }
 
 private:
     std::string config_dir_;

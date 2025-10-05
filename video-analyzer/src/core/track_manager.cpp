@@ -2,6 +2,7 @@
 
 #include "analyzer/analyzer.hpp"
 #include "media/source.hpp"
+#include "core/logger.hpp"
 
 #include <utility>
 #include <vector>
@@ -53,12 +54,24 @@ std::string TrackManager::subscribe(const SourceConfig& source_cfg,
 
 void TrackManager::unsubscribe(const std::string& stream_id, const std::string& profile_id) {
     const std::string key = makeKey(stream_id, profile_id);
-    std::scoped_lock lock(mutex_);
-    if (auto it = pipelines_.find(key); it != pipelines_.end()) {
-        if (it->second.pipeline) {
-            it->second.pipeline->stop();
+    std::shared_ptr<Pipeline> to_stop;
+    {
+        std::scoped_lock lock(mutex_);
+        auto it = pipelines_.find(key);
+        if (it != pipelines_.end()) {
+            // keep a local strong ref; erase from map first to avoid re-entrancy while holding lock
+            to_stop = it->second.pipeline;
+            pipelines_.erase(it);
         }
-        pipelines_.erase(it);
+    }
+    if (to_stop) {
+        try {
+            to_stop->stop();
+        } catch (const std::exception& ex) {
+            VA_LOG_ERROR() << "[TrackManager] exception while stopping pipeline '" << key << "': " << ex.what();
+        } catch (...) {
+            VA_LOG_ERROR() << "[TrackManager] unknown exception while stopping pipeline '" << key << "'";
+        }
     }
 }
 

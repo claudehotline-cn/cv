@@ -4,6 +4,7 @@
 #include "media/source.hpp"
 #include "media/encoder.hpp"
 #include "media/transport.hpp"
+#include "core/logger.hpp"
 
 #include <chrono>
 #include <thread>
@@ -42,10 +43,24 @@ void Pipeline::start() {
     last_timestamp_ms_.store(0.0);
 
     if (source_) {
-        source_->start();
+        try {
+            source_->start();
+        } catch (const std::exception& ex) {
+            VA_LOG_ERROR() << "[Pipeline] source start exception: " << ex.what();
+        } catch (...) {
+            VA_LOG_ERROR() << "[Pipeline] source start unknown exception";
+        }
     }
 
-    worker_ = std::thread(&Pipeline::run, this);
+    try {
+        worker_ = std::thread(&Pipeline::run, this);
+    } catch (const std::exception& ex) {
+        VA_LOG_ERROR() << "[Pipeline] failed to start worker thread: " << ex.what();
+        running_.store(false);
+    } catch (...) {
+        VA_LOG_ERROR() << "[Pipeline] failed to start worker thread: unknown error";
+        running_.store(false);
+    }
 }
 
 void Pipeline::stop() {
@@ -128,18 +143,28 @@ va::media::ITransport::Stats Pipeline::transportStats() const {
 
 void Pipeline::run() {
     while (running_.load()) {
-        core::Frame frame;
-        if (!pullFrame(frame)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
+        try {
+            core::Frame frame;
+            if (!pullFrame(frame)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
 
-        const double start_ms = ms_now();
-        if (processFrame(frame)) {
-            const double latency_ms = ms_now() - start_ms;
-            recordFrameProcessed(latency_ms);
-        } else {
+            const double start_ms = ms_now();
+            if (processFrame(frame)) {
+                const double latency_ms = ms_now() - start_ms;
+                recordFrameProcessed(latency_ms);
+            } else {
+                recordFrameDropped();
+            }
+        } catch (const std::exception& ex) {
+            VA_LOG_ERROR() << "[Pipeline] unhandled exception in run loop: " << ex.what();
             recordFrameDropped();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        } catch (...) {
+            VA_LOG_ERROR() << "[Pipeline] unknown exception in run loop";
+            recordFrameDropped();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 }
