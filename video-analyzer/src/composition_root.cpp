@@ -186,10 +186,16 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         return analyzer;
     };
 
-    factories.make_encoder = [](const va::core::EncoderConfig& cfg) {
+    // Resolve NVENC preference once (engine options at factory build time)
+    auto engine_desc_global = engine_manager.currentEngine();
+    auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+    auto findBoolGlobal = [&](const char* key){ auto it=engine_desc_global.options.find(key); if (it==engine_desc_global.options.end()) return false; auto v=toLower(it->second); return v=="1"||v=="true"||v=="yes"||v=="on"; };
+    const bool prefer_nvenc = findBoolGlobal("use_nvenc");
+
+    factories.make_encoder = [prefer_nvenc](const va::core::EncoderConfig& cfg) {
 #if defined(USE_CUDA) && defined(WITH_NVENC)
         const char* use_nvenc = std::getenv("VA_USE_NVENC");
-        if (use_nvenc && (std::string(use_nvenc) == "1" || std::string(use_nvenc) == "true")) {
+        if (prefer_nvenc || (use_nvenc && (std::string(use_nvenc) == "1" || std::string(use_nvenc) == "true"))) {
             extern std::shared_ptr<va::media::IEncoder> makeNvencEncoder(const va::core::EncoderConfig&);
             if (auto enc = makeNvencEncoder(cfg)) {
                 return enc;
