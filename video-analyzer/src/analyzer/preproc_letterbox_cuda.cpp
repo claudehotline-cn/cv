@@ -1,6 +1,7 @@
 #include "analyzer/preproc_letterbox_cuda.hpp"
 #include "analyzer/preproc_letterbox_cpu.hpp"
 #include "core/logger.hpp"
+#include "core/gpu_buffer_pool.hpp"
 #if defined(VA_HAS_CUDA_KERNELS)
 #include "analyzer/cuda/preproc_letterbox_kernels.hpp"
 #endif
@@ -42,14 +43,29 @@ bool LetterboxPreprocessorCUDA::ensureDeviceCapacity(std::size_t bytes) {
     if (device_ptr_ && capacity_bytes_ >= bytes) {
         return true;
     }
-    releaseDevice();
-    cudaError_t err = cudaMalloc(&device_ptr_, bytes);
-    if (err != cudaSuccess) {
-        device_ptr_ = nullptr;
-        capacity_bytes_ = 0;
-        return false;
+    // Use GPU buffer pool to acquire/reuse device memory
+    if (!out_pool_) {
+        out_pool_ = std::make_unique<va::core::GpuBufferPool>(bytes, 4);
     }
-    capacity_bytes_ = bytes;
+    if (out_mem_.ptr && out_mem_.bytes < bytes) {
+        // release smaller block back to pool
+        out_pool_->release(std::move(out_mem_));
+        out_mem_ = {};
+    }
+    if (!out_mem_.ptr) {
+        auto mem = out_pool_->acquire(bytes);
+        if (!mem.ptr) {
+            device_ptr_ = nullptr;
+            capacity_bytes_ = 0;
+            return false;
+        }
+        out_mem_ = mem;
+        device_ptr_ = out_mem_.ptr;
+        capacity_bytes_ = out_mem_.bytes;
+    } else {
+        device_ptr_ = out_mem_.ptr;
+        capacity_bytes_ = out_mem_.bytes;
+    }
     return true;
 #else
     (void)bytes;
@@ -59,10 +75,11 @@ bool LetterboxPreprocessorCUDA::ensureDeviceCapacity(std::size_t bytes) {
 
 void LetterboxPreprocessorCUDA::releaseDevice() {
 #if VA_HAS_CUDA_RUNTIME
-    if (device_ptr_) {
-        cudaFree(device_ptr_);
-        device_ptr_ = nullptr;
-        capacity_bytes_ = 0;
+    device_ptr_ = nullptr;
+    capacity_bytes_ = 0;
+    if (out_pool_ && out_mem_.ptr) {
+        out_pool_->release(std::move(out_mem_));
+        out_mem_ = {};
     }
 #endif
 }
@@ -71,10 +88,23 @@ bool LetterboxPreprocessorCUDA::ensureInputCapacity(std::size_t bytes) {
 #if VA_HAS_CUDA_RUNTIME
     if (bytes == 0) { releaseInput(); return true; }
     if (input_device_ptr_ && input_capacity_bytes_ >= bytes) return true;
-    releaseInput();
-    cudaError_t err = cudaMalloc(&input_device_ptr_, bytes);
-    if (err != cudaSuccess) { input_device_ptr_ = nullptr; input_capacity_bytes_ = 0; return false; }
-    input_capacity_bytes_ = bytes;
+    if (!in_pool_) {
+        in_pool_ = std::make_unique<va::core::GpuBufferPool>(bytes, 4);
+    }
+    if (in_mem_.ptr && in_mem_.bytes < bytes) {
+        in_pool_->release(std::move(in_mem_));
+        in_mem_ = {};
+    }
+    if (!in_mem_.ptr) {
+        auto mem = in_pool_->acquire(bytes);
+        if (!mem.ptr) { input_device_ptr_ = nullptr; input_capacity_bytes_ = 0; return false; }
+        in_mem_ = mem;
+        input_device_ptr_ = in_mem_.ptr;
+        input_capacity_bytes_ = in_mem_.bytes;
+    } else {
+        input_device_ptr_ = in_mem_.ptr;
+        input_capacity_bytes_ = in_mem_.bytes;
+    }
     return true;
 #else
     (void)bytes; return false;
@@ -83,10 +113,11 @@ bool LetterboxPreprocessorCUDA::ensureInputCapacity(std::size_t bytes) {
 
 void LetterboxPreprocessorCUDA::releaseInput() {
 #if VA_HAS_CUDA_RUNTIME
-    if (input_device_ptr_) {
-        cudaFree(input_device_ptr_);
-        input_device_ptr_ = nullptr;
-        input_capacity_bytes_ = 0;
+    input_device_ptr_ = nullptr;
+    input_capacity_bytes_ = 0;
+    if (in_pool_ && in_mem_.ptr) {
+        in_pool_->release(std::move(in_mem_));
+        in_mem_ = {};
     }
 #endif
 }
