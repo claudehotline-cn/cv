@@ -19,6 +19,12 @@
 
 #include <algorithm>
 
+// Forward declarations for optional factories (defined in va::media)
+namespace va { namespace media {
+    std::shared_ptr<ISwitchableSource> makeNvdecSource(const std::string& uri);
+    std::shared_ptr<IEncoder> makeNvencEncoder(const va::core::EncoderConfig&);
+} }
+
 namespace va {
 
 va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
@@ -29,20 +35,20 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
     auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
     auto findBoolGlobal = [&](const char* key){ auto it=engine_desc_global.options.find(key); if (it==engine_desc_global.options.end()) return false; auto v=toLower(it->second); return v=="1"||v=="true"||v=="yes"||v=="on"; };
 
-    factories.make_source = [findBoolGlobal](const va::core::SourceConfig& cfg) {
+    factories.make_source = [findBoolGlobal](const va::core::SourceConfig& cfg) -> std::shared_ptr<va::media::ISwitchableSource> {
 #ifdef USE_CUDA
 #if defined(WITH_NVDEC)
         // Opt-in via environment to avoid surprising runtime changes
         const char* use_nvdec = std::getenv("VA_USE_NVDEC");
         if (findBoolGlobal("use_nvdec") || (use_nvdec && (std::string(use_nvdec) == "1" || std::string(use_nvdec) == "true"))) {
-            extern std::shared_ptr<va::media::ISwitchableSource> makeNvdecSource(const std::string& uri);
-            if (auto src = makeNvdecSource(cfg.uri)) {
+            if (auto src = va::media::makeNvdecSource(cfg.uri)) {
                 return src;
             }
         }
 #endif // WITH_NVDEC
 #endif // USE_CUDA
-        return std::make_shared<va::media::SwitchableRtspSource>(cfg.uri);
+        return std::static_pointer_cast<va::media::ISwitchableSource>(
+            std::make_shared<va::media::SwitchableRtspSource>(cfg.uri));
     };
 
     factories.make_filter = [&engine_manager](const va::core::FilterConfig& cfg) {
@@ -194,18 +200,17 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
     // Resolve NVENC preference once (engine options at factory build time)
     const bool prefer_nvenc = findBoolGlobal("use_nvenc");
 
-    factories.make_encoder = [prefer_nvenc](const va::core::EncoderConfig& cfg) {
+    factories.make_encoder = [prefer_nvenc](const va::core::EncoderConfig& cfg) -> std::shared_ptr<va::media::IEncoder> {
 #if defined(USE_CUDA) && defined(WITH_NVENC)
         const char* use_nvenc = std::getenv("VA_USE_NVENC");
         if (prefer_nvenc || (use_nvenc && (std::string(use_nvenc) == "1" || std::string(use_nvenc) == "true"))) {
-            extern std::shared_ptr<va::media::IEncoder> makeNvencEncoder(const va::core::EncoderConfig&);
-            if (auto enc = makeNvencEncoder(cfg)) {
+            if (auto enc = va::media::makeNvencEncoder(cfg)) {
                 return enc;
             }
         }
 #endif
-        auto encoder = std::make_shared<va::media::FfmpegH264Encoder>();
-        return encoder;
+        return std::static_pointer_cast<va::media::IEncoder>(
+            std::make_shared<va::media::FfmpegH264Encoder>());
     };
 
     factories.make_transport = [](const va::core::TransportConfig& /*cfg*/) {
