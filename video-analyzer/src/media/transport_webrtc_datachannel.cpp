@@ -610,38 +610,45 @@ private:
 } // namespace
 
 struct WebRTCDataChannelTransport::Impl {
+    static std::mutex& globalMutex() { static std::mutex m; return m; }
+    static std::atomic<bool>& globalStarted() { static std::atomic<bool> s{false}; return s; }
+
     bool ensureStarted(const std::string& endpoint) {
         if (running_) {
             return true;
         }
 
+        std::scoped_lock lg(globalMutex());
         endpoint_ = endpoint.empty() ? std::string(kDefaultEndpoint) : endpoint;
         const uint16_t port = parsePort(endpoint_);
 
-        streamer_.SetOnSignalingMessage([this](const std::string& client_id, const Json::Value& message) {
-            signaling_.sendToClient(client_id, message);
-        });
+        if (!globalStarted().load()) {
+            streamer_.SetOnSignalingMessage([this](const std::string& client_id, const Json::Value& message) {
+                signaling_.sendToClient(client_id, message);
+            });
 
-        streamer_.SetOnClientConnected([this](const std::string&) {
-            std::scoped_lock lock(mutex_);
-            aggregate_.connected = true;
-        });
+            streamer_.SetOnClientConnected([this](const std::string&) {
+                std::scoped_lock lock(mutex_);
+                aggregate_.connected = true;
+            });
 
-        streamer_.SetOnClientDisconnected([this](const std::string&) {
-            std::scoped_lock lock(mutex_);
-            aggregate_.connected = false;
-        });
+            streamer_.SetOnClientDisconnected([this](const std::string&) {
+                std::scoped_lock lock(mutex_);
+                aggregate_.connected = false;
+            });
 
-        signaling_.setMessageCallback([this](const std::string& client_id, const Json::Value& message) {
-            handleSignalingMessage(client_id, message);
-        });
+            signaling_.setMessageCallback([this](const std::string& client_id, const Json::Value& message) {
+                handleSignalingMessage(client_id, message);
+            });
 
-        if (!streamer_.Initialize(kDefaultStreamerPort)) {
-            return false;
-        }
-        if (!signaling_.start(port)) {
-            streamer_.Shutdown();
-            return false;
+            if (!streamer_.Initialize(kDefaultStreamerPort)) {
+                return false;
+            }
+            if (!signaling_.start(port)) {
+                streamer_.Shutdown();
+                return false;
+            }
+            globalStarted().store(true);
         }
 
         running_ = true;
@@ -652,13 +659,10 @@ struct WebRTCDataChannelTransport::Impl {
         if (!running_) {
             return;
         }
-        streamer_.Shutdown();
-        signaling_.stop();
-        {
-            std::scoped_lock lock(mutex_);
-            track_stats_.clear();
-            aggregate_ = {};
-        }
+        // Keep global streamer/signaling running to avoid short restarts
+        std::scoped_lock lock(mutex_);
+        track_stats_.clear();
+        aggregate_ = {};
         running_ = false;
     }
 
