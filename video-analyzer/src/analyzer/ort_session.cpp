@@ -387,45 +387,6 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             input_holders.reserve(1);
 
             bool bound_device_input = false;
-#if VA_HAS_CUDA_RUNTIME
-            if (impl_->options.use_io_binding && impl_->use_gpu) {
-                size_t required_bytes = element_count * sizeof(float);
-                size_t target_bytes = std::max(required_bytes, impl_->options.io_binding_input_bytes);
-                if (target_bytes > 0 && !impl_->io_input_device_buffer) {
-                    ensureCudaCapacity(impl_->io_input_device_buffer,
-                                       impl_->io_input_capacity_bytes,
-                                       target_bytes);
-                } else if (target_bytes > 0 && impl_->io_input_capacity_bytes < target_bytes) {
-                    if (!ensureCudaCapacity(impl_->io_input_device_buffer,
-                                            impl_->io_input_capacity_bytes,
-                                            target_bytes)) {
-                        target_bytes = 0;
-                        required_bytes = 0;
-                    }
-                }
-
-                if (impl_->io_input_device_buffer && required_bytes > 0) {
-                    cudaError_t copy_err = cudaMemcpy(impl_->io_input_device_buffer,
-                                                      input.data,
-                                                      required_bytes,
-                                                      cudaMemcpyHostToDevice);
-                    if (copy_err != cudaSuccess) {
-                        VA_LOG_ERROR() << "cudaMemcpy host->device failed for IoBinding input: "
-                                       << cudaGetErrorString(copy_err);
-                        releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
-                    } else {
-                        Ort::MemoryInfo input_mem = Ort::MemoryInfo("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
-                        input_holders.emplace_back(Ort::Value::CreateTensor<float>(
-                            input_mem,
-                            reinterpret_cast<float*>(impl_->io_input_device_buffer),
-                            element_count,
-                            const_cast<int64_t*>(input.shape.data()),
-                            input.shape.size()));
-                        bound_device_input = true;
-                    }
-                }
-            }
-#endif
 
             if (!bound_device_input) {
                 Ort::MemoryInfo input_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
