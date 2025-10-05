@@ -231,6 +231,69 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
         YoloDetectionPostprocessor cpu;
         return cpu.run(raw_outputs, meta, output);
     }
+#if VA_HAS_CUDA_RUNTIME && defined(VA_HAS_CUDA_KERNELS)
+    // Fast path: device-side decode + CUDA NMS, then compact to host
+    {
+        int64_t dim0 = t.shape[0];
+        int64_t dim1 = t.shape[1];
+        int64_t dim2 = t.shape[2];
+        if (dim0 == 1) {
+            bool channels_first = false;
+            int num_det = 0, num_attrs = 0;
+            if (dim1 <= dim2) { num_det = static_cast<int>(dim1); num_attrs = static_cast<int>(dim2); }
+            else { num_det = static_cast<int>(dim2); num_attrs = static_cast<int>(dim1); channels_first = true; }
+            if (num_attrs >= 5 && num_det > 0) {
+                float *d_boxes=nullptr, *d_scores=nullptr; int32_t* d_classes=nullptr; int* d_count=nullptr; int* d_keep=nullptr;
+                if (cudaMalloc(&d_boxes, static_cast<size_t>(num_det)*4*sizeof(float)) == cudaSuccess &&
+                    cudaMalloc(&d_scores, static_cast<size_t>(num_det)*sizeof(float)) == cudaSuccess &&
+                    cudaMalloc(&d_classes, static_cast<size_t>(num_det)*sizeof(int32_t)) == cudaSuccess &&
+                    cudaMalloc(&d_count, sizeof(int)) == cudaSuccess &&
+                    cudaMemset(d_count, 0, sizeof(int)) == cudaSuccess) {
+                    float scale = meta.scale == 0.0f ? 1.0f : meta.scale;
+                    int orig_w = meta.original_width > 0 ? meta.original_width : meta.input_width;
+                    int orig_h = meta.original_height > 0 ? meta.original_height : meta.input_height;
+                    if (va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
+                        num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
+                        0.25f, scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+                        d_boxes, d_scores, d_classes, d_count, nullptr) == cudaSuccess &&
+                        cudaMalloc(&d_keep, static_cast<size_t>(num_det)*sizeof(int)) == cudaSuccess &&
+                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, num_det, 0.45f, d_keep, nullptr, nullptr) == cudaSuccess) {
+                        int h_count = 0;
+                        std::vector<int> h_keep(num_det, 0);
+                        std::vector<float> h_boxes(static_cast<size_t>(num_det)*4);
+                        std::vector<float> h_scores(static_cast<size_t>(num_det));
+                        std::vector<int32_t> h_classes(static_cast<size_t>(num_det));
+                        if (cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess &&
+                            cudaMemcpy(h_keep.data(), d_keep, static_cast<size_t>(num_det)*sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess &&
+                            cudaMemcpy(h_boxes.data(), d_boxes, h_boxes.size()*sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
+                            cudaMemcpy(h_scores.data(), d_scores, h_scores.size()*sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
+                            cudaMemcpy(h_classes.data(), d_classes, h_classes.size()*sizeof(int32_t), cudaMemcpyDeviceToHost) == cudaSuccess) {
+                            output.boxes.clear(); output.masks.clear();
+                            h_count = std::min(h_count, num_det);
+                            for (int i=0;i<num_det;++i) {
+                                if (!h_keep[i]) continue;
+                                core::Box b; b.x1=h_boxes[i*4+0]; b.y1=h_boxes[i*4+1]; b.x2=h_boxes[i*4+2]; b.y2=h_boxes[i*4+3];
+                                b.score=h_scores[i]; b.cls=static_cast<int>(h_classes[i]);
+                                output.boxes.emplace_back(b);
+                            }
+                            if (d_keep) cudaFree(d_keep);
+                            if (d_count) cudaFree(d_count);
+                            if (d_classes) cudaFree(d_classes);
+                            if (d_scores) cudaFree(d_scores);
+                            if (d_boxes) cudaFree(d_boxes);
+                            return true;
+                        }
+                    }
+                }
+                if (d_keep) cudaFree(d_keep);
+                if (d_count) cudaFree(d_count);
+                if (d_classes) cudaFree(d_classes);
+                if (d_scores) cudaFree(d_scores);
+                if (d_boxes) cudaFree(d_boxes);
+            }
+        }
+    }
+#endif
 
 #if VA_HAS_CUDA_RUNTIME
     // Decode YOLO tensor on host (D2H) to boxes/scores/classes; then run CUDA NMS if kernels available, else CPU NMS
@@ -343,4 +406,5 @@ CPU_NMS:
 #endif
 #ifdef USE_CUDA
 #include "analyzer/cuda/postproc_yolo_nms_kernels.hpp"
+#include "analyzer/cuda/yolo_decode_kernels.hpp"
 #endif
