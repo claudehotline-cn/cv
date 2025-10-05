@@ -216,34 +216,114 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     }
 
 #if VA_HAS_CUDA_RUNTIME
-    // Copy device tensor to host buffer, then reuse CPU decoder on the host view
+    // Decode YOLO tensor on host (D2H) to boxes/scores/classes; then run CUDA NMS if kernels available, else CPU NMS
     size_t count = 1;
     for (auto d : t.shape) { count *= static_cast<size_t>(d > 0 ? d : 1); }
-    if (count == 0) {
-        return false;
-    }
+    if (count == 0) return false;
     std::vector<float> host(count);
-    cudaError_t err = cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        // If D2H fails, fallback to CPU impl which will fail on device pointer; return false instead
+    if (cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
         return false;
     }
 
-    core::TensorView host_view;
-    host_view.data = host.data();
-    host_view.shape = t.shape;
-    host_view.dtype = core::DType::F32;
-    host_view.on_gpu = false;
+    // Interpret layout like CPU path
+    int64_t dim0 = t.shape[0];
+    int64_t dim1 = t.shape[1];
+    int64_t dim2 = t.shape[2];
+    bool channels_first = false;
+    int64_t num_det, num_attrs;
+    if (dim1 <= dim2) { num_det = dim1; num_attrs = dim2; }
+    else { num_det = dim2; num_attrs = dim1; channels_first = true; }
+    if (dim0 != 1 || num_attrs < 5) return false;
+    const int num_classes = static_cast<int>(num_attrs - 4);
 
-    std::vector<core::TensorView> wrapped{host_view};
-    YoloDetectionPostprocessor cpu;
-    const bool ok = cpu.run(wrapped, meta, output);
-    return ok;
+    auto value_at = [&](int64_t i, int64_t a)->float {
+        return channels_first ? host[a * num_det + i] : host[i * num_attrs + a];
+    };
+
+    struct Cand { float x1,y1,x2,y2,score; int cls; };
+    std::vector<Cand> cands;
+    cands.reserve(static_cast<size_t>(num_det));
+    for (int64_t i = 0; i < num_det; ++i) {
+        float cx = value_at(i,0), cy = value_at(i,1), w = value_at(i,2), h = value_at(i,3);
+        // best class score
+        float best=0.0f; int best_c=-1;
+        for (int c=0;c<num_classes;++c){ float s=value_at(i,4+c); if (s>best){ best=s; best_c=c; }}
+        if (best_c<0 || best<0.25f) continue; // score threshold aligned with CPU path
+        float x1 = cx - 0.5f*w, y1 = cy - 0.5f*h, x2 = cx + 0.5f*w, y2 = cy + 0.5f*h;
+        float ox1 = (x1 - static_cast<float>(meta.pad_x)) / (meta.scale==0.0f?1.0f:meta.scale);
+        float oy1 = (y1 - static_cast<float>(meta.pad_y)) / (meta.scale==0.0f?1.0f:meta.scale);
+        float ox2 = (x2 - static_cast<float>(meta.pad_x)) / (meta.scale==0.0f?1.0f:meta.scale);
+        float oy2 = (y2 - static_cast<float>(meta.pad_y)) / (meta.scale==0.0f?1.0f:meta.scale);
+        float mw = static_cast<float>(meta.original_width>0?meta.original_width:meta.input_width) - 1.0f;
+        float mh = static_cast<float>(meta.original_height>0?meta.original_height:meta.input_height) - 1.0f;
+        Cand cd;
+        cd.x1 = std::max(0.0f, std::min(ox1, mw));
+        cd.y1 = std::max(0.0f, std::min(oy1, mh));
+        cd.x2 = std::max(0.0f, std::min(ox2, mw));
+        cd.y2 = std::max(0.0f, std::min(oy2, mh));
+        cd.score = best; cd.cls = best_c;
+        if (cd.x2>cd.x1 && cd.y2>cd.y1) cands.emplace_back(cd);
+    }
+
+    if (cands.empty()) { output.boxes.clear(); output.masks.clear(); return true; }
+
+    // Sort by score desc on host (required by our simple GPU kernel)
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b){ return a.score > b.score; });
+
+#if defined(VA_HAS_CUDA_KERNELS)
+    // Move boxes/classes to device, run CUDA NMS
+    const int N = static_cast<int>(cands.size());
+    std::vector<float> h_boxes(N*4);
+    std::vector<float> h_scores(N);
+    std::vector<int32_t> h_classes(N);
+    for (int i=0;i<N;++i){ h_boxes[i*4+0]=cands[i].x1; h_boxes[i*4+1]=cands[i].y1; h_boxes[i*4+2]=cands[i].x2; h_boxes[i*4+3]=cands[i].y2; h_scores[i]=cands[i].score; h_classes[i]=cands[i].cls; }
+    float *d_boxes=nullptr,*d_scores=nullptr; int32_t* d_classes=nullptr; int *d_keep=nullptr, *d_kept=nullptr;
+    if (cudaMalloc(&d_boxes, h_boxes.size()*sizeof(float))!=cudaSuccess) goto CPU_NMS;
+    if (cudaMalloc(&d_scores, h_scores.size()*sizeof(float))!=cudaSuccess) goto CLEAN1;
+    if (cudaMalloc(&d_classes, h_classes.size()*sizeof(int32_t))!=cudaSuccess) goto CLEAN2;
+    if (cudaMalloc(&d_keep, N*sizeof(int))!=cudaSuccess) goto CLEAN3;
+    if (cudaMalloc(&d_kept, sizeof(int))!=cudaSuccess) goto CLEAN4;
+    if (cudaMemcpy(d_boxes, h_boxes.data(), h_boxes.size()*sizeof(float), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
+    if (cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
+    if (cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
+    if (cudaMemset(d_kept, 0, sizeof(int))!=cudaSuccess) goto CLEAN5;
+    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, 0.45f, d_keep, d_kept, nullptr)!=cudaSuccess) goto CLEAN5;
+    {
+        std::vector<int> h_keep(N);
+        if (cudaMemcpy(h_keep.data(), d_keep, N*sizeof(int), cudaMemcpyDeviceToHost)!=cudaSuccess) goto CLEAN5;
+        output.boxes.clear(); output.masks.clear();
+        for (int i=0;i<N;++i){ if (h_keep[i]) { core::Box b; b.x1=cands[i].x1; b.y1=cands[i].y1; b.x2=cands[i].x2; b.y2=cands[i].y2; b.score=cands[i].score; b.cls=cands[i].cls; output.boxes.emplace_back(b);} }
+    }
+    // cleanup
+    CLEAN5: if (d_kept) cudaFree(d_kept);
+    CLEAN4: if (d_keep) cudaFree(d_keep);
+    CLEAN3: if (d_classes) cudaFree(d_classes);
+    CLEAN2: if (d_scores) cudaFree(d_scores);
+    CLEAN1: if (d_boxes) cudaFree(d_boxes);
+    if (!output.boxes.empty()) return true;
+#endif
+
+CPU_NMS:
+    // Fallback: CPU NMS identical于现有实现
+    {
+        // 简单 NMS：按 CPU 实现逻辑
+        auto iou = [](const Cand& a, const Cand& b){
+            float x1 = std::max(a.x1,b.x1), y1=std::max(a.y1,b.y1), x2=std::min(a.x2,b.x2), y2=std::min(a.y2,b.y2);
+            float w=std::max(0.0f,x2-x1), h=std::max(0.0f,y2-y1); float inter=w*h;
+            float ua=(a.x2-a.x1)*(a.y2-a.y1) + (b.x2-b.x1)*(b.y2-b.y1) - inter; return ua>0.0f? inter/ua : 0.0f;
+        };
+        std::vector<bool> sup(cands.size(), false);
+        output.boxes.clear(); output.masks.clear();
+        for (size_t i=0;i<cands.size();++i){ if (sup[i]) continue; const auto& ci=cands[i]; output.boxes.push_back({ci.x1,ci.y1,ci.x2,ci.y2,ci.score,ci.cls}); for (size_t j=i+1;j<cands.size();++j){ if (sup[j]) continue; if (cands[j].cls!=ci.cls) continue; if (iou(ci,cands[j])>0.45f) sup[j]=true; } }
+        return true;
+    }
 #else
-    // No CUDA runtime – cannot D2H; fallback to CPU decoder (will fail on device ptr), so return false
     return false;
 #endif
 }
 
 } // namespace va::analyzer
+#endif
+#ifdef USE_CUDA
+#include "analyzer/cuda/postproc_yolo_nms_kernels.hpp"
 #endif
