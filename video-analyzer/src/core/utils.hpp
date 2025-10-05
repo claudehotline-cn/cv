@@ -13,11 +13,33 @@ enum class DType {
     F16
 };
 
+enum class PixelFormat {
+    UNKNOWN,
+    BGR24,
+    RGB24,
+    NV12,
+    YUV420P
+};
+
+struct DeviceSurface {
+    void* data0 {nullptr};
+    void* data1 {nullptr};
+    int pitch0 {0};
+    int pitch1 {0};
+    int width {0};
+    int height {0};
+    PixelFormat fmt {PixelFormat::UNKNOWN};
+    bool on_gpu {false};
+};
+
 struct Frame {
     int width {0};
     int height {0};
     double pts_ms {0.0};
     std::vector<uint8_t> bgr;
+    // Optional device surface metadata (experimental)
+    bool has_device_surface {false};
+    DeviceSurface device;
 };
 
 struct LetterboxMeta {

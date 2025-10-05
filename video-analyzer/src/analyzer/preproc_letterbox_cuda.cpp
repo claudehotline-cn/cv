@@ -1,5 +1,6 @@
 #include "analyzer/preproc_letterbox_cuda.hpp"
 #include "analyzer/preproc_letterbox_cpu.hpp"
+#include "core/logger.hpp"
 #if defined(VA_HAS_CUDA_KERNELS)
 #include "analyzer/cuda/preproc_letterbox_kernels.hpp"
 #endif
@@ -91,8 +92,12 @@ void LetterboxPreprocessorCUDA::releaseInput() {
 }
 
 bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out, core::LetterboxMeta& meta) {
-    if (in.width <= 0 || in.height <= 0 || in.bgr.empty()) {
+    if (in.width <= 0 || in.height <= 0 || (in.bgr.empty() && !in.has_device_surface)) {
         return false;
+    }
+    if (in.has_device_surface && in.device.on_gpu) {
+        VA_LOG_INFO() << "[PreprocCUDA] device surface present (fmt=" << static_cast<int>(in.device.fmt)
+                      << ", size=" << in.device.width << "x" << in.device.height << ") - using host staging path";
     }
 
     // 目标输出尺寸
