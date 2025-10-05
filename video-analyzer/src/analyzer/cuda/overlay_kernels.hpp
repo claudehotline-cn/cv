@@ -25,5 +25,16 @@ cudaError_t draw_rects_bgr_inplace(
     int thickness,
     cudaStream_t stream);
 
-}
+// Draw semi-transparent filled rectangles (yxyx) with per-class colors.
+// alpha in [0,1]; alpha=0 means no effect; 1 means solid fill.
+cudaError_t fill_rects_bgr_inplace(
+    uint8_t* d_bgr,
+    int w,
+    int h,
+    const float* d_boxes,
+    const int32_t* d_classes,
+    int num,
+    float alpha,
+    cudaStream_t stream);
 
+}
