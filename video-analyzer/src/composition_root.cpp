@@ -127,15 +127,25 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         analyzer->setSession(session);
         analyzer->setUseGpuHint(use_gpu);
 
+        auto findBoolOpt = [&](const char* key, bool fallback){
+            auto it = engine_desc.options.find(key);
+            if (it == engine_desc.options.end()) return fallback;
+            std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);});
+            if (v=="1"||v=="true"||v=="yes"||v=="on") return true;
+            if (v=="0"||v=="false"||v=="no"||v=="off") return false;
+            return fallback;
+        };
+
         std::shared_ptr<va::analyzer::IPostprocessor> postprocessor;
         if (cfg.task == "seg") {
             postprocessor = std::make_shared<va::analyzer::YoloSegmentationPostprocessor>();
         } else if (cfg.task == "detr") {
             postprocessor = std::make_shared<va::analyzer::DetrPostprocessor>();
         } else {
+            bool use_cuda_nms_flag = findBoolOpt("use_cuda_nms", false);
             const char* use_cuda_nms = std::getenv("VA_USE_CUDA_NMS");
 #ifdef USE_CUDA
-            if (use_cuda_nms && (std::string(use_cuda_nms)=="1" || std::string(use_cuda_nms)=="true")) {
+            if (use_cuda_nms_flag || (use_cuda_nms && (std::string(use_cuda_nms)=="1" || std::string(use_cuda_nms)=="true"))) {
                 postprocessor = std::make_shared<va::analyzer::YoloDetectionPostprocessorCUDA>();
             }
 #endif
@@ -146,15 +156,17 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         analyzer->setPostprocessor(postprocessor);
 
         // Rendering selection: default CPU overlay; allow passthrough or CUDA
+        bool render_cuda_flag = findBoolOpt("render_cuda", false);
+        bool render_passthrough_flag = findBoolOpt("render_passthrough", false);
         const char* passthrough = std::getenv("VA_RENDER_PASSTHROUGH");
         const char* render_cuda = std::getenv("VA_RENDER_CUDA");
-        if (passthrough && (std::string(passthrough) == "1" || std::string(passthrough) == "true")) {
+        if (render_passthrough_flag || (passthrough && (std::string(passthrough) == "1" || std::string(passthrough) == "true"))) {
             auto renderer = std::make_shared<va::analyzer::PassthroughRenderer>();
             analyzer->setRenderer(renderer);
         } else {
             bool set = false;
 #ifdef USE_CUDA
-            if (render_cuda && (std::string(render_cuda)=="1" || std::string(render_cuda)=="true")) {
+            if (render_cuda_flag || (render_cuda && (std::string(render_cuda)=="1" || std::string(render_cuda)=="true"))) {
                 auto renderer_cuda = std::make_shared<va::analyzer::OverlayRendererCUDA>();
                 analyzer->setRenderer(renderer_cuda);
                 set = true;
