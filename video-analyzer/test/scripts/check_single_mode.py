@@ -88,6 +88,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8082")
     ap.add_argument("--engine", default="ort-cpu")
+    ap.add_argument("--no-set-engine", action="store_true")
     ap.add_argument("--profile", default="det_720p")
     ap.add_argument("--url", required=True)
     ap.add_argument("--duration-sec", type=int, default=12)
@@ -98,25 +99,35 @@ def main():
 
     opts = parse_opts(args.opts)
 
-    # readiness before engine set
-    wait_ready(args.base, args.timeout, max_wait=5)
-    try:
-        set_engine(args.base, args.engine, opts, args.timeout)
-    except Exception as e:
-        print(f"[ERR] set_engine failed: {e}")
-        return 2
-
-    # wait after engine set
-    if not wait_ready(args.base, args.timeout, max_wait=6):
-        print("[ERR] backend not ready after engine set")
-        return 2
+    # readiness and engine set (optional)
+    wait_ready(args.base, args.timeout, max_wait=8)
+    if not args.no_set_engine:
+        try:
+            set_engine(args.base, args.engine, opts, args.timeout)
+        except Exception as e:
+            print(f"[ERR] set_engine failed: {e}")
+            return 2
+        if not wait_ready(args.base, args.timeout, max_wait=8):
+            print("[ERR] backend not ready after engine set")
+            return 2
 
     stream_id = f"single_{uuid.uuid4().hex[:6]}"
     key = f"{stream_id}:{args.profile}"
-    try:
-        post_json(args.base, "/api/subscribe", {"stream_id": stream_id, "profile": args.profile, "url": args.url}, args.timeout)
-    except Exception as e:
-        print(f"[ERR] subscribe failed: {e}")
+    # subscribe with retries (backend may briefly restart after engine set)
+    sub_payload = {"stream_id": stream_id, "profile": args.profile, "url": args.url}
+    last = None
+    ok_sub = False
+    for _ in range(6):
+        try:
+            post_json(args.base, "/api/subscribe", sub_payload, args.timeout)
+            ok_sub = True
+            break
+        except Exception as e:
+            last = e
+            time.sleep(1.0)
+            wait_ready(args.base, args.timeout, max_wait=4)
+    if not ok_sub:
+        print(f"[ERR] subscribe failed: {last}")
         return 2
 
     try:
@@ -152,4 +163,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

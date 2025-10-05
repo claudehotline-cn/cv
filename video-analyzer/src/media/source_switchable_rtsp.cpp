@@ -40,8 +40,20 @@ bool SwitchableRtspSource::read(core::Frame& frame) {
         return false;
     }
     if (!capture_.isOpened()) {
-        if (!openCapture()) {
-            VA_LOG_WARN() << "[RTSP] reopen failed for URI " << uri_;
+        const auto now = std::chrono::steady_clock::now();
+        if (next_reopen_time_.time_since_epoch().count() == 0 || now >= next_reopen_time_) {
+            if (!openCapture()) {
+                // incremental backoff: 200ms -> 5s
+                backoff_ms_ = backoff_ms_ == 0 ? 200 : std::min(backoff_ms_ * 2, 5000);
+                next_reopen_time_ = now + std::chrono::milliseconds(backoff_ms_);
+                VA_LOG_WARN() << "[RTSP] reopen failed for URI " << uri_ << ", backoff=" << backoff_ms_ << "ms";
+                return false;
+            }
+            // success resets backoff
+            backoff_ms_ = 0;
+            next_reopen_time_ = {};
+        } else {
+            // not yet time to reopen; throttle attempts
             return false;
         }
     }
@@ -93,7 +105,15 @@ bool SwitchableRtspSource::switchUri(const std::string& uri) {
 
 bool SwitchableRtspSource::openCapture() {
     capture_.release();
-    cv::VideoCapture cap(uri_, cv::CAP_FFMPEG);
+    std::string open_uri = uri_;
+    // Normalize Windows path to forward slashes; if file exists, allow implicit file path
+    try {
+        // avoid C++17 fs issues on some toolchains: use simple heuristic
+        if (open_uri.size() > 2 && ((open_uri[1] == ':' && (open_uri[2] == '\\' || open_uri[2] == '/')))) {
+            for (auto& ch : open_uri) { if (ch == '\\') ch = '/'; }
+        }
+    } catch (...) {}
+    cv::VideoCapture cap(open_uri, cv::CAP_FFMPEG);
     if (!cap.isOpened()) {
         VA_LOG_ERROR() << "[RTSP] cv::VideoCapture open failed for URI " << uri_;
         return false;
