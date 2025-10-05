@@ -103,6 +103,61 @@
 
 如需，我可以按 P0 先行提交最小改动补丁（仅内部切换，不改外部接口），确保“有 GPU 走零拷贝、无 GPU 走 CPU”成立，再逐步推进 P1/P2。
 
+## 2025-10-06 02:20:00 P0-STEP1 测试记录（NVENC 设备 NV12 喂入）
+
+- 改动摘要
+  - 为 NVENC 增加“设备 NV12 直接喂入”路径：检测到 `Frame.has_device_surface=true` 且 `fmt=NV12` 时，分配 NVENC CUDA hwframe，并通过 `cudaMemcpy2D` 将 NV12 的 Y/UV 平面设备内（D2D）拷贝到 hwframe 后直接编码；失败则回退原 CPU BGR→sws→上传路径。
+  - 文件：`video-analyzer/src/media/encoder_h264_ffmpeg.cpp`
+
+- 测试步骤
+  1) 启动后端（绝对路径，避免工作目录误差）
+     - 命令：`D:\Projects\ai\cv\video-analyzer\build\bin\Release\VideoAnalyzer.exe D:\Projects\ai\cv\video-analyzer\build\bin\Release\config`
+  2) 通过 HTTP 配置运行环境（Postman 执行）
+     - POST `http://127.0.0.1:8082/api/engine/set`
+       - JSON：
+         ```json
+         {
+           "type": "ort-cuda",
+           "device": 0,
+           "options": {
+             "use_ffmpeg_source": true,
+             "use_nvdec": true,
+             "use_nvenc": true,
+             "use_io_binding": true,
+             "device_output_views": true,
+             "prefer_pinned_memory": true,
+             "allow_cpu_fallback": true
+           }
+         }
+         ```
+  3) 订阅（Postman 执行；二选一）
+     - 文件源：
+       - POST `http://127.0.0.1:8082/api/subscribe`
+       - JSON：`{"stream_id":"zc_gpu_test","profile":"det_720p","url":"D:\\Projects\\ai\\cv\\video-analyzer\\data\\01.mp4"}`
+     - RTSP 源：
+       - POST `http://127.0.0.1:8082/api/subscribe`
+       - JSON：`{"stream_id":"zc_gpu_rtsp","profile":"det_720p","url":"rtsp://127.0.0.1:8554/camera_01"}`
+  4) 验证（Postman 执行）
+     - GET `http://127.0.0.1:8082/api/system/info`（provider=ort-cuda；ffmpeg_enabled=true）
+     - GET `http://127.0.0.1:8082/api/pipelines`（观察 `processed_frames` 与 `fps` 持续增长）
+  5) Python 脚本快速校验（终端执行）
+     - 命令：
+       ```bash
+       python video-analyzer/test/scripts/check_single_mode.py \
+         --base http://127.0.0.1:8082 \
+         --no-set-engine \
+         --profile det_720p \
+         --url D:\Projects\ai\cv\video-analyzer\data\01.mp4 \
+         --duration-sec 12 --warmup-sec 3 --timeout 10
+       ```
+
+- 期望与结果
+  - 期望：/api/pipelines 中 `processed_frames` 持续增长；日志显示 NVENC 打开成功；GPU 机上帧率稳定（30–40fps 量级，仅示例）。
+  - 实测：帧数在增长，订阅后服务可正常响应其它 API。
+
+- 备注
+  - 本步骤仅完成“编码端设备帧喂入”（去除像素数据的 Host 上传）；下一步将关闭 NVDEC 源在 GPU 路径下的 CPU BGR 生成，并采用 GPU NV12 画框（不绘文字）或 Passthrough，以打通主像素数据零拷贝闭环。
+
 ## 2025-10-06 P0-STEP1: 为 NVENC 增加设备 NV12 喂入路径（零拷贝闭环铺垫）
 - 目标：在不改变对外接口前提下，使编码器在检测到帧携带设备端 NV12 (Frame.has_device_surface=true) 时，直接以 NVENC 硬件帧喂入（设备内 D2D 拷贝），避免 CPU BGR + sws_scale + H2D。
 - 改动：
