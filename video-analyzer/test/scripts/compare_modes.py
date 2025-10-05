@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 import argparse, time, uuid, sys
 import requests
+import time as _time
 
 
 def get_json(base: str, path: str, timeout: int):
@@ -30,17 +31,42 @@ def unsubscribe(base: str, stream_id: str, profile: str, timeout: int):
         pass
 
 
+def _wait_ready(base: str, timeout: int, max_wait: int = 6):
+    deadline = _time.time() + max_wait
+    while _time.time() < deadline:
+        try:
+            r = requests.get(base + "/api/system/info", timeout=timeout)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        _time.sleep(0.5)
+    return False
+
+
 def set_engine(base: str, engine_type: str, opts: dict, timeout: int):
     payload = {
         "type": engine_type,
         "device": 0,
         "options": {k: ("true" if v else "false") if isinstance(v, bool) else v for k,v in opts.items()}
     }
-    post_json(base, "/api/engine/set", payload, timeout)
+    # Try with small retry window to mitigate transient restarts
+    last = None
+    for _ in range(3):
+        try:
+            return post_json(base, "/api/engine/set", payload, timeout)
+        except Exception as e:
+            last = e
+            _time.sleep(0.5)
+            _wait_ready(base, timeout, max_wait=2)
+    raise last
 
 
 def measure_mode(base: str, rtsp: str, profile: str, engine_type: str, opts: dict, duration: int, warmup: int, timeout: int):
+    # ensure backend is reachable before switching engine
+    _wait_ready(base, timeout, max_wait=3)
     set_engine(base, engine_type, opts, timeout)
+    _wait_ready(base, timeout, max_wait=3)
     stream_id = f"cmp_{uuid.uuid4().hex[:6]}"
     key = f"{stream_id}:{profile}"
     post_json(base, "/api/subscribe", {"stream_id":stream_id, "profile":profile, "url":rtsp}, timeout)
@@ -103,4 +129,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
