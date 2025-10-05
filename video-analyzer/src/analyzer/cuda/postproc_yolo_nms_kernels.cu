@@ -16,23 +16,32 @@ __device__ inline float iou_yxyx(const float* a, const float* b) {
     return uni > 0.0f ? inter / uni : 0.0f;
 }
 
-// Parallel pairwise NMS: for each i, suppress if any j has >= score and IoU>thr (same class)
-__global__ void k_nms_pairwise(const float* boxes, const float* scores, const int32_t* classes, int num, float iou_thr, int* keep) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+// Block-per-box tiled NMS: assumes inputs sorted by descending score on host.
+// For each i, compare only with j < i in same class. Threads in the block stride j.
+__global__ void k_nms_pairwise_tiled(const float* boxes, const float* scores,
+                                     const int32_t* classes, int num, float iou_thr, int* keep) {
+    int i = blockIdx.x;
     if (i >= num) return;
     int ci = classes[i];
     const float* bi = boxes + i * 4;
-    float si = scores[i];
-    int k = 1;
-    for (int j=0;j<num;++j){
-        if (j==i) continue;
+    (void)scores; // sorted by host; compare only j<i
+    __shared__ int suppressed;
+    suppressed = 0;
+    __syncthreads();
+    // stride j domain across threads
+    for (int j = threadIdx.x; j < i; j += blockDim.x) {
+        if (suppressed) break;
         if (classes[j] != ci) continue;
-        if (scores[j] >= si) {
-            const float* bj = boxes + j * 4;
-            if (iou_yxyx(bi, bj) > iou_thr) { k = 0; break; }
+        const float* bj = boxes + j * 4;
+        if (iou_yxyx(bi, bj) > iou_thr) {
+            suppressed = 1;
+            break;
         }
     }
-    keep[i] = k;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        keep[i] = suppressed ? 0 : 1;
+    }
 }
 
 cudaError_t nms_yxyx_per_class(
@@ -45,9 +54,10 @@ cudaError_t nms_yxyx_per_class(
     int* kept_count,
     cudaStream_t stream)
 {
-    int threads = 256;
-    int blocks = (num + threads - 1) / threads;
-    k_nms_pairwise<<<blocks, threads, 0, stream>>>(d_boxes, d_scores, d_classes, num, iou_threshold, d_keep);
+    if (num <= 0) return cudaSuccess;
+    int threads = 256; // per i
+    int blocks = num;
+    k_nms_pairwise_tiled<<<blocks, threads, 0, stream>>>(d_boxes, d_scores, d_classes, num, iou_threshold, d_keep);
     // Optionally compute kept_count on host later; ignore kept_count here for simplicity
     (void)kept_count;
     return cudaGetLastError();
