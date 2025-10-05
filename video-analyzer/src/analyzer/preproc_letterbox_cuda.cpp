@@ -95,9 +95,49 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
     if (in.width <= 0 || in.height <= 0 || (in.bgr.empty() && !in.has_device_surface)) {
         return false;
     }
-    if (in.has_device_surface && in.device.on_gpu) {
-        VA_LOG_INFO() << "[PreprocCUDA] device surface present (fmt=" << static_cast<int>(in.device.fmt)
-                      << ", size=" << in.device.width << "x" << in.device.height << ") - using host staging path";
+    if (in.has_device_surface && in.device.on_gpu && in.device.fmt == core::PixelFormat::NV12 &&
+        in.device.data0 && in.device.data1 && in.device.width > 0 && in.device.height > 0) {
+        // Try device path for NV12 → NCHW(FP32)
+        const int out_w = (input_width_ > 0 ? input_width_ : in.device.width);
+        const int out_h = (input_height_ > 0 ? input_height_ : in.device.height);
+        const float scale = std::min(static_cast<float>(out_w) / static_cast<float>(in.device.width),
+                                     static_cast<float>(out_h) / static_cast<float>(in.device.height));
+        const int resized_w = static_cast<int>(std::round(in.device.width * scale));
+        const int resized_h = static_cast<int>(std::round(in.device.height * scale));
+        const int pad_x = (out_w - resized_w) / 2;
+        const int pad_y = (out_h - resized_h) / 2;
+
+        meta.input_width = out_w;
+        meta.input_height = out_h;
+        meta.original_width = in.device.width;
+        meta.original_height = in.device.height;
+        meta.scale = scale;
+        meta.pad_x = pad_x;
+        meta.pad_y = pad_y;
+
+#if VA_HAS_CUDA_RUNTIME && defined(VA_HAS_CUDA_KERNELS)
+        const std::size_t out_elements = static_cast<std::size_t>(1) * 3ull * static_cast<std::size_t>(out_h) * static_cast<std::size_t>(out_w);
+        const std::size_t out_bytes = out_elements * sizeof(float);
+        if (ensureDeviceCapacity(out_bytes)) {
+            auto err = va::analyzer::cudaops::letterbox_nv12_to_nchw_fp32(
+                static_cast<const uint8_t*>(in.device.data0), in.device.pitch0,
+                static_cast<const uint8_t*>(in.device.data1), in.device.pitch1,
+                in.device.width, in.device.height,
+                out_w, out_h,
+                static_cast<float*>(device_ptr_),
+                scale, pad_x, pad_y,
+                true,
+                nullptr);
+            if (err == cudaSuccess) {
+                out.data = device_ptr_;
+                out.shape = {1, 3, out_h, out_w};
+                out.dtype = core::DType::F32;
+                out.on_gpu = true;
+                return true;
+            }
+        }
+#endif
+        VA_LOG_WARN() << "[PreprocCUDA] NV12 device path failed; falling back to host staging";
     }
 
     // 目标输出尺寸

@@ -27,5 +27,23 @@ cudaError_t letterbox_bgr_to_nchw_fp32(
     bool nearest,
     cudaStream_t stream);
 
-}
+// Launches a CUDA kernel that writes letterboxed NV12->NCHW FP32 output on device.
+// - d_y: device pointer to Y plane, pitch_y bytes per row
+// - d_uv: device pointer to interleaved UV plane, pitch_uv bytes per row
+// - in_w/in_h: input luma dimensions
+// - out_w/out_h: output (letterboxed) dimensions
+// - d_out: device pointer to output float tensor (1x3xHoutxWout), BGR order [0..1]
+// - scale/pad_x/pad_y: letterbox parameters
+cudaError_t letterbox_nv12_to_nchw_fp32(
+    const uint8_t* d_y,
+    int pitch_y,
+    const uint8_t* d_uv,
+    int pitch_uv,
+    int in_w, int in_h,
+    int out_w, int out_h,
+    float* d_out,
+    float scale, int pad_x, int pad_y,
+    bool nearest,
+    cudaStream_t stream);
 
+}
