@@ -463,7 +463,7 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             const char* input_name = impl_->input_names.empty() ? "input" : impl_->input_names.front();
             impl_->io_binding->BindInput(input_name, input_holders.front());
 
-            const bool bind_outputs_to_device = impl_->options.use_io_binding && impl_->use_gpu && impl_->options.stage_device_outputs;
+            const bool bind_outputs_to_device = impl_->options.use_io_binding && impl_->use_gpu && (impl_->options.stage_device_outputs || impl_->options.device_output_views);
             for (const char* output_name : impl_->output_names) {
                 if (bind_outputs_to_device) {
 #if VA_HAS_CUDA_RUNTIME
@@ -489,8 +489,21 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             outputs.reserve(impl_->last_outputs.size());
             impl_->staged_outputs.clear();
 
-            const bool stage_outputs = impl_->options.stage_device_outputs && impl_->use_gpu && impl_->options.use_io_binding;
-            if (stage_outputs) {
+            const bool prefer_device_views = impl_->options.device_output_views && impl_->use_gpu && impl_->options.use_io_binding && bind_outputs_to_device;
+            const bool stage_outputs = impl_->options.stage_device_outputs && impl_->use_gpu && impl_->options.use_io_binding && !prefer_device_views;
+            if (prefer_device_views) {
+                // Expose device-backed outputs without staging
+                for (auto& value : impl_->last_outputs) {
+                    if (!value.IsTensor()) { outputs.emplace_back(makeTensorView(value, false)); continue; }
+                    Ort::TensorTypeAndShapeInfo info = value.GetTensorTypeAndShapeInfo();
+                    core::TensorView view;
+                    view.data = const_cast<void*>(value.GetTensorRawData());
+                    view.shape = info.GetShape();
+                    view.dtype = core::DType::F32;
+                    view.on_gpu = true;
+                    outputs.emplace_back(std::move(view));
+                }
+            } else if (stage_outputs) {
                 if (!impl_->host_pool) {
                     impl_->host_pool_block_bytes = impl_->options.tensor_host_pool_bytes;
                     if (impl_->host_pool_block_bytes == 0 && !impl_->last_outputs.empty()) {

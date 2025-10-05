@@ -95,6 +95,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         };
         options.stage_device_outputs = findBool("stage_device_outputs", options.stage_device_outputs);
         options.tensor_host_pool_bytes = findSize("tensor_host_pool_bytes", options.tensor_host_pool_bytes);
+        options.device_output_views = findBool("device_output_views", options.device_output_views);
         session->setOptions(options);
 #endif
 

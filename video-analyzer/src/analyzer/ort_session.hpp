@@ -30,6 +30,8 @@ public:
         bool stage_device_outputs {false};
         // optional initial bytes for host pool blocks (0 = dynamic by first output)
         size_t tensor_host_pool_bytes {0};
+        // expose IoBinding outputs as device views (no host staging)
+        bool device_output_views {false};
     };
 
     void setOptions(const Options& options);
