@@ -26,6 +26,10 @@ public:
         int tensorrt_min_subgraph_size {0};
         size_t io_binding_input_bytes {0};
         size_t io_binding_output_bytes {0};
+        // stage outputs to host after IoBinding run (safe ownership, optional)
+        bool stage_device_outputs {false};
+        // optional initial bytes for host pool blocks (0 = dynamic by first output)
+        size_t tensor_host_pool_bytes {0};
     };
 
     void setOptions(const Options& options);
