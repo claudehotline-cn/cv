@@ -213,6 +213,12 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
                 auto renderer_cuda = std::make_shared<va::analyzer::OverlayRendererCUDA>();
                 analyzer->setRenderer(renderer_cuda);
                 set = true;
+            } else if (hint_gpu) {
+                // 默认：当推理在 GPU（cuda/trt）时启用 GPU 叠加（无文字），无需显式配置
+                auto renderer_cuda = std::make_shared<va::analyzer::OverlayRendererCUDA>();
+                analyzer->setRenderer(renderer_cuda);
+                set = true;
+                VA_LOG_INFO() << "[Renderer] Using CUDA overlay by default (GPU provider detected)";
             }
 #endif
             if (!set) {
