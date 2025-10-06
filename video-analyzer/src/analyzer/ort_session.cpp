@@ -309,6 +309,46 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     impl_->resolved_provider = provider_appended ? provider : std::string{"cpu"};
     impl_->cpu_fallback = gpu_requested && !provider_appended;
 
+    // Lightweight warmup: run a single inference pass with a zero tensor on CPU memory.
+    // This initializes EP kernels/graphs and reduces the first-frame latency without
+    // depending on upstream frame availability.
+    try {
+        Ort::AllocatorWithDefaultOptions warm_alloc;
+        // Derive an input shape; replace dynamic dims with concrete values
+        std::vector<int64_t> ishape;
+        {
+            Ort::TypeInfo ti = impl_->session->GetInputTypeInfo(0);
+            auto tensor_info = ti.GetTensorTypeAndShapeInfo();
+            ishape = tensor_info.GetShape();
+            if (ishape.empty()) { ishape = {1,3,640,640}; }
+            // Heuristics: if 4D and channel dim is 3, use 1x3x640x640; otherwise replace non-positive dims with 1
+            if (ishape.size() == 4 && (ishape[1] == 3 || ishape[1] <= 0)) {
+                if (ishape[0] <= 0) ishape[0] = 1;
+                if (ishape[1] <= 0) ishape[1] = 3;
+                if (ishape[2] <= 0) ishape[2] = 640;
+                if (ishape[3] <= 0) ishape[3] = 640;
+            } else {
+                for (auto& d : ishape) if (d <= 0) d = 1;
+            }
+        }
+        size_t elem = 1;
+        for (auto d : ishape) { elem *= static_cast<size_t>(d); }
+        std::vector<float> zeros(elem, 0.0f);
+        Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value in = Ort::Value::CreateTensor<float>(mem, zeros.data(), zeros.size(), ishape.data(), ishape.size());
+        auto t0 = std::chrono::high_resolution_clock::now();
+        (void)impl_->session->Run(Ort::RunOptions{nullptr},
+                                  impl_->input_names.data(), &in, 1,
+                                  impl_->output_names.data(), impl_->output_names.size());
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        VA_LOG_INFO() << "[OrtWarmup] ran 1 pass in " << ms << " ms, shape="
+                      << ishape[0] << "x" << (ishape.size()>1?ishape[1]:0) << "x"
+                      << (ishape.size()>2?ishape[2]:0) << "x" << (ishape.size()>3?ishape[3]:0);
+    } catch (const std::exception& ex) {
+        VA_LOG_WARN() << "[OrtWarmup] skipped due to error: " << ex.what();
+    }
+
     if (impl_->options.use_io_binding && impl_->use_gpu) {
         try {
             impl_->io_binding = std::make_unique<Ort::IoBinding>(*impl_->session);
