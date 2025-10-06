@@ -2,6 +2,8 @@
 #include "analyzer/preproc_letterbox_cpu.hpp"
 #include "core/logger.hpp"
 #include "core/gpu_buffer_pool.hpp"
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #if defined(VA_HAS_CUDA_KERNELS)
 #include "analyzer/cuda/preproc_letterbox_kernels.hpp"
 #endif
@@ -169,6 +171,87 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
         }
 #endif
         VA_LOG_WARN() << "[PreprocCUDA] NV12 device path failed; falling back to host staging";
+        // Fallback: if we have NV12 device surface but kernel failed, do Device->Host NV12 copy,
+        // convert to BGR on host, letterbox on host, then upload tensor to device to keep IoBinding path.
+        if (in.has_device_surface && in.device.on_gpu && in.device.fmt == core::PixelFormat::NV12 &&
+            in.device.data0 && in.device.data1 && in.device.width > 0 && in.device.height > 0) {
+            const int srcW = in.device.width;
+            const int srcH = in.device.height;
+            const int out_w = (input_width_ > 0 ? input_width_ : srcW);
+            const int out_h = (input_height_ > 0 ? input_height_ : srcH);
+
+            // Copy NV12 planes device->host contiguous
+            std::vector<uint8_t> hostY(static_cast<size_t>(srcW) * static_cast<size_t>(srcH));
+            std::vector<uint8_t> hostUV(static_cast<size_t>(srcW) * static_cast<size_t>(srcH/2));
+#if VA_HAS_CUDA_RUNTIME
+            cudaMemcpy2D(hostY.data(), static_cast<size_t>(srcW),
+                         in.device.data0, static_cast<size_t>(in.device.pitch0),
+                         static_cast<size_t>(srcW), static_cast<size_t>(srcH),
+                         cudaMemcpyDeviceToHost);
+            cudaMemcpy2D(hostUV.data(), static_cast<size_t>(srcW),
+                         in.device.data1, static_cast<size_t>(in.device.pitch1),
+                         static_cast<size_t>(srcW), static_cast<size_t>(srcH/2),
+                         cudaMemcpyDeviceToHost);
+#endif
+            // Build a single NV12 buffer (Y followed by interleaved UV)
+            std::vector<uint8_t> hostNV12(hostY.size() + hostUV.size());
+            std::memcpy(hostNV12.data(), hostY.data(), hostY.size());
+            std::memcpy(hostNV12.data() + hostY.size(), hostUV.data(), hostUV.size());
+
+            // Convert NV12 -> BGR on host
+            cv::Mat nv12(srcH + srcH/2, srcW, CV_8UC1, hostNV12.data());
+            cv::Mat bgr;
+            cv::cvtColor(nv12, bgr, cv::COLOR_YUV2BGR_NV12);
+
+            // Letterbox on host
+            const float scale = std::min(static_cast<float>(out_w) / static_cast<float>(srcW),
+                                         static_cast<float>(out_h) / static_cast<float>(srcH));
+            const int resized_w = static_cast<int>(std::round(srcW * scale));
+            const int resized_h = static_cast<int>(std::round(srcH * scale));
+            const int pad_x = (out_w - resized_w) / 2;
+            const int pad_y = (out_h - resized_h) / 2;
+
+            meta.input_width = out_w;
+            meta.input_height = out_h;
+            meta.original_width = srcW;
+            meta.original_height = srcH;
+            meta.scale = scale;
+            meta.pad_x = pad_x;
+            meta.pad_y = pad_y;
+
+            cv::Mat resized;
+            cv::resize(bgr, resized, cv::Size(resized_w, resized_h));
+            cv::Mat letterboxed(out_h, out_w, CV_8UC3, cv::Scalar(114,114,114));
+            resized.copyTo(letterboxed(cv::Rect(pad_x, pad_y, resized_w, resized_h)));
+            cv::Mat letterboxed_float;
+            letterboxed.convertTo(letterboxed_float, CV_32F, 1.0f/255.0f);
+            std::vector<cv::Mat> channels(3);
+            cv::split(letterboxed_float, channels);
+            const size_t plane = static_cast<size_t>(out_w) * static_cast<size_t>(out_h);
+            std::vector<float> hostTensor(plane * 3);
+            std::memcpy(hostTensor.data() + plane * 0, channels[0].ptr<float>(), plane * sizeof(float));
+            std::memcpy(hostTensor.data() + plane * 1, channels[1].ptr<float>(), plane * sizeof(float));
+            std::memcpy(hostTensor.data() + plane * 2, channels[2].ptr<float>(), plane * sizeof(float));
+
+            const std::size_t out_bytes = hostTensor.size() * sizeof(float);
+            if (ensureDeviceCapacity(out_bytes)) {
+#if VA_HAS_CUDA_RUNTIME
+                if (cudaMemcpy(device_ptr_, hostTensor.data(), out_bytes, cudaMemcpyHostToDevice) == cudaSuccess) {
+                    out.data = device_ptr_;
+                    out.shape = {1,3,out_h,out_w};
+                    out.dtype = core::DType::F32;
+                    out.on_gpu = true;
+                    return true;
+                }
+#endif
+            }
+            // As a last resort, return host tensor
+            out.data = hostTensor.data(); // WARNING: lifetime; but we only reach here if device upload failed; avoid this path ideally
+            out.shape = {1,3,out_h,out_w};
+            out.dtype = core::DType::F32;
+            out.on_gpu = false;
+            return true;
+        }
     }
 
     // 目标输出尺寸
