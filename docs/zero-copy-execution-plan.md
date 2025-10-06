@@ -177,3 +177,18 @@
 - 备注：
   - 此步未移除 NVDEC 源的 CPU BGR 生成，下一步将按 GPU 路径跳过该复制，形成“主像素零拷贝”闭环；
   - 叠加阶段在 GPU 模式下建议采用 Passthrough 或后续的 NV12 画框（不绘制文字）。
+## 测试记录 — 2025-10-06 15:50:00
+- 场景: RTSP 推流就绪后的端到端验证 (det_720p)
+- 引擎设置: POST /api/engine/set
+```json
+{"type":"ort-cuda","device":0,"options":{"use_ffmpeg_source":true,"use_nvdec":true,"use_nvenc":true,"use_io_binding":true,"prefer_pinned_memory":true,"allow_cpu_fallback":true}}
+```
+- 订阅: POST /api/subscribe
+```json
+{"stream_id":"rtsp_now","profile":"det_720p","url":"rtsp://127.0.0.1:8554/camera_01"}
+```
+- 轮询: GET /api/pipelines（三次，间隔 3s）
+  - T0: processed_frames≈50, fps≈42.12, connected=true, packets≈48
+  - T+6s: processed_frames≈228, fps≈25.48, connected=true, packets≈222
+  - T+3s(再次): processed_frames≈458, fps≈26.12, connected=true, packets≈444
+- 结论: 帧数持续增长，RTSP 流处理正常；依赖已就绪（FFmpeg/OpenCV/datachannel/juice/jsoncpp/zlib/jpeg/ORT 已拷贝至 bin）。
