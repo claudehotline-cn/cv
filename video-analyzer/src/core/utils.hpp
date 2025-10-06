@@ -4,6 +4,7 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <memory>
 
 namespace va::core {
 
@@ -40,6 +41,12 @@ struct Frame {
     // Optional device surface metadata (experimental)
     bool has_device_surface {false};
     DeviceSurface device;
+#ifdef USE_FFMPEG
+    // Optional handle to underlying FFmpeg hardware frame (e.g., NVDEC AVFrame)
+    // Stored as shared_ptr<void> with a custom deleter to avoid including FFmpeg headers here.
+    // When present, encoders can leverage av_hwframe_transfer_data for GPU→GPU transfer.
+    std::shared_ptr<void> hw_frame;
+#endif
 };
 
 struct LetterboxMeta {

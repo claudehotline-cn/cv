@@ -1,0 +1,10 @@
+params:
+  det:
+    confidence_threshold: 0.25
+    iou_threshold: 0.5
+    classes: "all"
+    roi: null
+  seg:
+    confidence_threshold: 0.25
+    iou_threshold: 0.5
+    mask_threshold: 0.5

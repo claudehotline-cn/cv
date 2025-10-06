@@ -170,7 +170,16 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
             }
         }
 #endif
-        VA_LOG_WARN() << "[PreprocCUDA] NV12 device path failed; falling back to host staging";
+        {
+            // Downgrade to DEBUG and rate-limit this message to avoid log noise
+            static auto last_log = std::chrono::steady_clock::time_point{};
+            auto now = std::chrono::steady_clock::now();
+            if (last_log.time_since_epoch().count() == 0 ||
+                std::chrono::duration_cast<std::chrono::seconds>(now - last_log).count() >= 1) {
+                VA_LOG_DEBUG() << "[PreprocCUDA] NV12 device path failed; falling back to host staging";
+                last_log = now;
+            }
+        }
         // Fallback: if we have NV12 device surface but kernel failed, do Device->Host NV12 copy,
         // convert to BGR on host, letterbox on host, then upload tensor to device to keep IoBinding path.
         if (in.has_device_surface && in.device.on_gpu && in.device.fmt == core::PixelFormat::NV12 &&

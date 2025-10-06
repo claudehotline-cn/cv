@@ -181,6 +181,19 @@ bool NvdecRtspSource::readImpl(va::core::Frame& frame) {
                     }
                 }
                 if (device_ok) {
+                    // Carry along a ref-counted clone of the hardware AVFrame for encoder D2D transfer
+#ifdef USE_FFMPEG
+                    if (!frame.hw_frame) {
+                        AVFrame* clone = av_frame_clone(f);
+                        if (clone) {
+                            auto deleter = [](void* p){
+                                AVFrame* fp = reinterpret_cast<AVFrame*>(p);
+                                av_frame_free(&fp);
+                            };
+                            frame.hw_frame = std::shared_ptr<void>(clone, deleter);
+                        }
+                    }
+#endif
                     // Zero-copy preferred path: do not materialize CPU BGR when device NV12 is present.
                     frame.width = f->width;
                     frame.height = f->height;

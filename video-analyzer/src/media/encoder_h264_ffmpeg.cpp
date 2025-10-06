@@ -327,7 +327,50 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     bool attempted_d2d = false;
     static int dbg_send_ctr = 0;
 #if VA_HAS_CUDA_RUNTIME
-    if (use_hwframes_ && hw_frames_ctx_ && frame.has_device_surface && frame.device.on_gpu &&
+    // Preferred D2D path: if upstream provided an FFmpeg HW frame (e.g., NVDEC), use av_hwframe_transfer_data
+    if (use_hwframes_ && hw_frames_ctx_ && frame.hw_frame) {
+        AVFrame* src_hw = reinterpret_cast<AVFrame*>(frame.hw_frame.get());
+        if (src_hw && src_hw->format == AV_PIX_FMT_CUDA) {
+            AVFrame* hwf = av_frame_alloc();
+            if (hwf) {
+                hwf->format = AV_PIX_FMT_CUDA;
+                hwf->width = frame_->width;
+                hwf->height = frame_->height;
+                hwf->hw_frames_ctx = av_buffer_ref(hw_frames_ctx_);
+                if (av_hwframe_get_buffer(hw_frames_ctx_, hwf, 0) >= 0) {
+                    if (av_hwframe_transfer_data(hwf, src_hw, 0) == 0) {
+                        attempted_d2d = true;
+                        hwf->pts = pts_++;
+                        int sret = avcodec_send_frame(codec_ctx_, hwf);
+                        if (sret == 0) {
+                            fed_device_nv12 = true;
+                        } else if (sret == AVERROR(EAGAIN)) {
+                            va::core::GlobalMetrics::eagain_retry_count.fetch_add(1, std::memory_order_relaxed);
+                            int rret = 0; int drained = 0;
+                            while ((rret = avcodec_receive_packet(codec_ctx_, packet_)) == 0) {
+                                av_packet_unref(packet_);
+                                ++drained;
+                            }
+                            if (drained > 0) {
+                                sret = avcodec_send_frame(codec_ctx_, hwf);
+                                if (sret == 0) {
+                                    fed_device_nv12 = true;
+                                }
+                            }
+                        } else {
+                            if (((++dbg_send_ctr) % 100) == 1) {
+                                VA_LOG_DEBUG() << "[Encoder][nvenc] avcodec_send_frame(hw xfer) ret=" << sret;
+                            }
+                        }
+                    }
+                }
+                av_frame_free(&hwf);
+            }
+        }
+    }
+
+    // Fallback D2D path: copy raw NV12 device pointers into NVENC hwframe when provided
+    if (!fed_device_nv12 && use_hwframes_ && hw_frames_ctx_ && frame.has_device_surface && frame.device.on_gpu &&
         frame.device.fmt == va::core::PixelFormat::NV12 && frame.device.data0 && frame.device.data1) {
         AVFrame* hwf = av_frame_alloc();
         if (hwf) {
@@ -461,10 +504,6 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     if (ret < 0) {
         VA_LOG_DEBUG() << "[Encoder] avcodec_receive_packet failed ret=" << ret;
         return false;
-    }
-
-    if (attempted_d2d) {
-        va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
     }
 
     if (attempted_d2d) {
