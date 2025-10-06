@@ -192,3 +192,20 @@
   - T+6s: processed_frames≈228, fps≈25.48, connected=true, packets≈222
   - T+3s(再次): processed_frames≈458, fps≈26.12, connected=true, packets≈444
 - 结论: 帧数持续增长，RTSP 流处理正常；依赖已就绪（FFmpeg/OpenCV/datachannel/juice/jsoncpp/zlib/jpeg/ORT 已拷贝至 bin）。
+## 测试记录 — 2025-10-06 16:29:00
+- 场景: RTSP 端到端验证 (det_720p)
+- 构建: build-ninja (VS2022 + vcpkg + ORT)
+- 引擎设置: POST /api/engine/set
+```json
+{"type":"ort-cuda","device":0,"options":{"use_ffmpeg_source":true,"use_nvdec":true,"use_nvenc":true,"use_io_binding":true,"prefer_pinned_memory":true,"allow_cpu_fallback":true}}
+```
+- 订阅: POST /api/subscribe
+```json
+{"stream_id":"rtsp_test","profile":"det_720p","url":"rtsp://127.0.0.1:8554/camera_01"}
+```
+- 轮询: GET /api/pipelines（间隔 3s）
+  - T0: processed_frames≈0, connected=false
+  - T+3s: processed_frames≈86,  connected=true, fps≈25.98
+  - T+6s: processed_frames≈195, connected=true, fps≈25.98
+  - T+9s: processed_frames≈444, connected=true, fps≈26.52
+- 结论: RTSP 推流正常、帧数稳定增长，链路工作正常。
