@@ -54,6 +54,9 @@ private:
     AVPixelFormat sw_pix_fmt_ {AV_PIX_FMT_BGR24};
     int width_ {0};
     int height_ {0};
+    // Wait for first IDR/KEY frame to reduce NVDEC startup decode failures
+    bool awaiting_idr_ {true};
+    bool idr_log_printed_ {false};
 #endif
 };
 

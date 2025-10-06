@@ -86,6 +86,8 @@ bool NvdecRtspSource::openImpl() {
     return false;
 #else
     closeImpl();
+    awaiting_idr_ = true;
+    idr_log_printed_ = false;
     if (avformat_open_input(&fmt_ctx_, uri_.c_str(), nullptr, nullptr) < 0) {
         fmt_ctx_ = nullptr;
         return false;
@@ -138,6 +140,20 @@ bool NvdecRtspSource::readImpl(va::core::Frame& frame) {
     bool ok = false;
     while (av_read_frame(fmt_ctx_, &pkt) >= 0) {
         if (pkt.stream_index != video_stream_) { av_packet_unref(&pkt); continue; }
+        // Drop pre-roll until first key/IDR to avoid NVDEC startup failures
+        if (awaiting_idr_) {
+            if ((pkt.flags & AV_PKT_FLAG_KEY) == 0) {
+                if (!idr_log_printed_) {
+                    VA_LOG_INFO() << "[NVDEC] awaiting first IDR/KEY frame, dropping pre-roll packets";
+                    idr_log_printed_ = true;
+                }
+                av_packet_unref(&pkt);
+                continue;
+            } else {
+                awaiting_idr_ = false;
+                VA_LOG_INFO() << "[NVDEC] first IDR/KEY frame received; enabling device decode";
+            }
+        }
         if (avcodec_send_packet(dec_ctx_, &pkt) < 0) { av_packet_unref(&pkt); break; }
         av_packet_unref(&pkt);
         while (true) {
