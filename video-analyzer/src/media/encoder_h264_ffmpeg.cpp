@@ -199,7 +199,8 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
                 frames_ctx->sw_format = codec_ctx_->pix_fmt; // NV12
                 frames_ctx->width = settings.width;
                 frames_ctx->height = settings.height;
-                frames_ctx->initial_pool_size = 3;
+                // Increase hwframe pool to reduce EAGAIN backpressure under burst
+                frames_ctx->initial_pool_size = 8;
                 if (av_hwframe_ctx_init(frames_ref) == 0) {
                     hw_frames_ctx_ = frames_ref;
                     codec_ctx_->hw_frames_ctx = av_buffer_ref(hw_frames_ctx_);
@@ -333,8 +334,22 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                                                   static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
                                                   cudaMemcpyDeviceToDevice);
                     if (e2 == cudaSuccess) {
-                        if (avcodec_send_frame(codec_ctx_, hwf) == 0) {
+                        int sret = avcodec_send_frame(codec_ctx_, hwf);
+                        if (sret == 0) {
                             fed_device_nv12 = true;
+                        } else if (sret == AVERROR(EAGAIN)) {
+                            // Drain pending packets then retry once
+                            int rret = 0; int drained = 0;
+                            while ((rret = avcodec_receive_packet(codec_ctx_, packet_)) == 0) {
+                                av_packet_unref(packet_);
+                                ++drained;
+                            }
+                            if (drained > 0) {
+                                sret = avcodec_send_frame(codec_ctx_, hwf);
+                                if (sret == 0) {
+                                    fed_device_nv12 = true;
+                                }
+                            }
                         }
                     }
                 }
