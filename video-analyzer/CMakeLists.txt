@@ -204,3 +204,34 @@ endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Ensure WebRTC/datachannel related libs from vcpkg are linked (do not skip)
+if (WIN32)
+    # vcpkg lib dir is resolved above; fallback to default if empty
+    if (NOT EXISTS "${VCPKG_LIB_DIR}")
+        set(VCPKG_LIB_DIR "D:/Projects/vcpkg/installed/x64-windows/lib")
+    endif()
+    foreach(LN IN ITEMS datachannel juice ixwebsocket mbedtls mbedcrypto mbedx509 usrsctp libssl libcrypto zlib)
+        if (EXISTS "${VCPKG_LIB_DIR}/${LN}.lib")
+            target_link_libraries(${PROJECT_NAME} PRIVATE "${VCPKG_LIB_DIR}/${LN}.lib")
+        endif()
+    endforeach()
+endif()
+
+# Unit test: postproc threshold override
+add_executable(va_unit_test_postproc
+    test/unit/test_postproc_threshold.cpp
+    src/analyzer/postproc_yolo_det.cpp)
+
+target_include_directories(va_unit_test_postproc PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+set_target_properties(va_unit_test_postproc PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+if (CUDAToolkit_FOUND)
+    target_include_directories(va_unit_test_postproc PRIVATE ${CUDAToolkit_INCLUDE_DIRS}) # CUDA include for va_unit_test_postproc
+endif()
+
+target_compile_definitions(va_unit_test_postproc PRIVATE UNIT_TEST_NO_CUDA VA_HAS_CUDA_RUNTIME=0)
+

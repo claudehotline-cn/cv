@@ -8,8 +8,18 @@
 
 namespace {
 
-constexpr float kScoreThreshold = 0.25f;
 constexpr float kNMSThreshold = 0.45f;
+
+inline float getScoreThreshold() {
+    float thr = 0.25f;
+    if (const char* e = std::getenv("VA_CONF_THRESH")) {
+        try { thr = std::stof(e); } catch (...) {}
+    } else if (const char* e2 = std::getenv("VA_SCORE_THR")) {
+        try { thr = std::stof(e2); } catch (...) {}
+    }
+    if (thr < 0.0f) thr = 0.0f; if (thr > 1.0f) thr = 1.0f;
+    return thr;
+}
 
 float clamp(float v, float lo, float hi) {
     return std::max(lo, std::min(v, hi));
@@ -155,7 +165,8 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
             }
         }
 
-        if (best_class < 0 || best_score < kScoreThreshold) {
+        const float score_thr = getScoreThreshold();
+        if (best_class < 0 || best_score < score_thr) {
             continue;
         }
 
@@ -196,7 +207,7 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 
 } // namespace va::analyzer
 
-#ifdef USE_CUDA
+#if defined(USE_CUDA) && !defined(UNIT_TEST_NO_CUDA)
 #include "analyzer/postproc_yolo_det.hpp"
 
 #if defined(__has_include)
@@ -254,7 +265,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     int orig_h = meta.original_height > 0 ? meta.original_height : meta.input_height;
                     if (va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
                         num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
-                        0.25f, scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+                        getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
                         d_boxes, d_scores, d_classes, d_count, nullptr) == cudaSuccess &&
                         cudaMalloc(&d_keep, static_cast<size_t>(num_det)*sizeof(int)) == cudaSuccess &&
                         va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, num_det, 0.45f, d_keep, nullptr, nullptr) == cudaSuccess) {
@@ -323,12 +334,13 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     struct Cand { float x1,y1,x2,y2,score; int cls; };
     std::vector<Cand> cands;
     cands.reserve(static_cast<size_t>(num_det));
+    const float score_thr2 = getScoreThreshold();
     for (int64_t i = 0; i < num_det; ++i) {
         float cx = value_at(i,0), cy = value_at(i,1), w = value_at(i,2), h = value_at(i,3);
         // best class score
         float best=0.0f; int best_c=-1;
         for (int c=0;c<num_classes;++c){ float s=value_at(i,4+c); if (s>best){ best=s; best_c=c; }}
-        if (best_c<0 || best<0.25f) continue; // score threshold aligned with CPU path
+        if (best_c<0 || best<score_thr2) continue; // score threshold (env overridable)
         float x1 = cx - 0.5f*w, y1 = cy - 0.5f*h, x2 = cx + 0.5f*w, y2 = cy + 0.5f*h;
         float ox1 = (x1 - static_cast<float>(meta.pad_x)) / (meta.scale==0.0f?1.0f:meta.scale);
         float oy1 = (y1 - static_cast<float>(meta.pad_y)) / (meta.scale==0.0f?1.0f:meta.scale);
