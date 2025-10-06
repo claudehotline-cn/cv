@@ -706,10 +706,11 @@ struct RestServer::Impl {
         engine_options["tensorrt_workspace_mb"] = getInt("trt_workspace_mb", config.engine.options.tensorrt_workspace_mb);
         engine_options["io_binding_input_bytes"] = static_cast<Json::UInt64>(getU64("io_binding_input_bytes", config.engine.options.io_binding_input_bytes));
         engine_options["io_binding_output_bytes"] = static_cast<Json::UInt64>(getU64("io_binding_output_bytes", config.engine.options.io_binding_output_bytes));
-        // Source/decoder toggles
+        // Source/decoder/renderer toggles
         engine_options["use_ffmpeg_source"] = getBool("use_ffmpeg_source", false);
         engine_options["use_nvdec"] = getBool("use_nvdec", false);
         engine_options["use_nvenc"] = getBool("use_nvenc", false);
+        engine_options["use_cuda_preproc"] = getBool("use_cuda_preproc", false);
 
         engine["options"] = engine_options;
         data["engine"] = engine;

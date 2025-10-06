@@ -187,12 +187,14 @@ bool Pipeline::processFrame(const core::Frame& in) {
 
     core::Frame analyzed;
     if (!analyzer_->analyze(in, analyzed)) {
+        VA_LOG_DEBUG() << "[Pipeline] analyze() returned false";
         return false;
     }
 
     va::media::IEncoder::Packet packet;
     if (encoder_) {
         if (!encoder_->encode(analyzed, packet)) {
+            VA_LOG_DEBUG() << "[Pipeline] encoder.encode returned false";
             return false;
         }
         if (transport_ && !packet.data.empty()) {

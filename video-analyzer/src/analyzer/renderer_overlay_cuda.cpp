@@ -27,6 +27,19 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
         }
     };
     // Prefer NV12 device overlay if available (no text)
+    // 若为 NV12 设备帧但当前无检测框，仍打印一次路径信息便于确认链路
+    if (in.has_device_surface && in.device.on_gpu && in.device.fmt == core::PixelFormat::NV12 && output.boxes.empty()) {
+#ifdef VA_HAS_CUDA_KERNELS
+        const bool has_kernels = true;
+#else
+        const bool has_kernels = false;
+#endif
+        log_once("nv12-no-boxes", 0, has_kernels, 2, 0.0f, in);
+        // Pass-through NV12 device frame when no boxes; keep zero-copy path alive
+        out = in;
+        return true;
+    }
+
     if (in.has_device_surface && in.device.on_gpu && in.device.fmt == core::PixelFormat::NV12 && !output.boxes.empty()) {
         out = in; // keep device surface and metadata
         const int w = in.device.width;

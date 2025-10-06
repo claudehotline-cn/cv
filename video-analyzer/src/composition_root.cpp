@@ -93,9 +93,17 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
 
         std::shared_ptr<va::analyzer::IPreprocessor> preprocessor;
 #ifdef USE_CUDA
-        // Enable CUDA preprocessor only when explicitly opted-in
+        // Enable CUDA preprocessor by engine option or env
+        bool opt_cuda_preproc = false;
+        if (!engine_desc.options.empty()) {
+            auto it = engine_desc.options.find("use_cuda_preproc");
+            if (it != engine_desc.options.end()) {
+                std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
+                opt_cuda_preproc = (v=="1"||v=="true"||v=="yes"||v=="on");
+            }
+        }
         const char* use_cuda_preproc = std::getenv("VA_USE_CUDA_PREPROC");
-        if (hint_gpu && use_cuda_preproc && (std::string(use_cuda_preproc) == "1" || std::string(use_cuda_preproc) == "true")) {
+        if (hint_gpu && (opt_cuda_preproc || (use_cuda_preproc && (std::string(use_cuda_preproc) == "1" || std::string(use_cuda_preproc) == "true")))) {
             preprocessor = std::make_shared<va::analyzer::LetterboxPreprocessorCUDA>(cfg.input_width, cfg.input_height);
         }
 #endif // USE_CUDA

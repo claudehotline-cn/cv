@@ -5,6 +5,7 @@
 #include <functional>
 #include <numeric>
 #include <vector>
+#include "core/logger.hpp"
 
 namespace {
 
@@ -121,16 +122,23 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 
     int64_t num_det = 0;
     int64_t num_attrs = 0;
-    bool channels_first = false; // indicates layout [C, N]
+    bool channels_first = false; // layout [C, N] when true
 
-    if (dim1 <= dim2) {
-        num_det = dim1;
-        num_attrs = dim2;
-    } else {
-        num_det = dim2;
-        num_attrs = dim1;
-        channels_first = true;
-    }
+    // Robust layout detection for YOLO outputs: prefer the dimension that looks like num_attrs (<=256)
+    auto looks_like_attrs = [](int64_t v){ return v >= 5 && v <= 256; };
+    // Candidate A: [N, C]
+    int64_t candA_det = dim1;
+    int64_t candA_attr = dim2;
+    // Candidate B: [C, N]
+    int64_t candB_det = dim2;
+    int64_t candB_attr = dim1;
+    bool useB = false;
+    if (looks_like_attrs(candB_attr) && !looks_like_attrs(candA_attr)) useB = true;
+    else if (looks_like_attrs(candB_attr) && looks_like_attrs(candA_attr)) useB = (candB_det >= candA_det); // pick larger det count
+    else if (!looks_like_attrs(candA_attr)) useB = true; // neither looks good; default to B when C<N (common 84x8400)
+
+    if (useB) { channels_first = true; num_det = candB_det; num_attrs = candB_attr; }
+    else { channels_first = false; num_det = candA_det; num_attrs = candA_attr; }
 
     if (num_attrs < 5) {
         return false;
@@ -144,10 +152,11 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 
     for (int64_t i = 0; i < num_det; ++i) {
         auto value_at = [&](int64_t attr) -> float {
-            if (channels_first) {
+            if (channels_first) { // [C, N]
                 return data[attr * num_det + i];
+            } else { // [N, C]
+                return data[i * num_attrs + attr];
             }
-            return data[i * num_attrs + attr];
         };
 
         const float cx = value_at(0);
@@ -222,6 +231,12 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 #  define VA_HAS_CUDA_RUNTIME 1
 #endif
 
+// Bring in CUDA kernel declarations before entering namespace to avoid nested qualified namespaces
+#if VA_HAS_CUDA_RUNTIME && defined(VA_HAS_CUDA_KERNELS)
+#include "analyzer/cuda/yolo_decode_kernels.hpp"
+#include "analyzer/cuda/postproc_yolo_nms_kernels.hpp"
+#endif
+
 namespace va::analyzer {
 
 bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& raw_outputs,
@@ -239,6 +254,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
 
     // If already on CPU, reuse CPU implementation
     if (!t.on_gpu) {
+        VA_LOG_DEBUG() << "[YoloCUDA] tensor on_gpu=0, fallback to CPU postproc";
         YoloDetectionPostprocessor cpu;
         return cpu.run(raw_outputs, meta, output);
     }
@@ -248,11 +264,24 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
         int64_t dim0 = t.shape[0];
         int64_t dim1 = t.shape[1];
         int64_t dim2 = t.shape[2];
+        VA_LOG_DEBUG() << "[YoloCUDA] dims=" << dim0 << "x" << dim1 << "x" << dim2
+                       << " score_thr=" << getScoreThreshold()
+                       << " meta(scale=" << meta.scale << ", pad=" << meta.pad_x << "," << meta.pad_y << ")";
         if (dim0 == 1) {
-            bool channels_first = false;
-            int num_det = 0, num_attrs = 0;
-            if (dim1 <= dim2) { num_det = static_cast<int>(dim1); num_attrs = static_cast<int>(dim2); }
-            else { num_det = static_cast<int>(dim2); num_attrs = static_cast<int>(dim1); channels_first = true; }
+            // Robust layout detection (match CPU path): prefer <=256 as attribute dimension
+            auto looks_like_attrs = [](int64_t v){ return v >= 5 && v <= 256; };
+            int64_t candA_det = dim1, candA_attr = dim2; // [N, C]
+            int64_t candB_det = dim2, candB_attr = dim1; // [C, N]
+            bool useB = false; // channels_first?
+            if (looks_like_attrs(candB_attr) && !looks_like_attrs(candA_attr)) useB = true;
+            else if (looks_like_attrs(candB_attr) && looks_like_attrs(candA_attr)) useB = (candB_det >= candA_det);
+            else if (!looks_like_attrs(candA_attr)) useB = true; // common 84x8400
+
+            bool channels_first = useB;
+            int num_det = static_cast<int>(useB ? candB_det : candA_det);
+            int num_attrs = static_cast<int>(useB ? candB_attr : candA_attr);
+            VA_LOG_DEBUG() << "[YoloCUDA] layout cf=" << (channels_first?1:0)
+                           << " num_det=" << num_det << " num_attrs=" << num_attrs;
             if (num_attrs >= 5 && num_det > 0) {
                 float *d_boxes=nullptr, *d_scores=nullptr; int32_t* d_classes=nullptr; int* d_count=nullptr; int* d_keep=nullptr;
                 if (cudaMalloc(&d_boxes, static_cast<size_t>(num_det)*4*sizeof(float)) == cudaSuccess &&
@@ -263,39 +292,68 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     float scale = meta.scale == 0.0f ? 1.0f : meta.scale;
                     int orig_w = meta.original_width > 0 ? meta.original_width : meta.input_width;
                     int orig_h = meta.original_height > 0 ? meta.original_height : meta.input_height;
-                    if (va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
+                    auto err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
                         num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
                         getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
-                        d_boxes, d_scores, d_classes, d_count, nullptr) == cudaSuccess &&
-                        cudaMalloc(&d_keep, static_cast<size_t>(num_det)*sizeof(int)) == cudaSuccess &&
-                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, num_det, 0.45f, d_keep, nullptr, nullptr) == cudaSuccess) {
+                        d_boxes, d_scores, d_classes, d_count, nullptr);
+                    if (err_decode == cudaSuccess) {
                         int h_count = 0;
-                        std::vector<int> h_keep(num_det, 0);
-                        std::vector<float> h_boxes(static_cast<size_t>(num_det)*4);
-                        std::vector<float> h_scores(static_cast<size_t>(num_det));
-                        std::vector<int32_t> h_classes(static_cast<size_t>(num_det));
-                        if (cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess &&
-                            cudaMemcpy(h_keep.data(), d_keep, static_cast<size_t>(num_det)*sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess &&
-                            cudaMemcpy(h_boxes.data(), d_boxes, h_boxes.size()*sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
-                            cudaMemcpy(h_scores.data(), d_scores, h_scores.size()*sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
-                            cudaMemcpy(h_classes.data(), d_classes, h_classes.size()*sizeof(int32_t), cudaMemcpyDeviceToHost) == cudaSuccess) {
-                            output.boxes.clear(); output.masks.clear();
+                        if (cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess) {
                             h_count = std::min(h_count, num_det);
-                            for (int i=0;i<num_det;++i) {
-                                if (!h_keep[i]) continue;
-                                core::Box b; b.x1=h_boxes[i*4+0]; b.y1=h_boxes[i*4+1]; b.x2=h_boxes[i*4+2]; b.y2=h_boxes[i*4+3];
-                                b.score=h_scores[i]; b.cls=static_cast<int>(h_classes[i]);
-                                output.boxes.emplace_back(b);
+                            if (h_count > 0) {
+                                // Copy to host, sort by score desc, copy back, run CUDA NMS on valid subset
+                                std::vector<float> h_boxes(static_cast<size_t>(h_count)*4);
+                                std::vector<float> h_scores(static_cast<size_t>(h_count));
+                                std::vector<int32_t> h_classes(static_cast<size_t>(h_count));
+                                if (cudaMemcpy(h_boxes.data(), d_boxes, h_boxes.size()*sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
+                                    cudaMemcpy(h_scores.data(), d_scores, h_scores.size()*sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
+                                    cudaMemcpy(h_classes.data(), d_classes, h_classes.size()*sizeof(int32_t), cudaMemcpyDeviceToHost) == cudaSuccess) {
+                                    std::vector<int> order(h_count); std::iota(order.begin(), order.end(), 0);
+                                    std::sort(order.begin(), order.end(), [&](int a, int b){ return h_scores[a] > h_scores[b]; });
+                                    std::vector<float> s_boxes = h_boxes; std::vector<float> s_scores = h_scores; std::vector<int32_t> s_classes = h_classes;
+                                    for (int i=0;i<h_count;++i) {
+                                        int o = order[i];
+                                        h_scores[i] = s_scores[o]; h_classes[i] = s_classes[o];
+                                        h_boxes[i*4+0] = s_boxes[o*4+0]; h_boxes[i*4+1] = s_boxes[o*4+1];
+                                        h_boxes[i*4+2] = s_boxes[o*4+2]; h_boxes[i*4+3] = s_boxes[o*4+3];
+                                    }
+                                    if (cudaMemcpy(d_boxes, h_boxes.data(), h_boxes.size()*sizeof(float), cudaMemcpyHostToDevice) == cudaSuccess &&
+                                        cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice) == cudaSuccess &&
+                                        cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice) == cudaSuccess &&
+                                        cudaMalloc(&d_keep, static_cast<size_t>(h_count)*sizeof(int)) == cudaSuccess &&
+                                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, h_count, 0.45f, d_keep, nullptr, nullptr) == cudaSuccess) {
+                                        std::vector<int> h_keep(h_count, 0);
+                                        if (cudaMemcpy(h_keep.data(), d_keep, static_cast<size_t>(h_count)*sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess) {
+                                            output.boxes.clear(); output.masks.clear();
+                                            for (int i=0;i<h_count;++i) {
+                                                if (!h_keep[i]) continue;
+                                                core::Box b; b.x1=h_boxes[i*4+0]; b.y1=h_boxes[i*4+1]; b.x2=h_boxes[i*4+2]; b.y2=h_boxes[i*4+3];
+                                                b.score=h_scores[i]; b.cls=static_cast<int>(h_classes[i]);
+                                                output.boxes.emplace_back(b);
+                                            }
+                                            if (d_keep) cudaFree(d_keep);
+                                            if (d_count) cudaFree(d_count);
+                                            if (d_classes) cudaFree(d_classes);
+                                            if (d_scores) cudaFree(d_scores);
+                                            if (d_boxes) cudaFree(d_boxes);
+                                            VA_LOG_DEBUG() << "[YoloCUDA] decode+NMS OK, valid=" << h_count << ", kept=" << output.boxes.size();
+                                            return true;
+                                        }
+                                    }
+                                }
+                            } else {
+                                output.boxes.clear(); output.masks.clear();
+                                if (d_count) cudaFree(d_count);
+                                if (d_classes) cudaFree(d_classes);
+                                if (d_scores) cudaFree(d_scores);
+                                if (d_boxes) cudaFree(d_boxes);
+                                VA_LOG_DEBUG() << "[YoloCUDA] decode OK, no candidates (valid=0)";
+                                return true;
                             }
-                            if (d_keep) cudaFree(d_keep);
-                            if (d_count) cudaFree(d_count);
-                            if (d_classes) cudaFree(d_classes);
-                            if (d_scores) cudaFree(d_scores);
-                            if (d_boxes) cudaFree(d_boxes);
-                            return true;
                         }
                     }
                 }
+                VA_LOG_DEBUG() << "[YoloCUDA] device decode/NMS path failed, fallback path engaged";
                 if (d_keep) cudaFree(d_keep);
                 if (d_count) cudaFree(d_count);
                 if (d_classes) cudaFree(d_classes);
@@ -308,22 +366,29 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
 
 #if VA_HAS_CUDA_RUNTIME
     // Decode YOLO tensor on host (D2H) to boxes/scores/classes; then run CUDA NMS if kernels available, else CPU NMS
+    VA_LOG_DEBUG() << "[YoloCUDA] host decode path (D2H), tensor bytes copy";
     size_t count = 1;
     for (auto d : t.shape) { count *= static_cast<size_t>(d > 0 ? d : 1); }
-    if (count == 0) return false;
+    if (count == 0) { VA_LOG_DEBUG() << "[YoloCUDA] host decode: empty tensor (count=0)"; return false; }
     std::vector<float> host(count);
     if (cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
+        VA_LOG_DEBUG() << "[YoloCUDA] host decode: cudaMemcpy D2H failed";
         return false;
     }
 
-    // Interpret layout like CPU path
+    // Interpret layout like CPU path with robust detection
     int64_t dim0 = t.shape[0];
     int64_t dim1 = t.shape[1];
     int64_t dim2 = t.shape[2];
+    auto looks_like_attrs = [](int64_t v){ return v >= 5 && v <= 256; };
+    int64_t candA_det = dim1, candA_attr = dim2; // [N,C]
+    int64_t candB_det = dim2, candB_attr = dim1; // [C,N]
     bool channels_first = false;
-    int64_t num_det, num_attrs;
-    if (dim1 <= dim2) { num_det = dim1; num_attrs = dim2; }
-    else { num_det = dim2; num_attrs = dim1; channels_first = true; }
+    if (looks_like_attrs(candB_attr) && !looks_like_attrs(candA_attr)) channels_first = true;
+    else if (looks_like_attrs(candB_attr) && looks_like_attrs(candA_attr)) channels_first = (candB_det >= candA_det);
+    else if (!looks_like_attrs(candA_attr)) channels_first = true;
+    int64_t num_det = channels_first ? candB_det : candA_det;
+    int64_t num_attrs = channels_first ? candB_attr : candA_attr;
     if (dim0 != 1 || num_attrs < 5) return false;
     const int num_classes = static_cast<int>(num_attrs - 4);
 

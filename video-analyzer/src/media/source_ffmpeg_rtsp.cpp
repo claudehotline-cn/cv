@@ -129,15 +129,21 @@ bool FfmpegRtspSource::openImpl() {
     }
 
     VA_LOG_INFO() << "[RTSP(FFmpeg)] avformat_open_input uri=" << uri_;
-    if (avformat_open_input(&fmt_, uri_.c_str(), nullptr, &opts) < 0) {
+    int open_ret = avformat_open_input(&fmt_, uri_.c_str(), nullptr, &opts);
+    if (open_ret < 0) {
         av_dict_free(&opts);
         fmt_ = nullptr;
-        VA_LOG_ERROR() << "[RTSP(FFmpeg)] avformat_open_input failed";
+        char err[256]; err[0]='\0';
+        av_strerror(open_ret, err, sizeof(err));
+        VA_LOG_ERROR() << "[RTSP(FFmpeg)] avformat_open_input failed ret=" << open_ret << " (" << err << ")";
         return false;
     }
     av_dict_free(&opts);
-    if (avformat_find_stream_info(fmt_, nullptr) < 0) {
-        VA_LOG_ERROR() << "[RTSP(FFmpeg)] avformat_find_stream_info failed";
+    int sinfo = avformat_find_stream_info(fmt_, nullptr);
+    if (sinfo < 0) {
+        char err[256]; err[0]='\0';
+        av_strerror(sinfo, err, sizeof(err));
+        VA_LOG_ERROR() << "[RTSP(FFmpeg)] avformat_find_stream_info failed ret=" << sinfo << " (" << err << ")";
         closeImpl();
         return false;
     }
@@ -153,7 +159,15 @@ bool FfmpegRtspSource::openImpl() {
     dec_ = avcodec_alloc_context3(dec);
     if (!dec_) { VA_LOG_ERROR() << "[RTSP(FFmpeg)] alloc context failed"; closeImpl(); return false; }
     if (avcodec_parameters_to_context(dec_, st->codecpar) < 0) { VA_LOG_ERROR() << "[RTSP(FFmpeg)] copy params failed"; closeImpl(); return false; }
-    if (avcodec_open2(dec_, dec, nullptr) < 0) { VA_LOG_ERROR() << "[RTSP(FFmpeg)] avcodec_open2 failed"; closeImpl(); return false; }
+    {
+        int aopen = avcodec_open2(dec_, dec, nullptr);
+        if (aopen < 0) {
+            char err[256]; err[0]='\0';
+            av_strerror(aopen, err, sizeof(err));
+            VA_LOG_ERROR() << "[RTSP(FFmpeg)] avcodec_open2 failed ret=" << aopen << " (" << err << ")";
+            closeImpl(); return false;
+        }
+    }
     VA_LOG_INFO() << "[RTSP(FFmpeg)] open OK: " << dec_->width << "x" << dec_->height;
     return true;
 #endif
@@ -197,9 +211,15 @@ bool FfmpegRtspSource::readImpl(core::Frame& frame) {
             int dst_linesize[4] = { frame.width * 3, 0, 0, 0 };
             sws_scale(sws_, f->data, f->linesize, 0, f->height, dst_data, dst_linesize);
             ok = true;
+            VA_LOG_DEBUG() << "[RTSP(FFmpeg)] read frame " << frame.width << "x" << frame.height;
             break;
         }
         if (ok) break;
+    }
+    if (read_ret < 0 && read_ret != AVERROR_EOF) {
+        char err[128]; err[0]='\0';
+        av_strerror(read_ret, err, sizeof(err));
+        VA_LOG_WARN() << "[RTSP(FFmpeg)] av_read_frame ret=" << read_ret << " (" << err << ")";
     }
     if (!is_rtsp_ && read_ret == AVERROR_EOF) {
         // Loop file inputs: seek back to start and flush decoder

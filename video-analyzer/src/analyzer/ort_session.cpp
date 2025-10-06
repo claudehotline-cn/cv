@@ -639,6 +639,10 @@ bool OrtModelSession::run(const core::TensorView&, std::vector<core::TensorView>
     return loaded_;
 }
 
+OrtModelSession::RuntimeInfo OrtModelSession::runtimeInfo() const {
+    return {};
+}
+
 #endif // USE_ONNXRUNTIME
 
 } // namespace va::analyzer

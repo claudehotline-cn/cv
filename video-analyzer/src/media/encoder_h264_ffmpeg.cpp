@@ -345,6 +345,15 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
 #endif
 
     if (!fed_device_nv12) {
+        // Guard: in NVDEC zero-copy path, there may be no CPU BGR. Avoid noisy sws_scale warnings.
+        if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
+            VA_LOG_DEBUG() << "[Encoder] skip CPU upload: no BGR for fallback (device NV12 frame)";
+            // Return empty packet to keep pipeline alive without error this frame
+            out_packet.data.clear();
+            out_packet.keyframe = false;
+            out_packet.pts_ms = frame.pts_ms;
+            return true;
+        }
         const uint8_t* src_slices[1] = { frame.bgr.data() };
         int src_stride[1] = { frame.width * 3 };
         sws_scale(sws_ctx_, src_slices, src_stride, 0, height_, frame_->data, frame_->linesize);
@@ -375,6 +384,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         ret = avcodec_send_frame(codec_ctx_, frame_);
     }
     if (ret < 0) {
+        VA_LOG_DEBUG() << "[Encoder] avcodec_send_frame failed ret=" << ret << (fed_device_nv12? " (device NV12)":" (CPU upload)");
         return false;
     }
 
@@ -386,6 +396,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         return true;
     }
     if (ret < 0) {
+        VA_LOG_DEBUG() << "[Encoder] avcodec_receive_packet failed ret=" << ret;
         return false;
     }
 
