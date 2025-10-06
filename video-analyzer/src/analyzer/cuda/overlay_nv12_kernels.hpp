@@ -1,0 +1,40 @@
+#pragma once
+
+#if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__CUDACC_RTC__)
+#define VA_NV12KERN_CUDA 1
+#endif
+
+#include <cstdint>
+
+namespace va { namespace analyzer { namespace cudaops_nv12 {
+
+// Draw rectangle borders on NV12 surface in-place (device memory).
+// - y: pointer to Y plane (device)
+// - pitchY: stride in bytes for Y plane
+// - uv: pointer to interleaved UV plane (device)
+// - pitchUV: stride in bytes for UV plane
+// - width, height: frame size in pixels
+// - boxes_xyxy: device pointer to N*4 floats [x1,y1,x2,y2,...]
+// - classes: optional device pointer to N ints (can be nullptr); currently unused (neutral UV)
+// - count: number of boxes
+// - thickness: border thickness in pixels
+// Returns cudaError_t (0 on success)
+int draw_rects_nv12_inplace(uint8_t* y, int pitchY,
+                            uint8_t* uv, int pitchUV,
+                            int width, int height,
+                            const float* boxes_xyxy,
+                            const int* classes,
+                            int count,
+                            int thickness);
+
+// Optional: filled rectangles with alpha on Y plane only (UV kept neutral 128)
+int fill_rects_nv12_inplace(uint8_t* y, int pitchY,
+                            uint8_t* uv, int pitchUV,
+                            int width, int height,
+                            const float* boxes_xyxy,
+                            const int* classes,
+                            int count,
+                            float alpha /*0..1*/);
+
+} } } // namespace
+
