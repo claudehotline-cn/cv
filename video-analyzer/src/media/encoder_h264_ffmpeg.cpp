@@ -353,6 +353,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                                                   cudaMemcpyDeviceToDevice);
                     if (e2 == cudaSuccess) {
                         attempted_d2d = true;
+                        hwf->pts = pts_++;
                         int sret = avcodec_send_frame(codec_ctx_, hwf);
                         if (sret == 0) {
                             fed_device_nv12 = true;
@@ -460,6 +461,10 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     if (ret < 0) {
         VA_LOG_DEBUG() << "[Encoder] avcodec_receive_packet failed ret=" << ret;
         return false;
+    }
+
+    if (attempted_d2d) {
+        va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
     }
 
     if (attempted_d2d) {
