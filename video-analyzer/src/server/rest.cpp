@@ -698,6 +698,7 @@ struct RestServer::Impl {
         };
 
         Json::Value engine_options(Json::objectValue);
+        // Core execution options
         engine_options["use_io_binding"] = getBool("use_io_binding", config.engine.options.use_io_binding);
         engine_options["prefer_pinned_memory"] = getBool("prefer_pinned_memory", config.engine.options.prefer_pinned_memory);
         engine_options["allow_cpu_fallback"] = getBool("allow_cpu_fallback", config.engine.options.allow_cpu_fallback);
@@ -712,6 +713,13 @@ struct RestServer::Impl {
         engine_options["use_nvdec"] = getBool("use_nvdec", false);
         engine_options["use_nvenc"] = getBool("use_nvenc", false);
         engine_options["use_cuda_preproc"] = getBool("use_cuda_preproc", false);
+        // Rendering / postproc toggles
+        engine_options["render_cuda"] = getBool("render_cuda", false);
+        engine_options["render_passthrough"] = getBool("render_passthrough", false);
+        engine_options["use_cuda_nms"] = getBool("use_cuda_nms", false);
+        // IoBinding output policies
+        engine_options["stage_device_outputs"] = getBool("stage_device_outputs", false);
+        engine_options["device_output_views"] = getBool("device_output_views", false);
 
         engine["options"] = engine_options;
         data["engine"] = engine;
@@ -826,6 +834,17 @@ struct RestServer::Impl {
             node["last_active_ms"] = info.last_active_ms;
             node["track_id"] = info.track_id;
             node["metrics"] = metricsToJson(info.metrics);
+            // Optional: include current global zero-copy counters to assist per-pipeline inspection
+            {
+                auto g = va::core::GlobalMetrics::snapshot();
+                Json::Value z(Json::objectValue);
+                z["d2d_nv12_frames"] = static_cast<Json::UInt64>(g.d2d_nv12_frames);
+                z["cpu_fallback_skips"] = static_cast<Json::UInt64>(g.cpu_fallback_skips);
+                z["eagain_retry_count"] = static_cast<Json::UInt64>(g.eagain_retry_count);
+                z["overlay_nv12_kernel_hits"] = static_cast<Json::UInt64>(g.overlay_nv12_kernel_hits);
+                z["overlay_nv12_passthrough"] = static_cast<Json::UInt64>(g.overlay_nv12_passthrough);
+                node["zerocopy_metrics"] = z;
+            }
             node["transport_stats"] = transportStatsToJson(info.transport_stats);
             node["encoder"] = encoderConfigToJson(info.encoder_cfg);
             data.append(std::move(node));

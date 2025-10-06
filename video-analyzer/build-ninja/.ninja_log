@@ -147,3 +147,11 @@
 3	55	7814844955547235	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
 61	342	7814844956130244	bin/VideoAnalyzer.exe	6c19d8b91a8dbaf8
 3	49	7814847774594766	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+4	58	7814854190828435	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+82	809	7814854191610299	CMakeFiles/VideoAnalyzer.dir/src/main.cpp.obj	bb39d4fb8a1c1142
+69	835	7814854191476621	CMakeFiles/VideoAnalyzer.dir/src/core/pipeline.cpp.obj	dd384e80c1aaff3e
+78	908	7814854191563275	CMakeFiles/VideoAnalyzer.dir/src/core/track_manager.cpp.obj	8943991bad96c331
+74	1110	7814854191521736	CMakeFiles/VideoAnalyzer.dir/src/core/pipeline_builder.cpp.obj	f5ed039d70254c30
+64	1285	7814854191433398	CMakeFiles/VideoAnalyzer.dir/src/app/application.cpp.obj	ca86297d461453d3
+87	1930	7814854191645697	CMakeFiles/VideoAnalyzer.dir/src/server/rest.cpp.obj	7b32ffc337cdb3d9
+1930	2215	7814854210079236	bin/VideoAnalyzer.exe	6c19d8b91a8dbaf8

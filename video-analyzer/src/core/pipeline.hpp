@@ -72,6 +72,7 @@ private:
     std::atomic<double> avg_latency_ms_ {0.0};
     std::atomic<double> fps_ {0.0};
     std::atomic<double> last_timestamp_ms_ {0.0};
+    bool did_warmup_ {false};
 };
 
 } // namespace va::core

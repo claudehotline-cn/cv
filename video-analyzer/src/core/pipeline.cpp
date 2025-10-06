@@ -151,6 +151,19 @@ void Pipeline::run() {
             }
 
             const double start_ms = ms_now();
+            // One-time warmup: run analyzer once without encoding/transport to amortize first-time costs
+            if (!did_warmup_) {
+                try {
+                    core::Frame warm;
+                    (void)analyzer_->analyze(frame, warm);
+                } catch (...) {
+                    // ignore warmup errors
+                }
+                did_warmup_ = true;
+                // Move on to next iteration without encoding
+                continue;
+            }
+
             if (processFrame(frame)) {
                 const double latency_ms = ms_now() - start_ms;
                 recordFrameProcessed(latency_ms);
