@@ -1,6 +1,7 @@
 #include "analyzer/renderer_overlay_cuda.hpp"
 #include "analyzer/renderer_overlay_cpu.hpp"
 #include "core/logger.hpp"
+#include "core/global_metrics.hpp"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/core.hpp>
 #if defined(VA_HAS_CUDA_KERNELS)
@@ -35,6 +36,8 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
         const bool has_kernels = false;
 #endif
         log_once("nv12-no-boxes", 0, has_kernels, 2, 0.0f, in);
+        // metrics: NV12 passthrough hit
+        va::core::GlobalMetrics::overlay_nv12_passthrough.fetch_add(1, std::memory_order_relaxed);
         // Pass-through NV12 device frame when no boxes; keep zero-copy path alive
         out = in;
         return true;
@@ -76,6 +79,8 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
                             static_cast<uint8_t*>(in.device.data1), in.device.pitch1,
                             w, h, d_boxes, nullptr, N, thick) == 0) {
                         log_once("nv12-kernel", output.boxes.size(), true, thick, alpha, in);
+                        // metrics: NV12 kernel draw hit
+                        va::core::GlobalMetrics::overlay_nv12_kernel_hits.fetch_add(1, std::memory_order_relaxed);
                         cudaFree(d_boxes);
                         return true; // in-place device overlay; no host copies
                     }

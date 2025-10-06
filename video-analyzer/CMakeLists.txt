@@ -326,7 +326,8 @@ if (CUDAToolkit_FOUND)
         test/unit/test_overlay_cuda.cpp
         src/analyzer/renderer_overlay_cuda.cpp
         src/analyzer/renderer_overlay_cpu.cpp
-        src/core/logger.cpp)
+        src/core/logger.cpp
+        src/core/global_metrics.cpp)
     target_include_directories(va_unit_test_overlay_cuda PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/include

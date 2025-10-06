@@ -5,6 +5,7 @@
 
 #include <opencv2/core.hpp>
 #include "core/logger.hpp"
+#include "core/global_metrics.hpp"
 #if defined(USE_CUDA)
 #  if defined(__has_include)
 #    if __has_include(<cuda_runtime.h>)
@@ -346,8 +347,10 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                         int sret = avcodec_send_frame(codec_ctx_, hwf);
                         if (sret == 0) {
                             fed_device_nv12 = true;
+                            va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
                         } else if (sret == AVERROR(EAGAIN)) {
                             // Drain pending packets then retry once
+                            va::core::GlobalMetrics::eagain_retry_count.fetch_add(1, std::memory_order_relaxed);
                             int rret = 0; int drained = 0;
                             while ((rret = avcodec_receive_packet(codec_ctx_, packet_)) == 0) {
                                 av_packet_unref(packet_);
@@ -357,6 +360,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                                 sret = avcodec_send_frame(codec_ctx_, hwf);
                                 if (sret == 0) {
                                     fed_device_nv12 = true;
+                                    va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
                                 }
                             }
                         }
@@ -375,6 +379,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
             // Light drain again here: drop at most one pending packet to relieve pressure
             int r = avcodec_receive_packet(codec_ctx_, packet_);
             if (r == 0) { av_packet_unref(packet_); }
+            va::core::GlobalMetrics::cpu_fallback_skips.fetch_add(1, std::memory_order_relaxed);
             // Return empty packet to keep pipeline alive without error this frame
             out_packet.data.clear();
             out_packet.keyframe = false;

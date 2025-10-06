@@ -4,6 +4,7 @@
 #include "analyzer/analyzer.hpp"
 #include "core/engine_manager.hpp"
 #include "core/logger.hpp"
+#include "core/global_metrics.hpp"
 
 #include <json/json.h>
 
@@ -775,6 +776,17 @@ struct RestServer::Impl {
         data["dropped_frames"] = static_cast<Json::UInt64>(stats.dropped_frames);
         data["transport_packets"] = static_cast<Json::UInt64>(stats.transport_packets);
         data["transport_bytes"] = static_cast<Json::UInt64>(stats.transport_bytes);
+        // Global zero-copy metrics snapshot
+        {
+            auto g = va::core::GlobalMetrics::snapshot();
+            Json::Value z(Json::objectValue);
+            z["d2d_nv12_frames"] = static_cast<Json::UInt64>(g.d2d_nv12_frames);
+            z["cpu_fallback_skips"] = static_cast<Json::UInt64>(g.cpu_fallback_skips);
+            z["eagain_retry_count"] = static_cast<Json::UInt64>(g.eagain_retry_count);
+            z["overlay_nv12_kernel_hits"] = static_cast<Json::UInt64>(g.overlay_nv12_kernel_hits);
+            z["overlay_nv12_passthrough"] = static_cast<Json::UInt64>(g.overlay_nv12_passthrough);
+            data["zerocopy_metrics"] = z;
+        }
         payload["data"] = data;
         return jsonResponse(payload, 200);
     }
