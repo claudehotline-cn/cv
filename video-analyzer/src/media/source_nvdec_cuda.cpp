@@ -148,6 +148,7 @@ bool NvdecRtspSource::readImpl(va::core::Frame& frame) {
             AVFrame* src = f;
             if (f->format == AV_PIX_FMT_CUDA) {
                 // Fill device surface metadata for downstream GPU preproc (NV12 fast path)
+                bool device_ok = false;
                 if (f->hw_frames_ctx) {
                     auto* hwfc = reinterpret_cast<AVHWFramesContext*>(f->hw_frames_ctx->data);
                     if (hwfc && hwfc->sw_format == AV_PIX_FMT_NV12 && f->data[0] && f->data[1]) {
@@ -160,16 +161,25 @@ bool NvdecRtspSource::readImpl(va::core::Frame& frame) {
                         frame.device.data1 = f->data[1];
                         frame.device.pitch0 = f->linesize[0];
                         frame.device.pitch1 = f->linesize[1];
+                        device_ok = true;
                     }
                 }
-                // transfer to CPU for BGR copy used by renderer/encoder fallback
+                if (device_ok) {
+                    // Zero-copy preferred path: do not materialize CPU BGR when device NV12 is present.
+                    frame.width = f->width;
+                    frame.height = f->height;
+                    frame.pts_ms = va::core::ms_now();
+                    ok = true;
+                    break;
+                }
+                // Fallback: transfer to CPU when device surface is not usable
                 if (av_hwframe_transfer_data(sw, f, 0) < 0) {
                     continue;
                 }
                 src = sw;
             }
 
-            // Setup sws on first frame
+            // CPU fallback path: convert to BGR for downstream CPU renderer/encoder
             if (!sws_) {
                 sws_ = sws_getContext(src->width, src->height, static_cast<AVPixelFormat>(src->format),
                                        src->width, src->height, AV_PIX_FMT_BGR24,
