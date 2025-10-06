@@ -154,6 +154,28 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     VA_LOG_INFO() << "[PipelineBuilder] pipeline created stream=" << source_cfg.stream_id
                   << " profile=" << filter_cfg.profile_id
                   << " uri=" << source_cfg.uri;
+
+    // Summarize runtime path (provider/GPU/IoBinding) and key engine toggles for quick diagnosis
+    try {
+        const auto runtime = engine_manager_.currentRuntimeStatus();
+        const auto engine  = engine_manager_.currentEngine();
+        auto getOpt = [&](const char* k){ auto it = engine.options.find(k); return it!=engine.options.end()? it->second : std::string(); };
+        const std::string s_nvdec = getOpt("use_nvdec");
+        const std::string s_nvenc = getOpt("use_nvenc");
+        const std::string s_iob   = getOpt("use_io_binding");
+        const std::string s_rcuda = getOpt("render_cuda");
+        const std::string s_rpass = getOpt("render_passthrough");
+        VA_LOG_INFO() << "[RuntimeSummary] provider=" << runtime.provider
+                      << " gpu_active=" << std::boolalpha << runtime.gpu_active
+                      << " io_binding=" << runtime.io_binding
+                      << " device_binding=" << runtime.device_binding
+                      << " nvdec=" << (s_nvdec.empty()?"":s_nvdec)
+                      << " nvenc=" << (s_nvenc.empty()?"":s_nvenc)
+                      << " io_bind_opt=" << (s_iob.empty()?"":s_iob)
+                      << " overlay(cuda=" << (s_rcuda.empty()?"":s_rcuda) << ", passthrough=" << (s_rpass.empty()?"":s_rpass) << ")";
+    } catch (...) {
+        // ignore summary failures
+    }
     return pipeline;
 }
 

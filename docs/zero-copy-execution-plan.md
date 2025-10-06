@@ -209,3 +209,12 @@
   - T+6s: processed_frames≈195, connected=true, fps≈25.98
   - T+9s: processed_frames≈444, connected=true, fps≈26.52
 - 结论: RTSP 推流正常、帧数稳定增长，链路工作正常。
+## 修改与测试 — 2025-10-06 16:42:00
+- 代码变更: 在 PipelineBuilder 输出 RuntimeSummary 日志，包含 provider/gpu_active/io_binding/device_binding 及关键引擎开关（use_nvdec/use_nvenc/use_io_binding/render_cuda/render_passthrough）。
+- 构建: build-ninja（增量构建）
+- 运行: 后端启动 → 引擎设置 → 订阅 RTSP
+- 关键日志:
+```
+[RuntimeSummary] provider=cuda gpu_active=true io_binding=true device_binding=true nvdec=true nvenc=true io_bind_opt=true overlay(cuda=true, passthrough=)
+```
+- 结论: 运行时路径摘要已可见，便于快速判定零拷贝链路是否命中。
