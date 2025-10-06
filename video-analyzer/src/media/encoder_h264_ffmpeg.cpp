@@ -318,6 +318,8 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     }
 
     bool fed_device_nv12 = false;
+    bool attempted_d2d = false;
+    static int dbg_send_ctr = 0;
 #if VA_HAS_CUDA_RUNTIME
     if (use_hwframes_ && hw_frames_ctx_ && frame.has_device_surface && frame.device.on_gpu &&
         frame.device.fmt == va::core::PixelFormat::NV12 && frame.device.data0 && frame.device.data1) {
@@ -344,10 +346,10 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                                                   static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
                                                   cudaMemcpyDeviceToDevice);
                     if (e2 == cudaSuccess) {
+                        attempted_d2d = true;
                         int sret = avcodec_send_frame(codec_ctx_, hwf);
                         if (sret == 0) {
                             fed_device_nv12 = true;
-                            va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
                         } else if (sret == AVERROR(EAGAIN)) {
                             // Drain pending packets then retry once
                             va::core::GlobalMetrics::eagain_retry_count.fetch_add(1, std::memory_order_relaxed);
@@ -360,8 +362,12 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                                 sret = avcodec_send_frame(codec_ctx_, hwf);
                                 if (sret == 0) {
                                     fed_device_nv12 = true;
-                                    va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
                                 }
+                            }
+                        } else {
+                            // limited debug for rare non-EAGAIN error
+                            if (((++dbg_send_ctr) % 100) == 1) {
+                                VA_LOG_DEBUG() << "[Encoder][nvenc] avcodec_send_frame(D2D) ret=" << sret;
                             }
                         }
                     }
@@ -430,6 +436,10 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     if (ret < 0) {
         VA_LOG_DEBUG() << "[Encoder] avcodec_receive_packet failed ret=" << ret;
         return false;
+    }
+
+    if (attempted_d2d) {
+        va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
     }
 
     out_packet.data.assign(packet_->data, packet_->data + packet_->size);
