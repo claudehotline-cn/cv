@@ -381,20 +381,38 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     if (!fed_device_nv12) {
         // Guard: in NVDEC zero-copy path, there may be no CPU BGR. Avoid noisy sws_scale warnings.
         if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
-            VA_LOG_DEBUG() << "[Encoder] skip CPU upload: no BGR for fallback (device NV12 frame)";
-            // Light drain again here: drop at most one pending packet to relieve pressure
-            int r = avcodec_receive_packet(codec_ctx_, packet_);
-            if (r == 0) { av_packet_unref(packet_); }
-            va::core::GlobalMetrics::cpu_fallback_skips.fetch_add(1, std::memory_order_relaxed);
-            // Return empty packet to keep pipeline alive without error this frame
-            out_packet.data.clear();
-            out_packet.keyframe = false;
-            out_packet.pts_ms = frame.pts_ms;
-            return true;
+            if (frame.has_device_surface && frame.device.on_gpu && frame.device.fmt == va::core::PixelFormat::NV12 &&
+                frame.device.data0 && frame.device.data1) {
+                // Device->Host NV12 fallback (keeps pipeline producing packets without BGR)
+                const uint8_t* srcY = static_cast<const uint8_t*>(frame.device.data0);
+                const uint8_t* srcUV = static_cast<const uint8_t*>(frame.device.data1);
+                const size_t srcPitchY = static_cast<size_t>(frame.device.pitch0);
+                const size_t srcPitchUV = static_cast<size_t>(frame.device.pitch1);
+                const size_t dstPitchY = static_cast<size_t>(frame_->linesize[0]);
+                const size_t dstPitchUV = static_cast<size_t>(frame_->linesize[1]);
+                (void)cudaMemcpy2D(frame_->data[0], dstPitchY, srcY, srcPitchY,
+                                   static_cast<size_t>(frame.width), static_cast<size_t>(frame.height),
+                                   cudaMemcpyDeviceToHost);
+                (void)cudaMemcpy2D(frame_->data[1], dstPitchUV, srcUV, srcPitchUV,
+                                   static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
+                                   cudaMemcpyDeviceToHost);
+                va::core::GlobalMetrics::cpu_fallback_skips.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                // no viable fallback; drain once and skip packet
+                VA_LOG_DEBUG() << "[Encoder] skip CPU upload: no BGR for fallback (device NV12 frame)";
+                int r = avcodec_receive_packet(codec_ctx_, packet_);
+                if (r == 0) { av_packet_unref(packet_); }
+                va::core::GlobalMetrics::cpu_fallback_skips.fetch_add(1, std::memory_order_relaxed);
+                out_packet.data.clear();
+                out_packet.keyframe = false;
+                out_packet.pts_ms = frame.pts_ms;
+                return true;
+            }
+        } else {
+            const uint8_t* src_slices[1] = { frame.bgr.data() };
+            int src_stride[1] = { frame.width * 3 };
+            sws_scale(sws_ctx_, src_slices, src_stride, 0, height_, frame_->data, frame_->linesize);
         }
-        const uint8_t* src_slices[1] = { frame.bgr.data() };
-        int src_stride[1] = { frame.width * 3 };
-        sws_scale(sws_ctx_, src_slices, src_stride, 0, height_, frame_->data, frame_->linesize);
     }
 
     frame_->pts = pts_++;
