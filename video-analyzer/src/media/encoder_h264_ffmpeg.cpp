@@ -285,6 +285,15 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         }
     }
 
+    // Light pre-drain: pull at most one pending packet to reduce encoder backpressure
+    {
+        int r = avcodec_receive_packet(codec_ctx_, packet_);
+        if (r == 0) {
+            // discard pre-drained packet here; this is just to keep the pipeline flowing
+            av_packet_unref(packet_);
+        }
+    }
+
     if (use_jpeg_) {
         if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
             return false;
@@ -363,6 +372,9 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         // Guard: in NVDEC zero-copy path, there may be no CPU BGR. Avoid noisy sws_scale warnings.
         if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
             VA_LOG_DEBUG() << "[Encoder] skip CPU upload: no BGR for fallback (device NV12 frame)";
+            // Light drain again here: drop at most one pending packet to relieve pressure
+            int r = avcodec_receive_packet(codec_ctx_, packet_);
+            if (r == 0) { av_packet_unref(packet_); }
             // Return empty packet to keep pipeline alive without error this frame
             out_packet.data.clear();
             out_packet.keyframe = false;
