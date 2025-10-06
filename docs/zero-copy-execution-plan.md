@@ -218,3 +218,21 @@
 [RuntimeSummary] provider=cuda gpu_active=true io_binding=true device_binding=true nvdec=true nvenc=true io_bind_opt=true overlay(cuda=true, passthrough=)
 ```
 - 结论: 运行时路径摘要已可见，便于快速判定零拷贝链路是否命中。
+## NVDEC 测试记录 — 2025-10-06 17:06:00
+- 引擎设置: 禁用 use_ffmpeg_source，启用 use_nvdec/use_nvenc/use_io_binding
+```json
+{ "type":"ort-cuda","device":0,
+  "options":{
+    "use_ffmpeg_source":false,
+    "use_nvdec":true,
+    "use_nvenc":true,
+    "use_io_binding":true
+  }}
+```
+- 日志要点:
+```
+[Factories] NVDEC preferred for URI rtsp://127.0.0.1:8554/camera_01
+[Factories] NVDEC source constructed.
+[RuntimeSummary] provider=cuda gpu_active=true io_binding=true device_binding=true ...
+```
+- 结论: 已命中 NVDEC 源 + CUDA IoBinding 路径，后续叠加默认使用 CUDA（无文字）。
