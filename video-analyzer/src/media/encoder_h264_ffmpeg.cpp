@@ -189,10 +189,15 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         // FFmpeg NVENC: prepare CUDA hwframes; mapping already applied above
         // Use NV12 for NVENC path
         codec_ctx_->pix_fmt = AV_PIX_FMT_NV12;
-        // Try to create CUDA hwdevice/hwframes before open
+        // Try to adopt external CUDA hwdevice (from NVDEC) or create our own
         AVBufferRef* device = nullptr;
-        if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_CUDA, nullptr, nullptr, 0) == 0) {
+#ifdef USE_FFMPEG
+        if (external_hw_device_ctx_) {
+            hw_device_ctx_ = av_buffer_ref(reinterpret_cast<AVBufferRef*>(external_hw_device_ctx_));
+        } else if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_CUDA, nullptr, nullptr, 0) == 0) {
             hw_device_ctx_ = device;
+        }
+        if (hw_device_ctx_) {
             AVBufferRef* frames_ref = av_hwframe_ctx_alloc(hw_device_ctx_);
             if (frames_ref) {
                 AVHWFramesContext* frames_ctx = (AVHWFramesContext*)frames_ref->data;
@@ -206,12 +211,13 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
                     hw_frames_ctx_ = frames_ref;
                     codec_ctx_->hw_frames_ctx = av_buffer_ref(hw_frames_ctx_);
                     use_hwframes_ = true;
-                    VA_LOG_INFO() << "[Encoder][nvenc] using CUDA hwframes (NV12)";
+                    VA_LOG_INFO() << "[Encoder][nvenc] using CUDA hwframes (NV12) (" << (external_hw_device_ctx_?"external":"internal") << ")";
                 } else {
                     av_buffer_unref(&frames_ref);
                 }
             }
         }
+#endif
     }
 
     VA_LOG_INFO() << "[Encoder] avcodec_open2 w=" << codec_ctx_->width

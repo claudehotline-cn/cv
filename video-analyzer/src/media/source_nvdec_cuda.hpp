@@ -58,6 +58,10 @@ private:
     bool awaiting_idr_ {true};
     bool idr_log_printed_ {false};
 #endif
+public:
+#ifdef USE_FFMPEG
+    AVBufferRef* hwDeviceCtx() const { return hw_device_ctx_ ? av_buffer_ref(hw_device_ctx_) : nullptr; }
+#endif
 };
 
 } // namespace va::media

@@ -27,6 +27,11 @@ public:
     bool encode(const core::Frame& frame, Packet& out_packet) override;
     void close() override;
 
+#ifdef USE_FFMPEG
+    // Optionally use an external CUDA hw device (e.g., NVDEC device) to build hwframes
+    void setExternalHwDevice(AVBufferRef* hw_device_ctx) { external_hw_device_ctx_ = hw_device_ctx; }
+#endif
+
 private:
     bool opened_ {false};
     int width_ {0};
@@ -44,6 +49,7 @@ private:
     bool use_hwframes_ {false};
     AVBufferRef* hw_device_ctx_ {nullptr};
     AVBufferRef* hw_frames_ctx_ {nullptr};
+    AVBufferRef* external_hw_device_ctx_ {nullptr};
 #endif
 };
 

@@ -12,6 +12,9 @@
 #include "analyzer/renderer_overlay_cuda.hpp"
 #include "core/engine_manager.hpp"
 #include "media/encoder_h264_ffmpeg.hpp"
+#if defined(USE_CUDA) && defined(WITH_NVDEC)
+#include "media/source_nvdec_cuda.hpp"
+#endif
 #include "media/source_switchable_rtsp.hpp"
 #include "media/source_ffmpeg_rtsp.hpp"
 #include "media/transport_webrtc_datachannel.hpp"

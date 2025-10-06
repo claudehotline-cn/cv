@@ -5,6 +5,10 @@
 #include "media/source.hpp"
 #include "media/source_switchable_rtsp.hpp"
 #include "media/source_ffmpeg_rtsp.hpp"
+#if defined(USE_CUDA) && defined(WITH_NVDEC)
+#include "media/source_nvdec_cuda.hpp"
+#endif
+#include "media/encoder_h264_ffmpeg.hpp"
 #include "media/transport.hpp"
 
 #include "core/logger.hpp"
@@ -124,6 +128,21 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     encoder_settings.tune = encoder_cfg.tune;
     encoder_settings.profile = encoder_cfg.profile;
     encoder_settings.codec = encoder_cfg.codec;
+
+    // If NVDEC source is used, pass its CUDA hwdevice to FFmpeg encoder to align contexts
+#if defined(USE_CUDA) && defined(WITH_NVDEC)
+    if (source && encoder) {
+        if (auto nvdec_src = std::dynamic_pointer_cast<va::media::NvdecRtspSource>(source)) {
+            if (auto ffenc = std::dynamic_pointer_cast<va::media::FfmpegH264Encoder>(encoder)) {
+#ifdef USE_FFMPEG
+                if (auto dev = nvdec_src->hwDeviceCtx()) {
+                    ffenc->setExternalHwDevice(dev);
+                }
+#endif
+            }
+        }
+    }
+#endif
 
     VA_LOG_INFO() << "[PipelineBuilder] opening encoder w=" << encoder_settings.width
                   << " h=" << encoder_settings.height
