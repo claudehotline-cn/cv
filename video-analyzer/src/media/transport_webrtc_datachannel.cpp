@@ -629,8 +629,19 @@ private:
                 }
             });
 
-            peer_connection->onIceStateChange([client_id](rtc::PeerConnection::IceState ice) {
+            peer_connection->onIceStateChange([this, client_id](rtc::PeerConnection::IceState ice) {
                 VA_LOG_INFO() << "[WebRTC] ICE state client=" << client_id << " -> " << ice;
+                bool mark_connected = (ice == rtc::PeerConnection::IceState::Connected || ice == rtc::PeerConnection::IceState::Completed);
+                {
+                    std::scoped_lock lock(clients_mutex_);
+                    auto it = clients_.find(client_id);
+                    if (it != clients_.end()) {
+                        it->second->connected = mark_connected;
+                        if (mark_connected && it->second->video_track) {
+                            it->second->video_track->requestKeyframe();
+                        }
+                    }
+                }
             });
 
             peer_connection->onGatheringStateChange([client_id](rtc::PeerConnection::GatheringState g) {
@@ -689,10 +700,12 @@ private:
             {
                 std::scoped_lock lock(clients_mutex_);
                 for (auto& [client_id, client] : clients_) {
-                    // Send frames when peer is connected; do not require DataChannel to be open
-                    if (client->connected) {
-                        clients.emplace_back(client_id, client->requested_source);
+                    // Send frames when peer is connected or track is open
+                    bool ready = client->connected;
+                    if (!ready && client->video_track) {
+                        try { ready = client->video_track->isOpen(); } catch (...) {}
                     }
+                    if (ready) clients.emplace_back(client_id, client->requested_source);
                 }
             }
 
