@@ -323,12 +323,17 @@ public:
         while (queue.size() > 10) {
             queue.pop();
         }
+        VA_LOG_DEBUG() << "[WebRTC] queued frame for source='" << source_id << "' size=" << queue.size();
     }
 
     bool HasEncodedFrame(const std::string& source_id) const {
         std::scoped_lock lock(mutex_);
         auto it = frames_.find(source_id);
-        return it != frames_.end() && !it->second.empty();
+        bool ok = it != frames_.end() && !it->second.empty();
+        if (!ok) {
+            VA_LOG_DEBUG() << "[WebRTC] no frame available for source='" << source_id << "'";
+        }
+        return ok;
     }
 
     std::vector<uint8_t> GetEncodedFrame(const std::string& source_id) {
@@ -711,10 +716,12 @@ private:
 
             for (const auto& [client_id, requested_source] : clients) {
                 if (!video_source_->HasEncodedFrame(requested_source)) {
+                    VA_LOG_DEBUG() << "[WebRTC] client='" << client_id << "' waiting frames for source='" << requested_source << "'";
                     continue;
                 }
                 auto encoded_frame = video_source_->GetEncodedFrame(requested_source);
                 if (encoded_frame.empty()) {
+                    VA_LOG_DEBUG() << "[WebRTC] client='" << client_id << "' got empty frame for source='" << requested_source << "'";
                     continue;
                 }
 
@@ -745,7 +752,7 @@ private:
                         client->video_track->sendFrame(std::move(h264), finfo);
                         frames_sent_count++;
                         if (frames_sent_count % 30 == 0) {
-                            VA_LOG_INFO() << "[WebRTC] tx video frame: +30 (last=" << encoded_frame.size() << " bytes)";
+                            VA_LOG_INFO() << "[WebRTC] tx video frame: +30 (last=" << encoded_frame.size() << " bytes) source='" << requested_source << "' client='" << client_id << "'";
                         }
                     }
                 } catch (const std::exception& ex) {
