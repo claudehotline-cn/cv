@@ -312,12 +312,8 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     // Lightweight warmup: run N inference passes with a zero tensor on CPU memory.
     // Initializes EP kernels/graphs to reduce the first-frame latency.
     try {
-        const int runs = std::max(0, impl_->options.warmup_runs);
-        if (runs <= 0) {
-            // warmup disabled
-            loaded_ = true;
-            return true;
-        }
+        // Decide warmup runs: 0=disable, -1=auto, >0=fixed
+        int runs_cfg = impl_->options.warmup_runs;
         Ort::AllocatorWithDefaultOptions warm_alloc;
         // Derive an input shape; replace dynamic dims with concrete values
         std::vector<int64_t> ishape;
@@ -335,6 +331,28 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
             } else {
                 for (auto& d : ishape) if (d <= 0) d = 1;
             }
+        }
+        // Auto runs based on model_path hint or input area
+        int runs = runs_cfg;
+        if (runs_cfg < 0) {
+            // Try parse model variant from path
+            int suggested = 1;
+            try {
+                // Very rough heuristic by input size
+                if (ishape.size() == 4) {
+                    const int64_t H = ishape[2];
+                    const int64_t W = ishape[3];
+                    const int64_t area = H * W;
+                    if (area >= 1024 * 1024) suggested = 3; // >= 1MP
+                    else if (area >= 640 * 640) suggested = 2; // >= 640^2
+                    else suggested = 1;
+                }
+            } catch (...) { suggested = 1; }
+            runs = suggested;
+        }
+        if (runs == 0) {
+            loaded_ = true;
+            return true;
         }
         size_t elem = 1;
         for (auto d : ishape) { elem *= static_cast<size_t>(d); }

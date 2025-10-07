@@ -155,7 +155,15 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         options.stage_device_outputs = findBool("stage_device_outputs", options.stage_device_outputs);
         options.tensor_host_pool_bytes = findSize("tensor_host_pool_bytes", options.tensor_host_pool_bytes);
         options.device_output_views = findBool("device_output_views", options.device_output_views);
-        options.warmup_runs = findInt("warmup_runs", options.warmup_runs);
+        // warmup_runs supports numeric or "auto" -> -1
+        if (auto itw = engine_desc.options.find("warmup_runs"); itw != engine_desc.options.end()) {
+            std::string v = toLower(itw->second);
+            if (v == "auto") {
+                options.warmup_runs = -1;
+            } else {
+                try { options.warmup_runs = std::stoi(v); } catch (...) { /* keep default */ }
+            }
+        }
         session->setOptions(options);
 #endif
 

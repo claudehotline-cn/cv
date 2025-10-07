@@ -720,8 +720,20 @@ struct RestServer::Impl {
         // IoBinding output policies
         engine_options["stage_device_outputs"] = getBool("stage_device_outputs", false);
         engine_options["device_output_views"] = getBool("device_output_views", false);
-        // Warmup controls
-        engine_options["warmup_runs"] = getInt("warmup_runs", 1);
+        // Warmup controls: echo string "auto" if configured as such, else int
+        {
+            auto it = cur.options.find("warmup_runs");
+            if (it != cur.options.end()) {
+                std::string v = toLower(it->second);
+                if (v == "auto") {
+                    engine_options["warmup_runs"] = "auto";
+                } else {
+                    engine_options["warmup_runs"] = getInt("warmup_runs", 1);
+                }
+            } else {
+                engine_options["warmup_runs"] = 1;
+            }
+        }
 
         engine["options"] = engine_options;
         data["engine"] = engine;
