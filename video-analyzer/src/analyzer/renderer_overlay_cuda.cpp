@@ -38,6 +38,7 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
         log_once("nv12-no-boxes", 0, has_kernels, 2, 0.0f, in);
         // metrics: NV12 passthrough hit
         va::core::GlobalMetrics::overlay_nv12_passthrough.fetch_add(1, std::memory_order_relaxed);
+        if (in.zc) { in.zc->overlay_nv12_passthrough++; }
         // Pass-through NV12 device frame when no boxes; keep zero-copy path alive
         out = in;
         return true;
@@ -81,6 +82,7 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
                         log_once("nv12-kernel", output.boxes.size(), true, thick, alpha, in);
                         // metrics: NV12 kernel draw hit
                         va::core::GlobalMetrics::overlay_nv12_kernel_hits.fetch_add(1, std::memory_order_relaxed);
+                        if (in.zc) { in.zc->overlay_nv12_kernel_hits++; }
                         cudaFree(d_boxes);
                         return true; // in-place device overlay; no host copies
                     }

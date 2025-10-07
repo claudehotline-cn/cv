@@ -857,15 +857,14 @@ struct RestServer::Impl {
             node["last_active_ms"] = info.last_active_ms;
             node["track_id"] = info.track_id;
             node["metrics"] = metricsToJson(info.metrics);
-            // Optional: include current global zero-copy counters to assist per-pipeline inspection
+            // Per-pipeline zero-copy metrics
             {
-                auto g = va::core::GlobalMetrics::snapshot();
                 Json::Value z(Json::objectValue);
-                z["d2d_nv12_frames"] = static_cast<Json::UInt64>(g.d2d_nv12_frames);
-                z["cpu_fallback_skips"] = static_cast<Json::UInt64>(g.cpu_fallback_skips);
-                z["eagain_retry_count"] = static_cast<Json::UInt64>(g.eagain_retry_count);
-                z["overlay_nv12_kernel_hits"] = static_cast<Json::UInt64>(g.overlay_nv12_kernel_hits);
-                z["overlay_nv12_passthrough"] = static_cast<Json::UInt64>(g.overlay_nv12_passthrough);
+                z["d2d_nv12_frames"] = static_cast<Json::UInt64>(info.zc.d2d_nv12_frames);
+                z["cpu_fallback_skips"] = static_cast<Json::UInt64>(info.zc.cpu_fallback_skips);
+                z["eagain_retry_count"] = static_cast<Json::UInt64>(info.zc.eagain_retry_count);
+                z["overlay_nv12_kernel_hits"] = static_cast<Json::UInt64>(info.zc.overlay_nv12_kernel_hits);
+                z["overlay_nv12_passthrough"] = static_cast<Json::UInt64>(info.zc.overlay_nv12_passthrough);
                 node["zerocopy_metrics"] = z;
             }
             node["transport_stats"] = transportStatsToJson(info.transport_stats);

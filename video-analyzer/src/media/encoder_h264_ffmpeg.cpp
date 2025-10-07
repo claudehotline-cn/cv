@@ -403,6 +403,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                         } else if (sret == AVERROR(EAGAIN)) {
                             // Drain pending packets then retry once
                             va::core::GlobalMetrics::eagain_retry_count.fetch_add(1, std::memory_order_relaxed);
+                            if (frame.zc) { frame.zc->eagain_retry_count++; }
                             int rret = 0; int drained = 0;
                             while ((rret = avcodec_receive_packet(codec_ctx_, packet_)) == 0) {
                                 av_packet_unref(packet_);
@@ -447,12 +448,14 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                                    static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
                                    cudaMemcpyDeviceToHost);
                 va::core::GlobalMetrics::cpu_fallback_skips.fetch_add(1, std::memory_order_relaxed);
+                if (frame.zc) { frame.zc->cpu_fallback_skips++; }
             } else {
                 // no viable fallback; drain once and skip packet
                 VA_LOG_DEBUG() << "[Encoder] skip CPU upload: no BGR for fallback (device NV12 frame)";
                 int r = avcodec_receive_packet(codec_ctx_, packet_);
                 if (r == 0) { av_packet_unref(packet_); }
                 va::core::GlobalMetrics::cpu_fallback_skips.fetch_add(1, std::memory_order_relaxed);
+                if (frame.zc) { frame.zc->cpu_fallback_skips++; }
                 out_packet.data.clear();
                 out_packet.keyframe = false;
                 out_packet.pts_ms = frame.pts_ms;
@@ -508,6 +511,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
 
     if (attempted_d2d) {
         va::core::GlobalMetrics::d2d_nv12_frames.fetch_add(1, std::memory_order_relaxed);
+        if (frame.zc) { frame.zc->d2d_nv12_frames++; }
     }
 
     out_packet.data.assign(packet_->data, packet_->data + packet_->size);

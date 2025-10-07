@@ -169,6 +169,7 @@ std::vector<TrackManager::PipelineInfo> TrackManager::listPipelines() const {
                 : entry.last_active_ms;
             info.track_id = entry.pipeline->streamId() + ":" + entry.pipeline->profileId();
             info.transport_stats = entry.pipeline->transportStats();
+            info.zc = entry.pipeline->zerocopyMetrics();
         } else {
             info.last_active_ms = entry.last_active_ms;
         }

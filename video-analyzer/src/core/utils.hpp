@@ -33,6 +33,14 @@ struct DeviceSurface {
     bool on_gpu {false};
 };
 
+struct ZeroCopyMetrics {
+    uint64_t d2d_nv12_frames {0};
+    uint64_t cpu_fallback_skips {0};
+    uint64_t eagain_retry_count {0};
+    uint64_t overlay_nv12_kernel_hits {0};
+    uint64_t overlay_nv12_passthrough {0};
+};
+
 struct Frame {
     int width {0};
     int height {0};
@@ -47,6 +55,8 @@ struct Frame {
     // When present, encoders can leverage av_hwframe_transfer_data for GPU→GPU transfer.
     std::shared_ptr<void> hw_frame;
 #endif
+    // Optional per-pipeline zero-copy metrics sink
+    ZeroCopyMetrics* zc {nullptr};
 };
 
 struct LetterboxMeta {

@@ -48,6 +48,7 @@ public:
         va::core::Pipeline::Metrics metrics;
         va::media::ITransport::Stats transport_stats;
         EncoderConfig encoder_cfg;
+        ZeroCopyMetrics zc;
     };
 
     std::vector<PipelineInfo> listPipelines() const;

@@ -176,6 +176,7 @@ bool Pipeline::pullFrame(core::Frame& frame) {
     bool ok = source_->read(frame);
     if (ok) {
         frame.pts_ms = ms_now();
+        frame.zc = &zc_metrics_;
     }
     return ok;
 }
@@ -190,6 +191,8 @@ bool Pipeline::processFrame(const core::Frame& in) {
         VA_LOG_DEBUG() << "[Pipeline] analyze() returned false";
         return false;
     }
+    // Ensure analyzed frame carries metrics sink
+    if (!analyzed.zc) analyzed.zc = &zc_metrics_;
 
     va::media::IEncoder::Packet packet;
     if (encoder_) {

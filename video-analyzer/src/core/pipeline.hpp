@@ -50,6 +50,7 @@ public:
     void recordFrameProcessed(double latency_ms);
     void recordFrameDropped();
     va::media::ITransport::Stats transportStats() const;
+    const ZeroCopyMetrics& zerocopyMetrics() const { return zc_metrics_; }
 
 private:
     void run();
@@ -72,6 +73,7 @@ private:
     std::atomic<double> avg_latency_ms_ {0.0};
     std::atomic<double> fps_ {0.0};
     std::atomic<double> last_timestamp_ms_ {0.0};
+    ZeroCopyMetrics zc_metrics_;
 };
 
 } // namespace va::core
