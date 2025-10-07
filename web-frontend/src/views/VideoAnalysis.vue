@@ -1,12 +1,12 @@
 <template>
   <div class="video-analysis">
     <el-row :gutter="20">
-      <!-- 分析控制面板 -->
+      <!-- 控制面板 -->
       <el-col :span="8">
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>分析控制</span>
+              <span>控制面板</span>
               <el-button size="small" type="primary" @click="goToSourceManager">
                 管理视频源
               </el-button>
@@ -27,13 +27,8 @@
                   :value="source.id"
                 />
               </el-select>
-              <div
-                v-if="!videoStore.videoSources.length"
-                class="no-sources-hint"
-              >
-                <el-text type="info" size="small">
-                  暂无视频源，请先到视频源管理页面添加
-                </el-text>
+              <div v-if="!videoStore.videoSources.length" class="no-sources-hint">
+                <el-text type="info" size="small">暂无视频源，请先前往视频源管理页面添加</el-text>
               </div>
             </el-form-item>
 
@@ -98,32 +93,13 @@
               >
                 <el-option
                   v-for="model in videoStore.filteredModels"
-                  v-if="model && model.id"
                   :key="model.id"
                   :label="model.name"
                   :value="model.id"
-                >
-                  <div class="model-option">
-                    <div class="model-name">{{ model.name }}</div>
-                    <div class="model-info">
-                      <el-tag
-                        :type="model.status === 'loaded' ? 'success' : 'info'"
-                        size="small"
-                      >
-                        {{ model.status === "loaded" ? "已加载" : "未加载" }}
-                      </el-tag>
-                      <span class="model-desc">{{ model.description }}</span>
-                    </div>
-                  </div>
-                </el-option>
+                />
               </el-select>
-              <div
-                v-if="!videoStore.filteredModels.length"
-                class="no-models-hint"
-              >
-                <el-text type="info" size="small">
-                  当前分析类型暂无可用模型
-                </el-text>
+              <div v-if="!videoStore.filteredModels.length" class="no-models-hint">
+                <el-text type="info" size="small">当前分析类型暂无可用模型</el-text>
               </div>
             </el-form-item>
 
@@ -158,7 +134,7 @@
         </el-card>
       </el-col>
 
-      <!-- 视频预览面板 -->
+      <!-- 视频预览区 -->
       <el-col :span="16">
         <el-card shadow="hover">
           <template #header>
@@ -171,109 +147,35 @@
               <p>请选择一个视频源</p>
             </div>
             <div v-else class="video-preview">
-              <!-- JPEG视频播放器 -->
-              <JpegVideoPlayer
-                ref="jpegPlayerRef"
-                :width="640"
-                :height="480"
-                :show-controls="true"
-                :show-detections="false"
-                @frame-received="onFrameReceived"
-                @error="onVideoError"
-              />
-
-              <!-- 备用: WebRTC视频流 (当不使用JPEG时) -->
               <video
                 ref="videoElement"
                 class="video-stream"
                 autoplay
                 muted
                 playsinline
-                style="display: none"
+                :style="{ display: showVideo ? 'block' : 'none' }"
               ></video>
-
-              <!-- WebRTC连接状态指示器 -->
               <div class="webrtc-status">
-                <el-tag
-                  :type="videoStore.webrtcConnected ? 'success' : 'danger'"
-                  size="small"
-                  effect="dark"
-                >
-                  {{
-                    videoStore.webrtcConnected ? "WebRTC已连接" : "WebRTC未连接"
-                  }}
+                <el-tag :type="videoStore.webrtcConnected ? 'success' : 'danger'" size="small" effect="dark">
+                  {{ videoStore.webrtcConnected ? 'WebRTC已连接' : 'WebRTC未连接' }}
                 </el-tag>
               </div>
-
-              <!-- 分析结果由后端绘制到帧上，前端不再叠加自绘框 -->
-
-              <!-- 视频流控制按钮 -->
               <div class="video-controls">
-                <el-button
-                  v-if="!videoStore.webrtcConnected"
-                  type="primary"
-                  size="small"
-                  @click="requestVideoStream"
-                >
+                <el-button v-if="!videoStore.webrtcConnected" type="primary" size="small" @click="requestVideoStream">
                   <el-icon><CaretRight /></el-icon>
                   开始视频流
                 </el-button>
-                <el-button
-                  v-else
-                  type="warning"
-                  size="small"
-                  @click="stopVideoStream"
-                >
+                <el-button v-else type="warning" size="small" @click="stopVideoStream">
                   <el-icon><VideoPause /></el-icon>
                   停止视频流
                 </el-button>
               </div>
             </div>
           </div>
-        </el-card>
 
-        <!-- 实时统计 -->
-        <el-card shadow="hover" style="margin-top: 20px">
-          <template #header>
-            <span>实时统计</span>
-          </template>
-
-          <el-row :gutter="20">
-            <el-col :span="6">
-              <el-statistic
-                title="检测对象数"
-                :value="currentDetectionCount"
-                :value-style="{ color: '#409EFF' }"
-              />
-            </el-col>
-            <el-col :span="6">
-              <el-statistic
-                title="分析帧数"
-                :value="analysisFrameCount"
-                :value-style="{ color: '#67C23A' }"
-              />
-            </el-col>
-            <el-col :span="6">
-              <el-statistic
-                title="平均置信度"
-                :value="averageConfidence"
-                suffix="%"
-                :value-style="{ color: '#E6A23C' }"
-              />
-            </el-col>
-            <el-col :span="6">
-              <el-statistic
-                title="处理延迟"
-                :value="processingDelay"
-                suffix="ms"
-                :value-style="{ color: '#F56C6C' }"
-              />
-            </el-col>
-          </el-row>
-
-          <!-- 检测结果历史 -->
+          <!-- 最近结果 -->
           <div v-if="recentResult?.detections.length" style="margin-top: 20px">
-            <el-divider content-position="left">最近检测结果</el-divider>
+            <el-divider content-position="left">最近检测</el-divider>
             <el-space wrap>
               <el-tag
                 v-for="(detection, index) in recentResult.detections"
@@ -290,6 +192,7 @@
       </el-col>
     </el-row>
   </div>
+  
 </template>
 
 <script setup lang="ts">
@@ -299,27 +202,31 @@ import { useVideoStore } from "@/stores/videoStore";
 import type { DetectionResult } from "@/types";
 import { CaretRight, VideoPause, Camera } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import JpegVideoPlayer from "@/components/JpegVideoPlayer.vue";
 
 const router = useRouter();
 const videoStore = useVideoStore();
 
-// 数据
+// 引用
 const videoElement = ref<HTMLVideoElement | null>(null);
-const jpegPlayerRef = ref<InstanceType<typeof JpegVideoPlayer> | null>(null);
+
 const startingAnalysis = ref(false);
 const stoppingAnalysis = ref(false);
 
+// 根据状态显示 video 标签
+const showVideo = computed(() => {
+  return videoStore.webrtcConnected || !!videoStore.videoStream;
+});
+
 // 标签映射
-const typeLabels = {
+const typeLabels: Record<string, string> = {
   camera: "摄像头",
   file: "文件",
   stream: "流",
 };
 
-const statusLabels = {
+const statusLabels: Record<string, string> = {
   active: "运行中",
-  inactive: "未激活",
+  inactive: "未运行",
   error: "错误",
 };
 
@@ -354,69 +261,6 @@ const recentResult = computed(() => {
   return videoStore.recentAnalysisResults[0];
 });
 
-const currentDetectionCount = computed(() => {
-  return recentResult.value?.detections.length || 0;
-});
-
-const analysisFrameCount = computed(() => {
-  return videoStore.analysisResults.length;
-});
-
-const averageConfidence = computed(() => {
-  if (!recentResult.value?.detections.length) return 0;
-  const sum = recentResult.value.detections.reduce(
-    (acc, det) => acc + det.confidence,
-    0,
-  );
-  return Math.round((sum / recentResult.value.detections.length) * 100);
-});
-
-const processingDelay = computed(() => {
-  // 模拟处理延迟
-  return Math.round(Math.random() * 100 + 50);
-});
-
-// 方法
-const startAnalysis = async () => {
-  startingAnalysis.value = true;
-  try {
-    await videoStore.startAnalysis(
-      videoStore.selectedSourceId,
-      videoStore.selectedAnalysisType,
-    );
-    console.log("✅ 开始分析成功");
-  } catch (error) {
-    console.error("❌ 开始分析失败:", error);
-    // 显示错误提示
-    ElMessage.error("开始分析失败: " + (error as Error).message);
-  } finally {
-    startingAnalysis.value = false;
-  }
-};
-
-const stopAnalysis = async () => {
-  stoppingAnalysis.value = true;
-  try {
-    await videoStore.stopAnalysis(videoStore.selectedSourceId);
-    console.log("✅ 停止分析成功");
-  } catch (error) {
-    console.error("❌ 停止分析失败:", error);
-    // 显示错误提示
-    ElMessage.error("停止分析失败: " + (error as Error).message);
-  } finally {
-    stoppingAnalysis.value = false;
-  }
-};
-
-const getDetectionBoxStyle = (detection: DetectionResult) => {
-  return {
-    left: `${detection.bbox.x}px`,
-    top: `${detection.bbox.y}px`,
-    width: `${detection.bbox.width}px`,
-    height: `${detection.bbox.height}px`,
-  };
-};
-
 const getDetectionTagType = (confidence: number) => {
   if (confidence >= 0.8) return "success";
   if (confidence >= 0.6) return "warning";
@@ -427,7 +271,7 @@ const goToSourceManager = () => {
   router.push("/video-source-manager");
 };
 
-// 模型选择相关方法
+// 模型/类型选择
 const onAnalysisTypeChange = (analysisType: string) => {
   videoStore.setSelectedAnalysisType(analysisType);
 };
@@ -441,70 +285,73 @@ const onModelChange = async (modelId: string) => {
   }
 };
 
-// WebRTC相关方法
+// WebRTC 方法
 const requestVideoStream = async () => {
-  // 如果WebRTC未连接，先重新连接
   if (!videoStore.webrtcConnected) {
-    console.log("🔗 WebRTC未连接，正在重新连接...");
+    console.log("🔌 WebRTC未连接，先连接再请求视频...");
     await videoStore.connectWebRTC();
-    // 等待连接建立后再请求视频流
     setTimeout(() => {
       videoStore.requestVideoStream();
-    }, 1000);
+    }, 500);
   } else {
     videoStore.requestVideoStream();
   }
 };
 
 const stopVideoStream = () => {
-  // 断开WebRTC连接
   videoStore.disconnectWebRTC();
-
-  // 清理本地视频元素
   if (videoElement.value) {
     videoElement.value.srcObject = null;
   }
-
-  // 清理JPEG播放器
-  if (jpegPlayerRef.value) {
-    jpegPlayerRef.value.clearCanvas();
-  }
-
   console.log("🛑 视频流已停止");
 };
 
-// JPEG播放器事件处理
-const onFrameReceived = (width: number, height: number) => {
-  // 帧接收处理（不输出日志）
+// 启停分析
+const startAnalysis = async () => {
+  startingAnalysis.value = true;
+  try {
+    await videoStore.startAnalysis(
+      videoStore.selectedSourceId,
+      videoStore.selectedAnalysisType,
+    );
+    console.log("✅ 开始分析成功");
+  } catch (error) {
+    console.error("❌ 开始分析失败:", error);
+    ElMessage.error("开始分析失败: " + (error as Error).message);
+  } finally {
+    startingAnalysis.value = false;
+  }
 };
 
-const onVideoError = (message: string) => {
-  console.error("❌ JPEG播放器错误:", message);
+const stopAnalysis = async () => {
+  stoppingAnalysis.value = true;
+  try {
+    await videoStore.stopAnalysis(videoStore.selectedSourceId);
+    console.log("✅ 停止分析成功");
+  } catch (error) {
+    console.error("❌ 停止分析失败:", error);
+    ElMessage.error("停止分析失败: " + (error as Error).message);
+  } finally {
+    stoppingAnalysis.value = false;
+  }
 };
 
-// 监听视频源变化，更新分析状态并重新请求视频流
+// 源变化时自动处理
 watch(
   () => videoStore.selectedSourceId,
   async (newSourceId, oldSourceId) => {
     if (newSourceId && newSourceId !== oldSourceId) {
-      console.log("📹 视频源已切换:", oldSourceId, "->", newSourceId);
-
-      // 如果WebRTC已连接，直接请求新源的视频流（不需要断开重连）
+      console.log("🎥 视频源切换:", oldSourceId, "->", newSourceId);
       if (videoStore.webrtcConnected) {
-        console.log("🔄 保持WebRTC连接，切换到新源:", newSourceId);
-        // 稍等一下让selectedSourceId更新完成
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        videoStore.requestVideoStream();
+        setTimeout(() => {
+          videoStore.requestVideoStream();
+        }, 100);
       } else {
-        // 如果未连接，先连接再请求
-        console.log("🔗 WebRTC未连接，正在连接并请求新源:", newSourceId);
         await videoStore.connectWebRTC();
         setTimeout(() => {
           videoStore.requestVideoStream();
-        }, 1000);
+        }, 500);
       }
-
-      // 更新分析状态
       await videoStore.getAnalysisStatus();
     }
   },
@@ -512,52 +359,33 @@ watch(
 
 // 生命周期
 onMounted(async () => {
-  console.log("🎬 VideoAnalysis组件已挂载");
+  console.log("🎬 VideoAnalysis 组件已挂载");
   videoStore.init();
 
-  // 等待WebRTC连接建立和DOM更新
   setTimeout(async () => {
-    console.log("🎥 准备设置视频元素和JPEG播放器");
-
-    // 设置JPEG视频播放器
-    if (jpegPlayerRef.value) {
-      console.log("📹 找到JPEG播放器，正在设置到store");
-      videoStore.setJpegVideoPlayer(jpegPlayerRef.value);
-    } else {
-      console.error("❌ JPEG播放器未找到");
-    }
-
-    // 设置备用视频元素
+    console.log("🎥 准备设置视频元素");
     if (videoElement.value) {
       console.log("📹 找到视频元素，正在设置到store");
       videoStore.setVideoElement(videoElement.value);
     }
 
-    // 每个客户端独立：刷新后自动开启分析
+    // 自动开启分析
     if (videoStore.selectedSourceId) {
-      console.log("🎬 自动开启分析（新连接默认开启）");
       try {
         await videoStore.startAnalysis(
           videoStore.selectedSourceId,
           videoStore.selectedAnalysisType,
         );
       } catch (error) {
-        console.error("自动开启分析失败:", error);
+        console.error("自动启动分析失败:", error);
       }
     }
 
-    // 自动请求视频流（如果已选择源）
-    if (videoStore.selectedSourceId) {
-      console.log("🎬 自动请求视频流, sourceId:", videoStore.selectedSourceId);
-      setTimeout(() => {
-        videoStore.requestVideoStream();
-      }, 500);
-    }
-  }, 1000); // 增加延迟确保WebRTC客户端已初始化
+    // 不在此处自动请求视频流，避免与 onConnected 重复触发
+  }, 500);
 });
 
 onUnmounted(() => {
-  // 清理WebRTC连接
   videoStore.disconnectWebRTC();
   startingAnalysis.value = false;
   stoppingAnalysis.value = false;

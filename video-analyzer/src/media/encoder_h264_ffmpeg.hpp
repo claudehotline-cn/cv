@@ -50,6 +50,9 @@ private:
     AVBufferRef* hw_device_ctx_ {nullptr};
     AVBufferRef* hw_frames_ctx_ {nullptr};
     AVBufferRef* external_hw_device_ctx_ {nullptr};
+    // Cached SPS/PPS (Annex B) built from extradata (AVCC) for keyframe prefixing
+    std::vector<uint8_t> spspps_annexb_;
+    bool spspps_ready_ {false};
 #endif
 };
 

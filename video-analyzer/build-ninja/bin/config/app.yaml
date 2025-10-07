@@ -8,8 +8,8 @@ engine:
     trt_fp16: true
     trt_workspace_mb: 2048
 sfu:
-  whip_base: "http://mediamtx:8889"
-  whep_base: "http://mediamtx:8889"
+  whip_base: ""
+  whep_base: ""
 orchestration:
   idle_timeout_ms: 60000
   reap_interval_ms: 5000

@@ -21,7 +21,7 @@ profiles:
       profile: baseline
       codec: h264_nvenc
     publish:
-      whip_url_template: "${whip_base}/${stream}_det_720p/whip"
+      whip_url_template: ""
   seg_720p:
     task: seg
     model:
@@ -44,4 +44,4 @@ profiles:
       profile: baseline
       codec: h264_nvenc
     publish:
-      whip_url_template: "${whip_base}/${stream}_seg_720p/whip"
+      whip_url_template: ""

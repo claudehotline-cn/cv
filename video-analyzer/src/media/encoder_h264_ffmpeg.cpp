@@ -230,6 +230,37 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         return false;
     }
 
+    // Build SPS/PPS (Annex B) from extradata (if present)
+    spspps_annexb_.clear();
+    spspps_ready_ = false;
+    if (codec_ctx_->extradata && codec_ctx_->extradata_size > 0) {
+        const uint8_t* ed = codec_ctx_->extradata;
+        size_t esz = static_cast<size_t>(codec_ctx_->extradata_size);
+        // If extradata is AVCC (starts with 1), parse SPS/PPS and convert to Annex B
+        if (esz >= 7 && ed[0] == 1) {
+            size_t pos = 5; // skip version(1), profile(1), compat(1), level(1), 6bits+2bits lengthSizeMinusOne
+            if (pos < esz) {
+                uint8_t numSps = ed[pos++] & 0x1F;
+                auto push_start_code = [&](std::vector<uint8_t>& v){ const uint8_t sc[4]={0,0,0,1}; v.insert(v.end(), sc, sc+4); };
+                for (uint8_t i=0;i<numSps && pos+2<=esz;i++) {
+                    uint16_t len = (static_cast<uint16_t>(ed[pos])<<8) | ed[pos+1]; pos+=2;
+                    if (pos+len<=esz) { push_start_code(spspps_annexb_); spspps_annexb_.insert(spspps_annexb_.end(), ed+pos, ed+pos+len); pos+=len; }
+                }
+                if (pos<esz) {
+                    uint8_t numPps = ed[pos++];
+                    for (uint8_t i=0;i<numPps && pos+2<=esz;i++) {
+                        uint16_t len = (static_cast<uint16_t>(ed[pos])<<8) | ed[pos+1]; pos+=2;
+                        if (pos+len<=esz) { push_start_code(spspps_annexb_); spspps_annexb_.insert(spspps_annexb_.end(), ed+pos, ed+pos+len); pos+=len; }
+                    }
+                }
+                if (!spspps_annexb_.empty()) {
+                    spspps_ready_ = true;
+                    VA_LOG_INFO() << "[Encoder] built SPS/PPS (Annex B) from extradata, bytes=" << spspps_annexb_.size();
+                }
+            }
+        }
+    }
+
     frame_ = av_frame_alloc();
     packet_ = av_packet_alloc();
     if (!frame_ || !packet_) {
@@ -515,6 +546,14 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     }
 
     out_packet.data.assign(packet_->data, packet_->data + packet_->size);
+    // If keyframe and SPS/PPS available, prepend them to ensure decoders can start
+    if (out_packet.keyframe && spspps_ready_ && !spspps_annexb_.empty()) {
+        std::vector<uint8_t> joined;
+        joined.reserve(spspps_annexb_.size() + out_packet.data.size());
+        joined.insert(joined.end(), spspps_annexb_.begin(), spspps_annexb_.end());
+        joined.insert(joined.end(), out_packet.data.begin(), out_packet.data.end());
+        out_packet.data.swap(joined);
+    }
     out_packet.keyframe = (packet_->flags & AV_PKT_FLAG_KEY) != 0;
     out_packet.pts_ms = frame.pts_ms;
     av_packet_unref(packet_);

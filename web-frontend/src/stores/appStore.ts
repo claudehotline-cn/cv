@@ -42,7 +42,7 @@ export const useAppStore = defineStore("app", () => {
   // WebRTC相关方法
   const initWebRTC = () => {
     const config: WebRTCConfig = {
-      signalingServerUrl: "ws://localhost:8083",
+      signalingServerUrl: "ws://127.0.0.1:8083",
       stunServers: [
         "stun:stun.l.google.com:19302",
         "stun:stun1.l.google.com:19302",
@@ -289,3 +289,4 @@ export const useAppStore = defineStore("app", () => {
     init,
   };
 });
+

@@ -10,7 +10,7 @@ export default defineConfig({
     },
   },
   server: {
-    host: "localhost",
+    host: true,
     port: 30000,
     proxy: {
       "/api": {
@@ -29,15 +29,15 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/analyzer/, ""),
       },
-      // WebRTC信令服务代理
+      // WebRTC信令服务代理（后端监听 8083）
       "/signaling": {
-        target: "ws://localhost:8889",
+        target: "ws://127.0.0.1:8083",
         ws: true,
         changeOrigin: true,
       },
-      // WebRTC WebSocket代理
+      // WebRTC WebSocket代理（兼容备用路径）
       "/api/webrtc": {
-        target: "ws://localhost:8889",
+        target: "ws://127.0.0.1:8083",
         ws: true,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/webrtc/, ""),
@@ -49,3 +49,4 @@ export default defineConfig({
     assetsDir: "assets",
   },
 });
+

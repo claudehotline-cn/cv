@@ -58,6 +58,8 @@ export const useVideoStore = defineStore("video", () => {
   const jpegVideoPlayer = ref<any>(null);
   const lastFrameTimestamp = ref(0);
   const frameLatency = ref(0);
+  // 防止重复请求视频流
+  let initialRequested = false;
 
   // 计算属性
   const activeVideoSources = computed(() =>
@@ -327,7 +329,7 @@ export const useVideoStore = defineStore("video", () => {
     isAnalyzing.value = true;
     await fetchVideoSources();
     // 无论连接状态，尝试请求一次，已连接则直接触发 offer，未连接则在 onConnected 再请求
-    requestVideoStream();
+    // auto-request removed to avoid duplicate offer
   };
 
   const stopAnalysis = async (sourceId: string) => {
@@ -351,6 +353,7 @@ export const useVideoStore = defineStore("video", () => {
     });
 
     isAnalyzing.value = false;
+    initialRequested = false;
     await fetchVideoSources();
   };
 
@@ -358,13 +361,11 @@ export const useVideoStore = defineStore("video", () => {
     const sig =
       (import.meta as any).env?.VITE_SIGNALING_URL ||
       // 默认直连后端信令端口，避免 dev 代理/HMR 干扰
-      "ws://127.0.0.1:8889";
+      `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/signaling`;
     const config: WebRTCConfig = {
       signalingServerUrl: sig,
-      stunServers: [
-        "stun:stun.l.google.com:19302",
-        "stun:stun1.l.google.com:19302",
-      ],
+      // 本机联调：禁用 STUN，仅用 host 候选（环回）
+      stunServers: [],
     };
 
     webrtcClient.value = new WebRTCClient(config);
@@ -372,9 +373,7 @@ export const useVideoStore = defineStore("video", () => {
       onConnected: () => {
         webrtcConnected.value = true;
         console.log("[videoStore] WebRTC connected");
-        if (selectedSourceId.value) {
-          requestVideoStream();
-        }
+        if (!initialRequested && selectedSourceId.value) { requestVideoStream(); initialRequested = true; }
       },
       onDisconnected: () => {
         webrtcConnected.value = false;
@@ -410,6 +409,7 @@ export const useVideoStore = defineStore("video", () => {
     webrtcClient.value = null;
     webrtcConnected.value = false;
     videoStream.value = null;
+    initialRequested = false;
   };
 
   const setVideoElement = (element: HTMLVideoElement) => {
@@ -419,10 +419,17 @@ export const useVideoStore = defineStore("video", () => {
     }
   };
 
+  // 防抖：同一 source 在短时间内重复请求会被忽略
+  let lastReqAt = 0;
+  let lastReqSource = "";
   const requestVideoStream = () => {
-    if (webrtcClient.value && selectedSourceId.value) {
-      webrtcClient.value.requestVideoStream(selectedSourceId.value);
-    }
+    const sid = selectedSourceId.value;
+    if (!webrtcClient.value || !sid) return;
+    const now = Date.now();
+    if (lastReqSource === sid && now - lastReqAt < 1000) return;
+    lastReqSource = sid;
+    lastReqAt = now;
+    webrtcClient.value.requestVideoStream(sid);
   };
 
   const setJpegVideoPlayer = (player: any) => {
@@ -557,3 +564,7 @@ async function apiRequest<T = any>(
   }
   return json as T;
 }
+
+
+
+
