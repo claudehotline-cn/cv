@@ -834,8 +834,13 @@ struct WebRTCDataChannelTransport::Impl {
             return false;
         }
 
+        // Normalize key so that it matches requested_source (usually plain stream id without profile suffix)
+        std::string key = track_id;
+        auto pos = key.find(':');
+        if (pos != std::string::npos) key = key.substr(0, pos);
+
         std::vector<uint8_t> buffer(data, data + size);
-        streamer_.PushEncodedFrame(track_id, std::move(buffer));
+        streamer_.PushEncodedFrame(key, std::move(buffer));
 
         std::scoped_lock lock(mutex_);
         auto& stat = track_stats_[track_id];
