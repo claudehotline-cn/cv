@@ -220,3 +220,6 @@
 70	2461	7815133406256919	CMakeFiles/VideoAnalyzer.dir/src/analyzer/ort_session.cpp.obj	9382150b42e0260f
 168	2839	7815133407240216	CMakeFiles/VideoAnalyzer.dir/src/server/rest.cpp.obj	7b32ffc337cdb3d9
 2840	3130	7815133433959497	bin/VideoAnalyzer.exe	6c19d8b91a8dbaf8
+3	45	7815137704235723	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+51	1362	7815137704715295	CMakeFiles/VideoAnalyzer.dir/src/server/rest.cpp.obj	7b32ffc337cdb3d9
+1362	1600	7815137717817271	bin/VideoAnalyzer.exe	6c19d8b91a8dbaf8

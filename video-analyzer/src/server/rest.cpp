@@ -807,15 +807,22 @@ struct RestServer::Impl {
         data["dropped_frames"] = static_cast<Json::UInt64>(stats.dropped_frames);
         data["transport_packets"] = static_cast<Json::UInt64>(stats.transport_packets);
         data["transport_bytes"] = static_cast<Json::UInt64>(stats.transport_bytes);
-        // Global zero-copy metrics snapshot
+        // Aggregate zero-copy metrics across pipelines (sum of per-pipeline)
         {
-            auto g = va::core::GlobalMetrics::snapshot();
+            uint64_t d2d = 0, cpu_fb = 0, eagain = 0, ov_k = 0, ov_p = 0;
+            for (const auto& info : app.pipelines()) {
+                d2d   += info.zc.d2d_nv12_frames;
+                cpu_fb+= info.zc.cpu_fallback_skips;
+                eagain+= info.zc.eagain_retry_count;
+                ov_k  += info.zc.overlay_nv12_kernel_hits;
+                ov_p  += info.zc.overlay_nv12_passthrough;
+            }
             Json::Value z(Json::objectValue);
-            z["d2d_nv12_frames"] = static_cast<Json::UInt64>(g.d2d_nv12_frames);
-            z["cpu_fallback_skips"] = static_cast<Json::UInt64>(g.cpu_fallback_skips);
-            z["eagain_retry_count"] = static_cast<Json::UInt64>(g.eagain_retry_count);
-            z["overlay_nv12_kernel_hits"] = static_cast<Json::UInt64>(g.overlay_nv12_kernel_hits);
-            z["overlay_nv12_passthrough"] = static_cast<Json::UInt64>(g.overlay_nv12_passthrough);
+            z["d2d_nv12_frames"] = static_cast<Json::UInt64>(d2d);
+            z["cpu_fallback_skips"] = static_cast<Json::UInt64>(cpu_fb);
+            z["eagain_retry_count"] = static_cast<Json::UInt64>(eagain);
+            z["overlay_nv12_kernel_hits"] = static_cast<Json::UInt64>(ov_k);
+            z["overlay_nv12_passthrough"] = static_cast<Json::UInt64>(ov_p);
             data["zerocopy_metrics"] = z;
         }
         payload["data"] = data;
