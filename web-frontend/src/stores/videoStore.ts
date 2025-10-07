@@ -326,10 +326,8 @@ export const useVideoStore = defineStore("video", () => {
 
     isAnalyzing.value = true;
     await fetchVideoSources();
-
-    if (!webrtcConnected.value) {
-      requestVideoStream();
-    }
+    // 无论连接状态，尝试请求一次，已连接则直接触发 offer，未连接则在 onConnected 再请求
+    requestVideoStream();
   };
 
   const stopAnalysis = async (sourceId: string) => {
@@ -373,6 +371,9 @@ export const useVideoStore = defineStore("video", () => {
       onConnected: () => {
         webrtcConnected.value = true;
         console.log("[videoStore] WebRTC connected");
+        if (selectedSourceId.value) {
+          requestVideoStream();
+        }
       },
       onDisconnected: () => {
         webrtcConnected.value = false;
