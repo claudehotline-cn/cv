@@ -15,7 +15,7 @@
 
           <el-table
             :data="videoStore.videoSources"
-            size="medium"
+            size="default"
             style="width: 100%"
           >
             <el-table-column prop="name" label="名称" width="150" />

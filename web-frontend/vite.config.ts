@@ -31,13 +31,13 @@ export default defineConfig({
       },
       // WebRTC信令服务代理
       "/signaling": {
-        target: "ws://localhost:8083",
+        target: "ws://localhost:8889",
         ws: true,
         changeOrigin: true,
       },
       // WebRTC WebSocket代理
       "/api/webrtc": {
-        target: "ws://localhost:8083",
+        target: "ws://localhost:8889",
         ws: true,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/webrtc/, ""),
