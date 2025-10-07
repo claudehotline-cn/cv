@@ -5,6 +5,7 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <json/json.h>
 #include <rtc/rtc.hpp>
+#include <rtc/h264rtppacketizer.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -443,6 +444,12 @@ public:
                 vdesc.addH264Codec(96, rtc::DEFAULT_H264_VIDEO_PROFILE);
                 VA_LOG_INFO() << "[WebRTC] adding video track mid='video' codec=H264 pt=96 for client " << client_id;
                 client->video_track = peer_connection->addTrack(vdesc);
+                // Explicitly set H264 RTP packetizer to be safe
+                try {
+                    auto h = std::make_shared<rtc::H264RtpPacketizer>();
+                    h->setPayloadType(96);
+                    client->video_track->setMediaHandler(h);
+                } catch (...) {}
             } catch (const std::exception& ex) {
                 VA_LOG_ERROR() << "Failed to add H264 video track: " << ex.what();
             }
@@ -714,15 +721,19 @@ private:
                 // 仅通过 WebRTC 视频轨发送 H.264（让浏览器直接解码显示）
                 try {
                     if (client->video_track) {
+                        ensure_annexb(encoded_frame);
                         rtc::binary h264;
                         h264.resize(encoded_frame.size());
                         std::memcpy(h264.data(), encoded_frame.data(), encoded_frame.size());
                         auto now = std::chrono::steady_clock::now();
                         auto elapsed = std::chrono::duration<double>(now - t0);
                         rtc::FrameInfo finfo(elapsed);
-                        finfo.payloadType = 96; // match the H264 PT declared in SDP
+                        finfo.payloadType = 96; // must match SDP payload type
                         client->video_track->sendFrame(std::move(h264), finfo);
                         frames_sent_count++;
+                        if (frames_sent_count % 30 == 0) {
+                            VA_LOG_INFO() << "[WebRTC] tx video frame: +30 (last=" << encoded_frame.size() << " bytes)";
+                        }
                     }
                 } catch (const std::exception& ex) {
                     VA_LOG_WARN() << "Failed to send H264 on video track for client " << client_id << ": " << ex.what();
@@ -928,3 +939,25 @@ ITransport::Stats WebRTCDataChannelTransport::stats() const {
 
 } // namespace va::media
 
+// Ensure H.264 bitstream is Annex B (0x00000001 start codes). If input appears to be AVCC (length-prefixed),
+// convert to Annex B by rewriting each NAL with a 4-byte start code.
+static inline void ensure_annexb(std::vector<uint8_t>& buf) {
+    if (buf.size() < 4) return;
+    if (buf[0] == 0x00 && buf[1] == 0x00 && buf[2] == 0x00 && buf[3] == 0x01) return; // already Annex B
+    // Try AVCC conversion
+    std::vector<uint8_t> out;
+    size_t pos = 0;
+    auto push_sc = [&out]() { const uint8_t sc[4] = {0,0,0,1}; out.insert(out.end(), sc, sc+4); };
+    while (pos + 4 <= buf.size()) {
+        uint32_t len = (static_cast<uint32_t>(buf[pos]) << 24) | (static_cast<uint32_t>(buf[pos+1]) << 16)
+                     | (static_cast<uint32_t>(buf[pos+2]) << 8)  | (static_cast<uint32_t>(buf[pos+3]));
+        pos += 4;
+        if (len == 0 || pos + len > buf.size()) { // invalid, abort conversion
+            return;
+        }
+        push_sc();
+        out.insert(out.end(), buf.begin()+pos, buf.begin()+pos+len);
+        pos += len;
+    }
+    if (!out.empty()) buf.swap(out);
+}
