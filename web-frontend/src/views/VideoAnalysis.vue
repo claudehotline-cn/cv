@@ -98,6 +98,7 @@
               >
                 <el-option
                   v-for="model in videoStore.filteredModels"
+                  v-if="model && model.id"
                   :key="model.id"
                   :label="model.name"
                   :value="model.id"

@@ -357,7 +357,8 @@ export const useVideoStore = defineStore("video", () => {
   const initWebRTC = () => {
     const sig =
       (import.meta as any).env?.VITE_SIGNALING_URL ||
-      `${location.origin.replace(/^http/, "ws")}/signaling`;
+      // 默认直连后端信令端口，避免 dev 代理/HMR 干扰
+      "ws://127.0.0.1:8889";
     const config: WebRTCConfig = {
       signalingServerUrl: sig,
       stunServers: [
