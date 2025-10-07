@@ -261,15 +261,7 @@ export const useVideoStore = defineStore("video", () => {
     try {
       const data = await apiRequest<any[]>("/pipelines");
       const list = Array.isArray(data) ? data : [];
-      const merged = mergePipelinesWithDefaults(list);
-      // Attach per-pipeline zerocopy metrics to sources by id if available
-      merged.forEach((src) => {
-        const p = list.find((it) => it.track_id === `${src.id}:det_720p` || it.stream_id === src.id || it.key?.startsWith(`${src.id}:`));
-        if (p && p.zerocopy_metrics) {
-          (src as any).zc = p.zerocopy_metrics;
-        }
-      });
-      videoSources.value = merged;
+      videoSources.value = mergePipelinesWithDefaults(list);
 
       if (videoSources.value.length > 0 && !selectedSourceId.value) {
         selectedSourceId.value = videoSources.value[0].id;
@@ -357,11 +349,8 @@ export const useVideoStore = defineStore("video", () => {
   };
 
   const initWebRTC = () => {
-    const sig =
-      (import.meta as any).env?.VITE_SIGNALING_URL ||
-      `${location.origin.replace(/^http/, "ws")}/signaling`;
     const config: WebRTCConfig = {
-      signalingServerUrl: sig,
+      signalingServerUrl: "ws://localhost:8083",
       stunServers: [
         "stun:stun.l.google.com:19302",
         "stun:stun1.l.google.com:19302",
@@ -445,16 +434,6 @@ export const useVideoStore = defineStore("video", () => {
     }
   };
 
-  // 设置后端引擎参数（渲染方式、NMS、IoBinding、Warmup、覆盖器参数等）
-  const setEngine = async (options: Record<string, unknown>) => {
-    const body = {
-      type: "ort-cuda",
-      device: 0,
-      options,
-    };
-    await apiRequest("/engine/set", { method: "POST", body: JSON.stringify(body) });
-  };
-
   const init = async () => {
     connectWebSocket();
     connectWebRTC();
@@ -506,7 +485,6 @@ export const useVideoStore = defineStore("video", () => {
     getAnalysisStatus,
     fetchModels,
     fetchVideoSources,
-    setEngine,
 
     // WebRTC 操作
     connectWebRTC,
@@ -523,35 +501,3 @@ export const useVideoStore = defineStore("video", () => {
 });
 
 async function apiRequest<T = any>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const init: RequestInit = { ...options };
-  const headers: Record<string, string> = {};
-  if (options.headers) {
-    Object.assign(headers, options.headers as Record<string, string>);
-  }
-  if (init.body && !("Content-Type" in headers)) {
-    headers["Content-Type"] = "application/json";
-  }
-  if (Object.keys(headers).length > 0) {
-    init.headers = headers;
-  }
-
-  const response = await fetch(`${API_BASE}${path}`, init);
-  const json = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    const message = json?.error || json?.message || response.statusText;
-    throw new Error(message || "Request failed");
-  }
-
-  if (json && json.success === false) {
-    throw new Error(json.error || json.message || "Request failed");
-  }
-
-  if (json && Object.prototype.hasOwnProperty.call(json, "data")) {
-    return json.data as T;
-  }
-  return json as T;
-}

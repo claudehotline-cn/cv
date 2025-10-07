@@ -6,6 +6,7 @@ export interface VideoSource {
   status: "active" | "inactive" | "error";
   fps: number;
   resolution: string;
+  zc?: ZeroCopyMetrics;
 }
 
 export interface AnalysisType {
@@ -41,4 +42,12 @@ export interface WebSocketMessage {
   source_id?: string;
   data: any;
   timestamp: number;
+}
+
+export interface ZeroCopyMetrics {
+  d2d_nv12_frames: number;
+  cpu_fallback_skips: number;
+  eagain_retry_count: number;
+  overlay_nv12_kernel_hits: number;
+  overlay_nv12_passthrough: number;
 }

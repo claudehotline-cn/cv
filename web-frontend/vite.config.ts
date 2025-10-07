@@ -13,6 +13,10 @@ export default defineConfig({
     host: "localhost",
     port: 30000,
     proxy: {
+      "/api": {
+        target: "http://localhost:8082",
+        changeOrigin: true,
+      },
       // 视频源管理API代理
       "/api/source-manager": {
         target: "http://localhost:8081/api",
