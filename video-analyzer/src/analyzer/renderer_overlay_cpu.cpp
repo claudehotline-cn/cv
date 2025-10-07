@@ -22,7 +22,10 @@ bool OverlayRendererCPU::draw(const core::Frame& in, const core::ModelOutput& ou
     cv::Mat img(out.height, out.width, CV_8UC3, out.bgr.data());
 
     const int base = std::min(out.width, out.height);
-    const int thickness = std::max(2, base / 400);
+    int thickness = std::max(2, base / 400);
+    if (const char* t = std::getenv("VA_OVERLAY_THICKNESS")) {
+        try { int v = std::stoi(t); if (v > 0) thickness = v; } catch (...) {}
+    }
     const double fontScale = std::max(0.4, base / 1000.0);
 
     // Optional semi-transparent fill

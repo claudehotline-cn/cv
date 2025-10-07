@@ -22,6 +22,7 @@
 #include "core/logger.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
 // Forward declarations for optional factories (defined in va::media)
 namespace va { namespace media {
@@ -249,6 +250,23 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             if (!set) {
                 auto renderer = std::make_shared<va::analyzer::OverlayRendererCPU>();
                 analyzer->setRenderer(renderer);
+            }
+        }
+
+        // Overlay tuning via engine options -> environment bridge (used by renderers)
+        {
+            auto set_env = [](const char* key, const std::string& val){
+#ifdef _WIN32
+                _putenv_s(key, val.c_str());
+#else
+                setenv(key, val.c_str(), 1);
+#endif
+            };
+            if (auto it = engine_desc.options.find("overlay_thickness"); it != engine_desc.options.end()) {
+                set_env("VA_OVERLAY_THICKNESS", it->second);
+            }
+            if (auto it = engine_desc.options.find("overlay_alpha"); it != engine_desc.options.end()) {
+                set_env("VA_OVERLAY_ALPHA", it->second);
             }
         }
 

@@ -696,6 +696,11 @@ struct RestServer::Impl {
             if (it == cur.options.end()) return fallback;
             try { return static_cast<uint64_t>(std::stoll(it->second)); } catch (...) { return fallback; }
         };
+        auto getDbl = [&](const char* key, double fallback){
+            auto it = cur.options.find(key);
+            if (it == cur.options.end()) return fallback;
+            try { return std::stod(it->second); } catch (...) { return fallback; }
+        };
 
         Json::Value engine_options(Json::objectValue);
         // Core execution options
@@ -717,6 +722,9 @@ struct RestServer::Impl {
         engine_options["render_cuda"] = getBool("render_cuda", false);
         engine_options["render_passthrough"] = getBool("render_passthrough", false);
         engine_options["use_cuda_nms"] = getBool("use_cuda_nms", false);
+        // Overlay tuning
+        engine_options["overlay_thickness"] = getInt("overlay_thickness", 0);
+        engine_options["overlay_alpha"] = getDbl("overlay_alpha", 0.0);
         // IoBinding output policies
         engine_options["stage_device_outputs"] = getBool("stage_device_outputs", false);
         engine_options["device_output_views"] = getBool("device_output_views", false);
