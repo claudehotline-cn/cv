@@ -309,10 +309,15 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     impl_->resolved_provider = provider_appended ? provider : std::string{"cpu"};
     impl_->cpu_fallback = gpu_requested && !provider_appended;
 
-    // Lightweight warmup: run a single inference pass with a zero tensor on CPU memory.
-    // This initializes EP kernels/graphs and reduces the first-frame latency without
-    // depending on upstream frame availability.
+    // Lightweight warmup: run N inference passes with a zero tensor on CPU memory.
+    // Initializes EP kernels/graphs to reduce the first-frame latency.
     try {
+        const int runs = std::max(0, impl_->options.warmup_runs);
+        if (runs <= 0) {
+            // warmup disabled
+            loaded_ = true;
+            return true;
+        }
         Ort::AllocatorWithDefaultOptions warm_alloc;
         // Derive an input shape; replace dynamic dims with concrete values
         std::vector<int64_t> ishape;
@@ -337,13 +342,15 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
         Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         Ort::Value in = Ort::Value::CreateTensor<float>(mem, zeros.data(), zeros.size(), ishape.data(), ishape.size());
         auto t0 = std::chrono::high_resolution_clock::now();
-        (void)impl_->session->Run(Ort::RunOptions{nullptr},
-                                  impl_->input_names.data(), &in, 1,
-                                  impl_->output_names.data(), impl_->output_names.size());
+        for (int i = 0; i < runs; ++i) {
+            (void)impl_->session->Run(Ort::RunOptions{nullptr},
+                                      impl_->input_names.data(), &in, 1,
+                                      impl_->output_names.data(), impl_->output_names.size());
+        }
         auto t1 = std::chrono::high_resolution_clock::now();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-        VA_LOG_INFO() << "[OrtWarmup] ran 1 pass in " << ms << " ms, shape="
-                      << ishape[0] << "x" << (ishape.size()>1?ishape[1]:0) << "x"
+        VA_LOG_INFO() << "[OrtWarmup] runs=" << runs << " total_ms=" << ms << " avg_ms=" << (runs>0? (ms / runs) : 0)
+                      << " shape=" << ishape[0] << "x" << (ishape.size()>1?ishape[1]:0) << "x"
                       << (ishape.size()>2?ishape[2]:0) << "x" << (ishape.size()>3?ishape[3]:0);
     } catch (const std::exception& ex) {
         VA_LOG_WARN() << "[OrtWarmup] skipped due to error: " << ex.what();

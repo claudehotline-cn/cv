@@ -147,9 +147,15 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             try { long long vv = std::stoll(it->second); return vv>0 ? static_cast<std::size_t>(vv) : fallback; }
             catch (...) { return fallback; }
         };
+        auto findInt = [&](const char* key, int fallback){
+            auto it = engine_desc.options.find(key);
+            if (it == engine_desc.options.end()) return fallback;
+            try { return std::stoi(it->second); } catch (...) { return fallback; }
+        };
         options.stage_device_outputs = findBool("stage_device_outputs", options.stage_device_outputs);
         options.tensor_host_pool_bytes = findSize("tensor_host_pool_bytes", options.tensor_host_pool_bytes);
         options.device_output_views = findBool("device_output_views", options.device_output_views);
+        options.warmup_runs = findInt("warmup_runs", options.warmup_runs);
         session->setOptions(options);
 #endif
 

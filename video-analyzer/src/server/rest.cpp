@@ -720,6 +720,8 @@ struct RestServer::Impl {
         // IoBinding output policies
         engine_options["stage_device_outputs"] = getBool("stage_device_outputs", false);
         engine_options["device_output_views"] = getBool("device_output_views", false);
+        // Warmup controls
+        engine_options["warmup_runs"] = getInt("warmup_runs", 1);
 
         engine["options"] = engine_options;
         data["engine"] = engine;

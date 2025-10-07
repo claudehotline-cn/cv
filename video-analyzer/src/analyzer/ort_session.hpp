@@ -32,6 +32,8 @@ public:
         size_t tensor_host_pool_bytes {0};
         // expose IoBinding outputs as device views (no host staging)
         bool device_output_views {false};
+        // warmup runs right after model load (0 = disable)
+        int warmup_runs {1};
     };
 
     void setOptions(const Options& options);
