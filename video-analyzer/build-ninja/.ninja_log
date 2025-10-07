@@ -185,3 +185,7 @@
 1437	2168	7815127270939918	bin/va_unit_test_overlay_cuda.exe	c12970eb7f83b6e3
 770	2585	7815127264259076	CMakeFiles/VideoAnalyzer.dir/src/server/rest.cpp.obj	7b32ffc337cdb3d9
 2585	2861	7815127282422173	bin/VideoAnalyzer.exe	6c19d8b91a8dbaf8
+3	45	7815129321838468	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+51	988	7815129322321152	CMakeFiles/VideoAnalyzer.dir/src/composition_root.cpp.obj	b21f97e6e1287d6d
+55	1514	7815129322355491	CMakeFiles/VideoAnalyzer.dir/src/server/rest.cpp.obj	7b32ffc337cdb3d9
+1514	1743	7815129336954390	bin/VideoAnalyzer.exe	6c19d8b91a8dbaf8

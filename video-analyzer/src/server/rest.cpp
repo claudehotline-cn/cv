@@ -725,6 +725,7 @@ struct RestServer::Impl {
         // Overlay tuning
         engine_options["overlay_thickness"] = getInt("overlay_thickness", 0);
         engine_options["overlay_alpha"] = getDbl("overlay_alpha", 0.0);
+        engine_options["overlay_draw_labels"] = getBool("overlay_draw_labels", true);
         // IoBinding output policies
         engine_options["stage_device_outputs"] = getBool("stage_device_outputs", false);
         engine_options["device_output_views"] = getBool("device_output_views", false);

@@ -268,6 +268,11 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             if (auto it = engine_desc.options.find("overlay_alpha"); it != engine_desc.options.end()) {
                 set_env("VA_OVERLAY_ALPHA", it->second);
             }
+            if (auto it = engine_desc.options.find("overlay_draw_labels"); it != engine_desc.options.end()) {
+                std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
+                bool enabled = !(v=="0"||v=="false"||v=="no"||v=="off");
+                set_env("VA_OVERLAY_DRAW_LABELS", enabled ? std::string("1") : std::string("0"));
+            }
         }
 
         auto params = std::make_shared<va::analyzer::AnalyzerParams>();
