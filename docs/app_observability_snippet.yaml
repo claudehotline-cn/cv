@@ -9,4 +9,4 @@ observability:
   metrics:
     registry_enabled: true        # use unified exporter for /metrics
     extended_labels: false        # optional labels: decoder/encoder/preproc
-
+    ttl_seconds: 300              # per-source metrics entry TTL; <=0 disables
