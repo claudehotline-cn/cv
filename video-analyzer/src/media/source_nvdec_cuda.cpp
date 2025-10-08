@@ -1,5 +1,6 @@
 #include "media/source_nvdec_cuda.hpp"
 #include "core/logger.hpp"
+#include "core/nvdec_events.hpp"
 #include "core/drop_metrics.hpp"
 
 namespace va::media {
@@ -56,11 +57,20 @@ bool NvdecRtspSource::read(va::core::Frame& frame) {
         if (readImpl(frame)) {
             frame_counter_++;
             last_frame_time_ = std::chrono::steady_clock::now();
+            // If previously on CPU fallback, this indicates NVDEC recovered
+            if (fallback_active_) {
+                fallback_active_ = false;
+                va::core::NvdecEvents::incrementRecoverByUri(uri_, 1);
+            }
             return true;
         }
         // If NVDEC path fails transiently, try CPU fallback
     }
-    return cpu_fallback_.read(frame);
+    if (cpu_fallback_.read(frame)) {
+        fallback_active_ = true;
+        return true;
+    }
+    return false;
 }
 
 SourceStats NvdecRtspSource::stats() const {

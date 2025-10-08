@@ -14,6 +14,7 @@
 #include "core/logger.hpp"
 #include "core/drop_metrics.hpp"
 #include "core/source_reconnects.hpp"
+#include "core/nvdec_events.hpp"
 
 namespace va::core {
 
@@ -178,6 +179,9 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     } catch (...) {}
     try {
         va::core::SourceReconnects::mapUriToSourceId(source_cfg.uri, source_cfg.stream_id);
+    } catch (...) {}
+    try {
+        va::core::NvdecEvents::mapUriToSourceId(source_cfg.uri, source_cfg.stream_id);
     } catch (...) {}
 
     VA_LOG_INFO() << "[PipelineBuilder] pipeline created stream=" << source_cfg.stream_id

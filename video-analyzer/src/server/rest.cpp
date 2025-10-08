@@ -7,6 +7,7 @@
 #include "core/global_metrics.hpp"
 #include "core/drop_metrics.hpp"
 #include "core/source_reconnects.hpp"
+#include "core/nvdec_events.hpp"
 
 #include <json/json.h>
 
@@ -990,6 +991,17 @@ struct RestServer::Impl {
             for (const auto& row : rows) {
                 out << "va_rtsp_source_reconnects_total{source_id=\"" << row.source_id << "\"} "
                     << static_cast<unsigned long long>(row.reconnects) << "\n";
+            }
+        }
+
+        // NVDEC device-path recovery events per source
+        {
+            auto rows = va::core::NvdecEvents::snapshot();
+            out << "# HELP va_nvdec_device_recover_total NVDEC device-path recovery events\n";
+            out << "# TYPE va_nvdec_device_recover_total counter\n";
+            for (const auto& row : rows) {
+                out << "va_nvdec_device_recover_total{source_id=\"" << row.source_id << "\"} "
+                    << static_cast<unsigned long long>(row.device_recover) << "\n";
             }
         }
 

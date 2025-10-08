@@ -150,6 +150,12 @@ if (HAVE_CUDA_KERNELS)
     file(GLOB_RECURSE CUDA_SOURCES "src/*.cu")
 endif()
 
+# Ensure newly added core metric/event sources are included even if glob caching misses them
+list(APPEND SOURCES
+    src/core/drop_metrics.cpp
+    src/core/source_reconnects.cpp
+    src/core/nvdec_events.cpp)
+
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
 if (HAVE_CUDA_KERNELS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAS_CUDA_KERNELS)

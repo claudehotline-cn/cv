@@ -44,6 +44,8 @@ private:
 
     // CPU fallback path
     SwitchableRtspSource cpu_fallback_;
+    // Track whether we're currently relying on CPU fallback (to detect recovery)
+    bool fallback_active_ {false};
 
 #ifdef USE_FFMPEG
     AVFormatContext* fmt_ctx_ {nullptr};
