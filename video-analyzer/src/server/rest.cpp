@@ -981,6 +981,27 @@ struct RestServer::Impl {
             }
         }
 
+        // Encoder metrics per source (use transport stats as proxy for encoded output)
+        out << "# HELP va_encoder_packets_total Encoded packets per source\n";
+        out << "# TYPE va_encoder_packets_total counter\n";
+        out << "# HELP va_encoder_bytes_total Encoded bytes per source\n";
+        out << "# TYPE va_encoder_bytes_total counter\n";
+        out << "# HELP va_encoder_eagain_total Encoder EAGAIN occurrences per source\n";
+        out << "# TYPE va_encoder_eagain_total counter\n";
+        for (const auto& info : app.pipelines()) {
+            const std::string path = classify_path(info);
+            const std::string codec = info.encoder_cfg.codec;
+            out << "va_encoder_packets_total{source_id=\"" << info.stream_id
+                << "\",codec=\"" << codec << "\",path=\"" << path << "\"} "
+                << static_cast<unsigned long long>(info.transport_stats.packets) << "\n";
+            out << "va_encoder_bytes_total{source_id=\"" << info.stream_id
+                << "\",codec=\"" << codec << "\",path=\"" << path << "\"} "
+                << static_cast<unsigned long long>(info.transport_stats.bytes) << "\n";
+            out << "va_encoder_eagain_total{source_id=\"" << info.stream_id
+                << "\",codec=\"" << codec << "\",path=\"" << path << "\"} "
+                << static_cast<unsigned long long>(info.zc.eagain_retry_count) << "\n";
+        }
+
         HttpResponse resp;
         resp.status_code = 200;
         resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8";
