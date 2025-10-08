@@ -161,7 +161,7 @@
                 :width="640"
                 :height="480"
                 :show-controls="true"
-                :show-detections="true"
+                :show-detections="false"
                 :detections="recentResult?.detections || []"
                 @frame-received="onFrameReceived"
                 @error="onVideoError"
@@ -190,7 +190,7 @@
               </div>
 
               <!-- 分析结果叠加层 -->
-              <div v-if="recentResult" class="analysis-overlay">
+              <div v-if="false" class="analysis-overlay">
                 <div
                   v-for="detection in recentResult.detections"
                   :key="`${detection.bbox.x}-${detection.bbox.y}`"
@@ -621,3 +621,5 @@ onUnmounted(() => {
   margin-top: 20px;
 }
 </style>
+
+
