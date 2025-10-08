@@ -3,64 +3,89 @@
 namespace va::core::NvdecEvents {
 
 namespace {
-std::mutex g_mutex;
+std::mutex g_uri_mutex;
 std::unordered_map<std::string, std::string> g_uri_to_source; // uri -> source_id
 struct Stats { uint64_t recover{0}; uint64_t await_idr{0}; };
-std::unordered_map<std::string, Stats> g_stats; // source_id -> stats
 
-Stats& ensure(const std::string& sid) {
-    auto it = g_stats.find(sid);
-    if (it == g_stats.end()) {
-        auto [iter, _] = g_stats.emplace(sid, Stats{});
-        it = iter;
+struct Shard {
+    std::mutex mtx;
+    std::unordered_map<std::string, Stats> by_source;
+};
+
+constexpr size_t kNumShards = 16;
+static Shard g_shards[kNumShards];
+
+static inline size_t shard_of(const std::string& sid) {
+    return std::hash<std::string>{}(sid) & (kNumShards - 1);
+}
+
+Stats& ensure_locked(Shard& sh, const std::string& sid) {
+    auto it = sh.by_source.find(sid);
+    if (it == sh.by_source.end()) {
+        it = sh.by_source.try_emplace(sid, Stats{}).first;
     }
     return it->second;
 }
 }
 
 void mapUriToSourceId(const std::string& uri, const std::string& source_id) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard<std::mutex> lk(g_uri_mutex);
     g_uri_to_source[uri] = source_id;
 }
 
 void unmapUri(const std::string& uri) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard<std::mutex> lk(g_uri_mutex);
     g_uri_to_source.erase(uri);
 }
 
 void incrementRecover(const std::string& source_id, uint64_t n) {
-    std::lock_guard<std::mutex> lk(g_mutex);
-    ensure(source_id).recover += n;
+    Shard& sh = g_shards[shard_of(source_id)];
+    std::lock_guard<std::mutex> lk(sh.mtx);
+    ensure_locked(sh, source_id).recover += n;
 }
 
 void incrementRecoverByUri(const std::string& uri, uint64_t n) {
-    std::lock_guard<std::mutex> lk(g_mutex);
-    auto it = g_uri_to_source.find(uri);
-    if (it != g_uri_to_source.end()) {
-        ensure(it->second).recover += n;
+    std::string sid;
+    {
+        std::lock_guard<std::mutex> lk(g_uri_mutex);
+        auto it = g_uri_to_source.find(uri);
+        if (it != g_uri_to_source.end()) sid = it->second;
     }
+    if (sid.empty()) return;
+    Shard& sh = g_shards[shard_of(sid)];
+    std::lock_guard<std::mutex> lk(sh.mtx);
+    ensure_locked(sh, sid).recover += n;
 }
 
 void incrementAwaitIdr(const std::string& source_id, uint64_t n) {
-    std::lock_guard<std::mutex> lk(g_mutex);
-    ensure(source_id).await_idr += n;
+    Shard& sh = g_shards[shard_of(source_id)];
+    std::lock_guard<std::mutex> lk(sh.mtx);
+    ensure_locked(sh, source_id).await_idr += n;
 }
 
 void incrementAwaitIdrByUri(const std::string& uri, uint64_t n) {
-    std::lock_guard<std::mutex> lk(g_mutex);
-    auto it = g_uri_to_source.find(uri);
-    if (it != g_uri_to_source.end()) {
-        ensure(it->second).await_idr += n;
+    std::string sid;
+    {
+        std::lock_guard<std::mutex> lk(g_uri_mutex);
+        auto it = g_uri_to_source.find(uri);
+        if (it != g_uri_to_source.end()) sid = it->second;
     }
+    if (sid.empty()) return;
+    Shard& sh = g_shards[shard_of(sid)];
+    std::lock_guard<std::mutex> lk(sh.mtx);
+    ensure_locked(sh, sid).await_idr += n;
 }
 
 std::vector<Row> snapshot() {
-    std::lock_guard<std::mutex> lk(g_mutex);
     std::vector<Row> rows;
-    rows.reserve(g_stats.size());
-    for (auto& kv : g_stats) {
-        Row r; r.source_id = kv.first; r.device_recover = kv.second.recover; r.await_idr = kv.second.await_idr;
-        rows.emplace_back(std::move(r));
+    for (size_t i=0;i<kNumShards;++i) {
+        Shard& sh = g_shards[i];
+        std::lock_guard<std::mutex> lk(sh.mtx);
+        rows.reserve(rows.size() + sh.by_source.size());
+        for (auto& kv : sh.by_source) {
+            Row r; r.source_id = kv.first; r.device_recover = kv.second.recover; r.await_idr = kv.second.await_idr;
+            rows.emplace_back(std::move(r));
+        }
     }
     return rows;
 }
