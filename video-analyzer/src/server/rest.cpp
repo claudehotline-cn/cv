@@ -8,6 +8,7 @@
 #include "core/drop_metrics.hpp"
 #include "core/source_reconnects.hpp"
 #include "core/nvdec_events.hpp"
+#include "core/metrics_text_builder.hpp"
 
 #include <json/json.h>
 
@@ -848,6 +849,149 @@ struct RestServer::Impl {
         // Prometheus text exposition format (0.0.4)
         auto sys = app.systemStats();
         auto gm = va::core::GlobalMetrics::snapshot();
+
+        if (app.appConfig().observability.metrics_registry_enabled) {
+            va::core::MetricsTextBuilder mb;
+            // System metrics
+            mb.header("va_pipelines_total", "gauge", "Total pipelines");
+            mb.sample("va_pipelines_total", "{}", std::to_string(static_cast<unsigned long long>(sys.total_pipelines)));
+            mb.header("va_pipelines_running", "gauge", "Running pipelines");
+            mb.sample("va_pipelines_running", "{}", std::to_string(static_cast<unsigned long long>(sys.running_pipelines)));
+            mb.header("va_pipeline_aggregate_fps", "gauge", "Aggregate FPS across pipelines");
+            mb.sample("va_pipeline_aggregate_fps", "{}", sys.aggregate_fps);
+
+            mb.header("va_frames_processed_total", "counter", "Frames processed (sum)");
+            mb.sample("va_frames_processed_total", "{}", std::to_string(static_cast<unsigned long long>(sys.processed_frames)));
+            mb.header("va_frames_dropped_total", "counter", "Frames dropped (sum)");
+            mb.sample("va_frames_dropped_total", "{}", std::to_string(static_cast<unsigned long long>(sys.dropped_frames)));
+
+            mb.header("va_transport_packets_total", "counter", "Transport packets sent (sum)");
+            mb.sample("va_transport_packets_total", "{}", std::to_string(static_cast<unsigned long long>(sys.transport_packets)));
+            mb.header("va_transport_bytes_total", "counter", "Transport bytes sent (sum)");
+            mb.sample("va_transport_bytes_total", "{}", std::to_string(static_cast<unsigned long long>(sys.transport_bytes)));
+
+            mb.header("va_d2d_nv12_frames_total", "counter", "NVENC device NV12 direct-feed frames");
+            mb.sample("va_d2d_nv12_frames_total", "{}", std::to_string(static_cast<unsigned long long>(gm.d2d_nv12_frames)));
+            mb.header("va_cpu_fallback_skips_total", "counter", "CPU upload skipped (device NV12 path)");
+            mb.sample("va_cpu_fallback_skips_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cpu_fallback_skips)));
+            mb.header("va_encoder_eagain_retry_total", "counter", "Encoder EAGAIN drain+retry occurrences");
+            mb.sample("va_encoder_eagain_retry_total", "{}", std::to_string(static_cast<unsigned long long>(gm.eagain_retry_count)));
+            mb.header("va_overlay_nv12_kernel_hits_total", "counter", "NV12 kernel overlay executions");
+            mb.sample("va_overlay_nv12_kernel_hits_total", "{}", std::to_string(static_cast<unsigned long long>(gm.overlay_nv12_kernel_hits)));
+            mb.header("va_overlay_nv12_passthrough_total", "counter", "NV12 overlay passthrough (no boxes)");
+            mb.sample("va_overlay_nv12_passthrough_total", "{}", std::to_string(static_cast<unsigned long long>(gm.overlay_nv12_passthrough)));
+
+            // Helper functions
+            auto classify_path = [](const va::core::TrackManager::PipelineInfo& info) -> std::string {
+                if (info.zc.d2d_nv12_frames > 0) return "d2d";
+                std::string lower = info.encoder_cfg.codec;
+                std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+                if (lower.find("nvenc") != std::string::npos) return "gpu";
+                return "cpu";
+            };
+            const bool ext_labels = app.appConfig().observability.metrics_extended_labels;
+            auto lbl = [&](const va::core::TrackManager::PipelineInfo& pinfo, const std::string& path){
+                std::ostringstream oss;
+                oss << "{source_id=\"" << pinfo.stream_id << "\",path=\"" << path << "\"";
+                if (ext_labels) {
+                    if (!pinfo.decoder_label.empty()) oss << ",decoder=\"" << pinfo.decoder_label << "\"";
+                    if (!pinfo.encoder_cfg.codec.empty()) oss << ",encoder=\"" << pinfo.encoder_cfg.codec << "\"";
+                    std::string preproc = "cpu";
+                    auto eng = app.currentEngine();
+                    auto it = eng.options.find("use_cuda_preproc");
+                    if (it != eng.options.end()) {
+                        std::string v = toLower(it->second);
+                        if (v=="1"||v=="true"||v=="yes"||v=="on") preproc = "cuda";
+                    }
+                    oss << ",preproc=\"" << preproc << "\"";
+                }
+                oss << "}"; return oss.str(); };
+
+            // Per-source FPS and frames
+            mb.header("va_pipeline_fps", "gauge", "Pipeline FPS per source");
+            for (const auto& info : app.pipelines()) {
+                const std::string path = classify_path(info);
+                mb.sample("va_pipeline_fps", lbl(info, path), info.metrics.fps);
+            }
+            mb.header("va_frames_processed_total", "counter", "Frames processed per source");
+            mb.header("va_frames_dropped_total", "counter", "Frames dropped per source");
+            for (const auto& info : app.pipelines()) {
+                const std::string path = classify_path(info);
+                mb.sample("va_frames_processed_total", lbl(info, path), info.metrics.processed_frames);
+                mb.sample("va_frames_dropped_total", lbl(info, path), info.metrics.dropped_frames);
+            }
+
+            // Histograms (per stage)
+            mb.header("va_frame_latency_ms", "histogram", "Frame processing latency per stage");
+            const double bounds_ms[10] = {1,2,5,10,20,50,100,200,500,1000};
+            auto emit_hist = [&](const std::string& stage,
+                                 const va::core::TrackManager::PipelineInfo& info,
+                                 const va::core::Pipeline::LatencySnapshot& snap) {
+                const std::string path = classify_path(info);
+                uint64_t cumulative = 0;
+                for (int i=0;i<va::core::Pipeline::LatencySnapshot::kNumBuckets; ++i) {
+                    cumulative += snap.buckets[i];
+                    std::ostringstream ls; ls<<"{stage=\""<<stage<<"\",source_id=\""<<info.stream_id<<"\",path=\""<<path<<"\",le=\""<<bounds_ms[i]<<"\"}";
+                    mb.sample("va_frame_latency_ms_bucket", ls.str(), cumulative);
+                }
+                std::ostringstream linf; linf<<"{stage=\""<<stage<<"\",source_id=\""<<info.stream_id<<"\",path=\""<<path<<"\",le=\"+Inf\"}";
+                mb.sample("va_frame_latency_ms_bucket", linf.str(), snap.count);
+                double sum_ms = static_cast<double>(snap.sum_us) / 1000.0;
+                std::ostringstream lsum; lsum<<"{stage=\""<<stage<<"\",source_id=\""<<info.stream_id<<"\",path=\""<<path<<"\"}";
+                mb.sample("va_frame_latency_ms_sum", lsum.str(), sum_ms);
+                mb.sample("va_frame_latency_ms_count", lsum.str(), snap.count);
+            };
+            for (const auto& info : app.pipelines()) {
+                emit_hist("preproc", info, info.stage_latency.preproc);
+                emit_hist("infer",   info, info.stage_latency.infer);
+                emit_hist("postproc",info, info.stage_latency.postproc);
+                emit_hist("encode",  info, info.stage_latency.encode);
+            }
+
+            // Drop reasons
+            mb.header("va_frames_dropped_total", "counter", "Frames dropped by reason");
+            for (const auto& row : va::core::DropMetrics::snapshot()) {
+                auto emit = [&](const char* reason, uint64_t v){ if(!v) return; std::ostringstream ls; ls<<"{source_id=\""<<row.source_id<<"\",reason=\""<<reason<<"\"}"; mb.sample("va_frames_dropped_total", ls.str(), v);};
+                emit("queue_overflow", row.counters.queue_overflow);
+                emit("decode_error",   row.counters.decode_error);
+                emit("encode_eagain",  row.counters.encode_eagain);
+                emit("backpressure",   row.counters.backpressure);
+            }
+
+            // Encoder per-source
+            mb.header("va_encoder_packets_total", "counter", "Encoded packets per source");
+            mb.header("va_encoder_bytes_total", "counter", "Encoded bytes per source");
+            mb.header("va_encoder_eagain_total", "counter", "Encoder EAGAIN occurrences per source");
+            for (const auto& info : app.pipelines()) {
+                const std::string path = classify_path(info);
+                std::ostringstream ls; ls<<"{source_id=\""<<info.stream_id<<"\",path=\""<<path<<"\"";
+                if (ext_labels && !info.encoder_cfg.codec.empty()) ls<<",encoder=\""<<info.encoder_cfg.codec<<"\"";
+                if (ext_labels && !info.decoder_label.empty()) ls<<",decoder=\""<<info.decoder_label<<"\"";
+                ls<<"}";
+                mb.sample("va_encoder_packets_total", ls.str(), info.transport_stats.packets);
+                mb.sample("va_encoder_bytes_total", ls.str(), info.transport_stats.bytes);
+                mb.sample("va_encoder_eagain_total", ls.str(), info.zc.eagain_retry_count);
+            }
+
+            // Reconnects & NVDEC
+            mb.header("va_rtsp_source_reconnects_total", "counter", "RTSP source reconnects");
+            for (const auto& row : va::core::SourceReconnects::snapshot()) {
+                std::ostringstream ls; ls<<"{source_id=\""<<row.source_id<<"\"}"; mb.sample("va_rtsp_source_reconnects_total", ls.str(), row.reconnects);
+            }
+            mb.header("va_nvdec_device_recover_total", "counter", "NVDEC device-path recovery events");
+            mb.header("va_nvdec_await_idr_total", "counter", "NVDEC await-IDR occurrences (startup/reopen)");
+            for (const auto& row : va::core::NvdecEvents::snapshot()) {
+                std::ostringstream ls; ls<<"{source_id=\""<<row.source_id<<"\"}";
+                mb.sample("va_nvdec_device_recover_total", ls.str(), row.device_recover);
+                mb.sample("va_nvdec_await_idr_total", ls.str(), row.await_idr);
+            }
+
+            HttpResponse resp;
+            resp.status_code = 200;
+            resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8";
+            resp.body = mb.str();
+            return resp;
+        }
 
         std::ostringstream out;
         out << "# HELP va_pipelines_total Total pipelines\n";
