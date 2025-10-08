@@ -66,6 +66,17 @@ public:
     void setModuleLevel(const std::string& component, LogLevel level);
     void setFormat(LogFormat fmt);
 
+    // Runtime getters for REST
+    LogLevel level() const { std::lock_guard<std::mutex> lock(mutex_); return level_threshold_; }
+    LogFormat format() const { std::lock_guard<std::mutex> lock(mutex_); return format_; }
+    std::unordered_map<std::string, LogLevel> moduleLevels() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return module_levels_;
+    }
+    std::string filePath() const { std::lock_guard<std::mutex> lock(mutex_); return file_path_; }
+    int fileMaxFiles() const { std::lock_guard<std::mutex> lock(mutex_); return file_max_files_; }
+    int fileMaxSizeKB() const { std::lock_guard<std::mutex> lock(mutex_); return file_max_size_bytes_ > 0 ? static_cast<int>(file_max_size_bytes_ / 1024) : 0; }
+
 private:
     Logger() = default;
 

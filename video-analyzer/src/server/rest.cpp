@@ -643,7 +643,9 @@ struct RestServer::Impl {
 
         // Logging config: runtime set
         auto loggingSetHandler = [this](const HttpRequest& req) { return handleLoggingSet(req); };
+        auto loggingGetHandler = [this](const HttpRequest& req) { return handleLoggingGet(req); };
         server.addRoute("POST", "/api/logging/set", loggingSetHandler);
+        server.addRoute("GET", "/api/logging", loggingGetHandler);
 
         auto systemInfoHandler = [this](const HttpRequest& req) { return handleSystemInfo(req); };
         auto systemStatsHandler = [this](const HttpRequest& req) { return handleSystemStats(req); };
@@ -669,6 +671,10 @@ struct RestServer::Impl {
         // Prometheus metrics endpoint
         auto metricsHandler = [this](const HttpRequest& req) { return handleMetrics(req); };
         server.addRoute("GET", "/metrics", metricsHandler);
+        auto metricsCfgGet = [this](const HttpRequest& req) { return handleMetricsConfigGet(req); };
+        auto metricsCfgSet = [this](const HttpRequest& req) { return handleMetricsConfigSet(req); };
+        server.addRoute("GET", "/api/metrics", metricsCfgGet);
+        server.addRoute("POST", "/api/metrics/set", metricsCfgSet);
     }
 
     bool start() {
@@ -849,8 +855,9 @@ struct RestServer::Impl {
         // Prometheus text exposition format (0.0.4)
         auto sys = app.systemStats();
         auto gm = va::core::GlobalMetrics::snapshot();
-
-        if (app.appConfig().observability.metrics_registry_enabled) {
+        const auto& obs = app.appConfig().observability;
+        const bool use_registry = metrics_registry_enabled_.has_value() ? *metrics_registry_enabled_ : obs.metrics_registry_enabled;
+        if (use_registry) {
             va::core::MetricsTextBuilder mb;
             // System metrics
             mb.header("va_pipelines_total", "gauge", "Total pipelines");
@@ -889,7 +896,7 @@ struct RestServer::Impl {
                 if (lower.find("nvenc") != std::string::npos) return "gpu";
                 return "cpu";
             };
-            const bool ext_labels = app.appConfig().observability.metrics_extended_labels;
+            const bool ext_labels = metrics_extended_labels_.has_value() ? *metrics_extended_labels_ : obs.metrics_extended_labels;
             auto lbl = [&](const va::core::TrackManager::PipelineInfo& pinfo, const std::string& path){
                 std::ostringstream oss;
                 oss << "{source_id=\"" << pinfo.stream_id << "\",path=\"" << path << "\"";
@@ -1240,6 +1247,45 @@ struct RestServer::Impl {
         return va::core::LogLevel::Info;
     }
 
+    HttpResponse handleLoggingGet(const HttpRequest& /*req*/) {
+        auto& logger = va::core::Logger::instance();
+        Json::Value payload = successPayload();
+        Json::Value data(Json::objectValue);
+        auto lvlToStr = [](va::core::LogLevel l){ switch(l){case va::core::LogLevel::Trace:return "trace";case va::core::LogLevel::Debug:return "debug";case va::core::LogLevel::Info:return "info";case va::core::LogLevel::Warn:return "warn";case va::core::LogLevel::Error:return "error";} return "info"; };
+        data["level"] = lvlToStr(logger.level());
+        data["format"] = (logger.format()==va::core::LogFormat::Json?"json":"text");
+        Json::Value mods(Json::objectValue);
+        for (auto& kv : logger.moduleLevels()) { mods[kv.first] = lvlToStr(kv.second); }
+        data["modules"] = mods;
+        data["file_path"] = logger.filePath();
+        data["file_max_size_kb"] = logger.fileMaxSizeKB();
+        data["file_max_files"] = logger.fileMaxFiles();
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handleMetricsConfigGet(const HttpRequest& /*req*/) {
+        const auto& obs = app.appConfig().observability;
+        const bool reg = metrics_registry_enabled_.has_value() ? *metrics_registry_enabled_ : obs.metrics_registry_enabled;
+        const bool ext = metrics_extended_labels_.has_value() ? *metrics_extended_labels_ : obs.metrics_extended_labels;
+        Json::Value payload = successPayload();
+        Json::Value data(Json::objectValue);
+        data["registry_enabled"] = reg;
+        data["extended_labels"] = ext;
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handleMetricsConfigSet(const HttpRequest& req) {
+        try {
+            const Json::Value body = parseJson(req.body);
+            if (body.isMember("registry_enabled")) { metrics_registry_enabled_ = body["registry_enabled"].asBool(); }
+            if (body.isMember("extended_labels")) { metrics_extended_labels_ = body["extended_labels"].asBool(); }
+            return handleMetricsConfigGet(req);
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("metrics set failed: ") + ex.what(), 400);
+        }
+    }
     HttpResponse handleLoggingSet(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
@@ -1306,6 +1352,10 @@ struct RestServer::Impl {
         payload["data"] = data;
         return jsonResponse(payload, 200);
     }
+
+    // Runtime metrics flags overrides (optional)
+    std::optional<bool> metrics_registry_enabled_{};
+    std::optional<bool> metrics_extended_labels_{};
 
     HttpResponse handleProfiles(const HttpRequest& /*req*/) {
         Json::Value payload = successPayload();
