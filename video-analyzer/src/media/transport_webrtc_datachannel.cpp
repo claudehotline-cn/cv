@@ -21,6 +21,7 @@
 #include <mutex>
 #include <optional>
 #include <queue>
+#include "core/drop_metrics.hpp"
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -337,10 +338,16 @@ public:
         std::scoped_lock lock(mutex_);
         auto& queue = frames_[source_id];
         queue.push(std::move(data));
+        size_t dropped = 0;
         while (queue.size() > 10) {
             queue.pop();
+            ++dropped;
         }
-        VA_LOG_DEBUG() << "[WebRTC] queued frame for source='" << source_id << "' size=" << queue.size();
+        if (dropped > 0) {
+            va::core::DropMetrics::increment(source_id, va::core::DropMetrics::Reason::QueueOverflow, static_cast<uint64_t>(dropped));
+        }
+        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 1000)
+            << "queued frame for source='" << source_id << "' size=" << queue.size();
     }
 
     bool HasEncodedFrame(const std::string& source_id) const {

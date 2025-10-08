@@ -3,6 +3,7 @@
 #include "analyzer/analyzer.hpp"
 #include "media/source.hpp"
 #include "core/logger.hpp"
+#include "core/drop_metrics.hpp"
 
 #include <utility>
 #include <vector>
@@ -103,6 +104,11 @@ bool TrackManager::switchSource(const std::string& stream_id,
     auto it = pipelines_.find(key);
     if (it == pipelines_.end()) {
         return false;
+    }
+    try {
+        va::core::DropMetrics::mapUriToSourceId(new_uri, stream_id);
+    } catch (...) {
+        // ignore metrics mapping errors
     }
     return it->second.pipeline->source()->switchUri(new_uri);
 }

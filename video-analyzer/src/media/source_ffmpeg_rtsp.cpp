@@ -1,5 +1,6 @@
 #include "media/source_ffmpeg_rtsp.hpp"
 #include "core/logger.hpp"
+#include "core/drop_metrics.hpp"
 
 namespace va::media {
 
@@ -19,12 +20,12 @@ bool FfmpegRtspSource::start() {
     last_frame_time_ = started_at_;
 #ifdef USE_FFMPEG
     is_rtsp_ = (uri_.rfind("rtsp://", 0) == 0 || uri_.rfind("rtsps://", 0) == 0);
-    VA_LOG_INFO() << "[RTSP(FFmpeg)] source start uri=" << uri_ << ", is_rtsp=" << (is_rtsp_ ? "true" : "false");
+    VA_LOG_C(::va::core::LogLevel::Info, "source.ffmpeg") << "source start uri=" << uri_ << ", is_rtsp=" << (is_rtsp_ ? "true" : "false");
     if (!openImpl()) {
-        VA_LOG_WARN() << "[RTSP(FFmpeg)] initial open failed for uri " << uri_ << ", will retry lazily";
+        VA_LOG_C(::va::core::LogLevel::Warn, "source.ffmpeg") << "initial open failed for uri " << uri_ << ", will retry lazily";
     }
 #else
-    VA_LOG_WARN() << "[RTSP(FFmpeg)] FFmpeg is not enabled in this build; source will not produce frames.";
+    VA_LOG_C(::va::core::LogLevel::Warn, "source.ffmpeg") << "FFmpeg is not enabled in this build; source will not produce frames.";
 #endif
     running_ = true;
     return true;
@@ -48,7 +49,7 @@ bool FfmpegRtspSource::read(core::Frame& frame) {
             if (!openImpl()) {
                 backoff_ms_ = backoff_ms_ == 0 ? 200 : std::min(backoff_ms_ * 2, 5000);
                 next_reopen_ = now + std::chrono::milliseconds(backoff_ms_);
-                VA_LOG_WARN() << "[RTSP(FFmpeg)] reopen failed for uri " << uri_ << ", backoff=" << backoff_ms_ << "ms";
+                VA_LOG_C(::va::core::LogLevel::Warn, "source.ffmpeg") << "reopen failed for uri " << uri_ << ", backoff=" << backoff_ms_ << "ms";
                 return false;
             }
             backoff_ms_ = 0;
@@ -72,7 +73,7 @@ bool FfmpegRtspSource::read(core::Frame& frame) {
                 const auto now = std::chrono::steady_clock::now();
                 backoff_ms_ = backoff_ms_ == 0 ? 200 : std::min(backoff_ms_ * 2, 5000);
                 next_reopen_ = now + std::chrono::milliseconds(backoff_ms_);
-                VA_LOG_WARN() << "[RTSP(FFmpeg)] too many read failures, scheduling reopen in " << backoff_ms_ << "ms for uri " << uri_;
+                VA_LOG_C(::va::core::LogLevel::Warn, "source.ffmpeg") << "too many read failures, scheduling reopen in " << backoff_ms_ << "ms for uri " << uri_;
                 fail_count_ = 0;
             }
         }
@@ -128,14 +129,14 @@ bool FfmpegRtspSource::openImpl() {
         av_dict_set(&opts, "user_agent", "VideoAnalyzer/1.0", 0);
     }
 
-    VA_LOG_INFO() << "[RTSP(FFmpeg)] avformat_open_input uri=" << uri_;
+    VA_LOG_C(::va::core::LogLevel::Info, "source.ffmpeg") << "avformat_open_input uri=" << uri_;
     int open_ret = avformat_open_input(&fmt_, uri_.c_str(), nullptr, &opts);
     if (open_ret < 0) {
         av_dict_free(&opts);
         fmt_ = nullptr;
         char err[256]; err[0]='\0';
         av_strerror(open_ret, err, sizeof(err));
-        VA_LOG_ERROR() << "[RTSP(FFmpeg)] avformat_open_input failed ret=" << open_ret << " (" << err << ")";
+        VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "avformat_open_input failed ret=" << open_ret << " (" << err << ")";
         return false;
     }
     av_dict_free(&opts);
@@ -143,32 +144,32 @@ bool FfmpegRtspSource::openImpl() {
     if (sinfo < 0) {
         char err[256]; err[0]='\0';
         av_strerror(sinfo, err, sizeof(err));
-        VA_LOG_ERROR() << "[RTSP(FFmpeg)] avformat_find_stream_info failed ret=" << sinfo << " (" << err << ")";
+        VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "avformat_find_stream_info failed ret=" << sinfo << " (" << err << ")";
         closeImpl();
         return false;
     }
     video_stream_ = av_find_best_stream(fmt_, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     if (video_stream_ < 0) {
-        VA_LOG_ERROR() << "[RTSP(FFmpeg)] no video stream";
+        VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "no video stream";
         closeImpl();
         return false;
     }
     AVStream* st = fmt_->streams[video_stream_];
     const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
-    if (!dec) { VA_LOG_ERROR() << "[RTSP(FFmpeg)] no decoder"; closeImpl(); return false; }
+    if (!dec) { VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "no decoder"; closeImpl(); return false; }
     dec_ = avcodec_alloc_context3(dec);
-    if (!dec_) { VA_LOG_ERROR() << "[RTSP(FFmpeg)] alloc context failed"; closeImpl(); return false; }
-    if (avcodec_parameters_to_context(dec_, st->codecpar) < 0) { VA_LOG_ERROR() << "[RTSP(FFmpeg)] copy params failed"; closeImpl(); return false; }
+    if (!dec_) { VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "alloc context failed"; closeImpl(); return false; }
+    if (avcodec_parameters_to_context(dec_, st->codecpar) < 0) { VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "copy params failed"; closeImpl(); return false; }
     {
         int aopen = avcodec_open2(dec_, dec, nullptr);
         if (aopen < 0) {
             char err[256]; err[0]='\0';
             av_strerror(aopen, err, sizeof(err));
-            VA_LOG_ERROR() << "[RTSP(FFmpeg)] avcodec_open2 failed ret=" << aopen << " (" << err << ")";
+            VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "avcodec_open2 failed ret=" << aopen << " (" << err << ")";
             closeImpl(); return false;
         }
     }
-    VA_LOG_INFO() << "[RTSP(FFmpeg)] open OK: " << dec_->width << "x" << dec_->height;
+    VA_LOG_C(::va::core::LogLevel::Info, "source.ffmpeg") << "open OK: " << dec_->width << "x" << dec_->height;
     return true;
 #endif
 }
@@ -211,7 +212,7 @@ bool FfmpegRtspSource::readImpl(core::Frame& frame) {
             int dst_linesize[4] = { frame.width * 3, 0, 0, 0 };
             sws_scale(sws_, f->data, f->linesize, 0, f->height, dst_data, dst_linesize);
             ok = true;
-            VA_LOG_DEBUG() << "[RTSP(FFmpeg)] read frame " << frame.width << "x" << frame.height;
+            VA_LOG_EVERY_N(::va::core::LogLevel::Debug, "source.ffmpeg", 120) << "read frame " << frame.width << "x" << frame.height;
             break;
         }
         if (ok) break;
@@ -219,7 +220,9 @@ bool FfmpegRtspSource::readImpl(core::Frame& frame) {
     if (read_ret < 0 && read_ret != AVERROR_EOF) {
         char err[128]; err[0]='\0';
         av_strerror(read_ret, err, sizeof(err));
-        VA_LOG_WARN() << "[RTSP(FFmpeg)] av_read_frame ret=" << read_ret << " (" << err << ")";
+        VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "source.ffmpeg", 2000) << "av_read_frame ret=" << read_ret << " (" << err << ")";
+        // Attribute decode error to current source via URI mapping
+        va::core::DropMetrics::incrementByUri(uri_, va::core::DropMetrics::Reason::DecodeError, 1);
     }
     if (!is_rtsp_ && read_ret == AVERROR_EOF) {
         // Loop file inputs: seek back to start and flush decoder

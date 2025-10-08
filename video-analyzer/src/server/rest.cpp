@@ -5,6 +5,7 @@
 #include "core/engine_manager.hpp"
 #include "core/logger.hpp"
 #include "core/global_metrics.hpp"
+#include "core/drop_metrics.hpp"
 
 #include <json/json.h>
 
@@ -959,6 +960,25 @@ struct RestServer::Impl {
             emit_hist("infer",   info.stream_id, path, info.stage_latency.infer);
             emit_hist("postproc",info.stream_id, path, info.stage_latency.postproc);
             emit_hist("encode",  info.stream_id, path, info.stage_latency.encode);
+        }
+
+        // Frames dropped by reason (per-source)
+        {
+            auto rows = va::core::DropMetrics::snapshot();
+            out << "# HELP va_frames_dropped_total Frames dropped by reason\n";
+            out << "# TYPE va_frames_dropped_total counter\n";
+            for (const auto& row : rows) {
+                auto emit = [&](const char* reason, uint64_t val){
+                    if (val == 0) return; // reduce noise
+                    out << "va_frames_dropped_total{source_id=\"" << row.source_id
+                        << "\",reason=\"" << reason << "\"} "
+                        << static_cast<unsigned long long>(val) << "\n";
+                };
+                emit("queue_overflow", row.counters.queue_overflow);
+                emit("decode_error",   row.counters.decode_error);
+                emit("encode_eagain",  row.counters.encode_eagain);
+                emit("backpressure",   row.counters.backpressure);
+            }
         }
 
         HttpResponse resp;

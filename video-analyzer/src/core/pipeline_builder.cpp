@@ -12,6 +12,7 @@
 #include "media/transport.hpp"
 
 #include "core/logger.hpp"
+#include "core/drop_metrics.hpp"
 
 namespace va::core {
 
@@ -170,6 +171,13 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
                                                std::move(transport),
                                                source_cfg.stream_id,
                                                filter_cfg.profile_id);
+    // Register source URI -> source_id mapping for drop-reason metrics attribution
+    try {
+        va::core::DropMetrics::mapUriToSourceId(source_cfg.uri, source_cfg.stream_id);
+    } catch (...) {
+        // best-effort; ignore failures
+    }
+
     VA_LOG_INFO() << "[PipelineBuilder] pipeline created stream=" << source_cfg.stream_id
                   << " profile=" << filter_cfg.profile_id
                   << " uri=" << source_cfg.uri;

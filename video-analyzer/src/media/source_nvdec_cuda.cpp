@@ -1,5 +1,6 @@
 #include "media/source_nvdec_cuda.hpp"
 #include "core/logger.hpp"
+#include "core/drop_metrics.hpp"
 
 namespace va::media {
 
@@ -33,7 +34,7 @@ bool NvdecRtspSource::start() {
     last_frame_time_ = started_at_;
     bool ok = openImpl();
     if (!ok) {
-        VA_LOG_WARN() << "[NVDEC] falling back to CPU for URI " << uri_;
+        VA_LOG_C(::va::core::LogLevel::Warn, "source.nvdec") << "falling back to CPU for URI " << uri_;
         ok = cpu_fallback_.start();
     }
     running_ = ok;
@@ -144,14 +145,14 @@ bool NvdecRtspSource::readImpl(va::core::Frame& frame) {
         if (awaiting_idr_) {
             if ((pkt.flags & AV_PKT_FLAG_KEY) == 0) {
                 if (!idr_log_printed_) {
-                    VA_LOG_INFO() << "[NVDEC] awaiting first IDR/KEY frame, dropping pre-roll packets";
+                    VA_LOG_C(::va::core::LogLevel::Info, "source.nvdec") << "awaiting first IDR/KEY frame, dropping pre-roll packets";
                     idr_log_printed_ = true;
                 }
                 av_packet_unref(&pkt);
                 continue;
             } else {
                 awaiting_idr_ = false;
-                VA_LOG_INFO() << "[NVDEC] first IDR/KEY frame received; enabling device decode";
+                VA_LOG_C(::va::core::LogLevel::Info, "source.nvdec") << "first IDR/KEY frame received; enabling device decode";
             }
         }
         if (avcodec_send_packet(dec_ctx_, &pkt) < 0) { av_packet_unref(&pkt); break; }
@@ -159,7 +160,11 @@ bool NvdecRtspSource::readImpl(va::core::Frame& frame) {
         while (true) {
             int ret = avcodec_receive_frame(dec_ctx_, f);
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
-            if (ret < 0) { break; }
+            if (ret < 0) {
+                // Attribute decode error to current source via URI mapping
+                va::core::DropMetrics::incrementByUri(uri_, va::core::DropMetrics::Reason::DecodeError, 1);
+                break;
+            }
 
             AVFrame* src = f;
             if (f->format == AV_PIX_FMT_CUDA) {
