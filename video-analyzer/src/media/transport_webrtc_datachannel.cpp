@@ -338,6 +338,10 @@ public:
         std::scoped_lock lock(mutex_);
         auto& queue = frames_[source_id];
         queue.push(std::move(data));
+        // Soft backpressure signal when queue grows high but before actual drops
+        if (queue.size() > 8) {
+            va::core::DropMetrics::increment(source_id, va::core::DropMetrics::Reason::Backpressure, 1);
+        }
         size_t dropped = 0;
         while (queue.size() > 10) {
             queue.pop();
@@ -935,6 +939,7 @@ private:
                 } catch (const std::exception& ex) {
                     VA_LOG_C(::va::core::LogLevel::Warn, "transport.webrtc")
                         << "Failed to send H264 on video track for client " << client_id << ": " << ex.what();
+                    va::core::DropMetrics::increment(used_source, va::core::DropMetrics::Reason::Backpressure, 1);
                 }
             }
 
