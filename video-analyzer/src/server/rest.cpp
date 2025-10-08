@@ -994,7 +994,7 @@ struct RestServer::Impl {
             }
         }
 
-        // NVDEC device-path recovery events per source
+        // NVDEC device-path recovery and await-IDR events per source
         {
             auto rows = va::core::NvdecEvents::snapshot();
             out << "# HELP va_nvdec_device_recover_total NVDEC device-path recovery events\n";
@@ -1002,6 +1002,12 @@ struct RestServer::Impl {
             for (const auto& row : rows) {
                 out << "va_nvdec_device_recover_total{source_id=\"" << row.source_id << "\"} "
                     << static_cast<unsigned long long>(row.device_recover) << "\n";
+            }
+            out << "# HELP va_nvdec_await_idr_total NVDEC await-IDR occurrences (startup/reopen)\n";
+            out << "# TYPE va_nvdec_await_idr_total counter\n";
+            for (const auto& row : rows) {
+                out << "va_nvdec_await_idr_total{source_id=\"" << row.source_id << "\"} "
+                    << static_cast<unsigned long long>(row.await_idr) << "\n";
             }
         }
 

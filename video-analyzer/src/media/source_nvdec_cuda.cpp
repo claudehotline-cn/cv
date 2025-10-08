@@ -98,6 +98,8 @@ bool NvdecRtspSource::openImpl() {
 #else
     closeImpl();
     awaiting_idr_ = true;
+    // Count an 'await IDR' event for NVDEC startup/reopen
+    va::core::NvdecEvents::incrementAwaitIdrByUri(uri_, 1);
     idr_log_printed_ = false;
     if (avformat_open_input(&fmt_ctx_, uri_.c_str(), nullptr, nullptr) < 0) {
         fmt_ctx_ = nullptr;
