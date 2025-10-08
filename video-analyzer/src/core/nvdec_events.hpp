@@ -25,4 +25,7 @@ void incrementAwaitIdrByUri(const std::string& uri, uint64_t n = 1);
 
 std::vector<Row> snapshot();
 
+// Optional: set TTL (seconds) for idle per-source entries. <=0 disables TTL pruning.
+void setTtlSeconds(int ttl_seconds);
+
 } // namespace va::core::NvdecEvents

@@ -86,6 +86,8 @@ struct ObservabilityConfig {
     // Metrics registry + labels
     bool metrics_registry_enabled {true};
     bool metrics_extended_labels {false};
+    // Metrics series TTL seconds (per-source shard cleanup); <=0 disables
+    int metrics_ttl_seconds {300};
     // Added: logging format and module-level overrides from config file
     // log_format: "text" | "json"
     std::string log_format {"text"};

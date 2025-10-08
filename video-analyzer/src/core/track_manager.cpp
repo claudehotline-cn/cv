@@ -23,8 +23,12 @@ TrackManager::~TrackManager() {
     std::scoped_lock lock(mutex_);
     for (auto& [key, entry] : pipelines_) {
         if (entry.pipeline) {
-            entry.pipeline->stop();
+            try { entry.pipeline->stop(); } catch (...) {}
         }
+        // Unmap URI -> source mapping for per-source metrics
+        try { va::core::DropMetrics::unmapUri(entry.source_uri); } catch (...) {}
+        try { va::core::SourceReconnects::unmapUri(entry.source_uri); } catch (...) {}
+        try { va::core::NvdecEvents::unmapUri(entry.source_uri); } catch (...) {}
     }
     pipelines_.clear();
 }
@@ -75,12 +79,14 @@ std::string TrackManager::subscribe(const SourceConfig& source_cfg,
 void TrackManager::unsubscribe(const std::string& stream_id, const std::string& profile_id) {
     const std::string key = makeKey(stream_id, profile_id);
     std::shared_ptr<Pipeline> to_stop;
+    std::string old_uri;
     {
         std::scoped_lock lock(mutex_);
         auto it = pipelines_.find(key);
         if (it != pipelines_.end()) {
             // keep a local strong ref; erase from map first to avoid re-entrancy while holding lock
             to_stop = it->second.pipeline;
+            old_uri = it->second.source_uri;
             pipelines_.erase(it);
         }
     }
@@ -93,24 +99,42 @@ void TrackManager::unsubscribe(const std::string& stream_id, const std::string& 
             VA_LOG_ERROR() << "[TrackManager] unknown exception while stopping pipeline '" << key << "'";
         }
     }
+    if (!old_uri.empty()) {
+        // Remove metrics URI mapping
+        try { va::core::DropMetrics::unmapUri(old_uri); } catch (...) {}
+        try { va::core::SourceReconnects::unmapUri(old_uri); } catch (...) {}
+        try { va::core::NvdecEvents::unmapUri(old_uri); } catch (...) {}
+    }
 }
 
 void TrackManager::reapIdle(int idle_timeout_ms) {
     const double now = va::core::ms_now();
-    std::scoped_lock lock(mutex_);
-    for (auto it = pipelines_.begin(); it != pipelines_.end();) {
-        double last = it->second.last_active_ms;
-        if (it->second.pipeline) {
-            const auto metrics = it->second.pipeline->metrics();
-            if (metrics.last_processed_ms > 0.0) {
-                last = metrics.last_processed_ms;
+    std::vector<std::pair<std::shared_ptr<Pipeline>, std::string>> to_stop;
+    {
+        std::scoped_lock lock(mutex_);
+        for (auto it = pipelines_.begin(); it != pipelines_.end();) {
+            double last = it->second.last_active_ms;
+            if (it->second.pipeline) {
+                const auto metrics = it->second.pipeline->metrics();
+                if (metrics.last_processed_ms > 0.0) {
+                    last = metrics.last_processed_ms;
+                }
+            }
+
+            if ((now - last) > idle_timeout_ms) {
+                to_stop.emplace_back(it->second.pipeline, it->second.source_uri);
+                it = pipelines_.erase(it);
+            } else {
+                ++it;
             }
         }
-
-        if ((now - last) > idle_timeout_ms) {
-            it = pipelines_.erase(it);
-        } else {
-            ++it;
+    }
+    for (auto& p : to_stop) {
+        if (p.first) { try { p.first->stop(); } catch (...) {} }
+        if (!p.second.empty()) {
+            try { va::core::DropMetrics::unmapUri(p.second); } catch (...) {}
+            try { va::core::SourceReconnects::unmapUri(p.second); } catch (...) {}
+            try { va::core::NvdecEvents::unmapUri(p.second); } catch (...) {}
         }
     }
 }
@@ -124,18 +148,19 @@ bool TrackManager::switchSource(const std::string& stream_id,
     if (it == pipelines_.end()) {
         return false;
     }
-    try {
-        va::core::DropMetrics::mapUriToSourceId(new_uri, stream_id);
-    } catch (...) {
-        // ignore metrics mapping errors
+    const std::string old_uri = it->second.source_uri;
+    const bool ok = it->second.pipeline->source()->switchUri(new_uri);
+    if (ok) {
+        // Update metrics mapping: unmap old, map new
+        try { va::core::DropMetrics::unmapUri(old_uri); } catch (...) {}
+        try { va::core::SourceReconnects::unmapUri(old_uri); } catch (...) {}
+        try { va::core::NvdecEvents::unmapUri(old_uri); } catch (...) {}
+        try { va::core::DropMetrics::mapUriToSourceId(new_uri, stream_id); } catch (...) {}
+        try { va::core::SourceReconnects::mapUriToSourceId(new_uri, stream_id); } catch (...) {}
+        try { va::core::NvdecEvents::mapUriToSourceId(new_uri, stream_id); } catch (...) {}
+        it->second.source_uri = new_uri;
     }
-    try {
-        va::core::SourceReconnects::mapUriToSourceId(new_uri, stream_id);
-    } catch (...) {}
-    try {
-        va::core::NvdecEvents::mapUriToSourceId(new_uri, stream_id);
-    } catch (...) {}
-    return it->second.pipeline->source()->switchUri(new_uri);
+    return ok;
 }
 
 bool TrackManager::switchModel(const std::string& stream_id,

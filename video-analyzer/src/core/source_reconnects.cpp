@@ -1,6 +1,8 @@
 #include "core/source_reconnects.hpp"
+#include "core/utils.hpp"
 
 #include <unordered_map>
+#include <atomic>
 
 namespace va::core::SourceReconnects {
 
@@ -8,9 +10,12 @@ namespace {
 std::mutex g_uri_mutex;
 std::unordered_map<std::string, std::string> g_uri_to_source; // uri -> source_id
 
+std::atomic<int> g_ttl_seconds{300}; // <=0 disables TTL pruning
+
 struct Shard {
     std::mutex mtx;
-    std::unordered_map<std::string, uint64_t> by_source;
+    struct Node { uint64_t reconnects{0}; double last_seen_ms{0.0}; };
+    std::unordered_map<std::string, Node> by_source;
 };
 
 constexpr size_t kNumShards = 16;
@@ -20,10 +25,10 @@ static inline size_t shard_of(const std::string& sid) {
     return std::hash<std::string>{}(sid) & (kNumShards - 1);
 }
 
-uint64_t& ensure_locked(Shard& sh, const std::string& sid) {
+Shard::Node& ensure_locked(Shard& sh, const std::string& sid) {
     auto it = sh.by_source.find(sid);
     if (it == sh.by_source.end()) {
-        it = sh.by_source.try_emplace(sid, 0ull).first;
+        it = sh.by_source.try_emplace(sid, Shard::Node{}).first;
     }
     return it->second;
 }
@@ -42,7 +47,9 @@ void unmapUri(const std::string& uri) {
 void increment(const std::string& source_id, uint64_t n) {
     Shard& sh = g_shards[shard_of(source_id)];
     std::lock_guard<std::mutex> lk(sh.mtx);
-    ensure_locked(sh, source_id) += n;
+    auto& node = ensure_locked(sh, source_id);
+    node.last_seen_ms = va::core::ms_now();
+    node.reconnects += n;
 }
 
 void incrementByUri(const std::string& uri, uint64_t n) {
@@ -55,7 +62,9 @@ void incrementByUri(const std::string& uri, uint64_t n) {
     if (sid.empty()) return;
     Shard& sh = g_shards[shard_of(sid)];
     std::lock_guard<std::mutex> lk(sh.mtx);
-    ensure_locked(sh, sid) += n;
+    auto& node = ensure_locked(sh, sid);
+    node.last_seen_ms = va::core::ms_now();
+    node.reconnects += n;
 }
 
 std::vector<Row> snapshot() {
@@ -64,12 +73,24 @@ std::vector<Row> snapshot() {
         Shard& sh = g_shards[i];
         std::lock_guard<std::mutex> lk(sh.mtx);
         rows.reserve(rows.size() + sh.by_source.size());
-        for (auto& kv : sh.by_source) {
-            Row r; r.source_id = kv.first; r.reconnects = kv.second;
-            rows.emplace_back(std::move(r));
+        const int ttl = g_ttl_seconds.load(std::memory_order_relaxed);
+        const double now_ms = va::core::ms_now();
+        for (auto it = sh.by_source.begin(); it != sh.by_source.end(); ) {
+            bool expired = (ttl > 0) && ((now_ms - it->second.last_seen_ms) > (ttl * 1000.0));
+            if (expired) {
+                it = sh.by_source.erase(it);
+            } else {
+                Row r; r.source_id = it->first; r.reconnects = it->second.reconnects;
+                rows.emplace_back(std::move(r));
+                ++it;
+            }
         }
     }
     return rows;
+}
+
+void setTtlSeconds(int ttl_seconds) {
+    g_ttl_seconds.store(ttl_seconds, std::memory_order_relaxed);
 }
 
 } // namespace va::core::SourceReconnects

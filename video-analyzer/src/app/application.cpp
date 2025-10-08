@@ -3,6 +3,9 @@
 #include "ConfigLoader.hpp"
 #include "analyzer/analyzer.hpp"
 #include "core/logger.hpp"
+#include "core/drop_metrics.hpp"
+#include "core/source_reconnects.hpp"
+#include "core/nvdec_events.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -135,6 +138,10 @@ bool Application::initialize(const std::string& config_dir) {
     app_config_ = ConfigLoader::loadAppConfig(config_dir_);
 
     va::core::Logger::instance().configure(app_config_.observability);
+    // Configure per-source metrics TTL (shard cleanup)
+    try { va::core::DropMetrics::setTtlSeconds(app_config_.observability.metrics_ttl_seconds); } catch (...) {}
+    try { va::core::SourceReconnects::setTtlSeconds(app_config_.observability.metrics_ttl_seconds); } catch (...) {}
+    try { va::core::NvdecEvents::setTtlSeconds(app_config_.observability.metrics_ttl_seconds); } catch (...) {}
 
     va::core::EngineDescriptor descriptor;
     descriptor.name = app_config_.engine.type;

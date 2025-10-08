@@ -57,4 +57,7 @@ struct SnapshotRow {
 
 std::vector<SnapshotRow> snapshot();
 
+// Optional: set TTL (seconds) for idle per-source entries. <=0 disables TTL pruning.
+void setTtlSeconds(int ttl_seconds);
+
 } // namespace va::core::DropMetrics

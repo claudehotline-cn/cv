@@ -287,12 +287,16 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
         if (metrics_node && metrics_node.IsMap()) {
             obs.metrics_registry_enabled = metrics_node["registry_enabled"].as<bool>(obs.metrics_registry_enabled);
             obs.metrics_extended_labels = metrics_node["extended_labels"].as<bool>(obs.metrics_extended_labels);
+            obs.metrics_ttl_seconds = metrics_node["ttl_seconds"].as<int>(obs.metrics_ttl_seconds);
         } else {
             if (observability_node["metrics_registry_enabled"]) {
                 obs.metrics_registry_enabled = observability_node["metrics_registry_enabled"].as<bool>(obs.metrics_registry_enabled);
             }
             if (observability_node["metrics_extended_labels"]) {
                 obs.metrics_extended_labels = observability_node["metrics_extended_labels"].as<bool>(obs.metrics_extended_labels);
+            }
+            if (observability_node["metrics_ttl_seconds"]) {
+                obs.metrics_ttl_seconds = observability_node["metrics_ttl_seconds"].as<int>(obs.metrics_ttl_seconds);
             }
         }
     }
