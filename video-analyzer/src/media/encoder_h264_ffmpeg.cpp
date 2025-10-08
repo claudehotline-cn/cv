@@ -465,21 +465,56 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
             if (frame.has_device_surface && frame.device.on_gpu && frame.device.fmt == va::core::PixelFormat::NV12 &&
                 frame.device.data0 && frame.device.data1) {
-                // Device->Host NV12 fallback (keeps pipeline producing packets without BGR)
+                // Device NV12 available but no CPU BGR. If encoder expects NV12 we can copy directly;
+                // otherwise convert NV12 -> YUV420P via swscale to avoid color shift.
                 const uint8_t* srcY = static_cast<const uint8_t*>(frame.device.data0);
                 const uint8_t* srcUV = static_cast<const uint8_t*>(frame.device.data1);
                 const size_t srcPitchY = static_cast<size_t>(frame.device.pitch0);
                 const size_t srcPitchUV = static_cast<size_t>(frame.device.pitch1);
-                const size_t dstPitchY = static_cast<size_t>(frame_->linesize[0]);
-                const size_t dstPitchUV = static_cast<size_t>(frame_->linesize[1]);
-                (void)cudaMemcpy2D(frame_->data[0], dstPitchY, srcY, srcPitchY,
-                                   static_cast<size_t>(frame.width), static_cast<size_t>(frame.height),
-                                   cudaMemcpyDeviceToHost);
-                (void)cudaMemcpy2D(frame_->data[1], dstPitchUV, srcUV, srcPitchUV,
-                                   static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
-                                   cudaMemcpyDeviceToHost);
-                va::core::GlobalMetrics::cpu_fallback_skips.fetch_add(1, std::memory_order_relaxed);
-                if (frame.zc) { frame.zc->cpu_fallback_skips++; }
+
+                if (codec_ctx_->pix_fmt == AV_PIX_FMT_NV12) {
+                    // Direct NV12 copy into destination frame
+                    const size_t dstPitchY = static_cast<size_t>(frame_->linesize[0]);
+                    const size_t dstPitchUV = static_cast<size_t>(frame_->linesize[1]);
+                    (void)cudaMemcpy2D(frame_->data[0], dstPitchY, srcY, srcPitchY,
+                                       static_cast<size_t>(frame.width), static_cast<size_t>(frame.height),
+                                       cudaMemcpyDeviceToHost);
+                    (void)cudaMemcpy2D(frame_->data[1], dstPitchUV, srcUV, srcPitchUV,
+                                       static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
+                                       cudaMemcpyDeviceToHost);
+                } else {
+                    // Convert NV12 (device) -> YUV420P (host) using libswscale
+                    AVFrame* nv12_host = av_frame_alloc();
+                    if (nv12_host) {
+                        nv12_host->format = AV_PIX_FMT_NV12;
+                        nv12_host->width = frame_->width;
+                        nv12_host->height = frame_->height;
+                        if (av_frame_get_buffer(nv12_host, 32) == 0) {
+                            // Copy device NV12 to host NV12 buffer first
+                            (void)cudaMemcpy2D(nv12_host->data[0], static_cast<size_t>(nv12_host->linesize[0]),
+                                               srcY, srcPitchY,
+                                               static_cast<size_t>(frame.width), static_cast<size_t>(frame.height),
+                                               cudaMemcpyDeviceToHost);
+                            (void)cudaMemcpy2D(nv12_host->data[1], static_cast<size_t>(nv12_host->linesize[1]),
+                                               srcUV, srcPitchUV,
+                                               static_cast<size_t>(frame.width), static_cast<size_t>(frame.height) / 2,
+                                               cudaMemcpyDeviceToHost);
+
+                            SwsContext* sws_nv12_to_yuv420 = sws_getContext(
+                                frame_->width, frame_->height, AV_PIX_FMT_NV12,
+                                frame_->width, frame_->height, AV_PIX_FMT_YUV420P,
+                                SWS_BILINEAR, nullptr, nullptr, nullptr);
+                            if (sws_nv12_to_yuv420) {
+                                const uint8_t* src_slices[4] = { nv12_host->data[0], nv12_host->data[1], nullptr, nullptr };
+                                int src_stride[4] = { nv12_host->linesize[0], nv12_host->linesize[1], 0, 0 };
+                                sws_scale(sws_nv12_to_yuv420, src_slices, src_stride, 0, frame_->height,
+                                          frame_->data, frame_->linesize);
+                                sws_freeContext(sws_nv12_to_yuv420);
+                            }
+                        }
+                        av_frame_free(&nv12_host);
+                    }
+                }
             } else {
                 // no viable fallback; drain once and skip packet
                 VA_LOG_DEBUG() << "[Encoder] skip CPU upload: no BGR for fallback (device NV12 frame)";
