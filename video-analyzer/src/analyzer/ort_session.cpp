@@ -69,8 +69,9 @@ inline bool ensureCudaCapacity(void*& pointer, size_t& capacity_bytes, size_t re
 
     cudaError_t err = cudaMalloc(&pointer, required_bytes);
     if (err != cudaSuccess) {
-        VA_LOG_ERROR() << "cudaMalloc failed while allocating IoBinding buffer (" << required_bytes
-                       << " bytes): " << cudaGetErrorString(err);
+        VA_LOG_C(::va::core::LogLevel::Error, "analyzer.ort")
+            << "cudaMalloc failed while allocating IoBinding buffer (" << required_bytes
+            << " bytes): " << cudaGetErrorString(err);
         pointer = nullptr;
         capacity_bytes = 0;
         return false;
