@@ -348,7 +348,8 @@ public:
         auto it = frames_.find(source_id);
         bool ok = it != frames_.end() && !it->second.empty();
         if (!ok) {
-            VA_LOG_DEBUG() << "[WebRTC] no frame available for source='" << source_id << "'";
+            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 1000)
+                << "no frame available for source='" << source_id << "'";
         }
         return ok;
     }
@@ -667,7 +668,8 @@ private:
                         it->second->connected = connected;
                     }
                 }
-                VA_LOG_INFO() << "[WebRTC] peer state client=" << client_id << " -> " << state;
+                VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                    << "peer state client=" << client_id << " -> " << state;
 
                 if (connected) {
                     // 已连接，向浏览器请求关键帧，确保拿到 SPS/PPS
@@ -691,7 +693,8 @@ private:
                             client_state_.erase(client_id);
                         }
                         if (removed) {
-                            VA_LOG_INFO() << "[WebRTC] removed client after state=" << state << " client=" << client_id;
+                    VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                        << "removed client after state=" << state << " client=" << client_id;
                         }
                         if (on_client_disconnected_) {
                             on_client_disconnected_(client_id);
@@ -701,7 +704,8 @@ private:
             });
 
             peer_connection->onIceStateChange([this, client_id](rtc::PeerConnection::IceState ice) {
-                VA_LOG_INFO() << "[WebRTC] ICE state client=" << client_id << " -> " << ice;
+                VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                    << "ICE state client=" << client_id << " -> " << ice;
                 bool mark_connected = (ice == rtc::PeerConnection::IceState::Connected || ice == rtc::PeerConnection::IceState::Completed);
                 {
                     std::scoped_lock lock(clients_mutex_);
@@ -721,21 +725,25 @@ private:
                         client_state_.erase(client_id);
                     }
                     if (removed) {
-                        VA_LOG_INFO() << "[WebRTC] removed client after ICE closed client=" << client_id;
+                        VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                            << "removed client after ICE closed client=" << client_id;
                     }
                 }
             });
 
             peer_connection->onGatheringStateChange([client_id](rtc::PeerConnection::GatheringState g) {
-                VA_LOG_DEBUG() << "[WebRTC] Gathering state client=" << client_id << " -> " << g;
+                VA_LOG_C(::va::core::LogLevel::Debug, "transport.webrtc")
+                    << "Gathering state client=" << client_id << " -> " << g;
             });
 
             peer_connection->onSignalingStateChange([client_id](rtc::PeerConnection::SignalingState s) {
-                VA_LOG_DEBUG() << "[WebRTC] Signaling state client=" << client_id << " -> " << s;
+                VA_LOG_C(::va::core::LogLevel::Debug, "transport.webrtc")
+                    << "Signaling state client=" << client_id << " -> " << s;
             });
 
             peer_connection->onLocalDescription([this, client_id](rtc::Description desc) {
-                VA_LOG_DEBUG() << "[WebRTC] local description client=" << client_id << " type=" << desc.typeString();
+                VA_LOG_C(::va::core::LogLevel::Debug, "transport.webrtc")
+                    << "local description client=" << client_id << " type=" << desc.typeString();
                 try {
                     // 在自动协商或重建轨道时，libdatachannel 会触发新的 offer，这里将其通过信令转发给前端
                     if (on_signaling_message_ && desc.type() == rtc::Description::Type::Offer) {
@@ -782,10 +790,11 @@ private:
 
             return peer_connection;
         } catch (const std::exception& ex) {
-            VA_LOG_ERROR() << "Failed to create peer connection for client " << client_id << ": " << ex.what();
-            return nullptr;
+                VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc")
+                    << "Failed to create peer connection for client " << client_id << ": " << ex.what();
+                return nullptr;
+            }
         }
-    }
 
     void SendVideoFrames() {
         int frames_sent_count = 0;
@@ -816,16 +825,19 @@ private:
                     if (video_source_->TryGetAnyEncodedFrame(any_src, any_frame)) {
                         used_source = any_src;
                         encoded_frame = std::move(any_frame);
-                        VA_LOG_DEBUG() << "[WebRTC] fallback send: client='" << client_id
-                                       << "' requested='" << requested_source
-                                       << "' use='" << used_source << "'";
+                        VA_LOG_C(::va::core::LogLevel::Debug, "transport.webrtc")
+                            << "fallback send: client='" << client_id
+                            << "' requested='" << requested_source
+                            << "' use='" << used_source << "'";
                     } else {
-                        VA_LOG_DEBUG() << "[WebRTC] client='" << client_id << "' waiting frames for source='" << requested_source << "' (no frames in any queue)";
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 1000)
+                            << "client='" << client_id << "' waiting frames for source='" << requested_source << "' (no frames)";
                         continue;
                     }
                 }
                 if (encoded_frame.empty()) {
-                    VA_LOG_DEBUG() << "[WebRTC] client='" << client_id << "' got empty frame for source='" << used_source << "'";
+                    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 2000)
+                        << "client='" << client_id << "' got empty frame for source='" << used_source << "'";
                     continue;
                 }
 
@@ -850,7 +862,8 @@ private:
                             vdesc.addSSRC(client->ssrc ? client->ssrc : std::random_device{}(), std::string("va"), std::string("stream1"), std::string("video1"));
                             client->video_track = client->peer_connection->addTrack(vdesc);
                             attachMediaHandlers(client->video_track, client->ssrc);
-                            VA_LOG_INFO() << "[WebRTC] recreated video track for client=" << client_id << " ssrc=" << (client->ssrc);
+                            VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                                << "recreated video track for client=" << client_id << " ssrc=" << (client->ssrc);
                             // 请求关键帧，确保包含 SPS/PPS
                             try { client->video_track->requestKeyframe(); } catch (...) {}
                             // 触发一次显式协商：生成新的 offer 并 setLocalDescription
@@ -858,7 +871,8 @@ private:
                                 auto off = client->peer_connection->createOffer();
                                 std::string sdp_offer = std::string(off);
                                 client->peer_connection->setLocalDescription(rtc::Description::Type::Offer);
-                                VA_LOG_INFO() << "[WebRTC] renegotiation: createOffer + setLocalDescription triggered for client=" << client_id;
+                                VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                                    << "renegotiation: createOffer + setLocalDescription triggered for client=" << client_id;
                                 // 直接通过信令发送新的 offer（不依赖回调），确保前端收到
                                 if (on_signaling_message_ && !sdp_offer.empty()) {
                                     Json::Value payload;
@@ -869,15 +883,18 @@ private:
                                     payload["timestamp"] = static_cast<Json::Int64>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                         std::chrono::system_clock::now().time_since_epoch()).count());
                                     on_signaling_message_(client_id, payload);
-                                    VA_LOG_INFO() << "[WebRTC] renegotiation offer sent, len=" << sdp_offer.size();
+                                    VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                                        << "renegotiation offer sent, len=" << sdp_offer.size();
                                 }
                             } catch (const std::exception& ex2) {
-                                VA_LOG_WARN() << "[WebRTC] renegotiation failed (createOffer/setLocal) for client " << client_id << ": " << ex2.what();
+                                VA_LOG_C(::va::core::LogLevel::Warn, "transport.webrtc")
+                                    << "renegotiation failed (createOffer/setLocal) for client " << client_id << ": " << ex2.what();
                             }
                             // 重新评估关闭状态
                             try { track_closed = client->video_track->isClosed(); } catch (...) { track_closed = true; }
                         } catch (const std::exception& ex) {
-                            VA_LOG_WARN() << "[WebRTC] recreate video track failed for client " << client_id << ": " << ex.what();
+                            VA_LOG_C(::va::core::LogLevel::Warn, "transport.webrtc")
+                                << "recreate video track failed for client " << client_id << ": " << ex.what();
                         }
                     }
                     if (!client->connected || track_closed) {
@@ -904,12 +921,13 @@ private:
                         frames_sent_count++;
                         st.ts90 += (90000u / (fps_ > 0 ? fps_ : 30));
                         st.next_tp += std::chrono::nanoseconds(static_cast<int64_t>(1'000'000'000.0 / (fps_ > 0 ? fps_ : 30)));
-                        if (frames_sent_count <= 5 || (frames_sent_count % 30 == 0)) {
-                            VA_LOG_INFO() << "[WebRTC] tx video frame (n=" << frames_sent_count << ", last=" << encoded_frame.size() << " bytes) src='" << used_source << "' client='" << client_id << "'";
-                        }
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 1000)
+                            << "tx frame: n=" << frames_sent_count << ", last=" << encoded_frame.size()
+                            << "B src='" << used_source << "' client='" << client_id << "'";
                     }
                 } catch (const std::exception& ex) {
-                    VA_LOG_WARN() << "Failed to send H264 on video track for client " << client_id << ": " << ex.what();
+                    VA_LOG_C(::va::core::LogLevel::Warn, "transport.webrtc")
+                        << "Failed to send H264 on video track for client " << client_id << ": " << ex.what();
                 }
             }
 
@@ -948,7 +966,7 @@ private:
                             << ",has=" << qsz << ")";
                     }
                 }
-                VA_LOG_INFO() << oss.str();
+                VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << oss.str();
             }
         }
     }
