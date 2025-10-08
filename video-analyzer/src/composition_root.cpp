@@ -50,14 +50,14 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         const char* use_ffsrc = std::getenv("VA_USE_FFMPEG_SOURCE");
         const bool ffsrc_flag = findBool("use_ffmpeg_source") || (use_ffsrc && (std::string(use_ffsrc) == "1" || std::string(use_ffsrc) == "true"));
         if (ffsrc_flag) {
-            VA_LOG_INFO() << "[Factories] FFmpeg RTSP source selected for URI " << cfg.uri;
+            VA_LOG_C(::va::core::LogLevel::Info, "composition") << "FFmpeg RTSP source selected for URI " << cfg.uri;
             try {
                 return std::static_pointer_cast<va::media::ISwitchableSource>(
                     std::make_shared<va::media::FfmpegRtspSource>(cfg.uri));
             } catch (const std::exception& ex) {
-                VA_LOG_WARN() << "[Factories] FFmpeg source construction threw: " << ex.what() << ", fallback to other sources.";
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "FFmpeg source construction threw: " << ex.what() << ", fallback to other sources.";
             } catch (...) {
-                VA_LOG_WARN() << "[Factories] FFmpeg source construction unknown error, fallback.";
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "FFmpeg source construction unknown error, fallback.";
             }
         }
 #endif
@@ -67,22 +67,22 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         const char* use_nvdec = std::getenv("VA_USE_NVDEC");
         const bool nvdec_flag = findBool("use_nvdec") || (use_nvdec && (std::string(use_nvdec) == "1" || std::string(use_nvdec) == "true"));
         if (nvdec_flag) {
-            VA_LOG_INFO() << "[Factories] NVDEC preferred for URI " << cfg.uri;
+        VA_LOG_C(::va::core::LogLevel::Info, "composition") << "NVDEC preferred for URI " << cfg.uri;
             try {
                 if (auto src = va::media::makeNvdecSource(cfg.uri)) {
-                    VA_LOG_INFO() << "[Factories] NVDEC source constructed.";
+                    VA_LOG_C(::va::core::LogLevel::Info, "composition") << "NVDEC source constructed.";
                     return src;
                 }
-                VA_LOG_WARN() << "[Factories] NVDEC makeNvdecSource returned null, fallback to CPU source.";
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "NVDEC makeNvdecSource returned null, fallback to CPU source.";
             } catch (const std::exception& ex) {
-                VA_LOG_WARN() << "[Factories] NVDEC source construction threw: " << ex.what() << ", fallback to CPU source.";
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "NVDEC source construction threw: " << ex.what() << ", fallback to CPU source.";
             } catch (...) {
-                VA_LOG_WARN() << "[Factories] NVDEC source construction unknown error, fallback to CPU source.";
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "NVDEC source construction unknown error, fallback to CPU source.";
             }
         }
 #endif // WITH_NVDEC
 #endif // USE_CUDA
-        VA_LOG_INFO() << "[Factories] using OpenCV RTSP source for URI " << cfg.uri;
+        VA_LOG_C(::va::core::LogLevel::Info, "composition") << "using OpenCV RTSP source for URI " << cfg.uri;
         return std::static_pointer_cast<va::media::ISwitchableSource>(
             std::make_shared<va::media::SwitchableRtspSource>(cfg.uri));
     };
@@ -177,7 +177,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         bool use_gpu = hint_gpu || provider_lower == "gpu";
 
         if (!session->loadModel(model_path, use_gpu)) {
-            VA_LOG_ERROR() << "[Factories] failed to load model at " << model_path
+            VA_LOG_C(::va::core::LogLevel::Error, "composition") << "failed to load model at " << model_path
                            << " (gpu=" << std::boolalpha << use_gpu << std::noboolalpha << ")";
             return std::shared_ptr<va::analyzer::Analyzer>{};
         }
@@ -244,7 +244,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
                 auto renderer_cuda = std::make_shared<va::analyzer::OverlayRendererCUDA>();
                 analyzer->setRenderer(renderer_cuda);
                 set = true;
-                VA_LOG_INFO() << "[Renderer] Using CUDA overlay by default (GPU provider detected)";
+                VA_LOG_C(::va::core::LogLevel::Info, "composition") << "Using CUDA overlay by default (GPU provider detected)";
             }
 #endif
             if (!set) {

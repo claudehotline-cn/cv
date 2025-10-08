@@ -389,9 +389,8 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                                 }
                             }
                         } else {
-                            if (((++dbg_send_ctr) % 100) == 1) {
-                                VA_LOG_DEBUG() << "[Encoder][nvenc] avcodec_send_frame(hw xfer) ret=" << sret;
-                            }
+            VA_LOG_EVERY_N(::va::core::LogLevel::Debug, "encoder.ffmpeg", 100)
+                << "avcodec_send_frame(hw xfer) ret=" << sret;
                         }
                     }
                 }
@@ -449,7 +448,8 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
                         } else {
                             // limited debug for rare non-EAGAIN error
                             if (((++dbg_send_ctr) % 100) == 1) {
-                                VA_LOG_DEBUG() << "[Encoder][nvenc] avcodec_send_frame(D2D) ret=" << sret;
+                            VA_LOG_EVERY_N(::va::core::LogLevel::Debug, "encoder.ffmpeg", 100)
+                                << "avcodec_send_frame(D2D) ret=" << sret;
                             }
                         }
                     }
@@ -559,7 +559,8 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         ret = avcodec_send_frame(codec_ctx_, frame_);
     }
     if (ret < 0) {
-        VA_LOG_DEBUG() << "[Encoder] avcodec_send_frame failed ret=" << ret << (fed_device_nv12? " (device NV12)":" (CPU upload)");
+        VA_LOG_C(::va::core::LogLevel::Debug, "encoder.ffmpeg")
+            << "avcodec_send_frame failed ret=" << ret << (fed_device_nv12? " (device NV12)":" (CPU upload)");
         return false;
     }
 
@@ -571,7 +572,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         return true;
     }
     if (ret < 0) {
-        VA_LOG_DEBUG() << "[Encoder] avcodec_receive_packet failed ret=" << ret;
+        VA_LOG_C(::va::core::LogLevel::Debug, "encoder.ffmpeg") << "avcodec_receive_packet failed ret=" << ret;
         return false;
     }
 

@@ -37,7 +37,11 @@ security:
     source_per_stream_per_sec: 0.2
     model_per_stream_per_sec: 0.5
 observability:
-  log_level: debug
+  log_level: info # info|debug|trace|warn|error
+  log_format: text # text|json
+  module_levels: 
+    transport.webrtc: info                                                                
+    encoder.ffmpeg: info                                                                        
   console: true
   file:
     path: D:\Projects\ai\cv\logs\video-analyzer-release.log
@@ -48,3 +52,5 @@ observability:
     interval_ms: 5000
   metrics:
     prom_endpoint: "0.0.0.0:9090"
+    extended_labels: true
+    registry_enabled: true
