@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <iomanip>
@@ -23,8 +24,10 @@ std::string toLowerCopy(const std::string& value) {
 
 }
 
-Logger::Stream::Stream(Logger& logger, LogLevel level)
-    : logger_(&logger), level_(level) {}
+Logger::Stream::Stream(Logger& logger, LogLevel level, const char* component)
+    : logger_(&logger), level_(level) {
+    component_ = (component && *component) ? component : "app";
+}
 
 Logger::Stream::Stream(Stream&& other) noexcept
     : logger_(other.logger_), level_(other.level_), buffer_(std::move(other.buffer_)), moved_(false) {
@@ -36,7 +39,7 @@ Logger::Stream::~Stream() {
     if (!logger_ || moved_) {
         return;
     }
-    logger_->log(level_, buffer_.str());
+    logger_->log(level_, component_, buffer_.str());
 }
 
 Logger::Stream& Logger::Stream::operator<<(std::ostream& (*manip)(std::ostream&)) {
@@ -65,11 +68,15 @@ void Logger::configure(const ObservabilityConfig& config) {
         file_stream_.close();
     }
 
+    // Optional: format/module levels from env
+    parseFormatEnv();
+    parseModuleLevelsEnv();
+
     installRedirects();
 }
 
-Logger::Stream Logger::stream(LogLevel level) {
-    return Stream(*this, level);
+Logger::Stream Logger::stream(LogLevel level, const char* component) {
+    return Stream(*this, level, component);
 }
 
 bool Logger::isEnabled(LogLevel level) const {
@@ -77,15 +84,62 @@ bool Logger::isEnabled(LogLevel level) const {
     return static_cast<int>(level) >= static_cast<int>(level_threshold_);
 }
 
-void Logger::log(LogLevel level, const std::string& message) {
+bool Logger::isEnabled(LogLevel level, const char* component) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (static_cast<int>(level) < static_cast<int>(level_threshold_)) {
+    // Module override takes precedence
+    if (component && *component) {
+        auto it = module_levels_.find(component);
+        if (it != module_levels_.end()) {
+            return static_cast<int>(level) >= static_cast<int>(it->second);
+        }
+    }
+    return static_cast<int>(level) >= static_cast<int>(level_threshold_);
+}
+
+void Logger::setModuleLevel(const std::string& component, LogLevel level) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    module_levels_[component] = level;
+}
+
+void Logger::setFormat(LogFormat fmt) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    format_ = fmt;
+}
+
+void Logger::log(LogLevel level, const char* component, const std::string& message) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Level check with module override
+    if (component && *component) {
+        auto it = module_levels_.find(component);
+        if (it != module_levels_.end()) {
+            if (static_cast<int>(level) < static_cast<int>(it->second)) return;
+        } else if (static_cast<int>(level) < static_cast<int>(level_threshold_)) {
+            return;
+        }
+    } else if (static_cast<int>(level) < static_cast<int>(level_threshold_)) {
         return;
     }
 
     const auto ts = timestamp();
     const auto level_str = levelToString(level);
-    const std::string payload = ts + " [" + level_str + "] " + message + '\n';
+    std::string payload;
+    if (format_ == LogFormat::Json) {
+        // Minimal JSON line without external deps
+        std::ostringstream oss;
+        oss << '{'
+            << "\"ts\":\"" << ts << "\","
+            << "\"level\":\"" << level_str << "\","
+            << "\"component\":\"" << (component ? component : "app") << "\","
+            << "\"msg\":\"";
+        // escape quotes/backslashes in message
+        for (char c : message) {
+            if (c == '"' || c == '\\') oss << '\\' << c; else if (c == '\n') oss << "\\n"; else oss << c;
+        }
+        oss << "\"}" << '\n';
+        payload = oss.str();
+    } else {
+        payload = ts + " [" + level_str + "][" + (component ? component : "app") + "] " + message + '\n';
+    }
 
     if (console_enabled_) {
         FILE* target = level >= LogLevel::Warn ? stderr : stdout;
@@ -222,7 +276,7 @@ private:
             payload.pop_back();
         }
         if (!payload.empty()) {
-            logger_.log(level_, payload);
+            logger_.log(level_, "stdout", payload);
         }
     }
 
@@ -246,6 +300,35 @@ void Logger::installRedirects() {
     std::cerr.rdbuf(cerr_redirect_.get());
 
     redirects_installed_ = true;
+}
+
+void Logger::parseModuleLevelsEnv() {
+    const char* env = std::getenv("VA_LOG_MODULE_LEVELS");
+    if (!env) return;
+    std::string s(env);
+    // format: comp:level,comp2:level2
+    size_t start = 0;
+    while (start < s.size()) {
+        size_t comma = s.find(',', start);
+        std::string pair = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        size_t colon = pair.find(':');
+        if (colon != std::string::npos) {
+            std::string comp = pair.substr(0, colon);
+            std::string lvl = pair.substr(colon + 1);
+            // trim spaces
+            auto trim = [](std::string& x){ x.erase(0, x.find_first_not_of(" \t")); x.erase(x.find_last_not_of(" \t") + 1); };
+            trim(comp); trim(lvl);
+            module_levels_[comp] = parseLevel(lvl);
+        }
+        if (comma == std::string::npos) break; else start = comma + 1;
+    }
+}
+
+void Logger::parseFormatEnv() {
+    const char* env = std::getenv("VA_LOG_FORMAT");
+    if (!env) return;
+    std::string v = toLowerCopy(env);
+    if (v == "json") format_ = LogFormat::Json; else format_ = LogFormat::Text;
 }
 
 } // namespace va::core
