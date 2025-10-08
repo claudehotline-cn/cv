@@ -50,6 +50,7 @@ public:
         EncoderConfig encoder_cfg;
         ZeroCopyMetrics zc;
         va::core::Pipeline::StageLatencySnapshot stage_latency;
+        std::string decoder_label;
     };
 
     std::vector<PipelineInfo> listPipelines() const;
@@ -64,6 +65,7 @@ private:
         std::string model_id;
         std::string task;
         EncoderConfig encoder_cfg;
+        std::string decoder_label;
     };
 
     std::string makeKey(const std::string& stream_id, const std::string& profile_id) const;

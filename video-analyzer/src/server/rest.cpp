@@ -783,6 +783,10 @@ struct RestServer::Impl {
         observability["file_max_files"] = config.observability.file_max_files;
         observability["pipeline_metrics_enabled"] = config.observability.pipeline_metrics_enabled;
         observability["pipeline_metrics_interval_ms"] = config.observability.pipeline_metrics_interval_ms;
+        Json::Value metrics_flags(Json::objectValue);
+        metrics_flags["registry_enabled"] = config.observability.metrics_registry_enabled;
+        metrics_flags["extended_labels"] = config.observability.metrics_extended_labels;
+        observability["metrics"] = metrics_flags;
         data["observability"] = observability;
 
         Json::Value sfu(Json::objectValue);
@@ -903,24 +907,51 @@ struct RestServer::Impl {
             return "cpu";
         };
 
+        const bool ext_labels = app.appConfig().observability.metrics_extended_labels;
+        // Helper to build label string with optional extended labels
+        auto make_labels = [&](const std::string& source_id,
+                               const std::string& path,
+                               const va::core::TrackManager::PipelineInfo* pinfo) -> std::string {
+            std::ostringstream oss;
+            oss << "{source_id=\"" << source_id << "\",path=\"" << path << "\"";
+            if (ext_labels && pinfo) {
+                // decoder label
+                if (!pinfo->decoder_label.empty()) {
+                    oss << ",decoder=\"" << pinfo->decoder_label << "\"";
+                }
+                // encoder label (codec family)
+                if (!pinfo->encoder_cfg.codec.empty()) {
+                    oss << ",encoder=\"" << pinfo->encoder_cfg.codec << "\"";
+                }
+                // preproc: derive from engine options (global hint)
+                std::string preproc = "cpu";
+                auto eng = app.currentEngine();
+                auto it = eng.options.find("use_cuda_preproc");
+                if (it != eng.options.end()) {
+                    std::string v = toLower(it->second);
+                    if (v=="1"||v=="true"||v=="yes"||v=="on") preproc = "cuda";
+                }
+                oss << ",preproc=\"" << preproc << "\"";
+            }
+            oss << "}";
+            return oss.str();
+        };
+
         // Per-pipeline FPS gauge
         out << "# HELP va_pipeline_fps Pipeline FPS per source\n";
         out << "# TYPE va_pipeline_fps gauge\n";
         for (const auto& info : app.pipelines()) {
             const std::string path = classify_path(info);
-            out << "va_pipeline_fps{source_id=\"" << info.stream_id
-                << "\",path=\"" << path << "\"} " << info.metrics.fps << "\n";
+            out << "va_pipeline_fps" << make_labels(info.stream_id, path, &info) << " " << info.metrics.fps << "\n";
         }
 
         // Per-pipeline frames processed/dropped with labels
         for (const auto& info : app.pipelines()) {
             const std::string path = classify_path(info);
-            out << "va_frames_processed_total{source_id=\"" << info.stream_id
-                << "\",path=\"" << path << "\"} "
-                << static_cast<unsigned long long>(info.metrics.processed_frames) << "\n";
-            out << "va_frames_dropped_total{source_id=\"" << info.stream_id
-                << "\",path=\"" << path << "\"} "
-                << static_cast<unsigned long long>(info.metrics.dropped_frames) << "\n";
+            out << "va_frames_processed_total" << make_labels(info.stream_id, path, &info)
+                << " " << static_cast<unsigned long long>(info.metrics.processed_frames) << "\n";
+            out << "va_frames_dropped_total" << make_labels(info.stream_id, path, &info)
+                << " " << static_cast<unsigned long long>(info.metrics.dropped_frames) << "\n";
         }
 
         // Per-stage latency histograms per source
@@ -1021,14 +1052,31 @@ struct RestServer::Impl {
         for (const auto& info : app.pipelines()) {
             const std::string path = classify_path(info);
             const std::string codec = info.encoder_cfg.codec;
-            out << "va_encoder_packets_total{source_id=\"" << info.stream_id
-                << "\",codec=\"" << codec << "\",path=\"" << path << "\"} "
+            std::string base = make_labels(info.stream_id, path, &info);
+            // prepend codec label
+            auto with_codec = [&](const char* metric){
+                std::ostringstream oss; oss << metric << "{source_id=\"" << info.stream_id << "\"";
+                oss << ",path=\"" << path << "\"";
+                if (ext_labels && !info.encoder_cfg.codec.empty()) oss << ",encoder=\"" << codec << "\"";
+                if (ext_labels && !info.decoder_label.empty()) oss << ",decoder=\"" << info.decoder_label << "\"";
+                // preproc
+                if (ext_labels) {
+                    std::string preproc = "cpu";
+                    auto eng = app.currentEngine();
+                    auto it = eng.options.find("use_cuda_preproc");
+                    if (it != eng.options.end()) {
+                        std::string v = toLower(it->second);
+                        if (v=="1"||v=="true"||v=="yes"||v=="on") preproc = "cuda";
+                    }
+                    oss << ",preproc=\"" << preproc << "\"";
+                }
+                oss << "}"; return oss.str(); };
+
+            out << with_codec("va_encoder_packets_total") << " "
                 << static_cast<unsigned long long>(info.transport_stats.packets) << "\n";
-            out << "va_encoder_bytes_total{source_id=\"" << info.stream_id
-                << "\",codec=\"" << codec << "\",path=\"" << path << "\"} "
+            out << with_codec("va_encoder_bytes_total") << " "
                 << static_cast<unsigned long long>(info.transport_stats.bytes) << "\n";
-            out << "va_encoder_eagain_total{source_id=\"" << info.stream_id
-                << "\",codec=\"" << codec << "\",path=\"" << path << "\"} "
+            out << with_codec("va_encoder_eagain_total") << " "
                 << static_cast<unsigned long long>(info.zc.eagain_retry_count) << "\n";
         }
 

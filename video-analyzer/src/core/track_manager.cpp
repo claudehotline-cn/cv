@@ -2,6 +2,10 @@
 
 #include "analyzer/analyzer.hpp"
 #include "media/source.hpp"
+#include "media/source_ffmpeg_rtsp.hpp"
+#if defined(USE_CUDA) && defined(WITH_NVDEC)
+#include "media/source_nvdec_cuda.hpp"
+#endif
 #include "core/logger.hpp"
 #include "core/drop_metrics.hpp"
 #include "core/source_reconnects.hpp"
@@ -40,16 +44,29 @@ std::string TrackManager::subscribe(const SourceConfig& source_cfg,
 
     {
         std::scoped_lock lock(mutex_);
-        pipelines_[key] = PipelineEntry{
-            std::move(pipeline),
-            va::core::ms_now(),
-            source_cfg.stream_id,
-            filter_cfg.profile_id,
-            source_cfg.uri,
-            filter_cfg.model_id,
-            filter_cfg.task,
-            encoder_cfg
-        };
+        PipelineEntry entry;
+        entry.pipeline = std::move(pipeline);
+        entry.last_active_ms = va::core::ms_now();
+        entry.stream_id = source_cfg.stream_id;
+        entry.profile_id = filter_cfg.profile_id;
+        entry.source_uri = source_cfg.uri;
+        entry.model_id = filter_cfg.model_id;
+        entry.task = filter_cfg.task;
+        entry.encoder_cfg = encoder_cfg;
+        // Derive decoder label from concrete source type
+        if (entry.pipeline && entry.pipeline->source()) {
+#if defined(USE_CUDA) && defined(WITH_NVDEC)
+            if (std::dynamic_pointer_cast<va::media::NvdecRtspSource>(std::shared_ptr<va::media::ISwitchableSource>(entry.pipeline->source(), [](auto*){}))) {
+                entry.decoder_label = "nvdec";
+            } else
+#endif
+            if (std::dynamic_pointer_cast<va::media::FfmpegRtspSource>(std::shared_ptr<va::media::ISwitchableSource>(entry.pipeline->source(), [](auto*){}))) {
+                entry.decoder_label = "ffmpeg";
+            } else {
+                entry.decoder_label = "other";
+            }
+        }
+        pipelines_[key] = std::move(entry);
     }
 
     return key;
@@ -185,6 +202,7 @@ std::vector<TrackManager::PipelineInfo> TrackManager::listPipelines() const {
             info.transport_stats = entry.pipeline->transportStats();
             info.zc = entry.pipeline->zerocopyMetrics();
             info.stage_latency = entry.pipeline->stageLatency();
+            info.decoder_label = entry.decoder_label;
         } else {
             info.last_active_ms = entry.last_active_ms;
         }

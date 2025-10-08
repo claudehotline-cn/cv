@@ -83,6 +83,9 @@ struct ObservabilityConfig {
     int file_max_files {0};
     bool pipeline_metrics_enabled {false};
     int pipeline_metrics_interval_ms {5000};
+    // Metrics registry + labels
+    bool metrics_registry_enabled {true};
+    bool metrics_extended_labels {false};
     // Added: logging format and module-level overrides from config file
     // log_format: "text" | "json"
     std::string log_format {"text"};
