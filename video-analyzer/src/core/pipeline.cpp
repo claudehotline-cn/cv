@@ -118,6 +118,9 @@ void Pipeline::recordFrameProcessed(double latency_ms) {
     const double last_ms = last_timestamp_ms_.load();
     last_timestamp_ms_.store(now_ms);
 
+    // record end-to-end latency histogram
+    latency_hist_.add(latency_ms);
+
     if (last_ms > 0.0) {
         const double delta = now_ms - last_ms;
         if (delta > 0.0) {
@@ -177,6 +180,7 @@ bool Pipeline::pullFrame(core::Frame& frame) {
     if (ok) {
         frame.pts_ms = ms_now();
         frame.zc = &zc_metrics_;
+        frame.lat = &latency_sink_;
     }
     return ok;
 }
@@ -193,18 +197,38 @@ bool Pipeline::processFrame(const core::Frame& in) {
     }
     // Ensure analyzed frame carries metrics sink
     if (!analyzed.zc) analyzed.zc = &zc_metrics_;
+    if (!analyzed.lat) analyzed.lat = &latency_sink_;
 
     va::media::IEncoder::Packet packet;
     if (encoder_) {
+        auto tenc0 = std::chrono::high_resolution_clock::now();
         if (!encoder_->encode(analyzed, packet)) {
             VA_LOG_DEBUG() << "[Pipeline] encoder.encode returned false";
             return false;
         }
+        auto tenc1 = std::chrono::high_resolution_clock::now();
+        auto ms = [](auto a, auto b){ return std::chrono::duration_cast<std::chrono::milliseconds>(b-a).count(); };
+        if (analyzed.lat) analyzed.lat->record_encode_ms(static_cast<double>(ms(tenc0, tenc1)));
         if (transport_ && !packet.data.empty()) {
             transport_->send(track_id_, packet.data.data(), packet.data.size());
         }
     }
     return true;
+}
+
+Pipeline::LatencySnapshot Pipeline::latencyHist() const {
+    LatencySnapshot snap;
+    latency_hist_.snapshot(snap);
+    return snap;
+}
+
+Pipeline::StageLatencySnapshot Pipeline::stageLatency() const {
+    StageLatencySnapshot out;
+    preproc_hist_.snapshot(out.preproc);
+    infer_hist_.snapshot(out.infer);
+    postproc_hist_.snapshot(out.postproc);
+    encode_hist_.snapshot(out.encode);
+    return out;
 }
 
 } // namespace va::core

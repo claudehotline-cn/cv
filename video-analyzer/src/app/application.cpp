@@ -10,6 +10,13 @@
 #include <filesystem>
 #include <iostream>
 #include <utility>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace va::app {
 
@@ -23,22 +30,80 @@ bool Application::initialize(const std::string& config_dir) {
         return true;
     }
 
+    auto has_config_files = [](const std::filesystem::path& dir) {
+        std::error_code e;
+        if (dir.empty()) return false;
+        auto app = dir / "app.yaml";
+        auto profiles = dir / "profiles.yaml";
+        return std::filesystem::exists(app, e) || std::filesystem::exists(profiles, e);
+    };
+
+    auto exe_dir = []() -> std::filesystem::path {
+#ifdef _WIN32
+        char buf[MAX_PATH];
+        DWORD len = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+        if (len > 0) {
+            return std::filesystem::path(buf).parent_path();
+        }
+#elif defined(__linux__)
+        char buf[4096];
+        ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (len > 0) { buf[len] = 0; return std::filesystem::path(buf).parent_path(); }
+#endif
+        return std::filesystem::current_path();
+    }();
+
+    // If user provided a config path, honor it strictly (do not auto-scan)
     if (!config_dir.empty()) {
         std::filesystem::path input(config_dir);
         std::error_code ec;
-        if (std::filesystem::is_regular_file(input, ec)) {
-            config_dir_ = input.parent_path().string();
-        } else if (std::filesystem::is_directory(input, ec)) {
-            config_dir_ = input.string();
+        std::filesystem::path chosen;
+        if (std::filesystem::is_directory(input, ec)) {
+            chosen = input;
+        } else if (std::filesystem::is_regular_file(input, ec)) {
+            chosen = input.parent_path();
         } else {
-            config_dir_ = input.parent_path().string();
+            chosen = input; // may be non-existing; check below
         }
+        if (!has_config_files(chosen)) {
+            last_error_ = std::string("config not found or missing required files in '") + chosen.string() + "'";
+            VA_LOG_ERROR() << last_error_;
+            return false;
+        }
+        config_dir_ = chosen.string();
+        VA_LOG_INFO() << "Using user-provided config directory: '" << config_dir_ << "'";
     } else {
-        config_dir_ = "config";
-    }
-
-    if (config_dir_.empty()) {
-        config_dir_ = ".";
+        // Build candidate config directories
+        std::vector<std::filesystem::path> candidates;
+        // 1) Environment override
+        if (const char* env = std::getenv("VA_CONFIG_DIR")) {
+            candidates.push_back(std::filesystem::path(env));
+        }
+        // 2) CWD/config
+        candidates.push_back(std::filesystem::current_path() / "config");
+        // 3) exe-dir relatives: ascend up to 5 levels and try "config" and "video-analyzer/config"
+        {
+            auto cur = exe_dir;
+            for (int i = 0; i < 6; ++i) {
+                candidates.push_back(cur / "config");
+                candidates.push_back(cur / "video-analyzer" / "config");
+                if (cur.has_parent_path()) cur = cur.parent_path(); else break;
+            }
+        }
+        // Pick the first candidate that has config files
+        std::filesystem::path resolved;
+        for (const auto& c : candidates) {
+            if (has_config_files(c)) { resolved = c; break; }
+        }
+        if (!resolved.empty()) {
+            config_dir_ = resolved.string();
+            VA_LOG_INFO() << "Resolved config directory: '" << config_dir_ << "'";
+        } else {
+            // Fallback to original behavior
+            config_dir_ = "config";
+            if (config_dir_.empty()) config_dir_ = ".";
+            VA_LOG_WARN() << "Config directory not found via robust resolution; falling back to '" << config_dir_ << "'";
+        }
     }
 
     last_error_.clear();

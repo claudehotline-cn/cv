@@ -79,6 +79,12 @@ bool Analyzer::analyze(const core::Frame& in, core::Frame& out) {
             << "renderer.draw failed (boxes=" << model_output.boxes.size() << ")";
     } else {
         auto ms = [](auto a, auto b){ return std::chrono::duration_cast<std::chrono::milliseconds>(b-a).count(); };
+        // Record stage latencies into per-pipeline histograms if sink is present
+        if (in.lat) {
+            in.lat->record_preproc_ms(static_cast<double>(ms(t0,t1)));
+            in.lat->record_infer_ms(static_cast<double>(ms(t1,t2)));
+            in.lat->record_postproc_ms(static_cast<double>(ms(t2,t3)));
+        }
         VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer", 1000)
             << "timings ms: preproc=" << ms(t0,t1)
             << " infer=" << ms(t1,t2)

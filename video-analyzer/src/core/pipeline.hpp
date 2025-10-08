@@ -52,6 +52,22 @@ public:
     va::media::ITransport::Stats transportStats() const;
     const ZeroCopyMetrics& zerocopyMetrics() const { return zc_metrics_; }
 
+    struct LatencySnapshot {
+        static constexpr int kNumBuckets = 10; // ms buckets: 1,2,5,10,20,50,100,200,500,1000
+        uint64_t buckets[kNumBuckets] {};
+        uint64_t sum_us {0};
+        uint64_t count {0};
+    };
+    LatencySnapshot latencyHist() const;
+
+    struct StageLatencySnapshot {
+        LatencySnapshot preproc;
+        LatencySnapshot infer;
+        LatencySnapshot postproc;
+        LatencySnapshot encode;
+    };
+    StageLatencySnapshot stageLatency() const;
+
 private:
     void run();
     bool pullFrame(core::Frame& frame);
@@ -74,6 +90,54 @@ private:
     std::atomic<double> fps_ {0.0};
     std::atomic<double> last_timestamp_ms_ {0.0};
     ZeroCopyMetrics zc_metrics_;
+
+    // Per-pipeline latency histogram (fixed buckets in ms)
+    struct LatencyHist {
+        static constexpr int kNumBuckets = 10;
+        static constexpr double bounds_ms[kNumBuckets] = {1,2,5,10,20,50,100,200,500,1000};
+        std::atomic<uint64_t> buckets[kNumBuckets];
+        std::atomic<uint64_t> sum_us; // sum of latencies in microseconds
+        std::atomic<uint64_t> count;
+        LatencyHist() : sum_us(0), count(0) {
+            for (int i=0;i<kNumBuckets;++i) buckets[i].store(0);
+        }
+        void add(double latency_ms) {
+            // bucket index
+            int idx = 0;
+            while (idx < kNumBuckets && latency_ms > bounds_ms[idx]) ++idx;
+            if (idx >= kNumBuckets) idx = kNumBuckets - 1;
+            buckets[idx].fetch_add(1, std::memory_order_relaxed);
+            // convert to microseconds to avoid double atomics
+            uint64_t us = (latency_ms <= 0.0) ? 0ull : static_cast<uint64_t>(latency_ms * 1000.0);
+            sum_us.fetch_add(us, std::memory_order_relaxed);
+            count.fetch_add(1, std::memory_order_relaxed);
+        }
+        void snapshot(LatencySnapshot& out) const {
+            for (int i=0;i<kNumBuckets;++i) out.buckets[i] = buckets[i].load(std::memory_order_relaxed);
+            out.sum_us = sum_us.load(std::memory_order_relaxed);
+            out.count = count.load(std::memory_order_relaxed);
+        }
+    };
+    LatencyHist latency_hist_;
+
+    // Stage-wise latency histograms
+    LatencyHist preproc_hist_;
+    LatencyHist infer_hist_;
+    LatencyHist postproc_hist_;
+    LatencyHist encode_hist_;
+
+    // Latency sink to be attached to frames for stage recording
+    class StageLatencySinkImpl : public va::core::Frame::LatencyMetricsSink {
+    public:
+        explicit StageLatencySinkImpl(Pipeline* p) : p_(p) {}
+        void record_preproc_ms(double ms) override { if (p_) p_->preproc_hist_.add(ms); }
+        void record_infer_ms(double ms) override { if (p_) p_->infer_hist_.add(ms); }
+        void record_postproc_ms(double ms) override { if (p_) p_->postproc_hist_.add(ms); }
+        void record_encode_ms(double ms) override { if (p_) p_->encode_hist_.add(ms); }
+    private:
+        Pipeline* p_ {nullptr};
+    };
+    StageLatencySinkImpl latency_sink_ {this};
 };
 
 } // namespace va::core

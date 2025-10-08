@@ -49,6 +49,7 @@ public:
         va::media::ITransport::Stats transport_stats;
         EncoderConfig encoder_cfg;
         ZeroCopyMetrics zc;
+        va::core::Pipeline::StageLatencySnapshot stage_latency;
     };
 
     std::vector<PipelineInfo> listPipelines() const;

@@ -255,7 +255,7 @@ private:
     void serverLoop() {
         server_socket_ = static_cast<int>(socket(AF_INET, SOCK_STREAM, 0));
         if (server_socket_ < 0) {
-            VA_LOG_ERROR() << "REST server: failed to create socket";
+            VA_LOG_C(::va::core::LogLevel::Error, "rest") << "failed to create socket";
             running_ = false;
             return;
         }
@@ -271,13 +271,13 @@ private:
             addr.sin_addr.s_addr = INADDR_ANY;
         } else {
             if (inet_pton(AF_INET, options_.host.c_str(), &addr.sin_addr) <= 0) {
-                VA_LOG_WARN() << "REST server: invalid host " << options_.host << ", defaulting to INADDR_ANY";
+                VA_LOG_C(::va::core::LogLevel::Warn, "rest") << "invalid host " << options_.host << ", defaulting to INADDR_ANY";
                 addr.sin_addr.s_addr = INADDR_ANY;
             }
         }
 
         if (bind(server_socket_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-            VA_LOG_ERROR() << "REST server: bind failed on port " << options_.port;
+            VA_LOG_C(::va::core::LogLevel::Error, "rest") << "bind failed on port " << options_.port;
             running_ = false;
 #ifdef _WIN32
             closesocket(server_socket_);
@@ -289,7 +289,7 @@ private:
         }
 
         if (listen(server_socket_, 16) < 0) {
-            VA_LOG_ERROR() << "REST server: listen failed";
+            VA_LOG_C(::va::core::LogLevel::Error, "rest") << "listen failed";
             running_ = false;
 #ifdef _WIN32
             closesocket(server_socket_);
@@ -300,7 +300,7 @@ private:
             return;
         }
 
-        VA_LOG_INFO() << "REST server listening on " << options_.host << ":" << options_.port;
+        VA_LOG_C(::va::core::LogLevel::Info, "rest") << "listening on " << options_.host << ":" << options_.port;
 
         while (running_) {
             sockaddr_in client_addr{};
@@ -308,7 +308,7 @@ private:
             int client_socket = accept(server_socket_, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
             if (client_socket < 0) {
                 if (running_) {
-                    VA_LOG_WARN() << "REST server: accept failed";
+                    VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "rest", 2000) << "accept failed";
                 }
                 continue;
             }
@@ -661,6 +661,10 @@ struct RestServer::Impl {
 
         server.addRoute("GET", "/pipelines", pipelinesHandler);
         server.addRoute("GET", "/api/pipelines", pipelinesHandler);
+
+        // Prometheus metrics endpoint
+        auto metricsHandler = [this](const HttpRequest& req) { return handleMetrics(req); };
+        server.addRoute("GET", "/metrics", metricsHandler);
     }
 
     bool start() {
@@ -833,6 +837,137 @@ struct RestServer::Impl {
         return jsonResponse(payload, 200);
     }
 
+    HttpResponse handleMetrics(const HttpRequest& /*req*/) {
+        // Prometheus text exposition format (0.0.4)
+        auto sys = app.systemStats();
+        auto gm = va::core::GlobalMetrics::snapshot();
+
+        std::ostringstream out;
+        out << "# HELP va_pipelines_total Total pipelines\n";
+        out << "# TYPE va_pipelines_total gauge\n";
+        out << "va_pipelines_total " << sys.total_pipelines << "\n";
+
+        out << "# HELP va_pipelines_running Running pipelines\n";
+        out << "# TYPE va_pipelines_running gauge\n";
+        out << "va_pipelines_running " << sys.running_pipelines << "\n";
+
+        out << "# HELP va_pipeline_aggregate_fps Aggregate FPS across pipelines\n";
+        out << "# TYPE va_pipeline_aggregate_fps gauge\n";
+        out << "va_pipeline_aggregate_fps " << sys.aggregate_fps << "\n";
+
+        out << "# HELP va_frames_processed_total Frames processed (sum)\n";
+        out << "# TYPE va_frames_processed_total counter\n";
+        out << "va_frames_processed_total " << sys.processed_frames << "\n";
+
+        out << "# HELP va_frames_dropped_total Frames dropped (sum)\n";
+        out << "# TYPE va_frames_dropped_total counter\n";
+        out << "va_frames_dropped_total " << sys.dropped_frames << "\n";
+
+        out << "# HELP va_transport_packets_total Transport packets sent (sum)\n";
+        out << "# TYPE va_transport_packets_total counter\n";
+        out << "va_transport_packets_total " << sys.transport_packets << "\n";
+
+        out << "# HELP va_transport_bytes_total Transport bytes sent (sum)\n";
+        out << "# TYPE va_transport_bytes_total counter\n";
+        out << "va_transport_bytes_total " << sys.transport_bytes << "\n";
+
+        out << "# HELP va_d2d_nv12_frames_total NVENC device NV12 direct-feed frames\n";
+        out << "# TYPE va_d2d_nv12_frames_total counter\n";
+        out << "va_d2d_nv12_frames_total " << gm.d2d_nv12_frames << "\n";
+
+        out << "# HELP va_cpu_fallback_skips_total CPU upload skipped (device NV12 path)\n";
+        out << "# TYPE va_cpu_fallback_skips_total counter\n";
+        out << "va_cpu_fallback_skips_total " << gm.cpu_fallback_skips << "\n";
+
+        out << "# HELP va_encoder_eagain_retry_total Encoder EAGAIN drain+retry occurrences\n";
+        out << "# TYPE va_encoder_eagain_retry_total counter\n";
+        out << "va_encoder_eagain_retry_total " << gm.eagain_retry_count << "\n";
+
+        out << "# HELP va_overlay_nv12_kernel_hits_total NV12 kernel overlay executions\n";
+        out << "# TYPE va_overlay_nv12_kernel_hits_total counter\n";
+        out << "va_overlay_nv12_kernel_hits_total " << gm.overlay_nv12_kernel_hits << "\n";
+
+        out << "# HELP va_overlay_nv12_passthrough_total NV12 overlay passthrough (no boxes)\n";
+        out << "# TYPE va_overlay_nv12_passthrough_total counter\n";
+        out << "va_overlay_nv12_passthrough_total " << gm.overlay_nv12_passthrough << "\n";
+
+        // Per-source metrics (labels: source_id, path)
+        auto classify_path = [](const va::core::TrackManager::PipelineInfo& info) -> std::string {
+            if (info.zc.d2d_nv12_frames > 0) return "d2d";
+            std::string lower = info.encoder_cfg.codec;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+            if (lower.find("nvenc") != std::string::npos) return "gpu";
+            return "cpu";
+        };
+
+        // Per-pipeline FPS gauge
+        out << "# HELP va_pipeline_fps Pipeline FPS per source\n";
+        out << "# TYPE va_pipeline_fps gauge\n";
+        for (const auto& info : app.pipelines()) {
+            const std::string path = classify_path(info);
+            out << "va_pipeline_fps{source_id=\"" << info.stream_id
+                << "\",path=\"" << path << "\"} " << info.metrics.fps << "\n";
+        }
+
+        // Per-pipeline frames processed/dropped with labels
+        for (const auto& info : app.pipelines()) {
+            const std::string path = classify_path(info);
+            out << "va_frames_processed_total{source_id=\"" << info.stream_id
+                << "\",path=\"" << path << "\"} "
+                << static_cast<unsigned long long>(info.metrics.processed_frames) << "\n";
+            out << "va_frames_dropped_total{source_id=\"" << info.stream_id
+                << "\",path=\"" << path << "\"} "
+                << static_cast<unsigned long long>(info.metrics.dropped_frames) << "\n";
+        }
+
+        // Per-stage latency histograms per source
+        const double bounds_ms[10] = {1,2,5,10,20,50,100,200,500,1000};
+        out << "# HELP va_frame_latency_ms Frame processing latency per stage\n";
+        out << "# TYPE va_frame_latency_ms histogram\n";
+        auto emit_hist = [&](const std::string& stage,
+                             const std::string& source_id,
+                             const std::string& path,
+                             const va::core::Pipeline::LatencySnapshot& snap) {
+            uint64_t cumulative = 0;
+            for (int i=0;i<va::core::Pipeline::LatencySnapshot::kNumBuckets; ++i) {
+                cumulative += snap.buckets[i];
+                out << "va_frame_latency_ms_bucket{stage=\"" << stage
+                    << "\",source_id=\"" << source_id
+                    << "\",path=\"" << path
+                    << "\",le=\"" << bounds_ms[i] << "\"} "
+                    << static_cast<unsigned long long>(cumulative) << "\n";
+            }
+            // +Inf bucket equals total count
+            out << "va_frame_latency_ms_bucket{stage=\"" << stage
+                << "\",source_id=\"" << source_id
+                << "\",path=\"" << path
+                << "\",le=\"+Inf\"} "
+                << static_cast<unsigned long long>(snap.count) << "\n";
+            // sum (ms) and count
+            double sum_ms = static_cast<double>(snap.sum_us) / 1000.0;
+            out << "va_frame_latency_ms_sum{stage=\"" << stage
+                << "\",source_id=\"" << source_id
+                << "\",path=\"" << path << "\"} " << sum_ms << "\n";
+            out << "va_frame_latency_ms_count{stage=\"" << stage
+                << "\",source_id=\"" << source_id
+                << "\",path=\"" << path << "\"} "
+                << static_cast<unsigned long long>(snap.count) << "\n";
+        };
+        for (const auto& info : app.pipelines()) {
+            const std::string path = classify_path(info);
+            emit_hist("preproc", info.stream_id, path, info.stage_latency.preproc);
+            emit_hist("infer",   info.stream_id, path, info.stage_latency.infer);
+            emit_hist("postproc",info.stream_id, path, info.stage_latency.postproc);
+            emit_hist("encode",  info.stream_id, path, info.stage_latency.encode);
+        }
+
+        HttpResponse resp;
+        resp.status_code = 200;
+        resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8";
+        resp.body = out.str();
+        return resp;
+    }
+
     static va::core::LogLevel parseLevelStr(const std::string& s) {
         std::string v = toLower(s);
         if (v == "trace") return va::core::LogLevel::Trace;
@@ -958,19 +1093,19 @@ struct RestServer::Impl {
 
             auto stream_opt = getStringField(body, {"stream_id", "stream"});
             if (!stream_opt) {
-                VA_LOG_WARN() << "[REST] subscribe missing stream identifier: body=" << body.toStyledString();
+                VA_LOG_C(::va::core::LogLevel::Warn, "rest") << "subscribe missing stream identifier";
                 return errorResponse("Missing required field: stream_id", 400);
             }
 
             auto profile_opt = getStringField(body, {"profile", "profile_id"});
             if (!profile_opt) {
-                VA_LOG_WARN() << "[REST] subscribe missing profile: body=" << body.toStyledString();
+                VA_LOG_C(::va::core::LogLevel::Warn, "rest") << "subscribe missing profile";
                 return errorResponse("Missing required field: profile", 400);
             }
 
             auto uri_opt = getStringField(body, {"source_uri", "url"});
             if (!uri_opt) {
-                VA_LOG_WARN() << "[REST] subscribe missing source URI: body=" << body.toStyledString();
+                VA_LOG_C(::va::core::LogLevel::Warn, "rest") << "subscribe missing source URI";
                 return errorResponse("Missing required field: source_uri", 400);
             }
 
@@ -978,7 +1113,7 @@ struct RestServer::Impl {
             const std::string profile = *profile_opt;
             const std::string uri = *uri_opt;
 
-            VA_LOG_INFO() << "[REST] subscribe request stream=" << stream_id
+            VA_LOG_C(::va::core::LogLevel::Info, "rest") << "subscribe request stream=" << stream_id
                           << " profile=" << profile
                           << " uri=" << uri;
             std::optional<std::string> model_override;
@@ -986,12 +1121,12 @@ struct RestServer::Impl {
                 model_override = body["model_id"].asString();
             }
 
-            VA_LOG_INFO() << "[REST] subscribe -> building pipeline...";
+            VA_LOG_C(::va::core::LogLevel::Info, "rest") << "subscribe -> building pipeline...";
             auto result = app.subscribeStream(stream_id, profile, uri, model_override);
             if (!result) {
                 return errorResponse(app.lastError(), 400);
             }
-            VA_LOG_INFO() << "[REST] subscribe -> pipeline created key=" << *result;
+            VA_LOG_C(::va::core::LogLevel::Info, "rest") << "subscribe -> pipeline created key=" << *result;
 
             Json::Value payload = successPayload();
             Json::Value data(Json::objectValue);

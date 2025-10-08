@@ -57,6 +57,15 @@ struct Frame {
 #endif
     // Optional per-pipeline zero-copy metrics sink
     ZeroCopyMetrics* zc {nullptr};
+    // Optional per-pipeline latency metrics sink (stage-wise)
+    struct LatencyMetricsSink {
+        virtual void record_preproc_ms(double) = 0;
+        virtual void record_infer_ms(double) = 0;
+        virtual void record_postproc_ms(double) = 0;
+        virtual void record_encode_ms(double) = 0;
+        virtual ~LatencyMetricsSink() = default;
+    };
+    LatencyMetricsSink* lat {nullptr};
 };
 
 struct LetterboxMeta {
