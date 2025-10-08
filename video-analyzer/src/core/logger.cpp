@@ -68,6 +68,14 @@ void Logger::configure(const ObservabilityConfig& config) {
         file_stream_.close();
     }
 
+    // Apply config-based format/module overrides first
+    if (!config.log_format.empty()) {
+        format_ = parseFormatString(config.log_format);
+    }
+    if (!config.module_levels.empty()) {
+        parseModuleLevelsString(config.module_levels);
+    }
+
     // Optional: format/module levels from env
     parseFormatEnv();
     parseModuleLevelsEnv();
@@ -104,6 +112,11 @@ void Logger::setModuleLevel(const std::string& component, LogLevel level) {
 void Logger::setFormat(LogFormat fmt) {
     std::lock_guard<std::mutex> lock(mutex_);
     format_ = fmt;
+}
+
+void Logger::setLevel(LogLevel level) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    level_threshold_ = level;
 }
 
 void Logger::log(LogLevel level, const char* component, const std::string& message) {
@@ -329,6 +342,31 @@ void Logger::parseFormatEnv() {
     if (!env) return;
     std::string v = toLowerCopy(env);
     if (v == "json") format_ = LogFormat::Json; else format_ = LogFormat::Text;
+}
+
+void Logger::parseModuleLevelsString(const std::string& s) {
+    // format: comp:level,comp2:level2 (spaces allowed)
+    size_t start = 0;
+    while (start < s.size()) {
+        size_t comma = s.find(',', start);
+        std::string pair = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        size_t colon = pair.find(':');
+        if (colon != std::string::npos) {
+            std::string comp = pair.substr(0, colon);
+            std::string lvl = pair.substr(colon + 1);
+            auto trim = [](std::string& x){ x.erase(0, x.find_first_not_of(" \t")); x.erase(x.find_last_not_of(" \t") + 1); };
+            trim(comp); trim(lvl);
+            if (!comp.empty() && !lvl.empty()) {
+                module_levels_[comp] = parseLevel(lvl);
+            }
+        }
+        if (comma == std::string::npos) break; else start = comma + 1;
+    }
+}
+
+LogFormat Logger::parseFormatString(const std::string& s) const {
+    std::string v = toLowerCopy(s);
+    return (v == "json") ? LogFormat::Json : LogFormat::Text;
 }
 
 } // namespace va::core

@@ -62,6 +62,7 @@ public:
     bool isEnabled(LogLevel level, const char* component) const;
 
     // Module level control via env/REST
+    void setLevel(LogLevel level);
     void setModuleLevel(const std::string& component, LogLevel level);
     void setFormat(LogFormat fmt);
 
@@ -77,6 +78,8 @@ private:
     void installRedirects();
     void parseModuleLevelsEnv();
     void parseFormatEnv();
+    void parseModuleLevelsString(const std::string& s);
+    LogFormat parseFormatString(const std::string& s) const;
 
     mutable std::mutex mutex_;
     LogLevel level_threshold_ {LogLevel::Info};

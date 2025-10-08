@@ -219,6 +219,42 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
         auto& obs = payload.observability;
         obs.log_level = observability_node["log_level"].as<std::string>(obs.log_level);
         obs.console = observability_node["console"].as<bool>(obs.console);
+        obs.log_format = observability_node["log_format"].as<std::string>(obs.log_format);
+        // module levels can be a scalar string or a map {comp: level}
+        if (observability_node["module_levels"]) {
+            const auto ml = observability_node["module_levels"];
+            if (ml.IsScalar()) {
+                obs.module_levels = ml.as<std::string>(obs.module_levels);
+            } else if (ml.IsMap()) {
+                // flatten map into "k1:v1,k2:v2"
+                std::ostringstream oss;
+                bool first = true;
+                for (auto it = ml.begin(); it != ml.end(); ++it) {
+                    const std::string k = it->first.as<std::string>("");
+                    const std::string v = it->second.as<std::string>("");
+                    if (k.empty() || v.empty()) continue;
+                    if (!first) oss << ","; first = false;
+                    oss << k << ":" << v;
+                }
+                obs.module_levels = oss.str();
+            }
+        } else if (observability_node["modules"]) {
+            const auto ml = observability_node["modules"];
+            if (ml.IsMap()) {
+                std::ostringstream oss;
+                bool first = true;
+                for (auto it = ml.begin(); it != ml.end(); ++it) {
+                    const std::string k = it->first.as<std::string>("");
+                    const std::string v = it->second.as<std::string>("");
+                    if (k.empty() || v.empty()) continue;
+                    if (!first) oss << ","; first = false;
+                    oss << k << ":" << v;
+                }
+                obs.module_levels = oss.str();
+            } else if (ml.IsScalar()) {
+                obs.module_levels = ml.as<std::string>(obs.module_levels);
+            }
+        }
 
         const auto file_node = observability_node["file"];
         if (file_node) {

@@ -83,6 +83,11 @@ struct ObservabilityConfig {
     int file_max_files {0};
     bool pipeline_metrics_enabled {false};
     int pipeline_metrics_interval_ms {5000};
+    // Added: logging format and module-level overrides from config file
+    // log_format: "text" | "json"
+    std::string log_format {"text"};
+    // module_levels: e.g., "transport.webrtc:debug,encoder.ffmpeg:info"
+    std::string module_levels;
 };
 
 struct AppConfigPayload {

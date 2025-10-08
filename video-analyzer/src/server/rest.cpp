@@ -637,6 +637,10 @@ struct RestServer::Impl {
         server.addRoute("POST", "/engine/set", setEngineHandler);
         server.addRoute("POST", "/api/engine/set", setEngineHandler);
 
+        // Logging config: runtime set
+        auto loggingSetHandler = [this](const HttpRequest& req) { return handleLoggingSet(req); };
+        server.addRoute("POST", "/api/logging/set", loggingSetHandler);
+
         auto systemInfoHandler = [this](const HttpRequest& req) { return handleSystemInfo(req); };
         auto systemStatsHandler = [this](const HttpRequest& req) { return handleSystemStats(req); };
         auto modelsHandler = [this](const HttpRequest& req) { return handleModels(req); };
@@ -827,6 +831,72 @@ struct RestServer::Impl {
         }
         payload["data"] = data;
         return jsonResponse(payload, 200);
+    }
+
+    static va::core::LogLevel parseLevelStr(const std::string& s) {
+        std::string v = toLower(s);
+        if (v == "trace") return va::core::LogLevel::Trace;
+        if (v == "debug") return va::core::LogLevel::Debug;
+        if (v == "warn" || v == "warning") return va::core::LogLevel::Warn;
+        if (v == "error" || v == "err") return va::core::LogLevel::Error;
+        return va::core::LogLevel::Info;
+    }
+
+    HttpResponse handleLoggingSet(const HttpRequest& req) {
+        try {
+            const Json::Value body = parseJson(req.body);
+            auto& logger = va::core::Logger::instance();
+
+            // level
+            if (body.isMember("level") && body["level"].isString()) {
+                logger.setLevel(parseLevelStr(body["level"].asString()));
+            }
+            // format
+            if (body.isMember("format") && body["format"].isString()) {
+                std::string f = toLower(body["format"].asString());
+                logger.setFormat(f == "json" ? va::core::LogFormat::Json : va::core::LogFormat::Text);
+            }
+            // modules map
+            if (body.isMember("modules") && body["modules"].isObject()) {
+                const auto& m = body["modules"];
+                for (const auto& name : m.getMemberNames()) {
+                    if (m[name].isString()) {
+                        logger.setModuleLevel(name, parseLevelStr(m[name].asString()));
+                    }
+                }
+            }
+            // module_levels (string or object), same语义
+            if (body.isMember("module_levels")) {
+                const auto& ml = body["module_levels"];
+                if (ml.isObject()) {
+                    for (const auto& name : ml.getMemberNames()) {
+                        if (ml[name].isString()) logger.setModuleLevel(name, parseLevelStr(ml[name].asString()));
+                    }
+                } else if (ml.isString()) {
+                    // parse "comp:level,comp2:level"
+                    std::string s = ml.asString(); size_t start = 0;
+                    while (start < s.size()) {
+                        size_t comma = s.find(',', start);
+                        std::string pair = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                        size_t colon = pair.find(':');
+                        if (colon != std::string::npos) {
+                            std::string comp = pair.substr(0, colon);
+                            std::string lvl = pair.substr(colon + 1);
+                            auto trim = [](std::string& x){ x.erase(0, x.find_first_not_of(" \t")); x.erase(x.find_last_not_of(" \t") + 1); };
+                            trim(comp); trim(lvl);
+                            if (!comp.empty() && !lvl.empty()) logger.setModuleLevel(comp, parseLevelStr(lvl));
+                        }
+                        if (comma == std::string::npos) break; else start = comma + 1;
+                    }
+                }
+            }
+
+            Json::Value ok = successPayload();
+            ok["message"] = "logging updated";
+            return jsonResponse(ok);
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("logging set failed: ") + ex.what(), 400);
+        }
     }
 
     HttpResponse handleModels(const HttpRequest& /*req*/) {
