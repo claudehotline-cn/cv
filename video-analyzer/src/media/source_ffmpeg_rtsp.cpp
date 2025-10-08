@@ -1,6 +1,7 @@
 #include "media/source_ffmpeg_rtsp.hpp"
 #include "core/logger.hpp"
 #include "core/drop_metrics.hpp"
+#include "core/source_reconnects.hpp"
 
 namespace va::media {
 
@@ -46,6 +47,7 @@ bool FfmpegRtspSource::read(core::Frame& frame) {
     if (!fmt_ || !dec_) {
         const auto now = std::chrono::steady_clock::now();
         if (is_rtsp_ && (next_reopen_.time_since_epoch().count() == 0 || now >= next_reopen_)) {
+            const bool scheduled_reopen = (next_reopen_.time_since_epoch().count() != 0) && now >= next_reopen_;
             if (!openImpl()) {
                 backoff_ms_ = backoff_ms_ == 0 ? 200 : std::min(backoff_ms_ * 2, 5000);
                 next_reopen_ = now + std::chrono::milliseconds(backoff_ms_);
@@ -55,6 +57,10 @@ bool FfmpegRtspSource::read(core::Frame& frame) {
             backoff_ms_ = 0;
             next_reopen_ = {};
             fail_count_ = 0;
+            if (scheduled_reopen) {
+                // Count successful reconnection events per source_id
+                va::core::SourceReconnects::incrementByUri(uri_, 1);
+            }
         } else if (is_rtsp_) {
             return false;
         } else {

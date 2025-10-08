@@ -6,6 +6,7 @@
 #include "core/logger.hpp"
 #include "core/global_metrics.hpp"
 #include "core/drop_metrics.hpp"
+#include "core/source_reconnects.hpp"
 
 #include <json/json.h>
 
@@ -978,6 +979,17 @@ struct RestServer::Impl {
                 emit("decode_error",   row.counters.decode_error);
                 emit("encode_eagain",  row.counters.encode_eagain);
                 emit("backpressure",   row.counters.backpressure);
+            }
+        }
+
+        // RTSP source reconnects per source
+        {
+            auto rows = va::core::SourceReconnects::snapshot();
+            out << "# HELP va_rtsp_source_reconnects_total RTSP source reconnects\n";
+            out << "# TYPE va_rtsp_source_reconnects_total counter\n";
+            for (const auto& row : rows) {
+                out << "va_rtsp_source_reconnects_total{source_id=\"" << row.source_id << "\"} "
+                    << static_cast<unsigned long long>(row.reconnects) << "\n";
             }
         }
 

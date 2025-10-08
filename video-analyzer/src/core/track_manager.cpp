@@ -4,6 +4,7 @@
 #include "media/source.hpp"
 #include "core/logger.hpp"
 #include "core/drop_metrics.hpp"
+#include "core/source_reconnects.hpp"
 
 #include <utility>
 #include <vector>
@@ -110,6 +111,9 @@ bool TrackManager::switchSource(const std::string& stream_id,
     } catch (...) {
         // ignore metrics mapping errors
     }
+    try {
+        va::core::SourceReconnects::mapUriToSourceId(new_uri, stream_id);
+    } catch (...) {}
     return it->second.pipeline->source()->switchUri(new_uri);
 }
 
