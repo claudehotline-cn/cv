@@ -283,7 +283,9 @@ export class WebRTCClient {
   private async handleOffer(offerData: any): Promise<void> {
     if (!this.peerConnection) throw new Error("PeerConnection not initialized");
     const pc = this.peerConnection; console.log("📨 收到 offer，开始应答... sdpLen=", (offerData?.sdp || "").length);
-    await pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: offerData.sdp }));
+    const sdp: string = String(offerData?.sdp || "");
+    if (pc.signalingState !== "stable") { try { await (pc as any).setLocalDescription({ type: "rollback" } as any); console.log("↩️ 已执行 rollback"); } catch (e) { console.warn("rollback 失败(可忽略)", e); } }
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp }));
     const answer = await pc.createAnswer({ offerToReceiveVideo: true, offerToReceiveAudio: false });
     if (answer.sdp) answer.sdp = answer.sdp.replace(/a=inactive/g, "a=recvonly");
     await pc.setLocalDescription(answer);

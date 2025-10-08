@@ -156,7 +156,7 @@
             </div>
             <div v-else class="video-preview">
               <!-- JPEG视频播放器 -->
-              <JpegVideoPlayer
+              <JpegVideoPlayer v-if="!videoStore.webrtcConnected"
                 ref="jpegPlayerRef"
                 :width="640"
                 :height="480"
@@ -168,13 +168,12 @@
               />
 
               <!-- 备用: WebRTC视频流 (当不使用JPEG时) -->
-              <video
+              <video v-show="videoStore.webrtcConnected"
                 ref="videoElement"
                 class="video-stream"
                 autoplay
                 muted
                 playsinline
-                style="display: none"
               ></video>
 
               <!-- WebRTC连接状态指示器 -->
