@@ -471,6 +471,12 @@ onUnmounted(() => {
   border-radius: 8px;
 }
 
+/* 隐藏旧版状态与控制条，改用 PlayerCard 提供的控件 */
+.video-preview .webrtc-status,
+.video-preview .video-controls {
+  display: none !important;
+}
+
 .webrtc-status {
   position: absolute;
   top: 10px;
