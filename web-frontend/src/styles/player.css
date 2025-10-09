@@ -1,0 +1,13 @@
+:root{
+  --va-card-bg:#0f172a; /* slate-900 */
+  --va-card-header-bg:#111827; /* gray-900 */
+}
+
+[data-theme="dark"]:root{
+  --va-card-bg:#0b1220;
+  --va-card-header-bg:#0f172a;
+}
+
+.va-text-dim { color:#9ca3af; }
+.va-muted { color:#6b7280; }
+

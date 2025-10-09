@@ -10,7 +10,7 @@
               <el-button size="small" type="primary" @click="goToSourceManager">
                 管理视频源
               </el-button>
-            </div>
+              </div>
           </template>
 
           <el-form label-width="100px">
@@ -147,6 +147,17 @@
               <p>请选择一个视频源</p>
             </div>
             <div v-else class="video-preview">
+              <PlayerCard
+                :title="selectedSourceName"
+                :connected="videoStore.webrtcConnected"
+                :connecting="videoStore.connectionStatus==='connecting'"
+                :error="videoStore.connectionStatus==='disconnected' && !videoStore.webrtcConnected"
+                :stats="{ fps: videoStore.selectedSource?.fps, resolution: videoStore.selectedSource?.resolution }"
+                @play-pause="onPlayPause"
+                @toggle-mute="onToggleMute"
+                @screenshot="onScreenshot"
+                @fullscreen="onFullscreen"
+              >
               <video
                 ref="videoElement"
                 class="video-stream"
@@ -170,6 +181,7 @@
                   停止视频流
                 </el-button>
               </div>
+              </PlayerCard>
             </div>
           </div>
 
@@ -201,6 +213,7 @@ import { useRouter } from "vue-router";
 import { useVideoStore } from "@/stores/videoStore";
 import type { DetectionResult } from "@/types";
 import { CaretRight, VideoPause, Camera } from "@element-plus/icons-vue";
+import PlayerCard from "@/components/analysis/PlayerCard.vue";
 import { ElMessage } from "element-plus";
 
 const router = useRouter();
@@ -304,6 +317,23 @@ const stopVideoStream = () => {
     videoElement.value.srcObject = null;
   }
   console.log("🛑 视频流已停止");
+};
+// PlayerCard 控件：仅作用于 <video> 标签，避免影响业务逻辑
+const onPlayPause = () => {
+  const v = videoElement.value; if (!v) return;
+  if (v.paused) { v.play().catch(() => {}); } else { v.pause(); }
+};
+const onToggleMute = () => { const v = videoElement.value; if (!v) return; v.muted = !v.muted; };
+const onFullscreen = () => {
+  const v: any = videoElement.value; if (!v) return;
+  (v.requestFullscreen || v.webkitRequestFullscreen || v.mozRequestFullScreen || v.msRequestFullscreen)?.call(v);
+};
+const onScreenshot = () => {
+  const v = videoElement.value; if (!v) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = v.videoWidth || 1280; canvas.height = v.videoHeight || 720;
+  const ctx = canvas.getContext('2d'); if (!ctx) return; ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+  canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='snapshot.png'; a.click(); URL.revokeObjectURL(url); }, 'image/png');
 };
 
 // 启停分析
@@ -512,3 +542,9 @@ onUnmounted(() => {
   margin-top: 8px;
 }
 </style>
+
+
+
+
+
+
