@@ -58,7 +58,7 @@ import { computed } from 'vue'
 import { ElTag, ElButton, ElTooltip, ElIcon } from 'element-plus'
 import { Loading, WarningFilled, Camera, Bell, FullScreen, VideoPlay } from '@element-plus/icons-vue'
 
-defineProps<{
+const props = defineProps<{
   title?: string
   connected?: boolean
   connecting?: boolean
@@ -67,8 +67,6 @@ defineProps<{
 }>()
 
 defineEmits(['toggle-mute', 'play-pause', 'screenshot', 'fullscreen'])
-
-const props = defineProps<{ connected?: boolean; connecting?: boolean; error?: boolean }>()
 const statusClass = computed(() => {
   if (props.connected) return 'ok'
   if (props.connecting) return 'warn'
@@ -118,4 +116,3 @@ const statusClass = computed(() => {
 
 .is-error .va-player-body { filter: grayscale(0.2) brightness(0.8); }
 </style>
-
