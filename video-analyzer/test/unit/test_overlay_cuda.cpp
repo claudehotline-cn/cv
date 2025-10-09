@@ -43,26 +43,26 @@ int main(){
     OverlayRendererCUDA ren; Frame out;
     if (!ren.draw(f, mo, out)) { std::cerr << "draw returned false" << std::endl; return 5; }
 
-    // Copy Y plane to host and verify border pixel changed to 235
+    // Copy Y/UV planes to host and verify border pixels changed
     std::vector<uint8_t> yhost((size_t)pitchY * H, 0);
     if (cudaMemcpy2D(yhost.data(), pitchY, d_y, pitchY, W, H, cudaMemcpyDeviceToHost) != cudaSuccess) { std::cerr << "copy Y back failed" << std::endl; return 6; }
+    std::vector<uint8_t> uvhost((size_t)pitchUV * (H/2), 0);
+    if (cudaMemcpy2D(uvhost.data(), pitchUV, d_uv, pitchUV, W, H/2, cudaMemcpyDeviceToHost) != cudaSuccess) { std::cerr << "copy UV back failed" << std::endl; return 6; }
 
     auto pix = [&](int x,int y)->uint8_t { return yhost[(size_t)y*pitchY + x]; };
     // Check a top border pixel and an interior non-border pixel
-    uint8_t borderPix = pix( (int)b.x1 + 1, (int)b.y1 );
-    uint8_t innerPix  = pix( (int)b.x1 + 5, (int)b.y1 + 5 );
+    uint8_t borderY = pix( (int)b.x1 + 1, (int)b.y1 );
+    uint8_t innerY  = pix( (int)b.x1 + 5, (int)b.y1 + 5 );
+    if (borderY == 0) { std::cerr << "expected border Y!=0" << std::endl; return 7; }
+    if (borderY == innerY) { std::cerr << "border Y equals inner Y unexpectedly" << std::endl; return 8; }
 
-    if (borderPix != 235) {
-        std::cerr << "expected border Y=235, got " << (int)borderPix << std::endl;
-        return 7;
-    }
-    if (innerPix == 235) {
-        std::cerr << "unexpected fill inside box (inner Y=235)" << std::endl;
-        return 8;
-    }
+    // Check UV border changed from neutral 128
+    auto uv_at = [&](int x, int y){ size_t off = (size_t)(y/2) * pitchUV + (size_t)(x/2) * 2; return std::pair<uint8_t,uint8_t>{ uvhost[off+0], uvhost[off+1] }; };
+    auto uvBorder = uv_at((int)b.x1 + 1, (int)b.y1);
+    if (uvBorder.first == 128 && uvBorder.second == 128) { std::cerr << "expected colored UV at border" << std::endl; return 9; }
 
     cudaFree(d_y); cudaFree(d_uv);
-    std::cout << "OK: CUDA overlay drew NV12 rectangle border (Y=235)." << std::endl;
+    std::cout << "OK: CUDA NV12 overlay drew colored rectangle border (Y/UV changed)." << std::endl;
     return 0;
 #endif
 }

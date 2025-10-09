@@ -15,7 +15,7 @@ namespace va { namespace analyzer { namespace cudaops_nv12 {
 // - pitchUV: stride in bytes for UV plane
 // - width, height: frame size in pixels
 // - boxes_xyxy: device pointer to N*4 floats [x1,y1,x2,y2,...]
-// - classes: optional device pointer to N ints (can be nullptr); currently unused (neutral UV)
+// - classes: optional device pointer to N ints (can be nullptr); when provided, per-class colors are used for UV and Y
 // - count: number of boxes
 // - thickness: border thickness in pixels
 // Returns cudaError_t (0 on success)
@@ -27,7 +27,7 @@ int draw_rects_nv12_inplace(uint8_t* y, int pitchY,
                             int count,
                             int thickness);
 
-// Optional: filled rectangles with alpha on Y plane only (UV kept neutral 128)
+// Optional: filled rectangles with alpha; currently blends Y only (UV kept neutral 128)
 int fill_rects_nv12_inplace(uint8_t* y, int pitchY,
                             uint8_t* uv, int pitchUV,
                             int width, int height,
@@ -37,4 +37,3 @@ int fill_rects_nv12_inplace(uint8_t* y, int pitchY,
                             float alpha /*0..1*/);
 
 } } } // namespace
-

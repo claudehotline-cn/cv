@@ -1,6 +1,6 @@
 # Build directories
 build/
-build-ninja/
+*/build-ninja/
 */build/
 **/build/
 
@@ -215,7 +215,10 @@ tmp_avcodec_modules.txt
 deps_avcodec.txt
 
 # 临时工具与扫描结果
+# Ignore generic tools directory, but keep NVCC wrapper under video-analyzer
 tools/
+!video-analyzer/tools/
+!video-analyzer/tools/nvcc_wrap.py
 
 # Python / scripts
 __pycache__/
