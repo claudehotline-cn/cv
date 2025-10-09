@@ -164,7 +164,7 @@
                 autoplay
                 muted
                 playsinline
-                :style="{ display: showVideo ? 'block' : 'none' }"
+                :style="{ visibility: showVideo ? 'visible' : 'hidden' }"
               ></video>
               <div class="webrtc-status">
                 <el-tag :type="videoStore.webrtcConnected ? 'success' : 'danger'" size="small" effect="dark">
@@ -542,6 +542,7 @@ onUnmounted(() => {
   margin-top: 8px;
 }
 </style>
+
 
 
 
