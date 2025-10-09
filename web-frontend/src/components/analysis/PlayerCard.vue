@@ -111,7 +111,10 @@ const statusClass = computed(() => {
 @keyframes va-rot { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
 
 .va-player-controls {
-  display: flex; align-items: center; gap: 8px; padding: 8px; justify-content: center; background: var(--va-card-header-bg, #111827);
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; gap: 8px; padding: 8px; justify-content: center;
+  background: rgba(17,24,39,0.7); backdrop-filter: saturate(120%) blur(4px);
+  z-index: 10;
 }
 
 .is-error .va-player-body { filter: grayscale(0.2) brightness(0.8); }
