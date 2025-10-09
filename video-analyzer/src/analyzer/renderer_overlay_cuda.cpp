@@ -82,7 +82,7 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
                         (void)va::analyzer::cudaops_nv12::fill_rects_nv12_inplace(
                             static_cast<uint8_t*>(in.device.data0), in.device.pitch0,
                             static_cast<uint8_t*>(in.device.data1), in.device.pitch1,
-                            w, h, d_boxes, nullptr, N, alpha);
+                            w, h, d_boxes, d_cls, N, alpha);
                     }
                     if (va::analyzer::cudaops_nv12::draw_rects_nv12_inplace(
                             static_cast<uint8_t*>(in.device.data0), in.device.pitch0,

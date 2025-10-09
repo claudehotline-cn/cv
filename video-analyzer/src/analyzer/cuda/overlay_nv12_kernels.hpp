@@ -27,7 +27,7 @@ int draw_rects_nv12_inplace(uint8_t* y, int pitchY,
                             int count,
                             int thickness);
 
-// Optional: filled rectangles with alpha; currently blends Y only (UV kept neutral 128)
+// Optional: filled rectangles with alpha; blends Y and UV (NV12 4:2:0 sampling)
 int fill_rects_nv12_inplace(uint8_t* y, int pitchY,
                             uint8_t* uv, int pitchUV,
                             int width, int height,
