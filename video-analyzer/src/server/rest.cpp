@@ -1686,27 +1686,44 @@ struct RestServer::Impl {
         }
     }
 
-    HttpResponse handleSetEngine(const HttpRequest& req) {
-        try {
-            const Json::Value body = parseJson(req.body);
-            if (!body.isMember("type") || !body["type"].isString()) {
-                return errorResponse("Missing required field: type", 400);
-            }
+      HttpResponse handleSetEngine(const HttpRequest& req) {
+          try {
+              const Json::Value body = parseJson(req.body);
+              // Merge semantics: start from current engine, override only provided fields
+              auto current = app.currentEngine();
+              va::core::EngineDescriptor desc = current;
 
-            auto descriptor = buildEngineDescriptor(body);
-            if (!app.setEngine(descriptor)) {
-                return errorResponse(app.lastError().empty() ? "set engine failed" : app.lastError(), 400);
-            }
+              if (body.isMember("type") && body["type"].isString()) {
+                  desc.name = body["type"].asString();
+                  // If provider not provided, keep existing; do NOT auto-sync to type to avoid unexpected changes
+              }
+              if (body.isMember("provider") && body["provider"].isString()) {
+                  desc.provider = body["provider"].asString();
+              }
+              if (body.isMember("device") && body["device"].isInt()) {
+                  desc.device_index = body["device"].asInt();
+              }
+              if (body.isMember("options") && body["options"].isObject()) {
+                  const auto& opts = body["options"];
+                  for (const auto& k : opts.getMemberNames()) {
+                      // Overwrite/insert provided options; leave others untouched
+                      desc.options[k] = opts[k].asString();
+                  }
+              }
 
-            Json::Value payload = successPayload();
-            payload["type"] = descriptor.name;
-            payload["provider"] = descriptor.provider;
-            payload["device"] = descriptor.device_index;
-            return jsonResponse(payload, 200);
-        } catch (const std::exception& ex) {
-            return errorResponse(ex.what(), 400);
-        }
-    }
+              if (!app.setEngine(desc)) {
+                  return errorResponse(app.lastError().empty() ? "set engine failed" : app.lastError(), 400);
+              }
+
+              Json::Value payload = successPayload();
+              payload["type"] = desc.name;
+              payload["provider"] = desc.provider;
+              payload["device"] = desc.device_index;
+              return jsonResponse(payload, 200);
+          } catch (const std::exception& ex) {
+              return errorResponse(ex.what(), 400);
+          }
+      }
 };
 
 RestServer::RestServer(RestServerOptions options, va::app::Application& app)
