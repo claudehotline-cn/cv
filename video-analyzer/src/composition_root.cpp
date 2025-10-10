@@ -11,6 +11,7 @@
 #include "analyzer/renderer_overlay_cpu.hpp"
 #include "analyzer/renderer_overlay_cuda.hpp"
 #include "core/engine_manager.hpp"
+#include <filesystem>
 #include "media/encoder_h264_ffmpeg.hpp"
 #if defined(USE_CUDA) && defined(WITH_NVDEC)
 #include "media/source_nvdec_cuda.hpp"
@@ -121,7 +122,33 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             auto ms = std::make_shared<AnalyzerMultistageAdapter>();
             // Try YAML
             std::string yaml_path;
+            // 1) explicit absolute/relative file path override
             if (auto it = engine_manager.currentEngine().options.find("multistage_yaml"); it != engine_manager.currentEngine().options.end()) yaml_path = it->second;
+            // 2) graph_id -> resolve under config/graphs directory near exe/cwd
+            if (yaml_path.empty()) {
+                auto itg = engine_manager.currentEngine().options.find("graph_id");
+                if (itg != engine_manager.currentEngine().options.end()) {
+                    const std::string graph_id = itg->second;
+                    // Resolve config directory candidates (similar to Application::initialize)
+                    std::vector<std::filesystem::path> candidates;
+                    std::filesystem::path exe_dir = std::filesystem::current_path();
+                    candidates.push_back(std::filesystem::current_path() / "config" / "graphs");
+                    candidates.push_back(exe_dir / "config" / "graphs");
+                    auto cur = exe_dir;
+                    for (int i=0;i<6;++i) {
+                        candidates.push_back(cur / "config" / "graphs");
+                        candidates.push_back(cur / "video-analyzer" / "config" / "graphs");
+                        if (cur.has_parent_path()) cur = cur.parent_path(); else break;
+                    }
+                    std::error_code ec;
+                    for (const auto& dir : candidates) {
+                        auto file = dir / (graph_id + ".yaml");
+                        if (std::filesystem::exists(file, ec)) { yaml_path = file.string(); break; }
+                        auto file2 = dir / (graph_id + ".yml");
+                        if (std::filesystem::exists(file2, ec)) { yaml_path = file2.string(); break; }
+                    }
+                }
+            }
             const char* yml_env = std::getenv("VA_MULTISTAGE_YAML");
             bool built = false;
             if (!yaml_path.empty()) {

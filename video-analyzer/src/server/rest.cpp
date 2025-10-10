@@ -17,6 +17,7 @@
 #include <cctype>
 #include <cstddef>
 #include <initializer_list>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -619,6 +620,8 @@ struct RestServer::Impl {
         auto taskSwitchHandler = [this](const HttpRequest& req) { return handleTaskSwitch(req); };
         auto paramsUpdateHandler = [this](const HttpRequest& req) { return handleParamsUpdate(req); };
         auto setEngineHandler = [this](const HttpRequest& req) { return handleSetEngine(req); };
+        auto graphsListHandler = [this](const HttpRequest& req) { return handleGraphsList(req); };
+        auto graphSwitchHandler = [this](const HttpRequest& req) { return handleGraphSwitch(req); };
 
         server.addRoute("POST", "/subscribe", subscribeHandler);
         server.addRoute("POST", "/api/subscribe", subscribeHandler);
@@ -640,6 +643,10 @@ struct RestServer::Impl {
 
         server.addRoute("POST", "/engine/set", setEngineHandler);
         server.addRoute("POST", "/api/engine/set", setEngineHandler);
+
+        // Multistage graph management
+        server.addRoute("GET", "/api/graphs", graphsListHandler);
+        server.addRoute("POST", "/api/graph/set", graphSwitchHandler);
 
         // Logging config: runtime set
         auto loggingSetHandler = [this](const HttpRequest& req) { return handleLoggingSet(req); };
@@ -685,7 +692,7 @@ struct RestServer::Impl {
         server.stop();
     }
 
-    HttpResponse handleSystemInfo(const HttpRequest& /*req*/) {
+      HttpResponse handleSystemInfo(const HttpRequest& /*req*/) {
         Json::Value payload = successPayload();
         Json::Value data(Json::objectValue);
 
@@ -814,9 +821,69 @@ struct RestServer::Impl {
         runtime["cpu_fallback"] = runtime_status.cpu_fallback;
         data["engine_runtime"] = runtime;
 
-        payload["data"] = data;
-        return jsonResponse(payload, 200);
-    }
+          payload["data"] = data;
+          return jsonResponse(payload, 200);
+      }
+      // --- Multistage graph helpers ---
+      static std::vector<std::filesystem::path> graphDirCandidates() {
+          std::vector<std::filesystem::path> dirs;
+          std::filesystem::path exe_dir = std::filesystem::current_path();
+          dirs.push_back(std::filesystem::current_path() / "config" / "graphs");
+          dirs.push_back(exe_dir / "config" / "graphs");
+          auto curd = exe_dir;
+          for (int i=0;i<6;++i) {
+              dirs.push_back(curd / "config" / "graphs");
+              dirs.push_back(curd / "video-analyzer" / "config" / "graphs");
+              if (curd.has_parent_path()) curd = curd.parent_path(); else break;
+          }
+          return dirs;
+      }
+
+      HttpResponse handleGraphsList(const HttpRequest& /*req*/) {
+          Json::Value payload = successPayload();
+          Json::Value arr(Json::arrayValue);
+          std::error_code ec;
+          auto dirs = graphDirCandidates();
+          for (const auto& dir : dirs) {
+              if (!std::filesystem::exists(dir, ec) || !std::filesystem::is_directory(dir, ec)) continue;
+              for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+                  if (entry.is_regular_file(ec)) {
+                      auto p = entry.path();
+                      auto ext = p.extension().string();
+                      if (ext == ".yaml" || ext == ".yml") {
+                          Json::Value node(Json::objectValue);
+                          node["id"] = p.stem().string();
+                          node["path"] = p.string();
+                          arr.append(node);
+                      }
+                  }
+              }
+          }
+          payload["data"] = arr;
+          return jsonResponse(payload, 200);
+      }
+
+      HttpResponse handleGraphSwitch(const HttpRequest& req) {
+          try {
+              const Json::Value body = parseJson(req.body);
+              if (!body.isMember("graph_id") || !body["graph_id"].isString()) {
+                  return errorResponse("Missing required field: graph_id", 400);
+              }
+              std::string graph_id = body["graph_id"].asString();
+              auto curEng = app.currentEngine();
+              va::core::EngineDescriptor desc = curEng;
+              desc.options["use_multistage"] = "true";
+              desc.options["graph_id"] = graph_id;
+              if (!app.setEngine(desc)) {
+                  return errorResponse(app.lastError().empty() ? "graph switch failed" : app.lastError(), 400);
+              }
+              Json::Value payload = successPayload();
+              payload["graph_id"] = graph_id;
+              return jsonResponse(payload, 200);
+          } catch (const std::exception& ex) {
+              return errorResponse(ex.what(), 400);
+          }
+      }
 
     HttpResponse handleSystemStats(const HttpRequest& /*req*/) {
         Json::Value payload = successPayload();
