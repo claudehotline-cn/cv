@@ -206,6 +206,16 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
                 opts.tensorrt_min_subgraph_size);
             opts.io_binding_input_bytes = parseByteOption(options_node, "io_binding_input_bytes", "io_binding_input_mb", opts.io_binding_input_bytes);
             opts.io_binding_output_bytes = parseByteOption(options_node, "io_binding_output_bytes", "io_binding_output_mb", opts.io_binding_output_bytes);
+            // Multistage graph options (pass-through)
+            if (options_node["use_multistage"]) {
+                try { opts.use_multistage = options_node["use_multistage"].as<bool>(false); } catch (...) {}
+            }
+            if (options_node["graph_id"]) {
+                try { opts.graph_id = options_node["graph_id"].as<std::string>(""); } catch (...) {}
+            }
+            if (options_node["multistage_yaml"]) {
+                try { opts.multistage_yaml = options_node["multistage_yaml"].as<std::string>(""); } catch (...) {}
+            }
         }
     }
     const auto sfu_node = v["sfu"];

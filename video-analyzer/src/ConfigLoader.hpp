@@ -66,6 +66,10 @@ struct EngineOptions {
     int tensorrt_min_subgraph_size {0};
     size_t io_binding_input_bytes {0};
     size_t io_binding_output_bytes {0};
+    // Multistage options (pass-through to EngineDescriptor.options)
+    bool use_multistage {false};
+    std::string graph_id;           // load from config/graphs/<graph_id>.yaml if set
+    std::string multistage_yaml;    // explicit YAML path override
 };
 
 struct AppEngineSpec {

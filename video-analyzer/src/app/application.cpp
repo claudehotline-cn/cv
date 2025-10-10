@@ -180,6 +180,16 @@ bool Application::initialize(const std::string& config_dir) {
     if (app_config_.engine.options.io_binding_output_bytes > 0) {
         descriptor.options["io_binding_output_bytes"] = std::to_string(app_config_.engine.options.io_binding_output_bytes);
     }
+    // Multistage: pass-through options from app.yaml
+    if (app_config_.engine.options.use_multistage) {
+        descriptor.options["use_multistage"] = "true";
+    }
+    if (!app_config_.engine.options.graph_id.empty()) {
+        descriptor.options["graph_id"] = app_config_.engine.options.graph_id;
+    }
+    if (!app_config_.engine.options.multistage_yaml.empty()) {
+        descriptor.options["multistage_yaml"] = app_config_.engine.options.multistage_yaml;
+    }
     engine_manager_.setEngine(std::move(descriptor));
 
     va::server::RestServerOptions rest_options;
