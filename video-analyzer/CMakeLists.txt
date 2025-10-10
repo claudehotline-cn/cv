@@ -152,6 +152,15 @@ endif()
 
 # Ensure newly added core metric/event sources are included even if glob caching misses them
 list(APPEND SOURCES
+    # Multistage analyzer core
+    src/analyzer/multistage/graph.cpp
+    src/analyzer/multistage/registry.cpp
+    src/analyzer/multistage/node_preproc_letterbox.cpp
+    src/analyzer/multistage/node_model.cpp
+    src/analyzer/multistage/node_nms.cpp
+    src/analyzer/multistage/node_overlay.cpp
+    src/analyzer/multistage/builder_yaml.cpp
+    src/analyzer/multistage/runner.cpp
     src/core/drop_metrics.cpp
     src/core/source_reconnects.cpp
     src/core/nvdec_events.cpp)

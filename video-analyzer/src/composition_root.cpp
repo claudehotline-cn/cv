@@ -21,6 +21,13 @@
 
 #include "core/logger.hpp"
 
+#include "analyzer/multistage/runner.hpp"
+#include "analyzer/multistage/builder_yaml.hpp"
+#include "analyzer/multistage/registry.hpp"
+#include "analyzer/multistage/node_preproc_letterbox.hpp"
+#include "analyzer/multistage/node_model.hpp"
+#include "analyzer/multistage/node_nms.hpp"
+#include "analyzer/multistage/node_overlay.hpp"
 #include <algorithm>
 #include <cstdlib>
 
@@ -37,12 +44,12 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
 
     factories.make_source = [&engine_manager](const va::core::SourceConfig& cfg) -> std::shared_ptr<va::media::ISwitchableSource> {
         // Evaluate engine options at call time to support /api/engine/set hot switch
-        auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+        auto toLower2 = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
         auto findBool = [&](const char* key){
             const auto eng = engine_manager.currentEngine();
             auto it = eng.options.find(key);
             if (it == eng.options.end()) return false;
-            auto v = toLower(it->second);
+            auto v = toLower2(it->second);
             return v=="1"||v=="true"||v=="yes"||v=="on";
         };
 #ifdef USE_FFMPEG
@@ -88,6 +95,53 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
     };
 
     factories.make_filter = [&engine_manager](const va::core::FilterConfig& cfg) {
+        auto toLower2 = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+        auto findBoolMs = [&](const char* key, bool defv){
+            auto eng = engine_manager.currentEngine(); auto it = eng.options.find(key);
+            if (it == eng.options.end()) return defv; auto v = toLower2(it->second);
+            return v=="1"||v=="true"||v=="yes"||v=="on";
+        };
+        // Opt-in multistage analyzer via engine option or environment
+        const char* use_ms_env = std::getenv("VA_USE_MULTISTAGE");
+        const bool use_ms = findBoolMs("use_multistage", false) || (use_ms_env && (std::string(use_ms_env)=="1"||std::string(use_ms_env)=="true"));
+        if (use_ms) {
+            // Build Multistage graph from YAML if provided, else fallback to a default chain
+            using va::analyzer::multistage::AnalyzerMultistageAdapter;
+            using va::analyzer::multistage::NodeRegistry;
+            using va::analyzer::multistage::Graph;
+            using va::analyzer::multistage::NodePreprocLetterbox;
+            using va::analyzer::multistage::NodeModel;
+            using va::analyzer::multistage::NodeNmsYolo;
+            using va::analyzer::multistage::NodeOverlay;
+            MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
+            MS_REGISTER_NODE("model.ort", NodeModel);
+            MS_REGISTER_NODE("post.yolo.nms", NodeNmsYolo);
+            MS_REGISTER_NODE("overlay.cuda", NodeOverlay);
+            va::analyzer::multistage::NodeRegistry::instance().reg("overlay.cpu", [](const std::unordered_map<std::string,std::string>& cfg){ return std::make_shared<NodeOverlay>(cfg); });
+            auto ms = std::make_shared<AnalyzerMultistageAdapter>();
+            // Try YAML
+            std::string yaml_path;
+            if (auto it = engine_manager.currentEngine().options.find("multistage_yaml"); it != engine_manager.currentEngine().options.end()) yaml_path = it->second;
+            const char* yml_env = std::getenv("VA_MULTISTAGE_YAML");
+            bool built = false;
+            if (!yaml_path.empty()) {
+                built = va::analyzer::multistage::build_graph_from_yaml(yaml_path, ms->graph());
+            } else if (yml_env) {
+                built = va::analyzer::multistage::build_graph_from_yaml(std::string(yml_env), ms->graph());
+            }
+            if (!built) {
+                // Fallback: pre -> model -> nms -> overlay
+                auto& g = ms->graph();
+                int n0 = g.add_node("pre", std::make_shared<NodePreprocLetterbox>(std::unordered_map<std::string,std::string>{}), "preproc.letterbox", {});
+                (void)n0;
+                int n1 = g.add_node("det", std::make_shared<NodeModel>(std::unordered_map<std::string,std::string>{{"in","tensor:det_input"}}), "model.ort", {});
+                int n2 = g.add_node("nms", std::make_shared<NodeNmsYolo>(std::unordered_map<std::string,std::string>{}), "post.yolo.nms", {});
+                int n3 = g.add_node("ovl", std::make_shared<NodeOverlay>(std::unordered_map<std::string,std::string>{}), "overlay.cuda", {});
+                g.add_edge("pre","det"); g.add_edge("det","nms"); g.add_edge("nms","ovl");
+                g.finalize();
+            }
+            return std::static_pointer_cast<va::analyzer::Analyzer>(ms);
+        }
         auto analyzer = std::make_shared<va::analyzer::Analyzer>();
 
         auto engine_desc = engine_manager.currentEngine();
@@ -133,11 +187,11 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         options.io_binding_input_bytes = cfg.io_binding_input_bytes;
         options.io_binding_output_bytes = cfg.io_binding_output_bytes;
         // Optional IoBinding staging controls via engine options map
-        auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return static_cast<char>(std::tolower(c));}); return v; };
+        auto toLower_opt = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return static_cast<char>(std::tolower(c));}); return v; };
         auto findBool = [&](const char* key, bool fallback){
             auto it = engine_desc.options.find(key);
             if (it == engine_desc.options.end()) return fallback;
-            std::string v = toLower(it->second);
+            std::string v = toLower_opt(it->second);
             if (v=="1"||v=="true"||v=="yes"||v=="on") return true;
             if (v=="0"||v=="false"||v=="no"||v=="off") return false;
             return fallback;
@@ -158,7 +212,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         options.device_output_views = findBool("device_output_views", options.device_output_views);
         // warmup_runs supports numeric or "auto" -> -1
         if (auto itw = engine_desc.options.find("warmup_runs"); itw != engine_desc.options.end()) {
-            std::string v = toLower(itw->second);
+            std::string v = toLower_opt(itw->second);
             if (v == "auto") {
                 options.warmup_runs = -1;
             } else {
@@ -285,11 +339,11 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
 
     factories.make_encoder = [&engine_manager](const va::core::EncoderConfig& cfg) -> std::shared_ptr<va::media::IEncoder> {
 #if defined(USE_CUDA) && defined(WITH_NVENC)
-        auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+        auto toLower2 = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
         auto eng = engine_manager.currentEngine();
         bool prefer_nvenc = false;
         if (auto it = eng.options.find("use_nvenc"); it != eng.options.end()) {
-            auto v = toLower(it->second); prefer_nvenc = (v=="1"||v=="true"||v=="yes"||v=="on");
+            auto v = toLower2(it->second); prefer_nvenc = (v=="1"||v=="true"||v=="yes"||v=="on");
         }
         const char* use_nvenc = std::getenv("VA_USE_NVENC");
         if (prefer_nvenc || (use_nvenc && (std::string(use_nvenc) == "1" || std::string(use_nvenc) == "true"))) {
