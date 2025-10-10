@@ -38,15 +38,59 @@ bool Graph::finalize() {
 }
 
 bool Graph::run(Packet& p, NodeContext& ctx) {
+    if (!opened_) {
+        if (!open_all(ctx)) return false;
+    }
     for (int id : topo_) {
-        if (!nodes_[id].node->process(p, ctx)) return false;
+        if (!nodes_[id].node->process(p, ctx)) {
+            VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph node failed: name='" << nodes_[id].name << "' type='" << nodes_[id].type << "'";
+            return false;
+        }
     }
     return true;
 }
 
+bool Graph::open_all(NodeContext& ctx) {
+    if (opened_) return true;
+    // Prefer topological order; fallback to insertion order
+    if (!topo_.empty()) {
+        for (int id : topo_) {
+            if (!nodes_[id].node->open(ctx)) {
+                VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph node open failed: name='" << nodes_[id].name << "' type='" << nodes_[id].type << "'";
+                return false;
+            }
+        }
+    } else {
+        for (size_t i = 0; i < nodes_.size(); ++i) {
+            if (!nodes_[i].node->open(ctx)) {
+                VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph node open failed: name='" << nodes_[i].name << "' type='" << nodes_[i].type << "'";
+                return false;
+            }
+        }
+    }
+    opened_ = true;
+    return true;
+}
+
+void Graph::close_all(NodeContext& ctx) {
+    if (!opened_) return;
+    if (!topo_.empty()) {
+        for (auto it = topo_.rbegin(); it != topo_.rend(); ++it) {
+            nodes_[*it].node->close(ctx);
+        }
+    } else {
+        for (auto it = nodes_.rbegin(); it != nodes_.rend(); ++it) {
+            it->node->close(ctx);
+        }
+    }
+    opened_ = false;
+}
+
 void Graph::clear() {
+    // Best-effort close before clearing
+    NodeContext dummy_ctx{};
+    close_all(dummy_ctx);
     nodes_.clear(); edges_.clear(); topo_.clear(); name2id_.clear();
 }
 
 } } } // namespace
-

@@ -107,6 +107,9 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         const bool use_ms = findBoolMs("use_multistage", false) || (use_ms_env && (std::string(use_ms_env)=="1"||std::string(use_ms_env)=="true"));
         if (use_ms) {
             // Build Multistage graph from YAML if provided, else fallback to a default chain
+            VA_LOG_C(::va::core::LogLevel::Info, "composition") << "Multistage analyzer enabled (via engine option/env).";
+            // Always read from EngineManager (Application has resolved multistage_yaml on startup if graph_id was set)
+            auto eng_opts = engine_manager.currentEngine().options;
             using va::analyzer::multistage::AnalyzerMultistageAdapter;
             using va::analyzer::multistage::NodeRegistry;
             using va::analyzer::multistage::Graph;
@@ -120,19 +123,49 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             MS_REGISTER_NODE("overlay.cuda", NodeOverlay);
             va::analyzer::multistage::NodeRegistry::instance().reg("overlay.cpu", [](const std::unordered_map<std::string,std::string>& cfg){ return std::make_shared<NodeOverlay>(cfg); });
             auto ms = std::make_shared<AnalyzerMultistageAdapter>();
+            // Populate NodeContext with available process-wide services
+            {
+                auto& ctx = ms->context();
+                ctx.logger = &::va::core::Logger::instance();
+                // Streams and pools: leave null by default; nodes may manage internal pools.
+                // Optionally expose engine manager as registry for future extensibility.
+                ctx.engine_registry = &engine_manager;
+            }
+            // Apply overlay tuning from engine options (parity with single-stage path)
+            {
+                auto set_env = [](const char* key, const std::string& val){
+#ifdef _WIN32
+                    _putenv_s(key, val.c_str());
+#else
+                    setenv(key, val.c_str(), 1);
+#endif
+                };
+                if (auto it = eng_opts.find("overlay_thickness"); it != eng_opts.end()) {
+                    set_env("VA_OVERLAY_THICKNESS", it->second);
+                }
+                if (auto it = eng_opts.find("overlay_alpha"); it != eng_opts.end()) {
+                    set_env("VA_OVERLAY_ALPHA", it->second);
+                }
+                if (auto it = eng_opts.find("overlay_draw_labels"); it != eng_opts.end()) {
+                    std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
+                    bool enabled = !(v=="0"||v=="false"||v=="no"||v=="off");
+                    set_env("VA_OVERLAY_DRAW_LABELS", enabled ? std::string("1") : std::string("0"));
+                }
+            }
             // Try YAML
             std::string yaml_path;
-            // 1) explicit absolute/relative file path override
-            if (auto it = engine_manager.currentEngine().options.find("multistage_yaml"); it != engine_manager.currentEngine().options.end()) yaml_path = it->second;
+            // 1) explicit absolute/relative file path override from engine options
+            if (auto it = eng_opts.find("multistage_yaml"); it != eng_opts.end()) yaml_path = it->second;
             // 2) graph_id -> resolve under config/graphs directory near exe/cwd
             if (yaml_path.empty()) {
-                auto itg = engine_manager.currentEngine().options.find("graph_id");
-                if (itg != engine_manager.currentEngine().options.end()) {
+                auto itg = eng_opts.find("graph_id");
+                if (itg != eng_opts.end()) {
                     const std::string graph_id = itg->second;
                     // Resolve config directory candidates (similar to Application::initialize)
                     std::vector<std::filesystem::path> candidates;
                     std::filesystem::path exe_dir = std::filesystem::current_path();
-                    candidates.push_back(std::filesystem::current_path() / "config" / "graphs");
+                    auto cwd_cfg = std::filesystem::current_path() / "config" / "graphs";
+                    candidates.push_back(cwd_cfg);
                     candidates.push_back(exe_dir / "config" / "graphs");
                     auto cur = exe_dir;
                     for (int i=0;i<6;++i) {
@@ -141,23 +174,36 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
                         if (cur.has_parent_path()) cur = cur.parent_path(); else break;
                     }
                     std::error_code ec;
+                    VA_LOG_C(::va::core::LogLevel::Info, "composition") << "Graph search starting from cwd='" << std::filesystem::current_path().string() << "' graph_id='" << graph_id << "'";
+                    for (const auto& dir : candidates) {
+                        VA_LOG_C(::va::core::LogLevel::Debug, "composition") << "Graph search candidate dir: " << dir.string();
+                    }
                     for (const auto& dir : candidates) {
                         auto file = dir / (graph_id + ".yaml");
                         if (std::filesystem::exists(file, ec)) { yaml_path = file.string(); break; }
                         auto file2 = dir / (graph_id + ".yml");
                         if (std::filesystem::exists(file2, ec)) { yaml_path = file2.string(); break; }
                     }
+                    if (!yaml_path.empty()) {
+                        VA_LOG_C(::va::core::LogLevel::Info, "composition") << "Resolved graph YAML via graph_id at: " << yaml_path;
+                    } else {
+                        VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "Graph YAML not found via graph_id='" << graph_id << "' under cwd-config/graphs; will fallback or use default chain.";
+                    }
                 }
             }
             const char* yml_env = std::getenv("VA_MULTISTAGE_YAML");
             bool built = false;
             if (!yaml_path.empty()) {
+                VA_LOG_C(::va::core::LogLevel::Info, "composition") << "Loading multistage graph from YAML: " << yaml_path;
                 built = va::analyzer::multistage::build_graph_from_yaml(yaml_path, ms->graph());
             } else if (yml_env) {
-                built = va::analyzer::multistage::build_graph_from_yaml(std::string(yml_env), ms->graph());
+                std::string p = std::string(yml_env);
+                VA_LOG_C(::va::core::LogLevel::Info, "composition") << "Loading multistage graph from VA_MULTISTAGE_YAML: " << p;
+                built = va::analyzer::multistage::build_graph_from_yaml(p, ms->graph());
             }
             if (!built) {
                 // Fallback: pre -> model -> nms -> overlay
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "Graph YAML not found or failed to load; using default multistage chain (pre->det->nms->ovl).";
                 auto& g = ms->graph();
                 int n0 = g.add_node("pre", std::make_shared<NodePreprocLetterbox>(std::unordered_map<std::string,std::string>{}), "preproc.letterbox", {});
                 (void)n0;
@@ -166,6 +212,8 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
                 int n3 = g.add_node("ovl", std::make_shared<NodeOverlay>(std::unordered_map<std::string,std::string>{}), "overlay.cuda", {});
                 g.add_edge("pre","det"); g.add_edge("det","nms"); g.add_edge("nms","ovl");
                 g.finalize();
+            } else {
+                VA_LOG_C(::va::core::LogLevel::Info, "composition") << "Multistage graph loaded successfully.";
             }
             return std::static_pointer_cast<va::analyzer::Analyzer>(ms);
         }

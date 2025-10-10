@@ -12,6 +12,9 @@ public:
     void add_edge(const std::string& src, const std::string& dst);
     bool finalize();
     bool run(Packet& p, NodeContext& ctx);
+    // Lifecycle management for nodes (idempotent open)
+    bool open_all(NodeContext& ctx);
+    void close_all(NodeContext& ctx);
     void clear();
 private:
     struct NodeEntry { NodePtr node; std::string name; std::string type; std::unordered_map<std::string,std::string> cfg; };
@@ -19,7 +22,7 @@ private:
     std::vector<std::pair<int,int>> edges_;
     std::vector<int> topo_;
     std::unordered_map<std::string,int> name2id_;
+    bool opened_ {false};
 };
 
 } } } // namespace
-

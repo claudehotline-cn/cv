@@ -2,6 +2,7 @@
 
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 namespace va { namespace analyzer { namespace multistage { namespace util {
 
@@ -20,5 +21,18 @@ inline float get_or_float(const std::unordered_map<std::string,std::string>& m,
     auto it = m.find(key); if (it==m.end()) return defv; try { return std::stof(it->second); } catch (...) { return defv; }
 }
 
-} } } } // namespace
+inline std::vector<std::string> split_csv(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == ',' || c == ';' || c == ' ' || c == '\t') {
+            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+        } else {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
 
+} } } } // namespace

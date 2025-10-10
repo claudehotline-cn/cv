@@ -191,7 +191,8 @@ bool Pipeline::processFrame(const core::Frame& in) {
     }
 
     core::Frame analyzed;
-    if (!analyzer_->analyze(in, analyzed)) {
+    // Use virtual IFrameFilter::process to allow multistage adapter to take effect
+    if (!analyzer_->process(in, analyzed)) {
         VA_LOG_DEBUG() << "[Pipeline] analyze() returned false";
         return false;
     }
