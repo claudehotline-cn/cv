@@ -738,11 +738,17 @@ struct RestServer::Impl {
         engine_options["tensorrt_workspace_mb"] = getInt("trt_workspace_mb", config.engine.options.tensorrt_workspace_mb);
         engine_options["io_binding_input_bytes"] = static_cast<Json::UInt64>(getU64("io_binding_input_bytes", config.engine.options.io_binding_input_bytes));
         engine_options["io_binding_output_bytes"] = static_cast<Json::UInt64>(getU64("io_binding_output_bytes", config.engine.options.io_binding_output_bytes));
-        // Source/decoder/renderer toggles
-        engine_options["use_ffmpeg_source"] = getBool("use_ffmpeg_source", false);
-        engine_options["use_nvdec"] = getBool("use_nvdec", false);
-        engine_options["use_nvenc"] = getBool("use_nvenc", false);
-        engine_options["use_cuda_preproc"] = getBool("use_cuda_preproc", false);
+          // Source/decoder/renderer toggles
+          engine_options["use_ffmpeg_source"] = getBool("use_ffmpeg_source", false);
+          engine_options["use_nvdec"] = getBool("use_nvdec", false);
+          engine_options["use_nvenc"] = getBool("use_nvenc", false);
+          engine_options["use_cuda_preproc"] = getBool("use_cuda_preproc", false);
+          // Multistage toggles
+          engine_options["use_multistage"] = getBool("use_multistage", false);
+          {
+              auto it = cur.options.find("graph_id");
+              engine_options["graph_id"] = (it != cur.options.end()) ? Json::Value(it->second) : Json::Value("");
+          }
         // Rendering / postproc toggles
         engine_options["render_cuda"] = getBool("render_cuda", false);
         engine_options["render_passthrough"] = getBool("render_passthrough", false);
@@ -826,17 +832,23 @@ struct RestServer::Impl {
       }
       // --- Multistage graph helpers ---
       static std::vector<std::filesystem::path> graphDirCandidates() {
-          std::vector<std::filesystem::path> dirs;
+          std::vector<std::filesystem::path> unique;
+          std::unordered_set<std::string> seen;
+          auto add_dir = [&](const std::filesystem::path& p){
+              std::error_code ec; auto can = std::filesystem::weakly_canonical(p, ec);
+              const std::string key = ec ? p.string() : can.string();
+              if (!seen.count(key)) { seen.insert(key); unique.push_back(ec ? p : can); }
+          };
           std::filesystem::path exe_dir = std::filesystem::current_path();
-          dirs.push_back(std::filesystem::current_path() / "config" / "graphs");
-          dirs.push_back(exe_dir / "config" / "graphs");
+          add_dir(std::filesystem::current_path() / "config" / "graphs");
+          add_dir(exe_dir / "config" / "graphs");
           auto curd = exe_dir;
           for (int i=0;i<6;++i) {
-              dirs.push_back(curd / "config" / "graphs");
-              dirs.push_back(curd / "video-analyzer" / "config" / "graphs");
+              add_dir(curd / "config" / "graphs");
+              add_dir(curd / "video-analyzer" / "config" / "graphs");
               if (curd.has_parent_path()) curd = curd.parent_path(); else break;
           }
-          return dirs;
+          return unique;
       }
 
       HttpResponse handleGraphsList(const HttpRequest& /*req*/) {
@@ -844,6 +856,7 @@ struct RestServer::Impl {
           Json::Value arr(Json::arrayValue);
           std::error_code ec;
           auto dirs = graphDirCandidates();
+          std::unordered_set<std::string> files_seen;
           for (const auto& dir : dirs) {
               if (!std::filesystem::exists(dir, ec) || !std::filesystem::is_directory(dir, ec)) continue;
               for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
@@ -851,9 +864,13 @@ struct RestServer::Impl {
                       auto p = entry.path();
                       auto ext = p.extension().string();
                       if (ext == ".yaml" || ext == ".yml") {
+                          auto can = std::filesystem::weakly_canonical(p, ec);
+                          const std::string fkey = (ec ? p : can).string();
+                          if (files_seen.count(fkey)) continue;
+                          files_seen.insert(fkey);
                           Json::Value node(Json::objectValue);
                           node["id"] = p.stem().string();
-                          node["path"] = p.string();
+                          node["path"] = fkey;
                           arr.append(node);
                       }
                   }
@@ -877,6 +894,7 @@ struct RestServer::Impl {
               if (!app.setEngine(desc)) {
                   return errorResponse(app.lastError().empty() ? "graph switch failed" : app.lastError(), 400);
               }
+              VA_LOG_C(::va::core::LogLevel::Info, "rest") << "Graph switched at runtime to id='" << graph_id << "' via /api/graph/set";
               Json::Value payload = successPayload();
               payload["graph_id"] = graph_id;
               return jsonResponse(payload, 200);
