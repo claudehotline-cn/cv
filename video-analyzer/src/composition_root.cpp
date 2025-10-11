@@ -126,6 +126,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             using va::analyzer::multistage::NodeKptDecode;
             using va::analyzer::multistage::NodeOverlayKpt;
             using va::analyzer::multistage::NodeRoiBatchCuda;
+            using va::analyzer::multistage::NodeJoin;
             MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
             MS_REGISTER_NODE("model.ort", NodeModel);
             MS_REGISTER_NODE("post.yolo.nms", NodeNmsYolo);

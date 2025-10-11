@@ -81,16 +81,17 @@ bool NodeJoin::process(Packet& p, NodeContext& ctx) {
     const bool use_gpu = prefer_gpu_ && all_gpu && ctx.gpu_pool;
     if (use_gpu) {
 #if VA_MS_JOIN_HAS_CUDA
-        va::core::GpuBufferPool::Memory mem = ctx.gpu_pool->acquire((size_t)out_shape[0] /* rough */);
-        // allocate precisely by bytes
+        // Allocate precisely by bytes
         size_t out_bytes = 1; for (auto d: out_shape) out_bytes *= (size_t)(d>0?d:1); out_bytes *= elt_stride;
-        if (!mem.ptr || mem.bytes < out_bytes) {
-            // fallback: local staging pool if needed
-            mem = ctx.gpu_pool->acquire(out_bytes);
-            if (!mem.ptr) { VA_LOG_C(::va::core::LogLevel::Error, "ms.join") << "gpu_pool acquire failed"; return false; }
-        }
+        va::core::GpuBufferPool::Memory mem = ctx.gpu_pool->acquire(out_bytes);
+        if (!mem.ptr) { VA_LOG_C(::va::core::LogLevel::Error, "ms.join") << "gpu_pool acquire failed"; return false; }
         uint8_t* d_out = static_cast<uint8_t*>(mem.ptr);
-        size_t out_outer_stride = out_axis * block_after * elt_stride;
+        
+        // Optional stream-aware copies
+        cudaStream_t stream = nullptr;
+        if (ctx.stream) {
+            stream = reinterpret_cast<cudaStream_t>(ctx.stream);
+        }
         for (size_t outer = 0; outer < block_before; ++outer) {
             for (size_t i=0;i<tvs.size();++i) {
                 size_t copy_elems = axis_sizes[i] * block_after;
@@ -98,9 +99,14 @@ bool NodeJoin::process(Packet& p, NodeContext& ctx) {
                 size_t out_offset_elems = outer * out_axis * block_after + axis_offsets[i] * block_after;
                 const uint8_t* d_src = static_cast<const uint8_t*>(tvs[i]->data) + in_offset_elems * elt_stride;
                 uint8_t* d_dst = d_out + out_offset_elems * elt_stride;
-                cudaMemcpy(d_dst, d_src, copy_elems * elt_stride, cudaMemcpyDeviceToDevice);
+                if (stream) {
+                    cudaMemcpyAsync(d_dst, d_src, copy_elems * elt_stride, cudaMemcpyDeviceToDevice, stream);
+                } else {
+                    cudaMemcpy(d_dst, d_src, copy_elems * elt_stride, cudaMemcpyDeviceToDevice);
+                }
             }
         }
+        if (stream) { cudaStreamSynchronize(stream); }
         va::core::TensorView tv;
         tv.data = d_out; tv.shape = out_shape; tv.dtype = va::core::DType::F32; tv.on_gpu = true;
         p.tensors[out_key_] = tv;
@@ -131,4 +137,3 @@ bool NodeJoin::process(Packet& p, NodeContext& ctx) {
 }
 
 } } } // namespace
-

@@ -85,10 +85,31 @@ bool build_graph_from_yaml(const std::string& file, Graph& g) {
     auto edges = ms["edges"];
     if (edges && edges.IsSequence()) {
         for (auto e : edges) {
-            if (e.IsSequence() && e.size()==2) {
+            if (e.IsSequence() && (e.size()==2 || e.size()==3)) {
                 auto s = e[0].as<std::string>();
                 auto d = e[1].as<std::string>();
-                g.add_edge(s, d);
+                if (e.size()==2) {
+                    g.add_edge(s, d);
+                } else if (e[2].IsMap()) {
+                    auto cond = e[2];
+                    const bool has_when = static_cast<bool>(cond["when"]);
+                    const bool has_when_not = static_cast<bool>(cond["when_not"]);
+                    if (has_when && has_when_not) {
+                        VA_LOG_C(::va::core::LogLevel::Warn, "composition")
+                            << "edge ('" << s << "'->'" << d << "') has both when and when_not; prioritizing 'when'";
+                    }
+                    if (has_when) {
+                        auto k = cond["when"].as<std::string>("");
+                        g.add_edge_cond(s, d, k, /*when_not*/false);
+                    } else if (has_when_not) {
+                        auto k = cond["when_not"].as<std::string>("");
+                        g.add_edge_cond(s, d, k, /*when_not*/true);
+                    } else {
+                        g.add_edge(s, d);
+                    }
+                } else {
+                    g.add_edge(s, d);
+                }
             }
         }
     }

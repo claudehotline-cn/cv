@@ -94,10 +94,32 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
     if (!outs.empty()) {
         const size_t n_model = outs.size();
         const size_t n_keys  = out_keys_.size();
+        // Try to use real model output names when not provided in YAML
+        std::vector<std::string> model_out_names;
+        try {
+            if (session_) {
+                if (auto ort = std::dynamic_pointer_cast<va::analyzer::OrtModelSession>(session_)) {
+                    model_out_names = ort->outputNames();
+                }
+            }
+        } catch (...) { /* ignore */ }
+        auto sanitize = [](std::string s) {
+            for (auto& c : s) {
+                bool ok = (c == '_') || (c == '-') || (c == ':') ||
+                          (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+                if (!ok) c = '_';
+            }
+            return s;
+        };
         for (size_t i = 0; i < n_model; ++i) {
             std::string key;
-            if (i < n_keys && !out_keys_[i].empty()) key = out_keys_[i];
-            else key = std::string("tensor:out") + std::to_string(i);
+            if (i < n_keys && !out_keys_[i].empty()) {
+                key = out_keys_[i];
+            } else if (i < model_out_names.size() && !model_out_names[i].empty()) {
+                key = std::string("tensor:") + sanitize(model_out_names[i]);
+            } else {
+                key = std::string("tensor:out") + std::to_string(i);
+            }
             p.tensors[key] = outs[i];
             if (i == 0) {
                 // Back-compat alias for first output commonly used for detection
