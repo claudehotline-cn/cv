@@ -1076,7 +1076,25 @@ struct WebRTCDataChannelTransport::Impl {
 
         std::scoped_lock lg(globalMutex());
         endpoint_ = endpoint.empty() ? std::string(kDefaultEndpoint) : endpoint;
-        const uint16_t port = parsePort(endpoint_);
+        // Env overrides for signaling endpoint/port
+        if (const char* ep = std::getenv("VA_SIGNAL_ENDPOINT"); ep && *ep) {
+            endpoint_ = ep;
+        }
+        // Decide signaling port:
+        // 1) VA_SIGNAL_PORT env > 0
+        // 2) If endpoint looks like ws:// or wss://, parse its port
+        // 3) Fallback to kDefaultSignalingPort
+        uint16_t port = kDefaultSignalingPort;
+        if (const char* p = std::getenv("VA_SIGNAL_PORT")) {
+            try { int v = std::stoi(p); if (v > 0 && v <= 65535) port = static_cast<uint16_t>(v); } catch (...) {}
+        } else {
+            std::string lower = endpoint_;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+            if (lower.rfind("ws://", 0) == 0 || lower.rfind("wss://", 0) == 0) {
+                port = parsePort(endpoint_);
+            }
+        }
+        VA_LOG_INFO() << "[WebRTC] using signaling endpoint='" << endpoint_ << "' port=" << port;
 
         if (!globalStarted().load()) {
             streamer_.SetOnSignalingMessage([this](const std::string& client_id, const Json::Value& message) {

@@ -71,9 +71,11 @@ endif()
 
 # Optional: CUDA support
 option(USE_CUDA "Enable CUDA support for GPU inference" ON)
+option(WITH_CUDA_KERNELS "Build CUDA kernels (device-side decode/NMS/overlay)" OFF)
 option(WITH_NVDEC "Build NVDEC-based RTSP source (scaffold)" OFF)
 option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
 option(USE_GRPC "Enable gRPC control plane endpoints" OFF)
+option(VA_ENABLE_GRPC_SERVER "Build gRPC server implementation (requires working gRPC toolchain)" OFF)
 option(VA_BUILD_TESTS "Build unit test targets" OFF)
 ## 默认 CUDA 架构（可在配置时覆盖）
 ## 示例覆盖：-DVA_CUDA_ARCHS=89 或 -DCMAKE_CUDA_ARCHITECTURES=89
@@ -108,6 +110,9 @@ find_library(ONNXRUNTIME_LIB NAMES onnxruntime
         ${ONNXRUNTIME_ROOT}/lib
         ${ONNXRUNTIME_ROOT}/build/Windows/Release
         /usr/local/lib /usr/lib)
+
+# Allow overriding ORT DLL directory explicitly (folder containing onnxruntime*.dll)
+set(ONNXRUNTIME_DLL_DIR "$ENV{ONNXRUNTIME_DLL_DIR}" CACHE PATH "Directory that contains onnxruntime*.dll (optional override)")
 
 # Optional vcpkg-installed dependencies
 set(VCPKG_ROOT_DIR "$ENV{VCPKG_ROOT}")
@@ -176,6 +181,10 @@ list(APPEND SOURCES
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
 if (HAVE_CUDA_KERNELS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAS_CUDA_KERNELS)
+endif()
+if (CUDAToolkit_FOUND)
+    # Ensure host code sees cuda_runtime.h so GPU postproc runtime paths are enabled
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif()
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
@@ -257,6 +266,10 @@ if (USE_GRPC)
 
         target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
         target_link_libraries(${PROJECT_NAME} PRIVATE va_analyzer_control_proto)
+
+        if (VA_ENABLE_GRPC_SERVER)
+            add_definitions(-DVA_ENABLE_GRPC_SERVER)
+        endif()
     else()
         message(WARNING "gRPC/Protobuf not found; building without gRPC (USE_GRPC=OFF)")
     endif()
@@ -301,6 +314,36 @@ if (CUDAToolkit_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cudart_static)
 endif()
 
+
+# Copy ONNX Runtime runtime DLLs next to the executable on Windows to avoid loader errors
+if (WIN32 AND DEFINED ONNXRUNTIME_ROOT)
+    set(ORT_DLL_DIR "${ONNXRUNTIME_ROOT}/lib")
+    if (EXISTS "${ORT_DLL_DIR}/onnxruntime.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ORT_DLL_DIR}/onnxruntime.dll"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime.dll")
+    endif()
+    if (EXISTS "${ORT_DLL_DIR}/onnxruntime_providers_shared.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ORT_DLL_DIR}/onnxruntime_providers_shared.dll"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime_providers_shared.dll")
+    endif()
+    if (EXISTS "${ORT_DLL_DIR}/onnxruntime_providers_cuda.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ORT_DLL_DIR}/onnxruntime_providers_cuda.dll"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime_providers_cuda.dll")
+    endif()
+    if (EXISTS "${ORT_DLL_DIR}/onnxruntime_providers_tensorrt.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ORT_DLL_DIR}/onnxruntime_providers_tensorrt.dll"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime_providers_tensorrt.dll")
+    endif()
+endif()
+
 # Some ORT builds place headers under include/onnxruntime/core/session
 if (ONNXRUNTIME_INCLUDE_DIR)
     if (EXISTS "${ONNXRUNTIME_INCLUDE_DIR}/onnxruntime_c_api.h")
@@ -339,6 +382,33 @@ if (JSONCPP_LIB_RELEASE OR JSONCPP_LIB_DEBUG)
     target_link_vcpkg_library(${PROJECT_NAME} "${JSONCPP_LIB_DEBUG}" "${JSONCPP_LIB_RELEASE}")
 endif()
 
+# --- Post-build: copy runtime DLLs to bin (Windows) ---
+if (WIN32)
+    # Minimal copy for onnxruntime.dll (optional), prefer explicit DLL dir when provided
+    if (DEFINED ONNXRUNTIME_DLL_DIR AND EXISTS "${ONNXRUNTIME_DLL_DIR}")
+        set(ORT_DLL_DIR "${ONNXRUNTIME_DLL_DIR}")
+    elseif (DEFINED ONNXRUNTIME_ROOT)
+        set(ORT_DLL_DIR "${ONNXRUNTIME_ROOT}/lib")
+    endif()
+    if (DEFINED ORT_DLL_DIR)
+        if (EXISTS "${ORT_DLL_DIR}/onnxruntime.dll")
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ORT_DLL_DIR}/onnxruntime.dll"
+                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime.dll")
+        endif()
+    endif()
+endif()
+
+if (WIN32)
+    # Custom target: copy runtime deps (runs only when explicitly built)
+    add_custom_target(va_copy_runtime_deps
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/tools/copy_runtime_deps.ps1"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>" "${ONNXRUNTIME_ROOT}" "${VCPKG_ROOT_DIR}" "${FFMPEG_LOCAL_ROOT}" "${ONNXRUNTIME_DLL_DIR}"
+        VERBATIM)
+    add_dependencies(va_copy_runtime_deps ${PROJECT_NAME})
+endif()
+
 # Ensure vcpkg include path is visible for header-only deps (ixwebsocket, rtc/libdatachannel, jsoncpp, etc.)
 target_include_directories(${PROJECT_NAME} PRIVATE "${VCPKG_INCLUDE_DIR}")
 if (EXISTS "D:/Projects/vcpkg/installed/x64-windows/include")
@@ -348,6 +418,16 @@ endif()
 
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 iphlpapi psapi crypt32 bcrypt)
+    # Ensure MSVC STL/UCRT/WinSDK include paths are visible to Ninja+MSVC in some CI shells
+    if(DEFINED ENV{VCToolsInstallDir})
+        target_include_directories(${PROJECT_NAME} PRIVATE "$ENV{VCToolsInstallDir}/include")
+    endif()
+    if(DEFINED ENV{UniversalCRTSdkDir} AND DEFINED ENV{UCRTVersion})
+        target_include_directories(${PROJECT_NAME} PRIVATE "$ENV{UniversalCRTSdkDir}/include/$ENV{UCRTVersion}/ucrt")
+    endif()
+    if(DEFINED ENV{WindowsSdkDir} AND DEFINED ENV{WindowsSDKVersion})
+        target_include_directories(${PROJECT_NAME} PRIVATE "$ENV{WindowsSdkDir}/Include/$ENV{WindowsSDKVersion}/um" "$ENV{WindowsSdkDir}/Include/$ENV{WindowsSDKVersion}/shared")
+    endif()
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

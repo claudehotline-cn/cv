@@ -34,10 +34,15 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
             }
         } catch (...) {}
     }
+    // Decide code path. Prefer CUDA when requested; fallback to CPU on failure
     if (use_cuda_nms) {
 #ifdef USE_CUDA
         va::analyzer::YoloDetectionPostprocessorCUDA gpu_pp;
-        if (!gpu_pp.run(raw, p.letterbox, mo)) return false;
+        if (!gpu_pp.run(raw, p.letterbox, mo)) {
+            // Fallback to CPU postproc if CUDA path fails (keep pipeline alive)
+            va::analyzer::YoloDetectionPostprocessor cpu_pp;
+            if (!cpu_pp.run(raw, p.letterbox, mo)) return false;
+        }
 #else
         va::analyzer::YoloDetectionPostprocessor cpu_pp;
         if (!cpu_pp.run(raw, p.letterbox, mo)) return false;

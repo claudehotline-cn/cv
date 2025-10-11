@@ -80,6 +80,20 @@ bool NodeModel::open(NodeContext& ctx) {
             VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "failed to load model: " << model_path_;
             return false;
         }
+        // 回填 EngineManager 的运行态（provider/gpu/io_binding/device_binding），用于 RuntimeSummary
+        if (ctx.engine_registry) {
+            try {
+                auto* em = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry);
+                auto ri = s->runtimeInfo();
+                va::core::EngineRuntimeStatus st;
+                st.provider = ri.provider;
+                st.gpu_active = ri.gpu_active;
+                st.io_binding = ri.io_binding_active;
+                st.device_binding = ri.device_binding_active;
+                st.cpu_fallback = ri.cpu_fallback;
+                em->updateRuntimeStatus(std::move(st));
+            } catch (...) { /* best-effort */ }
+        }
     }
     session_ = std::move(s);
     return true;
