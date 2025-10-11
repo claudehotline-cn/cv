@@ -33,6 +33,7 @@
 #include "analyzer/multistage/node_roi_batch_cuda.hpp"
 #include "analyzer/multistage/node_kpt_decode.hpp"
 #include "analyzer/multistage/node_overlay_kpt.hpp"
+#include "analyzer/multistage/node_join.hpp"
 #include <algorithm>
 #include <cstdlib>
 
@@ -134,6 +135,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             MS_REGISTER_NODE("roi.batch.cuda", NodeRoiBatchCuda);
             MS_REGISTER_NODE("post.yolo.kpt", NodeKptDecode);
             MS_REGISTER_NODE("overlay.kpt", NodeOverlayKpt);
+            MS_REGISTER_NODE("join", NodeJoin);
             auto ms = std::make_shared<AnalyzerMultistageAdapter>();
             // Populate NodeContext with available process-wide services
             {
