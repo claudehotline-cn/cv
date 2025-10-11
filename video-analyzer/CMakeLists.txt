@@ -74,6 +74,7 @@ option(USE_CUDA "Enable CUDA support for GPU inference" ON)
 option(WITH_NVDEC "Build NVDEC-based RTSP source (scaffold)" OFF)
 option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
 option(USE_GRPC "Enable gRPC control plane endpoints" OFF)
+option(VA_BUILD_TESTS "Build unit test targets" OFF)
 ## 默认 CUDA 架构（可在配置时覆盖）
 ## 示例覆盖：-DVA_CUDA_ARCHS=89 或 -DCMAKE_CUDA_ARCHITECTURES=89
 set(VA_CUDA_ARCHS "89" CACHE STRING "CUDA SM architectures for NVCC (e.g. 89;90;120)")
@@ -203,8 +204,9 @@ target_sources(${PROJECT_NAME}
 
 # Optional: gRPC/Protobuf integration for control plane
 if (USE_GRPC)
-    find_package(Protobuf QUIET)
-    find_package(gRPC QUIET)
+    # Prefer config packages from vcpkg to avoid mixing with system/anaconda modules
+    find_package(protobuf CONFIG QUIET)
+    find_package(gRPC CONFIG QUIET)
     if (Protobuf_FOUND AND gRPC_FOUND)
         message(STATUS "gRPC/Protobuf found: enabling AnalyzerControl service")
         add_definitions(-DUSE_GRPC)
@@ -242,7 +244,7 @@ if (USE_GRPC)
         add_custom_command(
             OUTPUT ${grpc_cc} ${grpc_h}
             COMMAND protobuf::protoc
-            ARGS --grpc_out ${_GEN_DIR}
+                ARGS --grpc_out ${_GEN_DIR}
                  --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
                  -I ${_PROTO_DIR}
                  ${_PROTO_DIR}/analyzer_control.proto
@@ -398,42 +400,44 @@ if (WIN32)
     endforeach()
 endif()
 
-# Unit test: postproc threshold override
-add_executable(va_unit_test_postproc
-    test/unit/test_postproc_threshold.cpp
-    src/analyzer/postproc_yolo_det.cpp)
+if (VA_BUILD_TESTS)
+    # Unit test: postproc threshold override
+    add_executable(va_unit_test_postproc
+        test/unit/test_postproc_threshold.cpp
+        src/analyzer/postproc_yolo_det.cpp)
 
-target_include_directories(va_unit_test_postproc PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-set_target_properties(va_unit_test_postproc PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-if (CUDAToolkit_FOUND)
-    target_include_directories(va_unit_test_postproc PRIVATE ${CUDAToolkit_INCLUDE_DIRS}) # CUDA include for va_unit_test_postproc
-endif()
-
-target_compile_definitions(va_unit_test_postproc PRIVATE UNIT_TEST_NO_CUDA VA_HAS_CUDA_RUNTIME=0)
-
-# Unit test: CUDA NV12 overlay rectangle drawing
-if (CUDAToolkit_FOUND)
-    add_executable(va_unit_test_overlay_cuda
-        test/unit/test_overlay_cuda.cpp
-        src/analyzer/renderer_overlay_cuda.cpp
-        src/analyzer/renderer_overlay_cpu.cpp
-        src/core/logger.cpp
-        src/core/global_metrics.cpp)
-    target_include_directories(va_unit_test_overlay_cuda PRIVATE
+    target_include_directories(va_unit_test_postproc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CUDAToolkit_INCLUDE_DIRS})
-    target_link_libraries(va_unit_test_overlay_cuda PRIVATE CUDA::cudart_static ${OpenCV_LIBS})
-    # If CUDA kernels are built, link them and define VA_HAS_CUDA_KERNELS for this test
-    if (TARGET va_cuda_kernels)
-        target_link_libraries(va_unit_test_overlay_cuda PRIVATE va_cuda_kernels)
-        target_compile_definitions(va_unit_test_overlay_cuda PRIVATE VA_HAS_CUDA_KERNELS)
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+    set_target_properties(va_unit_test_postproc PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    if (CUDAToolkit_FOUND)
+        target_include_directories(va_unit_test_postproc PRIVATE ${CUDAToolkit_INCLUDE_DIRS}) # CUDA include for va_unit_test_postproc
     endif()
-    set_target_properties(va_unit_test_overlay_cuda PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+    target_compile_definitions(va_unit_test_postproc PRIVATE UNIT_TEST_NO_CUDA VA_HAS_CUDA_RUNTIME=0)
+
+    # Unit test: CUDA NV12 overlay rectangle drawing
+    if (CUDAToolkit_FOUND)
+        add_executable(va_unit_test_overlay_cuda
+            test/unit/test_overlay_cuda.cpp
+            src/analyzer/renderer_overlay_cuda.cpp
+            src/analyzer/renderer_overlay_cpu.cpp
+            src/core/logger.cpp
+            src/core/global_metrics.cpp)
+        target_include_directories(va_unit_test_overlay_cuda PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(va_unit_test_overlay_cuda PRIVATE CUDA::cudart_static ${OpenCV_LIBS})
+        # If CUDA kernels are built, link them and define VA_HAS_CUDA_KERNELS for this test
+        if (TARGET va_cuda_kernels)
+            target_link_libraries(va_unit_test_overlay_cuda PRIVATE va_cuda_kernels)
+            target_compile_definitions(va_unit_test_overlay_cuda PRIVATE VA_HAS_CUDA_KERNELS)
+        endif()
+        set_target_properties(va_unit_test_overlay_cuda PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    endif()
 endif()
 
 
