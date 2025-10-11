@@ -190,6 +190,67 @@ bool Application::initialize(const std::string& config_dir) {
     if (!app_config_.engine.options.multistage_yaml.empty()) {
         descriptor.options["multistage_yaml"] = app_config_.engine.options.multistage_yaml;
     }
+    {
+        const auto& o = app_config_.engine.options;
+        VA_LOG_C(::va::core::LogLevel::Info, "app")
+            << "[Startup] multistage use=" << std::boolalpha << o.use_multistage
+            << " graph_id='" << (o.graph_id.empty()? std::string("") : o.graph_id) << "'"
+            << " yaml='" << (o.multistage_yaml.empty()? std::string("") : o.multistage_yaml) << "'";
+        // Also echo what will be pushed into EngineDescriptor options
+        VA_LOG_C(::va::core::LogLevel::Info, "app")
+            << "[Startup] engine.options keys:"
+            << (descriptor.options.count("use_multistage")? " use_multistage" : "")
+            << (descriptor.options.count("graph_id")? " graph_id" : "")
+            << (descriptor.options.count("multistage_yaml")? " multistage_yaml" : "");
+        // Resolve graph YAML path early using config_dir_ when only graph_id is provided
+        try {
+            bool use_ms = o.use_multistage || (descriptor.options.find("use_multistage")!=descriptor.options.end() && descriptor.options["use_multistage"]=="true");
+            bool has_yaml = descriptor.options.find("multistage_yaml") != descriptor.options.end() && !descriptor.options["multistage_yaml"].empty();
+            auto it_gid = descriptor.options.find("graph_id");
+            if (use_ms && !has_yaml && it_gid != descriptor.options.end() && !it_gid->second.empty()) {
+                std::filesystem::path base(config_dir_);
+                std::filesystem::path gdir = base / "graphs";
+                std::string gid = it_gid->second;
+                std::error_code ec;
+                std::filesystem::path p1 = gdir / (gid + ".yaml");
+                std::filesystem::path p2 = gdir / (gid + ".yml");
+                if (std::filesystem::exists(p1, ec)) {
+                    auto can = std::filesystem::weakly_canonical(p1, ec);
+                    descriptor.options["multistage_yaml"] = (ec? p1 : can).string();
+                    VA_LOG_C(::va::core::LogLevel::Info, "app") << "[Startup] resolved graph YAML: " << descriptor.options["multistage_yaml"];
+                } else if (std::filesystem::exists(p2, ec)) {
+                    auto can = std::filesystem::weakly_canonical(p2, ec);
+                    descriptor.options["multistage_yaml"] = (ec? p2 : can).string();
+                    VA_LOG_C(::va::core::LogLevel::Info, "app") << "[Startup] resolved graph YAML: " << descriptor.options["multistage_yaml"];
+                } else {
+                    VA_LOG_C(::va::core::LogLevel::Warn, "app") << "[Startup] graph_id='" << gid << "' not found under '" << gdir.string() << "'";
+                }
+            }
+        } catch (...) { /* best-effort */ }
+    }
+
+    // Bridge global logging throttle/level from engine.options into environment for early availability
+    {
+        auto set_env = [](const char* key, const std::string& val){
+#ifdef _WIN32
+            _putenv_s(key, val.c_str());
+#else
+            setenv(key, val.c_str(), 1);
+#endif
+        };
+        auto set_if = [&](const char* opt_key, const char* env_key){ auto it = descriptor.options.find(opt_key); if (it != descriptor.options.end() && !it->second.empty()) set_env(env_key, it->second); };
+        // Global defaults
+        set_if("log_throttle_ms", "VA_LOG_THROTTLE_MS");
+        set_if("log_throttled_level", "VA_LOG_THROTTLED_LEVEL");
+        // Per-tag overrides
+        set_if("ms_log_throttle_ms", "VA_MS_LOG_THROTTLE_MS");
+        set_if("overlay_log_throttle_ms", "VA_OVERLAY_LOG_THROTTLE_MS");
+        set_if("yolo_log_throttle_ms", "VA_YOLO_LOG_THROTTLE_MS");
+        set_if("ms_log_level", "VA_MS_LOG_LEVEL");
+        set_if("overlay_log_level", "VA_OVERLAY_LOG_LEVEL");
+        set_if("yolo_log_level", "VA_YOLO_LOG_LEVEL");
+    }
+
     engine_manager_.setEngine(std::move(descriptor));
 
     va::server::RestServerOptions rest_options;
