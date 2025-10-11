@@ -90,16 +90,20 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
     if (it == p.tensors.end()) return false;
     std::vector<va::core::TensorView> outs;
     if (!session_ || !session_->run(it->second, outs)) return false;
-    // Map outputs to keys (support multiple outputs if provided)
-    if (!out_keys_.empty()) {
-        const size_t n = std::min(out_keys_.size(), outs.size());
-        for (size_t i = 0; i < n; ++i) {
-            p.tensors[out_keys_[i]] = outs[i];
+    // Map outputs to keys (support multiple outputs and auto keys)
+    if (!outs.empty()) {
+        const size_t n_model = outs.size();
+        const size_t n_keys  = out_keys_.size();
+        for (size_t i = 0; i < n_model; ++i) {
+            std::string key;
+            if (i < n_keys && !out_keys_[i].empty()) key = out_keys_[i];
+            else key = std::string("tensor:out") + std::to_string(i);
+            p.tensors[key] = outs[i];
+            if (i == 0) {
+                // Back-compat alias for first output commonly used for detection
+                p.tensors["tensor:det_raw"] = outs[i];
+            }
         }
-        // If keys provided but outs fewer, leave missing keys untouched
-    } else if (!outs.empty()) {
-        // No keys provided: export the first output under a default key
-        p.tensors["tensor:det_raw"] = outs[0];
     }
     if (!outs.empty()) {
         auto& t = outs.front();
