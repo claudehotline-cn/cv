@@ -161,6 +161,7 @@ list(APPEND SOURCES
     src/analyzer/multistage/node_overlay.cpp
     src/analyzer/multistage/node_roi_batch.cpp
     src/analyzer/multistage/builder_yaml.cpp
+    src/analyzer/multistage/node_kpt_decode.cpp
     src/analyzer/multistage/runner.cpp
     src/core/drop_metrics.cpp
     src/core/source_reconnects.cpp
