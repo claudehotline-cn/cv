@@ -17,6 +17,9 @@ void Graph::add_edge(const std::string& src, const std::string& dst) {
     auto itS = name2id_.find(src);
     auto itD = name2id_.find(dst);
     if (itS == name2id_.end() || itD == name2id_.end()) {
+        VA_LOG_C(::va::core::LogLevel::Warn, "composition")
+            << "Graph add_edge ignored: src='" << src << "' dst='" << dst
+            << "' (one or both nodes not found at add_edge time)";
         return;
     }
     edges_.emplace_back(itS->second, itD->second);
@@ -46,6 +49,8 @@ bool Graph::finalize() {
     produced.insert("frame");
     bool ok = true;
     std::unordered_set<std::string> seen_outputs;
+    std::unordered_map<std::string, std::string> output_owner; // key -> node name
+    std::unordered_set<std::string> consumed_all;
     for (int id : topo_) {
         const auto& ne = nodes_[id];
         // Inputs check
@@ -55,6 +60,7 @@ bool Graph::finalize() {
                     << "Graph input missing before node name='" << ne.name << "' type='" << ne.type << "' key='" << key << "'";
                 ok = false;
             }
+            if (!key.empty()) consumed_all.insert(key);
         }
         // Outputs registration
         for (const auto& key : ne.node->outputs()) {
@@ -65,11 +71,20 @@ bool Graph::finalize() {
             }
             produced.insert(key);
             seen_outputs.insert(key);
+            output_owner.emplace(key, ne.name);
         }
     }
     if (!ok) {
         VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph I/O validation failed.";
         return false;
+    }
+    // Outputs never consumed (potentially wasted computation)
+    for (const auto& kv : output_owner) {
+        const auto& key = kv.first; const auto& owner = kv.second;
+        if (!consumed_all.count(key)) {
+            VA_LOG_C(::va::core::LogLevel::Warn, "composition")
+                << "Graph output not consumed: key='" << key << "' produced by node '" << owner << "'";
+        }
     }
     return true;
 }
