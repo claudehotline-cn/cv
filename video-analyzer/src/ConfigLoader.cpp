@@ -310,6 +310,14 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
             }
         }
     }
+    // control_plane
+    if (v["control_plane"]) {
+        const auto cp = v["control_plane"];
+        if (cp && cp.IsMap()) {
+            payload.control_plane.enabled = cp["enabled"].as<bool>(payload.control_plane.enabled);
+            payload.control_plane.grpc_addr = cp["grpc_addr"].as<std::string>(payload.control_plane.grpc_addr);
+        }
+    }
     return payload;
 }
 

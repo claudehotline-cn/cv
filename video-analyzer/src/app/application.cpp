@@ -7,6 +7,12 @@
 #include "core/source_reconnects.hpp"
 #include "core/nvdec_events.hpp"
 
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+#include "control_plane_embedded/adapters/graph_adapter_yaml.hpp"
+#include "control_plane_embedded/controllers/pipeline_controller.hpp"
+#include "control_plane_embedded/api/grpc_server.hpp"
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -256,6 +262,14 @@ bool Application::initialize(const std::string& config_dir) {
     va::server::RestServerOptions rest_options;
     rest_options.host = "0.0.0.0";
     rest_options.port = 8082;
+    // Allow overriding REST bind via environment for flexibility in multi-process dev
+#ifdef _WIN32
+    if (const char* p = std::getenv("VA_REST_HOST")) { rest_options.host = p; }
+    if (const char* p = std::getenv("VA_REST_PORT")) { try { int v = std::stoi(p); if (v > 0 && v < 65536) rest_options.port = v; } catch (...) {} }
+#else
+    if (const char* p = std::getenv("VA_REST_HOST")) { rest_options.host = p; }
+    if (const char* p = std::getenv("VA_REST_PORT")) { try { int v = std::stoi(p); if (v > 0 && v < 65536) rest_options.port = v; } catch (...) {} }
+#endif
     rest_server_ = std::make_unique<va::server::RestServer>(rest_options, *this);
 
     initialized_ = true;
@@ -267,10 +281,37 @@ bool Application::start() {
         return false;
     }
 
+    bool ok = true;
     if (rest_server_) {
-        return rest_server_->start();
+        ok = rest_server_->start();
     }
-    return false;
+
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+    // 控制平面：按 app.yaml 启动 gRPC（可由 env 覆盖）
+    if (app_config_.control_plane.enabled) {
+        try {
+            // 构造适配器与控制器
+            if (!graph_adapter_) {
+                graph_adapter_.reset(reinterpret_cast<va::control::IGraphAdapter*>(new va::control::GraphAdapterYaml()));
+            }
+            if (!pipeline_controller_) {
+                pipeline_controller_ = std::make_unique<va::control::PipelineController>(graph_adapter_.get());
+            }
+            std::string addr = app_config_.control_plane.grpc_addr.empty()? std::string("0.0.0.0:9090") : app_config_.control_plane.grpc_addr;
+            if (const char* ep = std::getenv("VA_GRPC_ADDR")) { addr = ep; }
+            grpc_server_ = va::control::StartGrpcServer(addr, pipeline_controller_.get());
+            if (!grpc_server_.get()) {
+                VA_LOG_WARN() << "[ControlPlane] gRPC start failed at " << addr;
+            } else {
+                VA_LOG_INFO() << "[ControlPlane] gRPC started at " << addr;
+            }
+        } catch (const std::exception& ex) {
+            VA_LOG_WARN() << "[ControlPlane] start error: " << ex.what();
+        }
+    }
+#endif
+
+    return ok;
 }
 
 void Application::shutdown() {
@@ -282,6 +323,11 @@ void Application::shutdown() {
         rest_server_->stop();
         rest_server_.reset();
     }
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+    grpc_server_.reset();
+    pipeline_controller_.reset();
+    graph_adapter_.reset();
+#endif
 
     track_manager_.reset();
     pipeline_builder_.reset();

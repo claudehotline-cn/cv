@@ -18,6 +18,8 @@ namespace va::analyzer {
 struct AnalyzerParams;
 }
 
+namespace va { namespace control { class IGraphAdapter; class PipelineController; struct OpaquePtr; } }
+
 namespace va::app {
 
 class Application {
@@ -108,6 +110,13 @@ private:
                                                   const ProfileEntry& profile) const;
     std::string expandTemplate(const std::string& templ,
                                const std::string& stream_id) const;
+
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+    // 控制平面（内嵌）
+    std::unique_ptr<class va::control::IGraphAdapter> graph_adapter_;
+    std::unique_ptr<class va::control::PipelineController> pipeline_controller_;
+    class va::control::OpaquePtr grpc_server_;
+#endif
 };
 
 } // namespace va::app

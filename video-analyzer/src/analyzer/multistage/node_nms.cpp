@@ -22,6 +22,23 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     if (it == p.tensors.end()) return false;
     std::vector<va::core::TensorView> raw{it->second};
     va::core::ModelOutput mo;
+    // Bridge graph-level thresholds到后处理（通过环境变量，避免大范围改动接口）
+#ifdef _WIN32
+    {
+        char buf[32];
+        sprintf_s(buf, "%g", static_cast<double>(conf_));
+        _putenv_s("VA_CONF_THRESH", buf);
+        sprintf_s(buf, "%g", static_cast<double>(iou_));
+        _putenv_s("VA_NMS_THR", buf);
+    }
+#else
+    {
+        std::string sc = std::to_string(static_cast<double>(conf_));
+        setenv("VA_CONF_THRESH", sc.c_str(), 1);
+        std::string si = std::to_string(static_cast<double>(iou_));
+        setenv("VA_NMS_THR", si.c_str(), 1);
+    }
+#endif
     bool use_cuda_nms = prefer_cuda_;
     if (ctx.engine_registry) {
         try {

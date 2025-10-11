@@ -104,6 +104,10 @@ struct AppConfigPayload {
     std::string sfu_whip_base;
     std::string sfu_whep_base;
     ObservabilityConfig observability;
+    struct ControlPlaneConfig {
+        bool enabled {false};
+        std::string grpc_addr; // e.g., 0.0.0.0:9090
+    } control_plane;
 };
 
 class ConfigLoader {

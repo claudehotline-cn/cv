@@ -22,6 +22,17 @@ inline float getScoreThreshold() {
     return thr;
 }
 
+inline float getNmsThreshold() {
+    float thr = 0.45f;
+    if (const char* e = std::getenv("VA_NMS_THR")) {
+        try { thr = std::stof(e); } catch (...) {}
+    } else if (const char* e2 = std::getenv("VA_IOU_THR")) {
+        try { thr = std::stof(e2); } catch (...) {}
+    }
+    if (thr < 0.0f) thr = 0.0f; if (thr > 1.0f) thr = 1.0f;
+    return thr;
+}
+
 float clamp(float v, float lo, float hi) {
     return std::max(lo, std::min(v, hi));
 }
@@ -44,6 +55,7 @@ float iou(const va::core::Box& a, const va::core::Box& b) {
 
 void nonMaxSuppression(std::vector<va::core::Box>& boxes) {
     if (boxes.empty()) return;
+    const float nms_thr = getNmsThreshold();
     // Precompute areas
     std::vector<float> areas(boxes.size());
     for (size_t i = 0; i < boxes.size(); ++i) {
@@ -84,7 +96,7 @@ void nonMaxSuppression(std::vector<va::core::Box>& boxes) {
                 float inter = w * h;
                 float uni = areas[i] + areas[j] - inter;
                 float ov = uni > 0.0f ? inter / uni : 0.0f;
-                if (ov > kNMSThreshold) suppressed[j] = true;
+                if (ov > nms_thr) suppressed[j] = true;
             }
         }
     }
@@ -326,7 +338,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                                         cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice) == cudaSuccess &&
                                         cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice) == cudaSuccess &&
                                         cudaMalloc(&d_keep, static_cast<size_t>(h_count)*sizeof(int)) == cudaSuccess &&
-                                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, h_count, 0.45f, d_keep, nullptr, nullptr) == cudaSuccess) {
+                                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, h_count, getNmsThreshold(), d_keep, nullptr, nullptr) == cudaSuccess) {
                                         std::vector<int> h_keep(h_count, 0);
                                         if (cudaMemcpy(h_keep.data(), d_keep, static_cast<size_t>(h_count)*sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess) {
                                             output.boxes.clear(); output.masks.clear();
@@ -451,7 +463,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     if (cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemset(d_kept, 0, sizeof(int))!=cudaSuccess) goto CLEAN5;
-    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, 0.45f, d_keep, d_kept, nullptr)!=cudaSuccess) goto CLEAN5;
+    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, getNmsThreshold(), d_keep, d_kept, nullptr)!=cudaSuccess) goto CLEAN5;
     {
         std::vector<int> h_keep(N);
         if (cudaMemcpy(h_keep.data(), d_keep, N*sizeof(int), cudaMemcpyDeviceToHost)!=cudaSuccess) goto CLEAN5;
@@ -478,7 +490,8 @@ CPU_NMS:
         };
         std::vector<bool> sup(cands.size(), false);
         output.boxes.clear(); output.masks.clear();
-        for (size_t i=0;i<cands.size();++i){ if (sup[i]) continue; const auto& ci=cands[i]; output.boxes.push_back({ci.x1,ci.y1,ci.x2,ci.y2,ci.score,ci.cls}); for (size_t j=i+1;j<cands.size();++j){ if (sup[j]) continue; if (cands[j].cls!=ci.cls) continue; if (iou(ci,cands[j])>0.45f) sup[j]=true; } }
+        const float nms_thr2 = getNmsThreshold();
+        for (size_t i=0;i<cands.size();++i){ if (sup[i]) continue; const auto& ci=cands[i]; output.boxes.push_back({ci.x1,ci.y1,ci.x2,ci.y2,ci.score,ci.cls}); for (size_t j=i+1;j<cands.size();++j){ if (sup[j]) continue; if (cands[j].cls!=ci.cls) continue; if (iou(ci,cands[j])>nms_thr2) sup[j]=true; } }
         return true;
     }
 #else
