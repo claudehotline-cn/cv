@@ -3,7 +3,9 @@ engine:
   device: 0
   options:
     # Default to FFmpeg RTSP source for better stability on Windows
-    use_ffmpeg_source: true
+    use_multistage: true
+    graph_id: analyzer_multistage_example
+    use_ffmpeg_source: false
     use_nvdec: false
     trt_fp16: true
     trt_workspace_mb: 2048
@@ -54,3 +56,7 @@ observability:
     prom_endpoint: "0.0.0.0:9090"
     extended_labels: true
     registry_enabled: true
+control_plane:
+  enabled: false
+  grpc_addr: "0.0.0.0:50051"
+  metrics_enabled: false

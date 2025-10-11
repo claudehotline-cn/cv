@@ -186,6 +186,20 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE Threads::Threads
     PRIVATE ${YAML_CPP_TARGET})
 
+# Control plane (embedded) sources — 无外部依赖占位，默认总是编译
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        src/control_plane_embedded/interfaces.hpp
+        src/control_plane_embedded/controllers/pipeline_controller.cpp
+        src/control_plane_embedded/controllers/pipeline_controller.hpp
+        src/control_plane_embedded/adapters/graph_adapter_yaml.cpp
+        src/control_plane_embedded/adapters/graph_adapter_yaml.hpp
+        src/control_plane_embedded/api/grpc_server.cpp
+        src/control_plane_embedded/api/grpc_server.hpp
+        src/control_plane_embedded/exporters/prometheus_exporter.cpp
+        src/control_plane_embedded/exporters/prometheus_exporter.hpp
+        src/control_plane_embedded/io/from_vsm_link.hpp)
+
 if(FFMPEG_FOUND)
     if(FFMPEG_PKG_FOUND)
         target_include_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_PKG_INCLUDE_DIRS})
