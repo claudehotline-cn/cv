@@ -151,6 +151,16 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
                     bool enabled = !(v=="0"||v=="false"||v=="no"||v=="off");
                     set_env("VA_OVERLAY_DRAW_LABELS", enabled ? std::string("1") : std::string("0"));
                 }
+                // Logging level/throttle bridging from engine options to env (used by logging_util.hpp)
+                auto set_if = [&](const char* opt_key, const char* env_key){ if (auto it = eng_opts.find(opt_key); it != eng_opts.end()) set_env(env_key, it->second); };
+                set_if("log_throttle_ms", "VA_LOG_THROTTLE_MS");
+                set_if("ms_log_throttle_ms", "VA_MS_LOG_THROTTLE_MS");
+                set_if("overlay_log_throttle_ms", "VA_OVERLAY_LOG_THROTTLE_MS");
+                set_if("yolo_log_throttle_ms", "VA_YOLO_LOG_THROTTLE_MS");
+                set_if("log_throttled_level", "VA_LOG_THROTTLED_LEVEL");
+                set_if("ms_log_level", "VA_MS_LOG_LEVEL");
+                set_if("overlay_log_level", "VA_OVERLAY_LOG_LEVEL");
+                set_if("yolo_log_level", "VA_YOLO_LOG_LEVEL");
             }
             // Try YAML
             std::string yaml_path;
