@@ -1,5 +1,6 @@
 #include "analyzer/multistage/graph.hpp"
 #include "core/logger.hpp"
+#include <unordered_set>
 #include <queue>
 
 namespace va { namespace analyzer { namespace multistage {
@@ -34,7 +35,43 @@ bool Graph::finalize() {
         int u = q.front(); q.pop(); topo_.push_back(u);
         for (int v : adj[u]) { if (--indeg[v]==0) q.push(v); }
     }
-    return static_cast<int>(topo_.size()) == n;
+    if (static_cast<int>(topo_.size()) != n) {
+        VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph finalize failed: cycle or unresolved edges (topo.size=" << topo_.size() << "/" << n << ")";
+        return false;
+    }
+
+    // I/O validation pass: ensure each node's declared inputs are produced by some previous node
+    std::unordered_set<std::string> produced;
+    // Seed with implicit inputs available in Packet
+    produced.insert("frame");
+    bool ok = true;
+    std::unordered_set<std::string> seen_outputs;
+    for (int id : topo_) {
+        const auto& ne = nodes_[id];
+        // Inputs check
+        for (const auto& key : ne.node->inputs()) {
+            if (!key.empty() && !produced.count(key)) {
+                VA_LOG_C(::va::core::LogLevel::Error, "composition")
+                    << "Graph input missing before node name='" << ne.name << "' type='" << ne.type << "' key='" << key << "'";
+                ok = false;
+            }
+        }
+        // Outputs registration
+        for (const auto& key : ne.node->outputs()) {
+            if (key.empty()) continue;
+            if (seen_outputs.count(key)) {
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition")
+                    << "Graph output key duplicate: key='" << key << "' at node name='" << ne.name << "' type='" << ne.type << "'";
+            }
+            produced.insert(key);
+            seen_outputs.insert(key);
+        }
+    }
+    if (!ok) {
+        VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph I/O validation failed.";
+        return false;
+    }
+    return true;
 }
 
 bool Graph::run(Packet& p, NodeContext& ctx) {

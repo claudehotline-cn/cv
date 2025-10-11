@@ -10,7 +10,35 @@ static std::unordered_map<std::string,std::string> to_map(const YAML::Node& n) {
     std::unordered_map<std::string,std::string> m;
     if (!n || !n.IsMap()) return m;
     for (auto it : n) {
-        m[it.first.as<std::string>()] = it.second.as<std::string>();
+        const std::string key = it.first.as<std::string>();
+        const YAML::Node& val = it.second;
+        try {
+            if (val.IsSequence()) {
+                // Join sequence as comma-separated for keys like 'outs'
+                std::string joined;
+                for (std::size_t i=0;i<val.size();++i) {
+                    if (i) joined += ",";
+                    joined += val[i].as<std::string>("");
+                }
+                m[key] = joined;
+            } else if (val.IsScalar()) {
+                m[key] = val.as<std::string>("");
+            } else if (val.IsMap()) {
+                // Best-effort: flatten one-level map as key1:val1;key2:val2
+                std::string flat; bool first=true;
+                for (auto kv : val) {
+                    if (!first) flat += ";"; first=false;
+                    flat += kv.first.as<std::string>("");
+                    flat += ":";
+                    flat += kv.second.as<std::string>("");
+                }
+                m[key] = flat;
+            } else {
+                m[key] = "";
+            }
+        } catch (...) {
+            m[key] = "";
+        }
     }
     return m;
 }
