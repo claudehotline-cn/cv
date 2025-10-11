@@ -163,6 +163,7 @@ list(APPEND SOURCES
     src/analyzer/multistage/builder_yaml.cpp
     src/analyzer/multistage/node_kpt_decode.cpp
     src/analyzer/multistage/runner.cpp
+    src/analyzer/multistage/node_overlay_kpt.cpp
     src/core/drop_metrics.cpp
     src/core/source_reconnects.cpp
     src/core/nvdec_events.cpp)

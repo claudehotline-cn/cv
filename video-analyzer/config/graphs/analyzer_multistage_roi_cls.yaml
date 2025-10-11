@@ -1,0 +1,27 @@
+analyzer:
+  multistage:
+    nodes:
+      - name: pre
+        type: preproc.letterbox
+        params: { out_w: "640", out_h: "640", use_cuda: "1" }
+      - name: det
+        type: model.ort
+        params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/model/yolov12x.onnx" }
+      - name: nms
+        type: post.yolo.nms
+        params: { conf: "0.25", iou: "0.45" }
+      - name: roi
+        type: roi.batch
+        params: { in_rois: "det", out: "tensor:roi_batch", out_w: "128", out_h: "128", normalize: "1", max_rois: "16" }
+      - name: cls
+        type: model.ort
+        params: { in: "tensor:roi_batch", outs: "tensor:cls_raw", model_path: "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/model/reid_cls.onnx" }
+      - name: ovl
+        type: overlay.cuda
+        params: { thickness: "2" }
+    edges:
+      - [pre, det]
+      - [det, nms]
+      - [nms, roi]
+      - [roi, cls]
+      - [nms, ovl]
