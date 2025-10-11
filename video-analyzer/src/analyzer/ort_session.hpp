@@ -55,6 +55,9 @@ public:
 
     RuntimeInfo runtimeInfo() const;
 
+    // Returns the model's output tensor names if available (empty otherwise).
+    std::vector<std::string> outputNames() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

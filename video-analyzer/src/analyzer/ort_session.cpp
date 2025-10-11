@@ -688,6 +688,18 @@ OrtModelSession::RuntimeInfo OrtModelSession::runtimeInfo() const {
     return info;
 }
 
+std::vector<std::string> OrtModelSession::outputNames() const {
+#ifdef USE_ONNXRUNTIME
+    std::vector<std::string> names;
+    if (!impl_) return names;
+    std::scoped_lock lock(impl_->mutex);
+    names = impl_->output_names_storage;
+    return names;
+#else
+    return {};
+#endif
+}
+
 #else // USE_ONNXRUNTIME
 
 struct OrtModelSession::Impl {};
