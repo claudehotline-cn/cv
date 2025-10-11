@@ -1,0 +1,18 @@
+syntax = "proto3";
+package va.v1;
+
+// 结构化 Pipeline（后续阶段用于 GraphAdapterProto）
+message NodeParamKV { string key = 1; string value = 2; }
+
+message NodeSpec {
+  string name = 1;                 // det/nms/overlay/sink...
+  string type = 2;                 // model.ort/post.yolo.nms/overlay.cuda/...
+  repeated NodeParamKV params = 3; // {k,v}
+}
+
+message Pipeline {
+  string name = 1;
+  string source_ref = 2;           // e.g. "source/rtsp-entrance-01"
+  repeated NodeSpec nodes = 3;     // 顺序执行（后续可扩展 edges[] 为 DAG）
+}
+

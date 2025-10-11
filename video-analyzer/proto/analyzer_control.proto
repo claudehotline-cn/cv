@@ -1,0 +1,38 @@
+syntax = "proto3";
+package va.v1;
+
+option cc_enable_arenas = true;
+
+// 控制平面 → video-analyzer
+service AnalyzerControl {
+  rpc ApplyPipeline(ApplyPipelineRequest) returns (ApplyPipelineReply);
+  rpc RemovePipeline(RemovePipelineRequest) returns (RemovePipelineReply);
+  rpc HotSwapModel(HotSwapModelRequest) returns (HotSwapModelReply);
+  rpc Drain(DrainRequest) returns (DrainReply);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusReply);
+}
+
+// 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
+// 后续接入 pipeline.proto 结构化定义时，可使用 serialized+format=proto/json。
+message PipelineSpec {
+  bytes serialized = 1;      // optional: proto/json bytes
+  string format = 2;         // "proto" | "json" | "yaml"
+  string graph_id = 3;       // 可选：根据 graph_id 在 config/graphs/ 下解析
+  string yaml_path = 4;      // 可选：指定 YAML 文件路径
+}
+
+message ApplyPipelineRequest { string pipeline_name = 1; PipelineSpec spec = 2; string revision = 3; }
+message ApplyPipelineReply   { bool accepted = 1; string msg = 2; }
+
+message RemovePipelineRequest { string pipeline_name = 1; }
+message RemovePipelineReply   { bool removed = 1; string msg = 2; }
+
+message HotSwapModelRequest { string pipeline_name = 1; string node = 2; string model_uri = 3; }
+message HotSwapModelReply   { bool ok = 1; string msg = 2; }
+
+message DrainRequest { string pipeline_name = 1; int32 timeout_sec = 2; }
+message DrainReply   { bool drained = 1; }
+
+message GetStatusRequest { string pipeline_name = 1; }
+message GetStatusReply   { string phase = 1; string metrics_json = 2; }
+

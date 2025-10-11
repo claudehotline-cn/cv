@@ -73,6 +73,7 @@ endif()
 option(USE_CUDA "Enable CUDA support for GPU inference" ON)
 option(WITH_NVDEC "Build NVDEC-based RTSP source (scaffold)" OFF)
 option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
+option(USE_GRPC "Enable gRPC control plane endpoints" OFF)
 ## 默认 CUDA 架构（可在配置时覆盖）
 ## 示例覆盖：-DVA_CUDA_ARCHS=89 或 -DCMAKE_CUDA_ARCHITECTURES=89
 set(VA_CUDA_ARCHS "89" CACHE STRING "CUDA SM architectures for NVCC (e.g. 89;90;120)")
@@ -199,6 +200,65 @@ target_sources(${PROJECT_NAME}
         src/control_plane_embedded/exporters/prometheus_exporter.cpp
         src/control_plane_embedded/exporters/prometheus_exporter.hpp
         src/control_plane_embedded/io/from_vsm_link.hpp)
+
+# Optional: gRPC/Protobuf integration for control plane
+if (USE_GRPC)
+    find_package(Protobuf QUIET)
+    find_package(gRPC QUIET)
+    if (Protobuf_FOUND AND gRPC_FOUND)
+        message(STATUS "gRPC/Protobuf found: enabling AnalyzerControl service")
+        add_definitions(-DUSE_GRPC)
+
+        set(_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
+        set(_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
+        file(MAKE_DIRECTORY ${_GEN_DIR})
+        set(PROTO_FILES ${_PROTO_DIR}/analyzer_control.proto ${_PROTO_DIR}/pipeline.proto)
+
+        # Generators
+        get_target_property(_PROTOC_LOCATION protobuf::protoc LOCATION)
+        get_target_property(_GRPC_CPP_PLUGIN_EXECUTABLE gRPC::grpc_cpp_plugin LOCATION)
+
+        set(GEN_SRCS)
+        set(GEN_HDRS)
+        foreach(proto ${PROTO_FILES})
+            get_filename_component(fname ${proto} NAME_WE)
+            set(pb_cc  ${_GEN_DIR}/${fname}.pb.cc)
+            set(pb_h   ${_GEN_DIR}/${fname}.pb.h)
+            list(APPEND GEN_SRCS ${pb_cc})
+            list(APPEND GEN_HDRS ${pb_h})
+            add_custom_command(
+                OUTPUT ${pb_cc} ${pb_h}
+                COMMAND protobuf::protoc
+                ARGS --cpp_out ${_GEN_DIR}
+                     -I ${_PROTO_DIR}
+                     ${proto}
+                DEPENDS ${proto}
+            )
+        endforeach()
+
+        # gRPC stubs for analyzer_control only
+        set(grpc_cc ${_GEN_DIR}/analyzer_control.grpc.pb.cc)
+        set(grpc_h  ${_GEN_DIR}/analyzer_control.grpc.pb.h)
+        add_custom_command(
+            OUTPUT ${grpc_cc} ${grpc_h}
+            COMMAND protobuf::protoc
+            ARGS --grpc_out ${_GEN_DIR}
+                 --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+                 -I ${_PROTO_DIR}
+                 ${_PROTO_DIR}/analyzer_control.proto
+            DEPENDS ${_PROTO_DIR}/analyzer_control.proto
+        )
+
+        add_library(va_analyzer_control_proto ${GEN_SRCS} ${grpc_cc})
+        target_include_directories(va_analyzer_control_proto PUBLIC ${_GEN_DIR})
+        target_link_libraries(va_analyzer_control_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+
+        target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
+        target_link_libraries(${PROJECT_NAME} PRIVATE va_analyzer_control_proto)
+    else()
+        message(WARNING "gRPC/Protobuf not found; building without gRPC (USE_GRPC=OFF)")
+    endif()
+endif()
 
 if(FFMPEG_FOUND)
     if(FFMPEG_PKG_FOUND)
