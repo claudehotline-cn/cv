@@ -254,7 +254,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
 
     // If already on CPU, reuse CPU implementation
     if (!t.on_gpu) {
-        VA_LOG_C(::va::core::LogLevel::Debug, "analyzer.yolo") << "tensor on_gpu=0, fallback to CPU postproc";
+        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "tensor on_gpu=0, fallback to CPU postproc";
         YoloDetectionPostprocessor cpu;
         return cpu.run(raw_outputs, meta, output);
     }
@@ -357,7 +357,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                         }
                     }
                 }
-                VA_LOG_C(::va::core::LogLevel::Debug, "analyzer.yolo") << "device decode/NMS path failed, fallback path engaged";
+                VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "device decode/NMS path failed, fallback path engaged";
                 if (d_keep) cudaFree(d_keep);
                 if (d_count) cudaFree(d_count);
                 if (d_classes) cudaFree(d_classes);
@@ -370,13 +370,13 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
 
 #if VA_HAS_CUDA_RUNTIME
     // Decode YOLO tensor on host (D2H) to boxes/scores/classes; then run CUDA NMS if kernels available, else CPU NMS
-    VA_LOG_C(::va::core::LogLevel::Debug, "analyzer.yolo") << "host decode path (D2H), tensor bytes copy";
+    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "host decode path (D2H), tensor bytes copy";
     size_t count = 1;
     for (auto d : t.shape) { count *= static_cast<size_t>(d > 0 ? d : 1); }
-    if (count == 0) { VA_LOG_C(::va::core::LogLevel::Debug, "analyzer.yolo") << "host decode: empty tensor (count=0)"; return false; }
+    if (count == 0) { VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "host decode: empty tensor (count=0)"; return false; }
     std::vector<float> host(count);
     if (cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
-        VA_LOG_C(::va::core::LogLevel::Debug, "analyzer.yolo") << "host decode: cudaMemcpy D2H failed";
+        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "host decode: cudaMemcpy D2H failed";
         return false;
     }
 
