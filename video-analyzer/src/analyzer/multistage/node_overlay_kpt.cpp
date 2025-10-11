@@ -88,6 +88,73 @@ bool NodeOverlayKpt::process(Packet& p, NodeContext& /*ctx*/) {
         };
         auto colorForBGR = [](int idx){ return std::array<unsigned char,3>{ (unsigned char)((233*idx)%255), (unsigned char)((17*idx)%255), (unsigned char)((37*idx)%255) }; };
         const int tb = std::max(1, radius_);
+
+        auto draw_square_nv12 = [&](int x1, int y1, int x2, int y2, unsigned char Yc, unsigned char Uc, unsigned char Vc){
+            if (x2 < x1 || y2 < y1) return;
+            // Fill Y square
+            size_t rowBytes = (size_t)(x2 - x1 + 1);
+            cudaMemset2D(yBase + y1 * yPitch + x1, yPitch, Yc, rowBytes, (size_t)(y2 - y1 + 1));
+            // Fill UV square (2x2)
+            int uv_x1 = x1/2, uv_x2 = x2/2, uv_y1 = y1/2, uv_y2 = y2/2;
+            size_t uvRowBytes = (size_t)((uv_x2 - uv_x1 + 1) * 2);
+            std::vector<uint8_t> uvRow(uvRowBytes);
+            for (size_t kk=0; kk<uvRowBytes; kk+=2){ uvRow[kk]=Uc; uvRow[kk+1]=Vc; }
+            for (int uyy = uv_y1; uyy <= uv_y2; ++uyy) {
+                cudaMemcpy(uvBase + uyy * uvPitch + uv_x1*2, uvRow.data(), uvRowBytes, cudaMemcpyHostToDevice);
+            }
+        };
+
+        // Optional: draw skeleton lines as contiguous segments by horizontal row fills
+        auto draw_line_nv12 = [&](int x0,int y0,int x1,int y1, unsigned char Yc, unsigned char Uc, unsigned char Vc){
+            // Ensure within bounds
+            x0 = std::max(0, std::min(p.frame.device.width - 1, x0));
+            x1 = std::max(0, std::min(p.frame.device.width - 1, x1));
+            y0 = std::max(0, std::min(p.frame.device.height - 1, y0));
+            y1 = std::max(0, std::min(p.frame.device.height - 1, y1));
+            int dy = y1 - y0; int dx = x1 - x0;
+            if (std::abs(dy) >= std::abs(dx)) {
+                // Step over y
+                if (y0 > y1) { std::swap(y0,y1); std::swap(x0,x1); dy = y1-y0; dx = x1-x0; }
+                for (int y = y0; y <= y1; ++y) {
+                    float t = (dy==0)? 0.0f : (float)(y - y0) / (float)dy;
+                    int x = (int)std::round(x0 + t * dx);
+                    int xs = std::max(0, x - tb), xe = std::min(p.frame.device.width - 1, x + tb);
+                    draw_square_nv12(xs, y, xe, y, Yc, Uc, Vc);
+                }
+            } else {
+                // Step over x
+                if (x0 > x1) { std::swap(y0,y1); std::swap(x0,x1); dy = y1-y0; dx = x1-x0; }
+                for (int x = x0; x <= x1; ++x) {
+                    float t = (dx==0)? 0.0f : (float)(x - x0) / (float)dx;
+                    int y = (int)std::round(y0 + t * dy);
+                    int ys = std::max(0, y - tb), ye = std::min(p.frame.device.height - 1, y + tb);
+                    // vertical band approximated by multiple horizontal 1-px rows
+                    for (int yy = ys; yy <= ye; ++yy) {
+                        draw_square_nv12(x, yy, x, yy, Yc, Uc, Vc);
+                    }
+                }
+            }
+        };
+        if (draw_skeleton_ && !edges_.empty()) {
+            for (int i=0;i<N;++i) {
+                for (auto e : edges_) {
+                    int a = e.first, b = e.second;
+                    if (a<0||a>=K||b<0||b>=K) continue;
+                    size_t ia = (static_cast<size_t>(i)*K + static_cast<size_t>(a))*3ull;
+                    size_t ib = (static_cast<size_t>(i)*K + static_cast<size_t>(b))*3ull;
+                    float xa = data[ia+0], ya = data[ia+1], sa = data[ia+2];
+                    float xb = data[ib+0], yb = data[ib+1], sb = data[ib+2];
+                    if (sa < min_score_ || sb < min_score_) continue;
+                    int x0 = (int)std::round(xa), y0 = (int)std::round(ya);
+                    int x1 = (int)std::round(xb), y1 = (int)std::round(yb);
+                    auto rgb = colorForBGR(a);
+                    unsigned char Yc=235, Uc=128, Vc=128; rgb_to_yuv709_limited(rgb[2], rgb[1], rgb[0], Yc, Uc, Vc);
+                    draw_line_nv12(x0,y0,x1,y1,Yc,Uc,Vc);
+                }
+            }
+        }
+
+        // Draw points as squares
         for (int i=0;i<N;++i) {
             for (int k=0;k<K;++k) {
                 size_t idx = (static_cast<size_t>(i)*K + static_cast<size_t>(k))*3ull;
@@ -95,22 +162,11 @@ bool NodeOverlayKpt::process(Packet& p, NodeContext& /*ctx*/) {
                 if (s < min_score_) continue;
                 int x = std::max(0, std::min(p.frame.device.width - 1, (int)std::round(xf)));
                 int y = std::max(0, std::min(p.frame.device.height - 1, (int)std::round(yf)));
-                int x1 = std::max(0, x - tb), x2 = std::min(p.frame.device.width - 1, x + tb);
-                int y1 = std::max(0, y - tb), y2 = std::min(p.frame.device.height - 1, y + tb);
-                if (x2 < x1 || y2 < y1) continue;
+                int xs1 = std::max(0, x - tb), xs2 = std::min(p.frame.device.width - 1, x + tb);
+                int ys1 = std::max(0, y - tb), ys2 = std::min(p.frame.device.height - 1, y + tb);
                 auto rgb = colorForBGR(k);
                 unsigned char Yc=235, Uc=128, Vc=128; rgb_to_yuv709_limited(rgb[2], rgb[1], rgb[0], Yc, Uc, Vc);
-                // Fill Y square
-                size_t rowBytes = (size_t)(x2 - x1 + 1);
-                cudaMemset2D(yBase + y1 * yPitch + x1, yPitch, Yc, rowBytes, (size_t)(y2 - y1 + 1));
-                // Fill UV square (2x2 blocks)
-                int uv_x1 = x1/2, uv_x2 = x2/2, uv_y1 = y1/2, uv_y2 = y2/2;
-                size_t uvRowBytes = (size_t)((uv_x2 - uv_x1 + 1) * 2);
-                std::vector<uint8_t> uvRow(uvRowBytes);
-                for (size_t kk=0; kk<uvRowBytes; kk+=2){ uvRow[kk]=Uc; uvRow[kk+1]=Vc; }
-                for (int uyy = uv_y1; uyy <= uv_y2; ++uyy) {
-                    cudaMemcpy(uvBase + uyy * uvPitch + uv_x1*2, uvRow.data(), uvRowBytes, cudaMemcpyHostToDevice);
-                }
+                draw_square_nv12(xs1, ys1, xs2, ys2, Yc, Uc, Vc);
             }
         }
         return true;
