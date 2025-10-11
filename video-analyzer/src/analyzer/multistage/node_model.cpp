@@ -104,9 +104,10 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
         auto& t = outs.front();
         std::string shape_str;
         for (size_t i=0;i<t.shape.size();++i){ shape_str += (i?"x":""); shape_str += std::to_string(t.shape[i]); }
-        VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model") << "out_count=" << outs.size() << " out0_shape=" << shape_str << " on_gpu=" << std::boolalpha << t.on_gpu;
+        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.node_model", 1000)
+            << "out_count=" << outs.size() << " out0_shape=" << shape_str << " on_gpu=" << std::boolalpha << t.on_gpu;
     } else {
-        VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model") << "out_count=0";
+        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.node_model", 1000) << "out_count=0";
     }
     return true;
 }

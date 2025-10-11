@@ -24,7 +24,7 @@ bool NodeOverlay::process(Packet& p, NodeContext& /*ctx*/) {
     va::core::Frame out;
     const size_t n = mo.boxes.size();
     if (!renderer_->draw(p.frame, mo, out)) return false;
-    VA_LOG_C(::va::core::LogLevel::Info, "ms.overlay") << "drawn boxes=" << n;
+    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.overlay", 1000) << "drawn boxes=" << n;
     p.frame = out;
     return true;
 }

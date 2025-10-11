@@ -47,7 +47,7 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     }
     // Export as rois
     p.rois["det"] = mo.boxes;
-    VA_LOG_C(::va::core::LogLevel::Info, "ms.nms") << "boxes=" << mo.boxes.size();
+    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.nms", 1000) << "boxes=" << mo.boxes.size();
     return true;
 }
 
