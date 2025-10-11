@@ -264,7 +264,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
         int64_t dim0 = t.shape[0];
         int64_t dim1 = t.shape[1];
         int64_t dim2 = t.shape[2];
-        VA_LOG_EVERY_N(::va::core::LogLevel::Debug, "analyzer.yolo", 60)
+        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000)
             << "dims=" << dim0 << "x" << dim1 << "x" << dim2
             << " score_thr=" << getScoreThreshold()
             << " meta(scale=" << meta.scale << ", pad=" << meta.pad_x << "," << meta.pad_y << ")";
@@ -281,7 +281,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
             bool channels_first = useB;
             int num_det = static_cast<int>(useB ? candB_det : candA_det);
             int num_attrs = static_cast<int>(useB ? candB_attr : candA_attr);
-            VA_LOG_EVERY_N(::va::core::LogLevel::Debug, "analyzer.yolo", 60)
+            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000)
                 << "layout cf=" << (channels_first?1:0)
                 << " num_det=" << num_det << " num_attrs=" << num_attrs;
             if (num_attrs >= 5 && num_det > 0) {
