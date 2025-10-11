@@ -30,6 +30,7 @@
 #include "analyzer/multistage/node_nms.hpp"
 #include "analyzer/multistage/node_overlay.hpp"
 #include "analyzer/multistage/node_roi_batch.hpp"
+#include "analyzer/multistage/node_roi_batch_cuda.hpp"
 #include "analyzer/multistage/node_kpt_decode.hpp"
 #include "analyzer/multistage/node_overlay_kpt.hpp"
 #include <algorithm>
@@ -123,12 +124,14 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             using va::analyzer::multistage::NodeRoiBatch;
             using va::analyzer::multistage::NodeKptDecode;
             using va::analyzer::multistage::NodeOverlayKpt;
+            using va::analyzer::multistage::NodeRoiBatchCuda;
             MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
             MS_REGISTER_NODE("model.ort", NodeModel);
             MS_REGISTER_NODE("post.yolo.nms", NodeNmsYolo);
             MS_REGISTER_NODE("overlay.cuda", NodeOverlay);
             va::analyzer::multistage::NodeRegistry::instance().reg("overlay.cpu", [](const std::unordered_map<std::string,std::string>& cfg){ return std::make_shared<NodeOverlay>(cfg); });
             MS_REGISTER_NODE("roi.batch", NodeRoiBatch);
+            MS_REGISTER_NODE("roi.batch.cuda", NodeRoiBatchCuda);
             MS_REGISTER_NODE("post.yolo.kpt", NodeKptDecode);
             MS_REGISTER_NODE("overlay.kpt", NodeOverlayKpt);
             auto ms = std::make_shared<AnalyzerMultistageAdapter>();
