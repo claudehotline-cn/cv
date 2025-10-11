@@ -20,13 +20,14 @@ namespace va::analyzer {
 bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& output, core::Frame& out) {
     auto log_once = [&](const char* path, size_t boxes, bool kernels, int thick, float alpha, const core::Frame& f){
         if (!debug_printed_) {
-            VA_LOG_INFO() << "[OverlayCUDA] path=" << path
-                          << " boxes=" << boxes
-                          << " kernels=" << std::boolalpha << kernels
-                          << " thickness=" << thick
-                          << " alpha=" << alpha
-                          << " nv12_pitch0=" << (f.has_device_surface? f.device.pitch0:0)
-                          << " nv12_pitch1=" << (f.has_device_surface? f.device.pitch1:0);
+            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "overlay.cuda", 2000)
+                << "[OverlayCUDA] path=" << path
+                << " boxes=" << boxes
+                << " kernels=" << std::boolalpha << kernels
+                << " thickness=" << thick
+                << " alpha=" << alpha
+                << " nv12_pitch0=" << (f.has_device_surface? f.device.pitch0:0)
+                << " nv12_pitch1=" << (f.has_device_surface? f.device.pitch1:0);
             debug_printed_ = true;
         }
     };
