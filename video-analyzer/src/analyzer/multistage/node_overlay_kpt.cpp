@@ -2,6 +2,21 @@
 #include "analyzer/multistage/nodes_common.hpp"
 #include <opencv2/imgproc.hpp>
 #include "core/logger.hpp"
+#ifdef USE_CUDA
+#  if defined(__has_include)
+#    if __has_include(<cuda_runtime.h>)
+#      include <cuda_runtime.h>
+#      define VA_MS_KPT_HAS_CUDA 1
+#    else
+#      define VA_MS_KPT_HAS_CUDA 0
+#    endif
+#  else
+#    include <cuda_runtime.h>
+#    define VA_MS_KPT_HAS_CUDA 1
+#  endif
+#else
+#  define VA_MS_KPT_HAS_CUDA 0
+#endif
 
 using va::analyzer::multistage::util::get_or_int;
 using va::analyzer::multistage::util::get_or_float;
@@ -41,7 +56,7 @@ bool NodeOverlayKpt::process(Packet& p, NodeContext& /*ctx*/) {
     if (it == p.tensors.end()) return true; // no kpt -> no-op
     const auto& t = it->second;
     if (t.shape.size() != 3 || t.dtype != va::core::DType::F32 || !t.data) return true;
-    if (p.frame.width <= 0 || p.frame.height <= 0 || p.frame.bgr.empty()) {
+    if (p.frame.width <= 0 || p.frame.height <= 0) {
         VA_LOG_C(::va::core::LogLevel::Debug, "ms.overlay.kpt") << "skip: frame.bgr empty or size invalid";
         return true;
     }
@@ -49,10 +64,62 @@ bool NodeOverlayKpt::process(Packet& p, NodeContext& /*ctx*/) {
     const int K = static_cast<int>(t.shape[1]);
     const float* data = static_cast<const float*>(t.data);
 
+#if VA_MS_KPT_HAS_CUDA
+    if (p.frame.has_device_surface && p.frame.device.on_gpu && p.frame.device.fmt == va::core::PixelFormat::NV12) {
+        // Device NV12 path: draw small squares around keypoints by Y memset + UV memcpy patterns.
+        uint8_t* yBase = static_cast<uint8_t*>(p.frame.device.data0);
+        uint8_t* uvBase = static_cast<uint8_t*>(p.frame.device.data1);
+        const size_t yPitch = static_cast<size_t>(p.frame.device.pitch0);
+        const size_t uvPitch = static_cast<size_t>(p.frame.device.pitch1);
+        auto srgb_to_lin = [](float c){ return c <= 0.04045f ? c/12.92f : std::pow((c+0.055f)/1.055f, 2.4); };
+        auto rgb_to_yuv709_limited = [&](unsigned char R8,unsigned char G8,unsigned char B8,
+                                         unsigned char& Yc,unsigned char& Uc,unsigned char& Vc){
+            float R = (float)srgb_to_lin(R8/255.0f);
+            float G = (float)srgb_to_lin(G8/255.0f);
+            float B = (float)srgb_to_lin(B8/255.0f);
+            float Yf = 0.2126f*R + 0.7152f*G + 0.0722f*B;
+            float Cb = (B - Yf) / 1.8556f;
+            float Cr = (R - Yf) / 1.5748f;
+            int yv = (int)std::round(16.0 + 219.0 * Yf);
+            int uv = (int)std::round(128.0 + 224.0 * Cb);
+            int vv = (int)std::round(128.0 + 224.0 * Cr);
+            if (yv<16) yv=16; if (yv>235) yv=235; if (uv<16) uv=16; if (uv>240) uv=240; if (vv<16) vv=16; if (vv>240) vv=240;
+            Yc=(unsigned char)yv; Uc=(unsigned char)uv; Vc=(unsigned char)vv;
+        };
+        auto colorForBGR = [](int idx){ return std::array<unsigned char,3>{ (unsigned char)((233*idx)%255), (unsigned char)((17*idx)%255), (unsigned char)((37*idx)%255) }; };
+        const int tb = std::max(1, radius_);
+        for (int i=0;i<N;++i) {
+            for (int k=0;k<K;++k) {
+                size_t idx = (static_cast<size_t>(i)*K + static_cast<size_t>(k))*3ull;
+                float xf = data[idx+0], yf = data[idx+1], s = data[idx+2];
+                if (s < min_score_) continue;
+                int x = std::max(0, std::min(p.frame.device.width - 1, (int)std::round(xf)));
+                int y = std::max(0, std::min(p.frame.device.height - 1, (int)std::round(yf)));
+                int x1 = std::max(0, x - tb), x2 = std::min(p.frame.device.width - 1, x + tb);
+                int y1 = std::max(0, y - tb), y2 = std::min(p.frame.device.height - 1, y + tb);
+                if (x2 < x1 || y2 < y1) continue;
+                auto rgb = colorForBGR(k);
+                unsigned char Yc=235, Uc=128, Vc=128; rgb_to_yuv709_limited(rgb[2], rgb[1], rgb[0], Yc, Uc, Vc);
+                // Fill Y square
+                size_t rowBytes = (size_t)(x2 - x1 + 1);
+                cudaMemset2D(yBase + y1 * yPitch + x1, yPitch, Yc, rowBytes, (size_t)(y2 - y1 + 1));
+                // Fill UV square (2x2 blocks)
+                int uv_x1 = x1/2, uv_x2 = x2/2, uv_y1 = y1/2, uv_y2 = y2/2;
+                size_t uvRowBytes = (size_t)((uv_x2 - uv_x1 + 1) * 2);
+                std::vector<uint8_t> uvRow(uvRowBytes);
+                for (size_t kk=0; kk<uvRowBytes; kk+=2){ uvRow[kk]=Uc; uvRow[kk+1]=Vc; }
+                for (int uyy = uv_y1; uyy <= uv_y2; ++uyy) {
+                    cudaMemcpy(uvBase + uyy * uvPitch + uv_x1*2, uvRow.data(), uvRowBytes, cudaMemcpyHostToDevice);
+                }
+            }
+        }
+        return true;
+    }
+#endif
+    // CPU BGR path
+    if (p.frame.bgr.empty()) return true;
     cv::Mat img(p.frame.height, p.frame.width, CV_8UC3, p.frame.bgr.data());
     auto colorFor = [](int idx){ return cv::Scalar((37*idx)%255, (17*idx)%255, (233*idx)%255); };
-
-    // Draw skeleton first (lines)
     if (draw_skeleton_ && !edges_.empty()) {
         for (int i=0;i<N;++i) {
             for (auto e : edges_) {
@@ -68,7 +135,6 @@ bool NodeOverlayKpt::process(Packet& p, NodeContext& /*ctx*/) {
             }
         }
     }
-    // Draw points
     for (int i=0;i<N;++i) {
         for (int k=0;k<K;++k) {
             size_t idx = (static_cast<size_t>(i)*K + static_cast<size_t>(k))*3ull;
@@ -81,4 +147,3 @@ bool NodeOverlayKpt::process(Packet& p, NodeContext& /*ctx*/) {
 }
 
 } } } // namespace
-
