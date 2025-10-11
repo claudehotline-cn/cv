@@ -167,6 +167,7 @@ list(APPEND SOURCES
     src/analyzer/multistage/node_overlay_kpt.cpp
     src/core/drop_metrics.cpp
     src/analyzer/multistage/node_join.cpp
+    src/analyzer/multistage/node_reid_smooth.cpp
     src/core/source_reconnects.cpp
     src/core/nvdec_events.cpp)
 
