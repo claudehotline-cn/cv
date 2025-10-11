@@ -49,6 +49,14 @@ NodeOverlayKpt::NodeOverlayKpt(const std::unordered_map<std::string,std::string>
     if (auto it = cfg.find("skeleton"); it != cfg.end()) {
         edges_ = parse_skeleton(it->second);
     }
+    // Provide a default COCO-17 skeleton if requested but not provided
+    if (draw_skeleton_ && edges_.empty()) {
+        // A common COCO-style edge list (indices may vary by model; adjust as needed)
+        int def[][2] = {
+            {5,7},{7,9}, {6,8},{8,10}, {5,6}, {11,13},{13,15}, {12,14},{14,16}, {11,12}, {5,11},{6,12}, {0,1},{1,2},{2,3},{3,4}
+        };
+        for (auto& e : def) edges_.emplace_back(e[0], e[1]);
+    }
 }
 
 bool NodeOverlayKpt::process(Packet& p, NodeContext& /*ctx*/) {
