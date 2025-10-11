@@ -131,6 +131,18 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
                 // Optionally expose engine manager as registry for future extensibility.
                 ctx.engine_registry = &engine_manager;
             }
+            // Configure shared buffer pools for multistage (use engine options if provided)
+            {
+                auto findSize = [&](const char* key, std::size_t fallback){
+                    auto it = eng_opts.find(key);
+                    if (it == eng_opts.end()) return fallback;
+                    try { long long vv = std::stoll(it->second); return vv>0 ? static_cast<std::size_t>(vv) : fallback; }
+                    catch (...) { return fallback; }
+                };
+                std::size_t dev_bytes = findSize("io_binding_input_bytes", 16ull*1024ull*1024ull);
+                std::size_t host_bytes = findSize("io_binding_output_bytes", 16ull*1024ull*1024ull);
+                ms->configurePools(host_bytes, 8, dev_bytes, 4);
+            }
             // Apply overlay tuning from engine options (parity with single-stage path)
             {
                 auto set_env = [](const char* key, const std::string& val){
