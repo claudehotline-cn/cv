@@ -3,6 +3,7 @@
 #include "analyzer/postproc_yolo_det.hpp"
 #include "core/logger.hpp"
 #include "core/engine_manager.hpp"
+#include "analyzer/logging_util.hpp"
 #include <algorithm>
 
 using va::analyzer::multistage::util::get_or_float;
@@ -47,7 +48,9 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     }
     // Export as rois
     p.rois["det"] = mo.boxes;
-    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.nms", 1000) << "boxes=" << mo.boxes.size();
+    auto lvl = va::analyzer::logutil::log_level_for_tag("ms.nms");
+    auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms");
+    VA_LOG_THROTTLED(lvl, "ms.nms", thr) << "boxes=" << mo.boxes.size();
     return true;
 }
 

@@ -1,6 +1,7 @@
 #include "analyzer/multistage/node_overlay.hpp"
 #include "analyzer/renderer_overlay_cpu.hpp"
 #include "analyzer/renderer_overlay_cuda.hpp"
+#include "analyzer/logging_util.hpp"
 #include "core/logger.hpp"
 
 namespace va { namespace analyzer { namespace multistage {
@@ -24,7 +25,9 @@ bool NodeOverlay::process(Packet& p, NodeContext& /*ctx*/) {
     va::core::Frame out;
     const size_t n = mo.boxes.size();
     if (!renderer_->draw(p.frame, mo, out)) return false;
-    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.overlay", 1000) << "drawn boxes=" << n;
+    auto lvl = va::analyzer::logutil::log_level_for_tag("ms.overlay");
+    auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.overlay");
+    VA_LOG_THROTTLED(lvl, "ms.overlay", thr) << "drawn boxes=" << n;
     p.frame = out;
     return true;
 }

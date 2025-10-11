@@ -1,6 +1,7 @@
 #include "analyzer/renderer_overlay_cuda.hpp"
 #include "analyzer/renderer_overlay_cpu.hpp"
 #include "core/logger.hpp"
+#include "analyzer/logging_util.hpp"
 #include "core/global_metrics.hpp"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/core.hpp>
@@ -20,7 +21,9 @@ namespace va::analyzer {
 bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& output, core::Frame& out) {
     auto log_once = [&](const char* path, size_t boxes, bool kernels, int thick, float alpha, const core::Frame& f){
         if (!debug_printed_) {
-            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "overlay.cuda", 2000)
+            auto lvl = va::analyzer::logutil::log_level_for_tag("overlay.cuda");
+            auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("overlay.cuda");
+            VA_LOG_THROTTLED(lvl, "overlay.cuda", thr)
                 << "[OverlayCUDA] path=" << path
                 << " boxes=" << boxes
                 << " kernels=" << std::boolalpha << kernels

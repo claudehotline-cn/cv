@@ -1,6 +1,7 @@
 #include "analyzer/multistage/node_model.hpp"
 #include "analyzer/ort_session.hpp"
 #include "core/engine_manager.hpp"
+#include "analyzer/logging_util.hpp"
 #include <algorithm>
 #include "analyzer/multistage/nodes_common.hpp"
 #include "core/logger.hpp"
@@ -104,10 +105,14 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
         auto& t = outs.front();
         std::string shape_str;
         for (size_t i=0;i<t.shape.size();++i){ shape_str += (i?"x":""); shape_str += std::to_string(t.shape[i]); }
-        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.node_model", 1000)
+        auto lvl = va::analyzer::logutil::log_level_for_tag("ms.node_model");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.node_model");
+        VA_LOG_THROTTLED(lvl, "ms.node_model", thr)
             << "out_count=" << outs.size() << " out0_shape=" << shape_str << " on_gpu=" << std::boolalpha << t.on_gpu;
     } else {
-        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ms.node_model", 1000) << "out_count=0";
+        auto lvl = va::analyzer::logutil::log_level_for_tag("ms.node_model");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.node_model");
+        VA_LOG_THROTTLED(lvl, "ms.node_model", thr) << "out_count=0";
     }
     return true;
 }

@@ -218,6 +218,7 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 
 #if defined(USE_CUDA) && !defined(UNIT_TEST_NO_CUDA)
 #include "analyzer/postproc_yolo_det.hpp"
+#include "analyzer/logging_util.hpp"
 
 #if defined(__has_include)
 #  if __has_include(<cuda_runtime.h>)
@@ -254,7 +255,9 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
 
     // If already on CPU, reuse CPU implementation
     if (!t.on_gpu) {
-        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "tensor on_gpu=0, fallback to CPU postproc";
+        auto lvl = va::analyzer::logutil::log_level_for_tag("analyzer.yolo");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo");
+        VA_LOG_THROTTLED(lvl, "analyzer.yolo", thr) << "tensor on_gpu=0, fallback to CPU postproc";
         YoloDetectionPostprocessor cpu;
         return cpu.run(raw_outputs, meta, output);
     }
@@ -264,7 +267,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
         int64_t dim0 = t.shape[0];
         int64_t dim1 = t.shape[1];
         int64_t dim2 = t.shape[2];
-        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000)
+        VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo"))
             << "dims=" << dim0 << "x" << dim1 << "x" << dim2
             << " score_thr=" << getScoreThreshold()
             << " meta(scale=" << meta.scale << ", pad=" << meta.pad_x << "," << meta.pad_y << ")";
@@ -281,7 +284,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
             bool channels_first = useB;
             int num_det = static_cast<int>(useB ? candB_det : candA_det);
             int num_attrs = static_cast<int>(useB ? candB_attr : candA_attr);
-            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000)
+            VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo"))
                 << "layout cf=" << (channels_first?1:0)
                 << " num_det=" << num_det << " num_attrs=" << num_attrs;
             if (num_attrs >= 5 && num_det > 0) {
@@ -338,7 +341,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                                             if (d_classes) cudaFree(d_classes);
                                             if (d_scores) cudaFree(d_scores);
                                             if (d_boxes) cudaFree(d_boxes);
-                                            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 1000)
+                                            VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo"))
                                                 << "decode+NMS OK, valid=" << h_count << ", kept=" << output.boxes.size();
                                             return true;
                                         }
@@ -350,14 +353,14 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                                 if (d_classes) cudaFree(d_classes);
                                 if (d_scores) cudaFree(d_scores);
                                 if (d_boxes) cudaFree(d_boxes);
-                                VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 1000)
+                                VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo"))
                                     << "decode OK, no candidates (valid=0)";
                                 return true;
                             }
                         }
                     }
                 }
-                VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "device decode/NMS path failed, fallback path engaged";
+                VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "device decode/NMS path failed, fallback path engaged";
                 if (d_keep) cudaFree(d_keep);
                 if (d_count) cudaFree(d_count);
                 if (d_classes) cudaFree(d_classes);
@@ -370,13 +373,13 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
 
 #if VA_HAS_CUDA_RUNTIME
     // Decode YOLO tensor on host (D2H) to boxes/scores/classes; then run CUDA NMS if kernels available, else CPU NMS
-    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "host decode path (D2H), tensor bytes copy";
+    VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode path (D2H), tensor bytes copy";
     size_t count = 1;
     for (auto d : t.shape) { count *= static_cast<size_t>(d > 0 ? d : 1); }
-    if (count == 0) { VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "host decode: empty tensor (count=0)"; return false; }
+    if (count == 0) { VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: empty tensor (count=0)"; return false; }
     std::vector<float> host(count);
     if (cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
-        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.yolo", 2000) << "host decode: cudaMemcpy D2H failed";
+        VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: cudaMemcpy D2H failed";
         return false;
     }
 
