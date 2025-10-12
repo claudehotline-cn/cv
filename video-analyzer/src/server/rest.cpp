@@ -1149,6 +1149,35 @@ struct RestServer::Impl {
         out << "# TYPE va_overlay_nv12_passthrough_total counter\n";
         out << "va_overlay_nv12_passthrough_total " << gm.overlay_nv12_passthrough << "\n";
 
+        // Control-plane metrics (plain text branch)
+        out << "# HELP va_cp_auto_subscribe_total Auto subscribe events (success)\n";
+        out << "# TYPE va_cp_auto_subscribe_total counter\n";
+        out << "va_cp_auto_subscribe_total " << gm.cp_auto_subscribe_total << "\n";
+
+        out << "# HELP va_cp_auto_unsubscribe_total Auto unsubscribe events (success)\n";
+        out << "# TYPE va_cp_auto_unsubscribe_total counter\n";
+        out << "va_cp_auto_unsubscribe_total " << gm.cp_auto_unsubscribe_total << "\n";
+
+        out << "# HELP va_cp_auto_switch_source_total Auto source switch events (success)\n";
+        out << "# TYPE va_cp_auto_switch_source_total counter\n";
+        out << "va_cp_auto_switch_source_total " << gm.cp_auto_switch_source_total << "\n";
+
+        out << "# HELP va_cp_auto_switch_model_total Auto model switch events (success)\n";
+        out << "# TYPE va_cp_auto_switch_model_total counter\n";
+        out << "va_cp_auto_switch_model_total " << gm.cp_auto_switch_model_total << "\n";
+
+        out << "# HELP va_cp_auto_subscribe_failed_total Auto subscribe failures\n";
+        out << "# TYPE va_cp_auto_subscribe_failed_total counter\n";
+        out << "va_cp_auto_subscribe_failed_total " << gm.cp_auto_subscribe_failed_total << "\n";
+
+        out << "# HELP va_cp_auto_switch_source_failed_total Auto source switch failures\n";
+        out << "# TYPE va_cp_auto_switch_source_failed_total counter\n";
+        out << "va_cp_auto_switch_source_failed_total " << gm.cp_auto_switch_source_failed_total << "\n";
+
+        out << "# HELP va_cp_auto_switch_model_failed_total Auto model switch failures\n";
+        out << "# TYPE va_cp_auto_switch_model_failed_total counter\n";
+        out << "va_cp_auto_switch_model_failed_total " << gm.cp_auto_switch_model_failed_total << "\n";
+
         // Per-source metrics (labels: source_id, path)
         auto classify_path = [](const va::core::TrackManager::PipelineInfo& info) -> std::string {
             if (info.zc.d2d_nv12_frames > 0) return "d2d";

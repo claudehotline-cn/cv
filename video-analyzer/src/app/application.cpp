@@ -3,6 +3,7 @@
 #include "ConfigLoader.hpp"
 #include "analyzer/analyzer.hpp"
 #include "core/logger.hpp"
+#include "core/global_metrics.hpp"
 #include "core/drop_metrics.hpp"
 #include "core/source_reconnects.hpp"
 #include "core/nvdec_events.hpp"
@@ -25,6 +26,9 @@
 #include <iostream>
 #include <utility>
 #include <vector>
+#include <chrono>
+#include <thread>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <windows.h>

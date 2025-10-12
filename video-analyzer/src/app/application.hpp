@@ -118,7 +118,7 @@ private:
     // 控制平面（内嵌）
     std::unique_ptr<class va::control::IGraphAdapter> graph_adapter_;
     std::unique_ptr<class va::control::PipelineController> pipeline_controller_;
-    class va::control::OpaquePtr grpc_server_;
+    struct va::control::OpaquePtr grpc_server_;
 #endif
 
 #if defined(USE_GRPC)
