@@ -53,6 +53,19 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     (void)body; (void)ctype;
     auto ok = [&](const std::string& data){ *status=200; return std::string("{\"success\":true,\"data\":")+data+"}"; };
     auto err = [&](int st, const std::string& msg){ *status=st; return std::string("{\"success\":false,\"message\":\"")+vsm::rest::jsonEscape(msg)+"\"}"; };
+    // naive JSON body parser for flat string pairs: {"k":"v",...}
+    auto parse_json_kv = [&](std::unordered_map<std::string,std::string>& out){
+      std::string s = body; size_t i=0; auto skip=[&](){ while(i<s.size() && (s[i]==' '||s[i]=='\n'||s[i]=='\r'||s[i]=='\t')) ++i; };
+      skip(); if (i>=s.size() || s[i] != '{') return; ++i; skip();
+      while (i<s.size() && s[i] != '}'){
+        skip(); if (i>=s.size()||s[i] != '"') break; ++i; size_t k0=i; while(i<s.size()&&s[i]!='"') ++i; if(i>=s.size()) break; std::string k=s.substr(k0,i-k0); ++i; skip(); if(i>=s.size()||s[i]!=':') break; ++i; skip();
+        std::string v;
+        if (i<s.size() && s[i]=='"'){ ++i; size_t v0=i; while(i<s.size()&&s[i]!='"') ++i; if(i>=s.size()) break; v=s.substr(v0,i-v0); ++i; }
+        else { size_t v0=i; while(i<s.size() && s[i]!=',' && s[i]!='}') ++i; v=s.substr(v0,i-v0); }
+        out[k]=v; skip(); if (i<s.size() && s[i]==','){ ++i; skip(); }
+      }
+    };
+    std::unordered_map<std::string,std::string> jbody; if (!body.empty() && body.find('{') != std::string::npos) parse_json_kv(jbody);
     if (method=="GET" && (path=="/api/source/list")) {
       auto vec = controller_->Collect();
       std::ostringstream o; o<<"["; bool first=true; for (auto& s: vec){ if(!first)o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; }
@@ -65,20 +78,23 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
       return ok(o.str());
     }
     if (method=="POST" && path=="/api/source/add") {
-      auto id_it = query.find("id"); auto uri_it = query.find("uri"); if (id_it==query.end()||uri_it==query.end()) return err(400, "missing id/uri");
-      std::unordered_map<std::string,std::string> opt; if (auto p=query.find("profile"); p!=query.end()) opt["profile"] = p->second; if (auto m=query.find("model_id"); m!=query.end()) opt["model_id"]=m->second;
-      std::string e; if (!controller_->Attach(id_it->second, uri_it->second, "", opt, &e)) return err(400, e);
+      auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
+      std::string id = get("id"), uri = get("uri"); if (id.empty()||uri.empty()) return err(400, "missing id/uri");
+      std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
+      std::string e; if (!controller_->Attach(id, uri, "", opt, &e)) return err(400, e);
       return ok("{}");
     }
     if (method=="POST" && path=="/api/source/update") {
-      auto id_it = query.find("id"); if (id_it==query.end()) return err(400, "missing id");
-      std::unordered_map<std::string,std::string> opt; if (auto p=query.find("profile"); p!=query.end()) opt["profile"] = p->second; if (auto m=query.find("model_id"); m!=query.end()) opt["model_id"]=m->second;
-      std::string e; if (!controller_->Update(id_it->second, opt, &e)) return err(400, e);
+      auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
+      std::string id = get("id"); if (id.empty()) return err(400, "missing id");
+      std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
+      std::string e; if (!controller_->Update(id, opt, &e)) return err(400, e);
       return ok("{}");
     }
     if (method=="POST" && path=="/api/source/delete") {
-      auto id_it = query.find("id"); if (id_it==query.end()) return err(400, "missing id");
-      std::string e; if (!controller_->Detach(id_it->second, &e)) return err(404, "not found");
+      auto id = (query.count("id")? query.at("id") : (jbody.count("id")? jbody.at("id") : std::string()));
+      if (id.empty()) return err(400, "missing id");
+      std::string e; if (!controller_->Detach(id, &e)) return err(404, "not found");
       return ok("{}");
     }
     if (method=="GET" && path=="/api/source/watch") {

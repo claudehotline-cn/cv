@@ -45,13 +45,17 @@ struct GrpcServer::Impl {
 
     ::grpc::Status WatchState(::grpc::ServerContext* ctx, const vsm::v1::WatchStateRequest* req,
                               ::grpc::ServerWriter<vsm::v1::WatchStateReply>* writer) override {
-      int interval_ms = (req && req->interval_ms()>0) ? req->interval_ms() : 1000;
+      int wait_ms = (req && req->interval_ms()>0) ? req->interval_ms() : 25000; // treat interval as max wait
+      uint64_t rev = ctl_.Revision();
       while (!ctx->IsCancelled()) {
+        uint64_t new_rev = rev;
+        ctl_.WaitForChange(rev, wait_ms, &new_rev);
+        auto snap = ctl_.Snapshot();
+        rev = snap.first;
         vsm::v1::WatchStateReply reply;
-        // ts_ms
         auto now = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()).time_since_epoch().count();
         reply.set_ts_ms(static_cast<long long>(now));
-        for (auto s : ctl_.Collect()) {
+        for (auto s : snap.second) {
           auto* it = reply.add_items();
           it->set_attach_id(s.attach_id);
           it->set_source_uri(s.source_uri);
@@ -60,10 +64,7 @@ struct GrpcServer::Impl {
           if (!s.profile.empty()) it->set_profile(s.profile);
           if (!s.model_id.empty()) it->set_model_id(s.model_id);
         }
-        if (!writer->Write(reply)) {
-          break; // client closed
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        if (!writer->Write(reply)) break;
       }
       return ::grpc::Status::OK;
     }
