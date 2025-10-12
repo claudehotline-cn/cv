@@ -627,6 +627,9 @@ struct RestServer::Impl {
         auto setEngineHandler = [this](const HttpRequest& req) { return handleSetEngine(req); };
         auto graphsListHandler = [this](const HttpRequest& req) { return handleGraphsList(req); };
         auto graphSwitchHandler = [this](const HttpRequest& req) { return handleGraphSwitch(req); };
+        // Control-plane (embedded): ApplyPipeline / ApplyPipelines via REST
+        auto cpApplyHandler = [this](const HttpRequest& req) { return handleCpApply(req); };
+        auto cpApplyBatchHandler = [this](const HttpRequest& req) { return handleCpApplyBatch(req); };
 
         server.addRoute("POST", "/subscribe", subscribeHandler);
         server.addRoute("POST", "/api/subscribe", subscribeHandler);
@@ -652,6 +655,9 @@ struct RestServer::Impl {
         // Multistage graph management
         server.addRoute("GET", "/api/graphs", graphsListHandler);
         server.addRoute("POST", "/api/graph/set", graphSwitchHandler);
+        // Control-plane mapping
+        server.addRoute("POST", "/api/control/apply_pipeline", cpApplyHandler);
+        server.addRoute("POST", "/api/control/apply_pipelines", cpApplyBatchHandler);
 
         // Logging config: runtime set
         auto loggingSetHandler = [this](const HttpRequest& req) { return handleLoggingSet(req); };
@@ -695,6 +701,86 @@ struct RestServer::Impl {
 
     void stop() {
         server.stop();
+    }
+
+    HttpResponse handleCpApply(const HttpRequest& req) {
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+        try {
+            Json::Value body = parseJson(req.body);
+            if (!body.isMember("pipeline_name") || !body["pipeline_name"].isString()) {
+                return errorResponse("Missing required field: pipeline_name", 400);
+            }
+            va::control::PlainPipelineSpec spec;
+            spec.name = body["pipeline_name"].asString();
+            if (body.isMember("revision") && body["revision"].isString()) spec.revision = body["revision"].asString();
+            if (body.isMember("graph_id") && body["graph_id"].isString()) spec.graph_id = body["graph_id"].asString();
+            if (body.isMember("yaml_path") && body["yaml_path"].isString()) spec.yaml_path = body["yaml_path"].asString();
+            if (body.isMember("template_id") && body["template_id"].isString()) spec.template_id = body["template_id"].asString();
+            if (body.isMember("project") && body["project"].isString()) spec.project = body["project"].asString();
+            if (body.isMember("tags") && body["tags"].isArray()) {
+                for (const auto& t : body["tags"]) if (t.isString()) spec.tags.push_back(t.asString());
+            }
+            if (body.isMember("overrides") && body["overrides"].isObject()) {
+                for (const auto& k : body["overrides"].getMemberNames()) {
+                    spec.overrides[k] = body["overrides"][k].asString();
+                }
+            }
+            // Require at least one of graph_id/yaml_path/template_id
+            if (spec.graph_id.empty() && spec.yaml_path.empty() && spec.template_id.empty()) {
+                return errorResponse("Missing graph_id/yaml_path/template_id", 400);
+            }
+            std::string err;
+            bool ok = app.applyPipeline(spec, &err);
+            if (!ok) return errorResponse(err.empty()? "apply failed" : err, 409);
+            Json::Value payload = successPayload();
+            payload["accepted"] = ok;
+            return jsonResponse(payload, 200);
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("exception: ") + ex.what(), 500);
+        }
+#else
+        return errorResponse("control-plane disabled", 503);
+#endif
+    }
+
+    HttpResponse handleCpApplyBatch(const HttpRequest& req) {
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+        try {
+            Json::Value body = parseJson(req.body);
+            if (!body.isMember("items") || !body["items"].isArray()) {
+                return errorResponse("Missing required array: items", 400);
+            }
+            std::vector<va::control::PlainPipelineSpec> items;
+            for (const auto& it : body["items"]) {
+                if (!it.isObject()) continue;
+                va::control::PlainPipelineSpec spec;
+                if (it.isMember("pipeline_name") && it["pipeline_name"].isString()) spec.name = it["pipeline_name"].asString();
+                if (it.isMember("revision") && it["revision"].isString()) spec.revision = it["revision"].asString();
+                if (it.isMember("graph_id") && it["graph_id"].isString()) spec.graph_id = it["graph_id"].asString();
+                if (it.isMember("yaml_path") && it["yaml_path"].isString()) spec.yaml_path = it["yaml_path"].asString();
+                if (it.isMember("template_id") && it["template_id"].isString()) spec.template_id = it["template_id"].asString();
+                if (it.isMember("project") && it["project"].isString()) spec.project = it["project"].asString();
+                if (it.isMember("tags") && it["tags"].isArray()) {
+                    for (const auto& t : it["tags"]) if (t.isString()) spec.tags.push_back(t.asString());
+                }
+                if (it.isMember("overrides") && it["overrides"].isObject()) {
+                    for (const auto& k : it["overrides"].getMemberNames()) spec.overrides[k] = it["overrides"][k].asString();
+                }
+                items.push_back(std::move(spec));
+            }
+            std::vector<std::string> errors;
+            int accepted = app.applyPipelines(items, &errors);
+            Json::Value payload = successPayload();
+            payload["accepted"] = accepted;
+            Json::Value errs(Json::arrayValue); for (const auto& e : errors) errs.append(e);
+            payload["errors"] = errs;
+            return jsonResponse(payload, 200);
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("exception: ") + ex.what(), 500);
+        }
+#else
+        return errorResponse("control-plane disabled", 503);
+#endif
     }
 
       HttpResponse handleSystemInfo(const HttpRequest& /*req*/) {

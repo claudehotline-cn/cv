@@ -2,6 +2,7 @@
 
 #include "control_plane_embedded/interfaces.hpp"
 #include <unordered_map>
+#include <vector>
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -22,6 +23,8 @@ private:
         OpaquePtr                  graph;     // holds multistage::Graph
         std::unique_ptr<IExecutor> executor;
         std::string                revision;
+        std::string                project;
+        std::vector<std::string>   tags;
         std::atomic<bool>          ready{false};
         Runtime() = default;
         Runtime(const Runtime&) = delete;

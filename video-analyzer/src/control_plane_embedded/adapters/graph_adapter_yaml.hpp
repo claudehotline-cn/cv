@@ -15,6 +15,8 @@ public:
     std::unique_ptr<IExecutor> CreateExecutor(void* graph, std::string* err) override;
 private:
     va::core::EngineManager* engine_manager_ {nullptr};
+    // Cache last overrides for executor startup (engine.options.*)
+    std::unordered_map<std::string,std::string> overrides_cache_;
 };
 
 } } // namespace

@@ -13,6 +13,7 @@
 #include "analyzer/multistage/node_join.hpp"
 #include "analyzer/multistage/node_reid_smooth.hpp"
 #include "core/logger.hpp"
+#include "core/engine_manager.hpp"
 #include <filesystem>
 
 namespace va { namespace control {
@@ -49,7 +50,29 @@ static void ensure_ms_nodes_registered() {
 }
 static std::string resolve_yaml(const PlainPipelineSpec& spec) {
     if (!spec.yaml_path.empty()) return spec.yaml_path;
-    if (spec.graph_id.empty()) return {};
+    if (spec.graph_id.empty()) {
+        // M3: 当未显式提供 graph_id/yaml_path 时，支持按 template_id 解析
+        if (!spec.template_id.empty()) {
+            std::vector<std::filesystem::path> tdirs;
+            std::filesystem::path cwd = std::filesystem::current_path();
+            tdirs.push_back(cwd / "config" / "graphs");
+            tdirs.push_back(cwd / "video-analyzer" / "config" / "graphs");
+            auto cur = cwd;
+            for (int i=0;i<4;++i) {
+                tdirs.push_back(cur / "config" / "graphs");
+                tdirs.push_back(cur / "video-analyzer" / "config" / "graphs");
+                if (cur.has_parent_path()) cur = cur.parent_path(); else break;
+            }
+            std::error_code ec;
+            for (const auto& dir : tdirs) {
+                auto f1 = dir / (spec.template_id + ".yaml");
+                if (std::filesystem::exists(f1, ec)) return f1.string();
+                auto f2 = dir / (spec.template_id + ".yml");
+                if (std::filesystem::exists(f2, ec)) return f2.string();
+            }
+        }
+        return {};
+    }
     // 尝试在常见目录下查找 config/graphs/<graph_id>.yaml
     std::vector<std::filesystem::path> candidates;
     std::filesystem::path cwd = std::filesystem::current_path();
@@ -77,7 +100,7 @@ OpaquePtr GraphAdapterYaml::BuildGraph(const PlainPipelineSpec& spec, std::strin
     auto g = std::make_unique<Graph>();
     std::string file = resolve_yaml(spec);
     if (file.empty()) { if (err) *err = "yaml not found by graph_id/yaml_path"; return {}; }
-    if (!va::analyzer::multistage::build_graph_from_yaml(file, *g)) {
+    overrides_cache_ = spec.overrides; bool ok=false; const bool has_node_ov = std::any_of(overrides_cache_.begin(), overrides_cache_.end(), [](const auto& kv){ return kv.first.rfind("node.",0)==0 || kv.first.rfind("type:",0)==0; }); if (has_node_ov) ok = va::analyzer::multistage::build_graph_from_yaml_with_overrides(file, overrides_cache_, *g); else ok = va::analyzer::multistage::build_graph_from_yaml(file, *g); if (!ok) {
         if (err) *err = std::string("build_graph_from_yaml failed: ") + file; return {};
     }
     Graph* raw = g.release();
@@ -86,12 +109,24 @@ OpaquePtr GraphAdapterYaml::BuildGraph(const PlainPipelineSpec& spec, std::strin
 
 class SimpleExecutor : public IExecutor {
 public:
-    explicit SimpleExecutor(Graph* g, va::core::EngineManager* em) : g_(g), em_(em) {}
+    explicit SimpleExecutor(Graph* g, va::core::EngineManager* em, std::unordered_map<std::string,std::string> overrides = {}) : g_(g), em_(em), overrides_(std::move(overrides)) {}
     bool Start(std::string* /*err*/) override {
         if (!g_) return false;
         // 打开节点（无数据/单线程，此处仅为控制面占位）
         va::analyzer::multistage::NodeContext ctx{};
         ctx.engine_registry = reinterpret_cast<void*>(em_);
+        // Apply engine overrides if present (global)
+        if (em_ && true) {
+            bool touch=false; auto desc = em_->currentEngine();
+            for (const auto& kv : overrides_) {
+                const auto& k = kv.first; const auto& v = kv.second;
+                if (k.rfind("engine.options.", 0) == 0) { auto sub = k.substr(std::string("engine.options.").size()); if (!sub.empty()) { desc.options[sub]=v; touch=true; } }
+                else if (k == "engine.provider") { desc.provider = v; touch=true; }
+                else if (k == "engine.name") { desc.name = v; touch=true; }
+                else if (k == "engine.device" || k == "engine.device_index") { try { desc.device_index = std::stoi(v); touch=true; } catch (...) {} }
+            }
+            if (touch) em_->setEngine(std::move(desc));
+        }
         opened_ = g_->open_all(ctx);
         return opened_;
     }
@@ -99,6 +134,18 @@ public:
         if (!g_) return;
         va::analyzer::multistage::NodeContext ctx{};
         ctx.engine_registry = reinterpret_cast<void*>(em_);
+        // Apply engine overrides if present (global)
+        if (em_ && true) {
+            bool touch=false; auto desc = em_->currentEngine();
+            for (const auto& kv : overrides_) {
+                const auto& k = kv.first; const auto& v = kv.second;
+                if (k.rfind("engine.options.", 0) == 0) { auto sub = k.substr(std::string("engine.options.").size()); if (!sub.empty()) { desc.options[sub]=v; touch=true; } }
+                else if (k == "engine.provider") { desc.provider = v; touch=true; }
+                else if (k == "engine.name") { desc.name = v; touch=true; }
+                else if (k == "engine.device" || k == "engine.device_index") { try { desc.device_index = std::stoi(v); touch=true; } catch (...) {} }
+            }
+            if (touch) em_->setEngine(std::move(desc));
+        }
         g_->close_all(ctx);
         opened_ = false;
     }
@@ -111,12 +158,13 @@ private:
     Graph* g_ {nullptr};
     va::core::EngineManager* em_ {nullptr};
     bool opened_ {false};
+    std::unordered_map<std::string,std::string> overrides_;
 };
 
 std::unique_ptr<IExecutor> GraphAdapterYaml::CreateExecutor(void* graph, std::string* /*err*/) {
     auto g = reinterpret_cast<Graph*>(graph);
     if (!g) return {};
-    return std::make_unique<SimpleExecutor>(g, engine_manager_);
+    return std::make_unique<SimpleExecutor>(g, engine_manager_, overrides_cache_);
 }
 
 } } // namespace

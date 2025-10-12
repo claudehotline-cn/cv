@@ -6,6 +6,8 @@ option cc_enable_arenas = true;
 // 控制平面 → video-analyzer
 service AnalyzerControl {
   rpc ApplyPipeline(ApplyPipelineRequest) returns (ApplyPipelineReply);
+  // M3: 批量下发多个 Pipeline 规格
+  rpc ApplyPipelines(ApplyPipelinesRequest) returns (ApplyPipelinesReply);
   rpc RemovePipeline(RemovePipelineRequest) returns (RemovePipelineReply);
   rpc HotSwapModel(HotSwapModelRequest) returns (HotSwapModelReply);
   rpc Drain(DrainRequest) returns (DrainReply);
@@ -24,11 +26,34 @@ message PipelineSpec {
   bytes serialized = 1;      // optional: proto/json bytes
   string format = 2;         // "proto" | "json" | "yaml"
   string graph_id = 3;       // 可选：根据 graph_id 在 config/graphs/ 下解析
-  string yaml_path = 4;      // 可选：指定 YAML 文件路径
+  string yaml_path = 4;
+  // M3: 模板化与运行时覆写（最小能力）
+  string template_id = 5;    // 可选：当 graph_id/yaml_path 为空时，尝试按模板名在 config/graphs 下解析
+  map<string,string> overrides = 6; // 可选：用于模板参数/Engine 覆写（当前仅透传与记录）      // 可选：指定 YAML 文件路径
 }
 
-message ApplyPipelineRequest { string pipeline_name = 1; PipelineSpec spec = 2; string revision = 3; }
+message ApplyPipelineRequest {
+  string pipeline_name = 1;
+  PipelineSpec spec = 2;
+  string revision = 3;
+  // M3: 元信息（项目/标签），便于治理与查询
+  string project = 4;
+  repeated string tags = 5;
+}
+
 message ApplyPipelineReply   { bool accepted = 1; string msg = 2; }
+
+// M3: 批量 Apply
+message BatchApplyItem {
+  string pipeline_name = 1;
+  PipelineSpec spec = 2;
+  string revision = 3;
+  string project = 4;
+  repeated string tags = 5;
+}
+message ApplyPipelinesRequest { repeated BatchApplyItem items = 1; }
+message ApplyPipelinesReply   { int32 accepted = 1; repeated string errors = 2; }
+
 
 message RemovePipelineRequest { string pipeline_name = 1; }
 message RemovePipelineReply   { bool removed = 1; string msg = 2; }

@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <mutex>
 
 namespace va { namespace control {
@@ -38,7 +39,12 @@ struct PlainPipelineSpec {
     std::string name;         // pipeline 名称
     std::string graph_id;     // 可选：在 config/graphs 下解析
     std::string yaml_path;    // 可选：绝对/相对 YAML 路径
-    std::string revision;     // 版本/修订
+    std::string revision;
+    // M3: 模板与治理元信息
+    std::string template_id;
+    std::unordered_map<std::string,std::string> overrides;
+    std::string project;
+    std::vector<std::string> tags;     // 版本/修订
 };
 
 class IExecutor {

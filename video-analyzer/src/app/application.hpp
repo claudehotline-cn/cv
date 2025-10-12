@@ -80,6 +80,13 @@ public:
     va::core::EngineRuntimeStatus engineRuntimeStatus() const;
     va::core::EngineDescriptor currentEngine() const { return engine_manager_.currentEngine(); }
 
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+    // 控制面：通过 REST 映射调用，应用单条/批量 Pipeline 规格
+    bool applyPipeline(const va::control::PlainPipelineSpec& spec, std::string* err);
+    int  applyPipelines(const std::vector<va::control::PlainPipelineSpec>& items,
+                        std::vector<std::string>* errors);
+#endif
+
 private:
     std::string config_dir_;
     va::core::EngineManager engine_manager_;

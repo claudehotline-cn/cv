@@ -25,6 +25,8 @@ Status PipelineController::Apply(const PlainPipelineSpec& spec) {
     rt.graph = std::move(g);
     rt.executor = std::move(ex);
     rt.revision = spec.revision;
+    rt.project = spec.project;
+    rt.tags = spec.tags;
     if (!rt.executor->Start(&err)) {
         return Status::Internal(std::string("executor start failed: ")+err);
     }
@@ -32,7 +34,8 @@ Status PipelineController::Apply(const PlainPipelineSpec& spec) {
     pipelines_.emplace(std::piecewise_construct,
                        std::forward_as_tuple(spec.name),
                        std::forward_as_tuple(std::move(rt)));
-    VA_LOG_C(::va::core::LogLevel::Info, "control") << "pipeline applied name=" << spec.name << " rev=" << spec.revision;
+    VA_LOG_C(::va::core::LogLevel::Info, "control") << "pipeline applied name=" << spec.name << " rev=" << spec.revision
+                                                     << " project=" << rt.project;
     return Status::OK();
 }
 

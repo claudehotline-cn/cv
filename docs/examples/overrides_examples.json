@@ -1,0 +1,52 @@
+{
+  "single_apply": {
+    "pipeline_name": "p1",
+    "revision": "r001",
+    "graph_id": "analyzer_multistage_example",
+    "template_id": "", 
+    "yaml_path": "",
+    "project": "projA",
+    "tags": ["prod", "yolo"],
+    "overrides": {
+      "node.nms.conf": "0.50",
+      "node.nms.iou": "0.50",
+      "type:overlay.cuda.thickness": "3",
+      "type:overlay.cuda.alpha": "0.30",
+      "engine.provider": "cuda",
+      "engine.device": "0",
+      "engine.options.use_cuda_nms": "true",
+      "engine.options.use_nvdec": "true",
+      "engine.options.use_nvenc": "true",
+      "engine.options.render_cuda": "true"
+    }
+  },
+  "batch_apply": {
+    "items": [
+      {
+        "pipeline_name": "p1",
+        "revision": "r001",
+        "graph_id": "analyzer_multistage_example",
+        "project": "projA",
+        "tags": ["prod"],
+        "overrides": {
+          "node.nms.conf": "0.55",
+          "engine.options.use_cuda_nms": "true"
+        }
+      },
+      {
+        "pipeline_name": "p2",
+        "revision": "r002",
+        "template_id": "analyzer_multistage_example",
+        "project": "projB",
+        "tags": ["staging"],
+        "overrides": {
+          "type:overlay.cuda.thickness": "4",
+          "engine.provider": "cuda",
+          "engine.device_index": "0",
+          "engine.options.render_cuda": "true"
+        }
+      }
+    ]
+  }
+}
+

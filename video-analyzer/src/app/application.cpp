@@ -558,6 +558,26 @@ std::vector<va::core::TrackManager::PipelineInfo> Application::pipelines() const
     return track_manager_->listPipelines();
 }
 
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+bool Application::applyPipeline(const va::control::PlainPipelineSpec& spec, std::string* err) {
+    if (!pipeline_controller_) { if (err) *err = "control-plane disabled"; return false; }
+    auto st = pipeline_controller_->Apply(spec);
+    if (!st.ok() && err) *err = st.message();
+    return st.ok();
+}
+
+int Application::applyPipelines(const std::vector<va::control::PlainPipelineSpec>& items,
+                                std::vector<std::string>* errors) {
+    if (!pipeline_controller_) { if (errors) errors->push_back("control-plane disabled"); return 0; }
+    int accepted = 0;
+    for (const auto& it : items) {
+        auto st = pipeline_controller_->Apply(it);
+        if (st.ok()) ++accepted; else if (errors) errors->push_back(st.message());
+    }
+    return accepted;
+}
+#endif
+
 Application::SystemStats Application::systemStats() const {
     SystemStats stats;
     for (const auto& info : pipelines()) {

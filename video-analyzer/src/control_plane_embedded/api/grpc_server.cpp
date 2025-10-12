@@ -51,6 +51,10 @@ public:
             spec.revision = req->revision();
             if (!req->spec().graph_id().empty()) spec.graph_id = req->spec().graph_id();
             if (!req->spec().yaml_path().empty()) spec.yaml_path = req->spec().yaml_path();
+            if (!req->spec().template_id().empty()) spec.template_id = req->spec().template_id();
+            for (const auto& kv : req->spec().overrides()) { spec.overrides[kv.first] = kv.second; }
+            if (!req->project().empty()) spec.project = req->project();
+            for (const auto& t : req->tags()) spec.tags.push_back(t);
 
             VA_LOG_C(::va::core::LogLevel::Info, "control")
                 << "[gRPC] ApplyPipeline name='" << spec.name
@@ -63,10 +67,10 @@ public:
                 resp->set_msg("empty pipeline_name");
                 return mapStatus("missing pipeline_name");
             }
-            if (spec.graph_id.empty() && spec.yaml_path.empty()) {
+            if (spec.graph_id.empty() && spec.yaml_path.empty() && spec.template_id.empty()) {
                 resp->set_accepted(false);
-                resp->set_msg("only graph_id or yaml_path supported in this phase");
-                return mapStatus("missing graph_id/yaml_path");
+                resp->set_msg("only graph_id/yaml_path/template_id supported in this phase");
+                return mapStatus("missing graph_id/yaml_path/template_id");
             }
 
             auto st = ctl_->Apply(spec);
@@ -82,6 +86,36 @@ public:
             VA_LOG_C(::va::core::LogLevel::Error, "control") << "[gRPC] ApplyPipeline unknown exception";
             resp->set_accepted(false);
             resp->set_msg("unknown exception");
+            return ::grpc::Status::OK;
+        }
+    }
+    // M3: 批量 ApplyPipelines
+    ::grpc::Status ApplyPipelines(::grpc::ServerContext*, const va::v1::ApplyPipelinesRequest* req,
+                                  va::v1::ApplyPipelinesReply* resp) override {
+        try {
+            if (!ctl_) { resp->set_accepted(0); resp->add_errors("no controller"); return ::grpc::Status::OK; }
+            int accepted = 0;
+            for (const auto& item : req->items()) {
+                PlainPipelineSpec spec;
+                spec.name = item.pipeline_name();
+                spec.revision = item.revision();
+                if (!item.spec().graph_id().empty()) spec.graph_id = item.spec().graph_id();
+                if (!item.spec().yaml_path().empty()) spec.yaml_path = item.spec().yaml_path();
+                if (!item.spec().template_id().empty()) spec.template_id = item.spec().template_id();
+                for (const auto& kv : item.spec().overrides()) spec.overrides[kv.first] = kv.second;
+                spec.project = item.project();
+                for (const auto& t : item.tags()) spec.tags.push_back(t);
+
+                auto st = ctl_->Apply(spec);
+                if (st.ok()) ++accepted; else resp->add_errors(st.message());
+            }
+            resp->set_accepted(accepted);
+            return ::grpc::Status::OK;
+        } catch (const std::exception& ex) {
+            resp->add_errors(std::string("exception: ") + ex.what());
+            return ::grpc::Status(::grpc::StatusCode::INTERNAL, "ApplyPipelines exception");
+        } catch (...) {
+            resp->add_errors("unknown exception");
             return ::grpc::Status::OK;
         }
     }
