@@ -4,6 +4,7 @@
 #if defined(USE_GRPC)
 #include <grpcpp/grpcpp.h>
 #include "source_control.grpc.pb.h"
+#include "app/errors/error_codes.h"
 #endif
 
 namespace vsm::rpc {
@@ -19,12 +20,28 @@ struct GrpcServer::Impl {
                           vsm::v1::AttachReply* resp) override {
       std::unordered_map<std::string,std::string> opts(req->options().begin(), req->options().end());
       std::string err; bool ok = ctl_.Attach(req->attach_id(), req->source_uri(), req->pipeline_id(), opts, &err);
-      resp->set_accepted(ok); resp->set_msg(ok? std::string("") : err); return ::grpc::Status::OK;
+      if (ok) { resp->set_accepted(true); return ::grpc::Status::OK; }
+      // map error to gRPC status
+      using vsm::errors::ErrorCode; using vsm::errors::map_message;
+      ErrorCode ec = map_message(err);
+      switch (ec) {
+        case ErrorCode::INVALID_ARG: return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, err);
+        case ErrorCode::ALREADY_EXISTS: return ::grpc::Status(::grpc::StatusCode::ALREADY_EXISTS, err);
+        case ErrorCode::UNAVAILABLE: return ::grpc::Status(::grpc::StatusCode::UNAVAILABLE, err);
+        default: return ::grpc::Status(::grpc::StatusCode::INTERNAL, err);
+      }
     }
     ::grpc::Status Detach(::grpc::ServerContext*, const vsm::v1::DetachRequest* req,
                           vsm::v1::DetachReply* resp) override {
       std::string err; bool ok = ctl_.Detach(req->attach_id(), &err);
-      resp->set_removed(ok); resp->set_msg(ok? std::string("") : err); return ::grpc::Status::OK;
+      if (ok) { resp->set_removed(true); return ::grpc::Status::OK; }
+      using vsm::errors::ErrorCode; using vsm::errors::map_message;
+      ErrorCode ec = map_message(err);
+      switch (ec) {
+        case ErrorCode::INVALID_ARG: return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, err);
+        case ErrorCode::NOT_FOUND: return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, err);
+        default: return ::grpc::Status(::grpc::StatusCode::INTERNAL, err);
+      }
     }
     ::grpc::Status GetHealth(::grpc::ServerContext*, const vsm::v1::GetHealthRequest*,
                              vsm::v1::GetHealthReply* resp) override {
@@ -40,7 +57,14 @@ struct GrpcServer::Impl {
                           vsm::v1::UpdateReply* resp) override {
       std::unordered_map<std::string,std::string> opts(req->options().begin(), req->options().end());
       std::string err; bool ok = ctl_.Update(req->attach_id(), opts, &err);
-      resp->set_ok(ok); resp->set_msg(ok? std::string("") : err); return ::grpc::Status::OK;
+      if (ok) { resp->set_ok(true); return ::grpc::Status::OK; }
+      using vsm::errors::ErrorCode; using vsm::errors::map_message;
+      ErrorCode ec = map_message(err);
+      switch (ec) {
+        case ErrorCode::INVALID_ARG: return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, err);
+        case ErrorCode::NOT_FOUND: return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, err);
+        default: return ::grpc::Status(::grpc::StatusCode::INTERNAL, err);
+      }
     }
 
     ::grpc::Status WatchState(::grpc::ServerContext* ctx, const vsm::v1::WatchStateRequest* req,

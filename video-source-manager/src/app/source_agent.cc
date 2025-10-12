@@ -3,6 +3,7 @@
 #include "app/rpc/grpc_server.h"
 #include "app/metrics/metrics_exporter.h"
 #include "app/rest/rest_server.h"
+#include "app/errors/error_codes.h"
 #include <sstream>
 #include <algorithm>
 #include <string>
@@ -70,8 +71,10 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
                         const std::unordered_map<std::string,std::string>& headers,
                         const std::string& body, int* status, std::string* ctype) -> std::string {
     (void)body; (void)ctype;
-    auto ok = [&](const std::string& data){ *status=200; return std::string("{\"success\":true,\"data\":")+data+"}"; };
-    auto err = [&](int st, const std::string& msg){ *status=st; return std::string("{\"success\":false,\"message\":\"")+vsm::rest::jsonEscape(msg)+"\"}"; };
+    auto ok = [&](const std::string& data){ *status=200; return std::string("{\"success\":true,\"code\":\"OK\",\"data\":")+data+"}"; };
+    auto err = [&](vsm::errors::ErrorCode ec, const std::string& msg){
+      *status = vsm::errors::http_status(ec);
+      std::ostringstream o; o<<"{\"success\":false,\"code\":\""<<vsm::errors::to_string(ec)<<"\",\"message\":\""<<vsm::rest::jsonEscape(msg)<<"\"}"; return o.str(); };
     std::unordered_map<std::string,std::string> jbody;
     bool is_json = false; if (auto it=headers.find("content-type"); it!=headers.end()) { auto v=it->second; std::transform(v.begin(), v.end(), v.begin(), ::tolower); is_json = (v.find("application/json")!=std::string::npos) || (v.find("json")!=std::string::npos); }
     if (!body.empty() && (is_json || body.find('{') != std::string::npos)) vsm::rest::parseJsonObjectFlat(body, jbody);
@@ -81,29 +84,29 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
       o<<"]"; return ok(o.str());
     }
     if (method=="GET" && (path=="/api/source/describe" || path=="/api/source/health")) {
-      auto it = query.find("id"); if (it==query.end()||it->second.empty()) return err(400, "missing id");
-      vsm::StreamStat st; if(!controller_->GetOne(it->second, &st)) return err(404, "not found");
+      auto it = query.find("id"); if (it==query.end()||it->second.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id");
+      vsm::StreamStat st; if(!controller_->GetOne(it->second, &st)) return err(vsm::errors::ErrorCode::NOT_FOUND, "not found");
       std::ostringstream o; o<<"{\"id\":\""<<vsm::rest::jsonEscape(st.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(st.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(st.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(st.model_id)<<"\",\"fps\":"<<st.fps<<",\"jitter_ms\":"<<st.jitter_ms<<",\"rtt_ms\":"<<st.rtt_ms<<",\"loss_ratio\":"<<st.loss_pct<<",\"last_ok_unixts\":"<<st.last_ok_unixts<<",\"phase\":\""<<st.phase<<"\"}"; 
       return ok(o.str());
     }
     if (method=="POST" && path=="/api/source/add") {
       auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
-      std::string id = get("id"), uri = get("uri"); if (id.empty()||uri.empty()) return err(400, "missing id/uri");
+      std::string id = get("id"), uri = get("uri"); if (id.empty()||uri.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id/uri");
       std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
-      std::string e; if (!controller_->Attach(id, uri, "", opt, &e)) return err(400, e);
+      std::string e; if (!controller_->Attach(id, uri, "", opt, &e)) return err(vsm::errors::map_message(e), e);
       return ok("{}");
     }
     if (method=="POST" && path=="/api/source/update") {
       auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
-      std::string id = get("id"); if (id.empty()) return err(400, "missing id");
+      std::string id = get("id"); if (id.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id");
       std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
-      std::string e; if (!controller_->Update(id, opt, &e)) return err(400, e);
+      std::string e; if (!controller_->Update(id, opt, &e)) return err(vsm::errors::map_message(e), e);
       return ok("{}");
     }
     if (method=="POST" && path=="/api/source/delete") {
       auto id = (query.count("id")? query.at("id") : (jbody.count("id")? jbody.at("id") : std::string()));
-      if (id.empty()) return err(400, "missing id");
-      std::string e; if (!controller_->Detach(id, &e)) return err(404, "not found");
+      if (id.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id");
+      std::string e; if (!controller_->Detach(id, &e)) return err(vsm::errors::map_message(e), e);
       return ok("{}");
     }
     if (method=="GET" && path=="/api/source/watch") {
