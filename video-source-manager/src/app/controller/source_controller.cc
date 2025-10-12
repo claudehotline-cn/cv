@@ -23,6 +23,7 @@ bool SourceController::Attach(const std::string& attach_id, const std::string& s
   sessions_.emplace(attach_id, std::move(sess));
   // Persist registry best-effort
   try { SaveRegistry(nullptr); } catch (...) {}
+  revision_.fetch_add(1);
   return true;
 }
 
@@ -33,6 +34,7 @@ bool SourceController::Detach(const std::string& attach_id, std::string* /*err*/
   if (it->second && it->second->reader) it->second->reader->Stop();
   sessions_.erase(it);
   try { SaveRegistry(nullptr); } catch (...) {}
+  revision_.fetch_add(1);
   return true;
 }
 
@@ -65,6 +67,7 @@ bool SourceController::Update(const std::string& attach_id,
   if (auto p = options.find("profile"); p != options.end()) sess->profile = p->second;
   if (auto m = options.find("model_id"); m != options.end()) sess->model_id = m->second;
   try { SaveRegistry(nullptr); } catch (...) {}
+  revision_.fetch_add(1);
   return true;
 }
 
@@ -117,6 +120,28 @@ bool SourceController::SaveRegistry(std::string* err) {
   }
   std::fclose(f);
   return true;
+}
+
+bool SourceController::GetOne(const std::string& attach_id, StreamStat* out) {
+  std::lock_guard<std::mutex> lk(mu_);
+  auto it = sessions_.find(attach_id);
+  if (it == sessions_.end()) return false;
+  StreamStat st; st.attach_id = it->first; st.phase = (it->second && it->second->running)? "Ready" : "Stopped";
+  if (it->second && it->second->reader) {
+    st.fps = it->second->reader->Fps();
+    st.source_uri = it->second->reader->Uri();
+    st.jitter_ms = it->second->reader->JitterMs();
+    st.rtt_ms = it->second->reader->RttMs();
+    st.loss_pct = it->second->reader->LossRatio();
+    st.last_ok_unixts = it->second->reader->LastOkUnixSec();
+  }
+  if (it->second) { st.profile = it->second->profile; st.model_id = it->second->model_id; }
+  if (out) *out = st; return true;
+}
+
+std::pair<uint64_t, std::vector<StreamStat>> SourceController::Snapshot() {
+  uint64_t rev = revision_.load();
+  return {rev, Collect()};
 }
 
 } // namespace vsm

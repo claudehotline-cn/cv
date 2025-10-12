@@ -28,12 +28,14 @@ set(SRC
     src/app/controller/source_controller.cc
     src/app/rpc/grpc_server.cc
     src/app/metrics/metrics_exporter.cc
+    src/app/rest/rest_server.cc
     src/adapters/inputs/ffmpeg_rtsp_reader.cc)
 set(HDR
     src/app/source_agent.h
     src/app/controller/source_controller.h
     src/app/rpc/grpc_server.h
     src/app/metrics/metrics_exporter.h
+    src/app/rest/rest_server.h
     src/adapters/inputs/ffmpeg_rtsp_reader.h
     src/adapters/outputs/to_analyzer_link.h)
 

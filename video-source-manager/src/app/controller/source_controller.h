@@ -39,6 +39,9 @@ public:
               const std::unordered_map<std::string,std::string>& options,
               std::string* err);
   std::vector<StreamStat> Collect();
+  bool GetOne(const std::string& attach_id, StreamStat* out);
+  uint64_t Revision() const { return revision_.load(); }
+  std::pair<uint64_t, std::vector<StreamStat>> Snapshot();
 
   // Registry persistence (simple TSV: attach_id \t uri \t profile \t model_id)
   void SetRegistryPath(const std::string& path) { std::lock_guard<std::mutex> lk(mu_); registry_path_ = path; }
@@ -56,6 +59,7 @@ private:
   std::mutex mu_;
   std::unordered_map<std::string, std::unique_ptr<Session>> sessions_; // attach_id -> Session
   std::string registry_path_ {"vsm_registry.tsv"};
+  std::atomic<uint64_t> revision_{0};
 };
 
 } // namespace vsm
