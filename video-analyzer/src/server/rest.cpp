@@ -11,6 +11,7 @@
 #include "core/metrics_text_builder.hpp"
 
 #include <json/json.h>
+#include "core/error_codes.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -565,6 +566,9 @@ HttpResponse jsonResponse(const Json::Value& value, int status = 200) {
 HttpResponse errorResponse(const std::string& message, int status = 400) {
     Json::Value error;
     error["success"] = false;
+    // Map HTTP status to a canonical error code string
+    va::core::errors::ErrorCode ec = va::core::errors::from_http_status(status);
+    error["code"] = va::core::errors::to_string(ec);
     error["message"] = message;
     return jsonResponse(error, status);
 }
@@ -572,6 +576,7 @@ HttpResponse errorResponse(const std::string& message, int status = 400) {
 Json::Value successPayload() {
     Json::Value root(Json::objectValue);
     root["success"] = true;
+    root["code"] = "OK";
     return root;
 }
 
