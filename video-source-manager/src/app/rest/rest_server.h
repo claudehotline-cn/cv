@@ -19,10 +19,16 @@ public:
                                               const std::string& body,
                                               int* status,
                                               std::string* content_type)>;
+  using StreamingHandlerFn = std::function<void(int cfd,
+                                                const std::string& method,
+                                                const std::string& path,
+                                                const std::unordered_map<std::string,std::string>& query,
+                                                const std::unordered_map<std::string,std::string>& headers)>;
   RestServer(int port, HandlerFn handler);
   ~RestServer();
   bool Start();
   void Stop();
+  void SetStreamingHandler(StreamingHandlerFn fn) { streaming_handler_ = std::move(fn); }
 
 private:
   void Loop();
@@ -33,6 +39,7 @@ private:
 
   int port_;
   HandlerFn handler_;
+  StreamingHandlerFn streaming_handler_;
   std::atomic<bool> running_{false};
   std::thread th_;
   int server_fd_{-1};

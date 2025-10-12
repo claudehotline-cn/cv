@@ -6,6 +6,14 @@
 #include <sstream>
 #include <algorithm>
 #include <string>
+#ifdef _WIN32
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#else
+#  include <sys/types.h>
+#  include <sys/socket.h>
+#  include <unistd.h>
+#endif
 
 namespace vsm {
 
@@ -107,6 +115,51 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
   };
   static std::unique_ptr<vsm::rest::RestServer> rest_server;
   rest_server = std::make_unique<vsm::rest::RestServer>(rest_port, handler);
+  rest_server->SetStreamingHandler([this](int cfd,
+                                          const std::string& method,
+                                          const std::string& path,
+                                          const std::unordered_map<std::string,std::string>& query,
+                                          const std::unordered_map<std::string,std::string>& /*headers*/){
+    (void)method; (void)path;
+    auto send_all = [&](const std::string& s){
+      const char* p = s.c_str(); size_t left = s.size();
+      while (left > 0) {
+#ifdef _WIN32
+        int n = ::send(cfd, p, (int)left, 0);
+#else
+        ssize_t n = ::send(cfd, p, left, 0);
+#endif
+        if (n <= 0) break; p += n; left -= (size_t)n;
+      }
+    };
+    uint64_t since = 0; if (auto it=query.find("since"); it!=query.end()) { try { since = std::stoull(it->second); } catch(...){} }
+    int keepalive_ms = 15000; if (auto it=query.find("keepalive_ms"); it!=query.end()) { try { keepalive_ms = std::stoi(it->second); } catch(...){} }
+    int max_sec = 300; if (auto it=query.find("max_sec"); it!=query.end()) { try { max_sec = std::stoi(it->second); } catch(...){} }
+    auto start_tp = std::chrono::steady_clock::now();
+    uint64_t rev = since;
+    while (true) {
+      // Break on max duration
+      auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_tp).count();
+      if (elapsed >= max_sec) break;
+      // Wait for change or keepalive interval
+      uint64_t new_rev = rev;
+      bool changed = controller_->WaitForChange(rev, keepalive_ms, &new_rev);
+      if (changed) {
+        auto snap = controller_->Snapshot();
+        rev = snap.first;
+        std::ostringstream o;
+        o << "event: update\n";
+        // data payload
+        o << "data: {\"rev\":" << snap.first << ",\"items\":[";
+        bool first=true; for (auto& s: snap.second){ if(!first) o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; }
+        o << "]}\n\n";
+        send_all(o.str());
+      } else {
+        // keepalive comment
+        send_all(": keepalive\n\n");
+      }
+    }
+  });
   rest_server->Start();
   return grpc_->Start();
 }
