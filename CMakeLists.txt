@@ -22,5 +22,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Build only the video-analyzer project for now.
+# Build video-analyzer
 add_subdirectory(video-analyzer)
+
+# Optional unified CLI for VA/VSM (requires USE_GRPC and gRPC toolchain)
+add_subdirectory(tools/va_vsm_cli)

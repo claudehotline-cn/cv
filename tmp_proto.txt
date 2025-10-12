@@ -1,0 +1,122 @@
+syntax = "proto3";
+package va.v1;
+
+option cc_enable_arenas = true;
+
+// 控制平面 → video-analyzer
+service AnalyzerControl {
+  rpc ApplyPipeline(ApplyPipelineRequest) returns (ApplyPipelineReply);
+  // M3: 批量下发多个 Pipeline 规格
+  rpc ApplyPipelines(ApplyPipelinesRequest) returns (ApplyPipelinesReply);
+  rpc RemovePipeline(RemovePipelineRequest) returns (RemovePipelineReply);
+  rpc HotSwapModel(HotSwapModelRequest) returns (HotSwapModelReply);
+  rpc Drain(DrainRequest) returns (DrainReply);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusReply);
+  // M1+: 控制数据面最小集
+  rpc SubscribePipeline(SubscribePipelineRequest) returns (SubscribePipelineReply);
+  rpc UnsubscribePipeline(UnsubscribePipelineRequest) returns (UnsubscribePipelineReply);
+  rpc SetEngine(SetEngineRequest) returns (SetEngineReply);
+  rpc QueryRuntime(QueryRuntimeRequest) returns (QueryRuntimeReply);
+  rpc ListPipelines(ListPipelinesRequest) returns (ListPipelinesReply);
+}
+
+// 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
+// 后续接入 pipeline.proto 结构化定义时，可使用 serialized+format=proto/json。
+message PipelineSpec {
+  bytes serialized = 1;      // optional: proto/json bytes
+  string format = 2;         // "proto" | "json" | "yaml"
+  string graph_id = 3;       // 可选：根据 graph_id 在 config/graphs/ 下解析
+  string yaml_path = 4;
+  // M3: 模板化与运行时覆写（最小能力）
+  string template_id = 5;    // 可选：当 graph_id/yaml_path 为空时，尝试按模板名在 config/graphs 下解析
+  map<string,string> overrides = 6; // 可选：用于模板参数/Engine 覆写（当前仅透传与记录）      // 可选：指定 YAML 文件路径
+}
+
+message ApplyPipelineRequest {
+  string pipeline_name = 1;
+  PipelineSpec spec = 2;
+  string revision = 3;
+  // M3: 元信息（项目/标签），便于治理与查询
+  string project = 4;
+  repeated string tags = 5;
+}
+
+message ApplyPipelineReply   { bool accepted = 1; string msg = 2; }
+
+message RemovePipelineRequest { string pipeline_name = 1; }
+message RemovePipelineReply   { bool removed = 1; string msg = 2; }
+
+message HotSwapModelRequest { string pipeline_name = 1; string node = 2; string model_uri = 3; }
+message HotSwapModelReply   { bool ok = 1; string msg = 2; }
+
+message DrainRequest { string pipeline_name = 1; int32 timeout_sec = 2; }
+message DrainReply   { bool drained = 1; }
+
+message GetStatusRequest { string pipeline_name = 1; }
+message GetStatusReply   { string phase = 1; string metrics_json = 2; }
+
+// 订阅/取消订阅数据面管线（映射 Application.subscribeStream/unsubscribeStream）
+message SubscribePipelineRequest {
+  string stream_id = 1;
+  string profile = 2;
+  string source_uri = 3;
+  string model_id = 4; // optional
+}
+message SubscribePipelineReply {
+  bool ok = 1;
+  string msg = 2;
+  string subscription_id = 3; // pipeline_key
+}
+message UnsubscribePipelineRequest {
+  string stream_id = 1;
+  string profile = 2;
+}
+message UnsubscribePipelineReply {
+  bool ok = 1;
+  string msg = 2;
+}
+
+// 设置引擎配置（合并语义）：覆盖提供的字段，其他沿用当前引擎
+message SetEngineRequest {
+  string type = 1;      // optional
+  string provider = 2;  // optional
+  int32 device = 3;     // optional
+  map<string,string> options = 4; // optional
+}
+message SetEngineReply {
+  bool ok = 1;
+  string msg = 2;
+  string provider = 3;
+  bool gpu_active = 4;
+  bool io_binding = 5;
+  bool device_binding = 6;
+}
+
+message QueryRuntimeRequest {}
+message QueryRuntimeReply {
+  string provider = 1;
+  bool gpu_active = 2;
+  bool io_binding = 3;
+  bool device_binding = 4;
+}
+
+message ListPipelinesRequest {}
+message PipelineItem {
+  string key = 1;
+  string stream_id = 2;
+  string profile = 3;
+  string source_uri = 4;
+  string model_id = 5;
+  string task = 6;
+  bool running = 7;
+  double fps = 8;
+  uint64 processed_frames = 9;
+  uint64 dropped_frames = 10;
+  uint64 transport_packets = 11;
+  uint64 transport_bytes = 12;
+  string decoder_label = 13;
+}
+message ListPipelinesReply {
+  repeated PipelineItem items = 1;
+}
+

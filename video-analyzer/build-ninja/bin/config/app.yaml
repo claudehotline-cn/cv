@@ -11,9 +11,9 @@ engine:
     use_io_binding: true
     device_output_views: true
     stage_device_outputs: false
-    use_cuda_nms": true
+    use_cuda_nms: true
     render_passthrough: false
-    render_cuda": true
+    render_cuda: true
     use_cuda_preproc: true
     graph_id: analyzer_multistage_example
     warmup_runs: auto
@@ -71,4 +71,5 @@ observability:
 control_plane:
   enabled: true
   grpc_addr: "0.0.0.0:50051"
+  vsm_addr: "127.0.0.1:7070"
   metrics_enabled: true
