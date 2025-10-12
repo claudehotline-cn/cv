@@ -8,13 +8,16 @@ SourceController::SourceController() = default;
 SourceController::~SourceController() = default;
 
 bool SourceController::Attach(const std::string& attach_id, const std::string& source_uri,
-                              const std::string& /*pipeline_id*/, const std::unordered_map<std::string,std::string>& /*options*/,
+                              const std::string& pipeline_id, const std::unordered_map<std::string,std::string>& options,
                               std::string* err) {
   std::lock_guard<std::mutex> lk(mu_);
   if (sessions_.count(attach_id)) { if (err) *err = "already exists"; return false; }
   auto sess = std::make_unique<Session>();
   sess->reader = std::make_unique<FfmpegRtspReader>(source_uri);
   sess->sink = std::make_shared<ToAnalyzerLink>();
+  // Accept options.profile/model_id as desired hints for VA
+  if (auto it = options.find("profile"); it != options.end()) sess->profile = it->second;
+  if (auto it2 = options.find("model_id"); it2 != options.end()) sess->model_id = it2->second;
   if (!sess->reader->Start()) { if (err) *err = "reader start failed"; return false; }
   sess->running.store(true);
   sessions_.emplace(attach_id, std::move(sess));
@@ -35,7 +38,11 @@ std::vector<StreamStat> SourceController::Collect() {
   std::lock_guard<std::mutex> lk(mu_);
   for (auto& kv : sessions_) {
     StreamStat st; st.attach_id = kv.first; st.phase = (kv.second && kv.second->running)? "Ready" : "Stopped";
-    if (kv.second && kv.second->reader) st.fps = kv.second->reader->Fps();
+    if (kv.second && kv.second->reader) {
+      st.fps = kv.second->reader->Fps();
+      st.source_uri = kv.second->reader->Uri();
+    }
+    if (kv.second) { st.profile = kv.second->profile; st.model_id = kv.second->model_id; }
     out.push_back(st);
   }
   return out;

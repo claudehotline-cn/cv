@@ -14,6 +14,9 @@ class ToAnalyzerLink;
 
 struct StreamStat {
   std::string attach_id;
+  std::string source_uri;
+  std::string profile;
+  std::string model_id;
   double fps {0.0};
   double rtt_ms {0.0};
   double jitter_ms {0.0};
@@ -37,6 +40,8 @@ private:
   struct Session {
     std::unique_ptr<FfmpegRtspReader> reader;
     std::shared_ptr<ToAnalyzerLink>   sink;
+    std::string profile;   // desired VA profile id hint
+    std::string model_id;  // desired VA model id hint
     std::atomic<bool> running{false};
   };
   std::mutex mu_;

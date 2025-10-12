@@ -15,6 +15,7 @@ public:
   bool Start();
   void Stop();
   double Fps() const { return fps_; }
+  const std::string& Uri() const { return uri_; }
 
 private:
   void Loop();
@@ -25,4 +26,3 @@ private:
 };
 
 } // namespace vsm
-

@@ -13,6 +13,11 @@
 #include "control_plane_embedded/api/grpc_server.hpp"
 #endif
 
+#if defined(USE_GRPC)
+#include <grpcpp/grpcpp.h>
+#include "source_control.grpc.pb.h"
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -169,6 +174,30 @@ bool Application::initialize(const std::string& config_dir) {
     descriptor.options["prefer_pinned_memory"] = app_config_.engine.options.prefer_pinned_memory ? "true" : "false";
     descriptor.options["allow_cpu_fallback"] = app_config_.engine.options.allow_cpu_fallback ? "true" : "false";
     descriptor.options["enable_profiling"] = app_config_.engine.options.enable_profiling ? "true" : "false";
+    // Source/encoder toggles (if provided in app.yaml)
+    if (app_config_.engine.options.use_ffmpeg_source) {
+        descriptor.options["use_ffmpeg_source"] = "true";
+    }
+    if (app_config_.engine.options.use_nvdec) {
+        descriptor.options["use_nvdec"] = "true";
+    }
+    if (app_config_.engine.options.use_nvenc) {
+        descriptor.options["use_nvenc"] = "true";
+    }
+    // Other toggles
+    if (app_config_.engine.options.device_output_views) descriptor.options["device_output_views"] = "true";
+    if (app_config_.engine.options.stage_device_outputs) descriptor.options["stage_device_outputs"] = "true";
+    if (app_config_.engine.options.use_cuda_nms) descriptor.options["use_cuda_nms"] = "true";
+    if (app_config_.engine.options.render_passthrough) descriptor.options["render_passthrough"] = "true";
+    if (app_config_.engine.options.render_cuda) descriptor.options["render_cuda"] = "true";
+    if (app_config_.engine.options.use_cuda_preproc) descriptor.options["use_cuda_preproc"] = "true";
+    if (!app_config_.engine.options.warmup_runs.empty()) descriptor.options["warmup_runs"] = app_config_.engine.options.warmup_runs;
+    if (app_config_.engine.options.overlay_thickness > 0) descriptor.options["overlay_thickness"] = std::to_string(app_config_.engine.options.overlay_thickness);
+    if (app_config_.engine.options.overlay_alpha > 0.0) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.3f", app_config_.engine.options.overlay_alpha);
+        descriptor.options["overlay_alpha"] = buf;
+    }
     descriptor.options["trt_fp16"] = app_config_.engine.options.tensorrt_fp16 ? "true" : "false";
     descriptor.options["trt_int8"] = app_config_.engine.options.tensorrt_int8 ? "true" : "false";
     if (app_config_.engine.options.tensorrt_workspace_mb > 0) {
@@ -311,6 +340,11 @@ bool Application::start() {
     }
 #endif
 
+    // Start VSM WatchState client if configured (Plan B)
+#if defined(USE_GRPC)
+    try { startVsmWatchIfConfigured(); } catch (...) { /* best-effort */ }
+#endif
+
     return ok;
 }
 
@@ -329,6 +363,14 @@ void Application::shutdown() {
     graph_adapter_.reset();
 #endif
 
+#if defined(USE_GRPC)
+    vsm_watch_stop_.store(true);
+    if (vsm_watch_thread_ && vsm_watch_thread_->joinable()) {
+        vsm_watch_thread_->join();
+    }
+    vsm_watch_thread_.reset();
+#endif
+
     track_manager_.reset();
     pipeline_builder_.reset();
 
@@ -338,6 +380,114 @@ void Application::shutdown() {
 bool Application::isInitialized() const {
     return initialized_;
 }
+
+#if defined(USE_GRPC)
+void Application::startVsmWatchIfConfigured() {
+    std::string addr = app_config_.control_plane.vsm_addr;
+    if (const char* ep = std::getenv("VA_VSM_ADDR")) { addr = ep; }
+    if (addr.empty()) {
+        return; // not configured
+    }
+    if (vsm_watch_thread_) return;
+
+    // choose default profile
+    auto default_profile = std::string{};
+    for (const auto& p : profiles_) {
+        if (p.name == "det_720p") { default_profile = p.name; break; }
+    }
+    if (default_profile.empty() && !profiles_.empty()) default_profile = profiles_.front().name;
+    if (default_profile.empty()) default_profile = "det_720p";
+
+    int interval_ms = 1500;
+    if (const char* v = std::getenv("VA_VSM_WATCH_MS")) { try { int t = std::stoi(v); if (t>100) interval_ms = t; } catch (...) {} }
+
+    vsm_watch_stop_.store(false);
+    vsm_watch_thread_ = std::make_unique<std::thread>([this, addr, default_profile, interval_ms]() {
+        VA_LOG_INFO() << "[ControlPlane] VSM watch connecting addr=" << addr << " interval_ms=" << interval_ms;
+        while (!vsm_watch_stop_.load()) {
+            try {
+                auto channel = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+                std::unique_ptr<vsm::v1::SourceControl::Stub> stub = vsm::v1::SourceControl::NewStub(channel);
+                grpc::ClientContext ctx;
+                vsm::v1::WatchStateRequest req; req.set_interval_ms(interval_ms);
+                std::unique_ptr<grpc::ClientReader<vsm::v1::WatchStateReply>> reader(stub->WatchState(&ctx, req));
+                struct Item { std::string uri; std::string profile; };
+                std::unordered_map<std::string, Item> last; // attach_id -> {uri,profile}
+                std::unordered_map<std::string, long long> last_change_ms;
+                auto now_ms = [](){ return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+                int debounce_ms = 300; if (const char* v = std::getenv("VA_VSM_DEBOUNCE_MS")) { try { int t = std::stoi(v); if (t>=0) debounce_ms = t; } catch (...) {} }
+                vsm::v1::WatchStateReply rep;
+                while (!vsm_watch_stop_.load() && reader->Read(&rep)) {
+                    std::unordered_map<std::string, Item> cur;
+                    cur.reserve(static_cast<size_t>(rep.items_size()));
+                    for (const auto& it : rep.items()) {
+                        Item item{it.source_uri(), it.profile()};
+                        cur[it.attach_id()] = item;
+                    }
+                    // create/update
+                    for (const auto& kv : cur) {
+                        const std::string& sid = kv.first; const Item& item = kv.second;
+                        const std::string prof = item.profile.empty()? default_profile : item.profile;
+                        // find existing pipeline
+                        bool exists = false; std::string exist_uri;
+                        for (const auto& pinfo : track_manager_->listPipelines()) {
+                            if (pinfo.stream_id == sid && pinfo.profile_id == prof) {
+                                exists = true; exist_uri = pinfo.source_uri; break;
+                            }
+                        }
+                        long long nowts = now_ms();
+                        auto too_soon = [&](const std::string& key){ auto it=last_change_ms.find(key); return it!=last_change_ms.end() && (nowts - it->second) < debounce_ms; };
+                        auto mark = [&](const std::string& key){ last_change_ms[key]=nowts; };
+
+                        if (!exists) {
+                            if (!too_soon(sid+":"+prof)) {
+                                auto key = subscribeStream(sid, prof, item.uri);
+                                if (key) {
+                                    VA_LOG_INFO() << "[ControlPlane] auto-subscribe created key=" << *key << " stream=" << sid << " profile=" << prof;
+                                } else {
+                                    VA_LOG_WARN() << "[ControlPlane] auto-subscribe failed stream=" << sid << " err=" << last_error_;
+                                }
+                                mark(sid+":"+prof);
+                            }
+                        } else {
+                            // exists: if uri changed, switch source
+                            if (!exist_uri.empty() && exist_uri != item.uri) {
+                                if (!too_soon(std::string("sw:")+sid+":"+prof)) {
+                                    bool ok = switchSource(sid, prof, item.uri);
+                                    if (ok) VA_LOG_INFO() << "[ControlPlane] auto-switchSource stream=" << sid << " profile=" << prof;
+                                    else VA_LOG_WARN() << "[ControlPlane] auto-switchSource failed stream=" << sid << " err=" << last_error_;
+                                    mark(std::string("sw:")+sid+":"+prof);
+                                }
+                            }
+                        }
+                    }
+                    // remove
+                    long long nowts2 = now_ms();
+                    auto too_soon2 = [&](const std::string& key){ auto it=last_change_ms.find(key); return it!=last_change_ms.end() && (nowts2 - it->second) < debounce_ms; };
+                    auto mark2 = [&](const std::string& key){ last_change_ms[key]=nowts2; };
+                    for (const auto& kv : last) {
+                        if (cur.find(kv.first) == cur.end()) {
+                            const std::string prof = kv.second.profile.empty()? default_profile : kv.second.profile;
+                            if (!too_soon2(std::string("rm:")+kv.first+":"+prof)) {
+                                unsubscribeStream(kv.first, prof);
+                                VA_LOG_INFO() << "[ControlPlane] auto-unsubscribe stream=" << kv.first << " profile=" << prof;
+                                mark2(std::string("rm:")+kv.first+":"+prof);
+                            }
+                        }
+                    }
+                    last.swap(cur);
+                }
+                // drain and retry after short backoff
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            } catch (const std::exception& ex) {
+                VA_LOG_WARN() << "[ControlPlane] VSM watch exception: " << ex.what();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            }
+        }
+        VA_LOG_INFO() << "[ControlPlane] VSM watch stopped";
+    });
+}
+#endif
 
 va::core::TrackManager* Application::trackManager() {
     return track_manager_.get();

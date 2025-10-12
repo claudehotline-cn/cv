@@ -5,6 +5,8 @@ service SourceControl {
   rpc Attach(AttachRequest) returns (AttachReply);
   rpc Detach(DetachRequest) returns (DetachReply);
   rpc GetHealth(GetHealthRequest) returns (GetHealthReply);
+  // Plan B: stream current sources snapshot periodically for instant reaction
+  rpc WatchState(WatchStateRequest) returns (stream WatchStateReply);
 }
 
 message AttachRequest {
@@ -31,3 +33,19 @@ message StreamStat {
   string phase     = 6; // Ready/Connecting/Backoff/Failed
 }
 
+// Streaming watch API
+message WatchStateRequest {
+  int32 interval_ms = 1; // default 1000
+}
+message SourceItem {
+  string attach_id = 1;
+  string source_uri = 2;
+  string phase = 3;
+  double fps = 4;
+  string profile = 5;   // optional desired profile id for VA
+  string model_id = 6;  // optional desired model id for VA
+}
+message WatchStateReply {
+  int64 ts_ms = 1;
+  repeated SourceItem items = 2;
+}

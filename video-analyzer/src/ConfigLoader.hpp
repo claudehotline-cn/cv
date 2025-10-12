@@ -66,6 +66,19 @@ struct EngineOptions {
     int tensorrt_min_subgraph_size {0};
     size_t io_binding_input_bytes {0};
     size_t io_binding_output_bytes {0};
+    // Source/encoder toggles (plumb to EngineDescriptor.options)
+    bool use_ffmpeg_source {false};
+    bool use_nvdec {false};
+    bool use_nvenc {false};
+    bool device_output_views {false};
+    bool stage_device_outputs {false};
+    bool use_cuda_nms {false};
+    bool render_passthrough {false};
+    bool render_cuda {false};
+    bool use_cuda_preproc {false};
+    std::string warmup_runs; // e.g., "auto" or digits
+    int overlay_thickness {0};
+    double overlay_alpha {0.0};
     // Multistage options (pass-through to EngineDescriptor.options)
     bool use_multistage {false};
     std::string graph_id;           // load from config/graphs/<graph_id>.yaml if set
@@ -107,6 +120,7 @@ struct AppConfigPayload {
     struct ControlPlaneConfig {
         bool enabled {false};
         std::string grpc_addr; // e.g., 0.0.0.0:9090
+        std::string vsm_addr;  // optional: vsm gRPC address for WatchState, e.g., 127.0.0.1:7070
     } control_plane;
 };
 

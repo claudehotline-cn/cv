@@ -74,3 +74,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${OpenCV_LIBS} ws2_32)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Optional unified CLI (va_vsm_cli) built within video-source-manager tree
+# Requires gRPC/Protobuf and accesses VA/VSM proto definitions
+add_subdirectory(tools/va_vsm_cli)

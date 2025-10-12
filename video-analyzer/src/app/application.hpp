@@ -10,10 +10,12 @@
 
 #include <map>
 #include <memory>
+#include <atomic>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <thread>
 
 namespace va::analyzer {
 struct AnalyzerParams;
@@ -118,7 +120,15 @@ private:
     std::unique_ptr<class va::control::PipelineController> pipeline_controller_;
     class va::control::OpaquePtr grpc_server_;
 #endif
+
+#if defined(USE_GRPC)
+    // VSM WatchState client (Plan B)
+    std::unique_ptr<class std::thread> vsm_watch_thread_;
+    std::atomic<bool> vsm_watch_stop_{false};
+    void startVsmWatchIfConfigured();
+#endif
 };
 
 } // namespace va::app
+
 

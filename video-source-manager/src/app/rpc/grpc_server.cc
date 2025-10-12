@@ -35,6 +35,31 @@ struct GrpcServer::Impl {
       }
       return ::grpc::Status::OK;
     }
+
+    ::grpc::Status WatchState(::grpc::ServerContext* ctx, const vsm::v1::WatchStateRequest* req,
+                              ::grpc::ServerWriter<vsm::v1::WatchStateReply>* writer) override {
+      int interval_ms = (req && req->interval_ms()>0) ? req->interval_ms() : 1000;
+      while (!ctx->IsCancelled()) {
+        vsm::v1::WatchStateReply reply;
+        // ts_ms
+        auto now = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()).time_since_epoch().count();
+        reply.set_ts_ms(static_cast<long long>(now));
+        for (auto s : ctl_.Collect()) {
+          auto* it = reply.add_items();
+          it->set_attach_id(s.attach_id);
+          it->set_source_uri(s.source_uri);
+          it->set_phase(s.phase);
+          it->set_fps(s.fps);
+          if (!s.profile.empty()) it->set_profile(s.profile);
+          if (!s.model_id.empty()) it->set_model_id(s.model_id);
+        }
+        if (!writer->Write(reply)) {
+          break; // client closed
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+      }
+      return ::grpc::Status::OK;
+    }
   private:
     vsm::SourceController& ctl_;
   };
@@ -68,4 +93,3 @@ void GrpcServer::Stop() {
 }
 
 } // namespace vsm::rpc
-

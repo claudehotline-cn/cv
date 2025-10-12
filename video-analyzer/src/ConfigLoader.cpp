@@ -206,6 +206,47 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
                 opts.tensorrt_min_subgraph_size);
             opts.io_binding_input_bytes = parseByteOption(options_node, "io_binding_input_bytes", "io_binding_input_mb", opts.io_binding_input_bytes);
             opts.io_binding_output_bytes = parseByteOption(options_node, "io_binding_output_bytes", "io_binding_output_mb", opts.io_binding_output_bytes);
+            // Source/encoder toggles
+            if (options_node["use_ffmpeg_source"]) {
+                try { opts.use_ffmpeg_source = options_node["use_ffmpeg_source"].as<bool>(opts.use_ffmpeg_source); } catch (...) {}
+            }
+            if (options_node["use_nvdec"]) {
+                try { opts.use_nvdec = options_node["use_nvdec"].as<bool>(opts.use_nvdec); } catch (...) {}
+            }
+            if (options_node["use_nvenc"]) {
+                try { opts.use_nvenc = options_node["use_nvenc"].as<bool>(opts.use_nvenc); } catch (...) {}
+            }
+            // Execution/render toggles
+            if (options_node["device_output_views"]) {
+                try { opts.device_output_views = options_node["device_output_views"].as<bool>(opts.device_output_views); } catch (...) {}
+            }
+            if (options_node["stage_device_outputs"]) {
+                try { opts.stage_device_outputs = options_node["stage_device_outputs"].as<bool>(opts.stage_device_outputs); } catch (...) {}
+            }
+            if (options_node["use_cuda_nms"]) {
+                try { opts.use_cuda_nms = options_node["use_cuda_nms"].as<bool>(opts.use_cuda_nms); } catch (...) {}
+            }
+            if (options_node["render_passthrough"]) {
+                try { opts.render_passthrough = options_node["render_passthrough"].as<bool>(opts.render_passthrough); } catch (...) {}
+            }
+            if (options_node["render_cuda"]) {
+                try { opts.render_cuda = options_node["render_cuda"].as<bool>(opts.render_cuda); } catch (...) {}
+            }
+            if (options_node["use_cuda_preproc"]) {
+                try { opts.use_cuda_preproc = options_node["use_cuda_preproc"].as<bool>(opts.use_cuda_preproc); } catch (...) {}
+            }
+            if (options_node["warmup_runs"]) {
+                try { opts.warmup_runs = options_node["warmup_runs"].as<std::string>(opts.warmup_runs); } catch (...) {
+                    // also accept integer, convert to string
+                    try { int w = options_node["warmup_runs"].as<int>(0); if (w>0) opts.warmup_runs = std::to_string(w); } catch (...) {}
+                }
+            }
+            if (options_node["overlay_thickness"]) {
+                try { opts.overlay_thickness = options_node["overlay_thickness"].as<int>(opts.overlay_thickness); } catch (...) {}
+            }
+            if (options_node["overlay_alpha"]) {
+                try { opts.overlay_alpha = options_node["overlay_alpha"].as<double>(opts.overlay_alpha); } catch (...) {}
+            }
             // Multistage graph options (pass-through)
             if (options_node["use_multistage"]) {
                 try { opts.use_multistage = options_node["use_multistage"].as<bool>(false); } catch (...) {}
@@ -316,6 +357,7 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
         if (cp && cp.IsMap()) {
             payload.control_plane.enabled = cp["enabled"].as<bool>(payload.control_plane.enabled);
             payload.control_plane.grpc_addr = cp["grpc_addr"].as<std::string>(payload.control_plane.grpc_addr);
+            payload.control_plane.vsm_addr = cp["vsm_addr"].as<std::string>(payload.control_plane.vsm_addr);
         }
     }
     return payload;

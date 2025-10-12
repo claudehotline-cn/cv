@@ -219,6 +219,7 @@ if (USE_GRPC)
         add_definitions(-DUSE_GRPC)
 
         set(_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
+        set(_VSM_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../video-source-manager/proto)
         set(_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
         file(MAKE_DIRECTORY ${_GEN_DIR})
         set(PROTO_FILES ${_PROTO_DIR}/analyzer_control.proto ${_PROTO_DIR}/pipeline.proto)
@@ -264,6 +265,29 @@ if (USE_GRPC)
 
         target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
         target_link_libraries(${PROJECT_NAME} PRIVATE va_analyzer_control_proto)
+
+        # Also generate VSM SourceControl stubs for client usage (Plan B streaming)
+        if (EXISTS ${_VSM_PROTO_DIR}/source_control.proto)
+            add_custom_command(
+                OUTPUT ${_GEN_DIR}/source_control.pb.cc ${_GEN_DIR}/source_control.pb.h
+                COMMAND protobuf::protoc
+                    ARGS --cpp_out ${_GEN_DIR}
+                         -I ${_VSM_PROTO_DIR}
+                         ${_VSM_PROTO_DIR}/source_control.proto
+                DEPENDS ${_VSM_PROTO_DIR}/source_control.proto)
+            add_custom_command(
+                OUTPUT ${_GEN_DIR}/source_control.grpc.pb.cc ${_GEN_DIR}/source_control.grpc.pb.h
+                COMMAND protobuf::protoc
+                    ARGS --grpc_out ${_GEN_DIR}
+                         --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+                         -I ${_VSM_PROTO_DIR}
+                         ${_VSM_PROTO_DIR}/source_control.proto
+                DEPENDS ${_VSM_PROTO_DIR}/source_control.proto)
+            add_library(va_vsm_proto ${_GEN_DIR}/source_control.pb.cc ${_GEN_DIR}/source_control.grpc.pb.cc)
+            target_include_directories(va_vsm_proto PUBLIC ${_GEN_DIR})
+            target_link_libraries(va_vsm_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+            target_link_libraries(${PROJECT_NAME} PRIVATE va_vsm_proto)
+        endif()
 
         if (VA_ENABLE_GRPC_SERVER)
             add_definitions(-DVA_ENABLE_GRPC_SERVER)
