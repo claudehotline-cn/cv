@@ -406,9 +406,22 @@ void Application::startVsmWatchIfConfigured() {
         VA_LOG_INFO() << "[ControlPlane] VSM watch connecting addr=" << addr << " interval_ms=" << interval_ms;
         while (!vsm_watch_stop_.load()) {
             try {
-                auto channel = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+                // gRPC channel with optional keepalive
+                grpc::ChannelArguments args;
+                auto env_int = [](const char* k, int defv){ if(const char* v=getenv(k)){ try { return std::stoi(v);} catch(...){} } return defv;};
+                int ka_time = env_int("VA_VSM_KEEPALIVE_TIME_MS", 20000);
+                int ka_timeout = env_int("VA_VSM_KEEPALIVE_TIMEOUT_MS", 10000);
+                int ka_permit = env_int("VA_VSM_KEEPALIVE_PERMIT_WITHOUT_CALLS", 1);
+                args.SetInt("grpc.keepalive_time_ms", ka_time);
+                args.SetInt("grpc.keepalive_timeout_ms", ka_timeout);
+                args.SetInt("grpc.keepalive_permit_without_calls", ka_permit);
+                auto channel = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args);
                 std::unique_ptr<vsm::v1::SourceControl::Stub> stub = vsm::v1::SourceControl::NewStub(channel);
                 grpc::ClientContext ctx;
+                // Set a generous deadline to detect dead streams
+                int deadline_ms = env_int("VA_VSM_WATCH_DEADLINE_MS", 60000);
+                auto ddl = std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_ms);
+                ctx.set_deadline(ddl);
                 vsm::v1::WatchStateRequest req; req.set_interval_ms(interval_ms);
                 std::unique_ptr<grpc::ClientReader<vsm::v1::WatchStateReply>> reader(stub->WatchState(&ctx, req));
                 struct Item { std::string uri; std::string profile; std::string model; };
@@ -417,7 +430,9 @@ void Application::startVsmWatchIfConfigured() {
                 auto now_ms = [](){ return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
                 int debounce_ms = 300; if (const char* v = std::getenv("VA_VSM_DEBOUNCE_MS")) { try { int t = std::stoi(v); if (t>=0) debounce_ms = t; } catch (...) {} }
                 vsm::v1::WatchStateReply rep;
+                bool had_data = false;
                 while (!vsm_watch_stop_.load() && reader->Read(&rep)) {
+                    had_data = true;
                     std::unordered_map<std::string, Item> cur;
                     cur.reserve(static_cast<size_t>(rep.items_size()));
                     for (const auto& it : rep.items()) {
@@ -444,8 +459,10 @@ void Application::startVsmWatchIfConfigured() {
                                 auto key = subscribeStream(sid, prof, item.uri);
                                 if (key) {
                                     VA_LOG_INFO() << "[ControlPlane] auto-subscribe created key=" << *key << " stream=" << sid << " profile=" << prof;
+                                    va::core::GlobalMetrics::cp_auto_subscribe_total.fetch_add(1);
                                 } else {
                                     VA_LOG_WARN() << "[ControlPlane] auto-subscribe failed stream=" << sid << " err=" << last_error_;
+                                    va::core::GlobalMetrics::cp_auto_subscribe_failed_total.fetch_add(1);
                                 }
                                 mark(sid+":"+prof);
                             }
@@ -454,8 +471,8 @@ void Application::startVsmWatchIfConfigured() {
                             if (!exist_uri.empty() && exist_uri != item.uri) {
                                 if (!too_soon(std::string("sw:")+sid+":"+prof)) {
                                     bool ok = switchSource(sid, prof, item.uri);
-                                    if (ok) VA_LOG_INFO() << "[ControlPlane] auto-switchSource stream=" << sid << " profile=" << prof;
-                                    else VA_LOG_WARN() << "[ControlPlane] auto-switchSource failed stream=" << sid << " err=" << last_error_;
+                                    if (ok) { VA_LOG_INFO() << "[ControlPlane] auto-switchSource stream=" << sid << " profile=" << prof; va::core::GlobalMetrics::cp_auto_switch_source_total.fetch_add(1);} 
+                                    else { VA_LOG_WARN() << "[ControlPlane] auto-switchSource failed stream=" << sid << " err=" << last_error_; va::core::GlobalMetrics::cp_auto_switch_source_failed_total.fetch_add(1);} 
                                     mark(std::string("sw:")+sid+":"+prof);
                                 }
                             }
@@ -463,9 +480,15 @@ void Application::startVsmWatchIfConfigured() {
                             if (!item.model.empty() && exist_model != item.model) {
                                 if (!too_soon(std::string("md:")+sid+":"+prof)) {
                                     bool okm = switchModel(sid, prof, item.model);
-                                    if (okm) VA_LOG_INFO() << "[ControlPlane] auto-switchModel stream=" << sid << " profile=" << prof << " model=" << item.model;
-                                    else VA_LOG_WARN() << "[ControlPlane] auto-switchModel failed stream=" << sid << " model=" << item.model << " err=" << last_error_;
-                                    mark(std::string("md:")+sid+":"+prof);
+                                    if (okm) {
+                                        VA_LOG_INFO() << "[ControlPlane] auto-switchModel stream=" << sid << " profile=" << prof << " model=" << item.model;
+                                        va::core::GlobalMetrics::cp_auto_switch_model_total.fetch_add(1);
+                                        mark(std::string("md:")+sid+":"+prof);
+                                    } else {
+                                        VA_LOG_WARN() << "[ControlPlane] auto-switchModel failed stream=" << sid << " model=" << item.model << " err=" << last_error_;
+                                        va::core::GlobalMetrics::cp_auto_switch_model_failed_total.fetch_add(1);
+                                        // 不标记md:去抖键，允许下一次WatchState重试
+                                    }
                                 }
                             }
                         }
@@ -480,17 +503,39 @@ void Application::startVsmWatchIfConfigured() {
                             if (!too_soon2(std::string("rm:")+kv.first+":"+prof)) {
                                 unsubscribeStream(kv.first, prof);
                                 VA_LOG_INFO() << "[ControlPlane] auto-unsubscribe stream=" << kv.first << " profile=" << prof;
+                                va::core::GlobalMetrics::cp_auto_unsubscribe_total.fetch_add(1);
                                 mark2(std::string("rm:")+kv.first+":"+prof);
                             }
                         }
                     }
                     last.swap(cur);
                 }
-                // drain and retry after short backoff
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                // reset backoff on activity; else apply backoff with jitter
+                static int backoff_ms = env_int("VA_VSM_BACKOFF_MS_START", 500);
+                static int backoff_max = env_int("VA_VSM_BACKOFF_MS_MAX", 10000);
+                static double jitter = [](){ if(const char* j=getenv("VA_VSM_BACKOFF_JITTER")) { try { return std::stod(j);} catch(...){} } return 0.2; }();
+                if (!had_data) {
+                    int delay = backoff_ms;
+                    // jitter +/-
+                    int jspan = static_cast<int>(delay * jitter);
+                    if (jspan > 0) {
+                        auto seed = static_cast<unsigned>(now_ms());
+                        int delta = (seed % (2*jspan+1)) - jspan; // [-jspan, +jspan]
+                        delay = std::max(0, delay + delta);
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+                    backoff_ms = std::min(backoff_ms * 2, backoff_max);
+                } else {
+                    backoff_ms = env_int("VA_VSM_BACKOFF_MS_START", 500);
+                }
             } catch (const std::exception& ex) {
                 VA_LOG_WARN() << "[ControlPlane] VSM watch exception: " << ex.what();
-                std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+                // keep same backoff path as above when exceptions occur
+                static int backoff_ms = 500; static int backoff_max = 10000; static double jitter = 0.2;
+                int jspan = static_cast<int>(backoff_ms * jitter);
+                int delay = backoff_ms + ((jspan>0)? ((int)(std::chrono::steady_clock::now().time_since_epoch().count()) % (2*jspan+1)) - jspan : 0);
+                std::this_thread::sleep_for(std::chrono::milliseconds(std::max(0, delay)));
+                backoff_ms = std::min(backoff_ms * 2, backoff_max);
             }
         }
         VA_LOG_INFO() << "[ControlPlane] VSM watch stopped";

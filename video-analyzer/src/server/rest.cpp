@@ -972,6 +972,21 @@ struct RestServer::Impl {
             mb.sample("va_overlay_nv12_kernel_hits_total", "{}", std::to_string(static_cast<unsigned long long>(gm.overlay_nv12_kernel_hits)));
             mb.header("va_overlay_nv12_passthrough_total", "counter", "NV12 overlay passthrough (no boxes)");
             mb.sample("va_overlay_nv12_passthrough_total", "{}", std::to_string(static_cast<unsigned long long>(gm.overlay_nv12_passthrough)));
+            // Control-plane metrics
+            mb.header("va_cp_auto_subscribe_total", "counter", "Auto subscribe events (success)");
+            mb.sample("va_cp_auto_subscribe_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cp_auto_subscribe_total)));
+            mb.header("va_cp_auto_unsubscribe_total", "counter", "Auto unsubscribe events (success)");
+            mb.sample("va_cp_auto_unsubscribe_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cp_auto_unsubscribe_total)));
+            mb.header("va_cp_auto_switch_source_total", "counter", "Auto source switch events (success)");
+            mb.sample("va_cp_auto_switch_source_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cp_auto_switch_source_total)));
+            mb.header("va_cp_auto_switch_model_total", "counter", "Auto model switch events (success)");
+            mb.sample("va_cp_auto_switch_model_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cp_auto_switch_model_total)));
+            mb.header("va_cp_auto_subscribe_failed_total", "counter", "Auto subscribe failures");
+            mb.sample("va_cp_auto_subscribe_failed_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cp_auto_subscribe_failed_total)));
+            mb.header("va_cp_auto_switch_source_failed_total", "counter", "Auto source switch failures");
+            mb.sample("va_cp_auto_switch_source_failed_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cp_auto_switch_source_failed_total)));
+            mb.header("va_cp_auto_switch_model_failed_total", "counter", "Auto model switch failures");
+            mb.sample("va_cp_auto_switch_model_failed_total", "{}", std::to_string(static_cast<unsigned long long>(gm.cp_auto_switch_model_failed_total)));
 
             // Helper functions
             auto classify_path = [](const va::core::TrackManager::PipelineInfo& info) -> std::string {
