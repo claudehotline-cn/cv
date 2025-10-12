@@ -48,4 +48,16 @@ std::vector<StreamStat> SourceController::Collect() {
   return out;
 }
 
+bool SourceController::Update(const std::string& attach_id,
+                              const std::unordered_map<std::string,std::string>& options,
+                              std::string* err) {
+  std::lock_guard<std::mutex> lk(mu_);
+  auto it = sessions_.find(attach_id);
+  if (it == sessions_.end()) { if (err) *err = "not found"; return false; }
+  auto& sess = it->second;
+  if (auto p = options.find("profile"); p != options.end()) sess->profile = p->second;
+  if (auto m = options.find("model_id"); m != options.end()) sess->model_id = m->second;
+  return true;
+}
+
 } // namespace vsm

@@ -36,6 +36,13 @@ struct GrpcServer::Impl {
       return ::grpc::Status::OK;
     }
 
+    ::grpc::Status Update(::grpc::ServerContext*, const vsm::v1::UpdateRequest* req,
+                          vsm::v1::UpdateReply* resp) override {
+      std::unordered_map<std::string,std::string> opts(req->options().begin(), req->options().end());
+      std::string err; bool ok = ctl_.Update(req->attach_id(), opts, &err);
+      resp->set_ok(ok); resp->set_msg(ok? std::string("") : err); return ::grpc::Status::OK;
+    }
+
     ::grpc::Status WatchState(::grpc::ServerContext* ctx, const vsm::v1::WatchStateRequest* req,
                               ::grpc::ServerWriter<vsm::v1::WatchStateReply>* writer) override {
       int interval_ms = (req && req->interval_ms()>0) ? req->interval_ms() : 1000;

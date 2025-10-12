@@ -34,6 +34,9 @@ public:
               const std::unordered_map<std::string,std::string>& options,
               std::string* err);
   bool Detach(const std::string& attach_id, std::string* err);
+  bool Update(const std::string& attach_id,
+              const std::unordered_map<std::string,std::string>& options,
+              std::string* err);
   std::vector<StreamStat> Collect();
 
 private:

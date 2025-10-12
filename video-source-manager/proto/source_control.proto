@@ -7,6 +7,7 @@ service SourceControl {
   rpc GetHealth(GetHealthRequest) returns (GetHealthReply);
   // Plan B: stream current sources snapshot periodically for instant reaction
   rpc WatchState(WatchStateRequest) returns (stream WatchStateReply);
+  rpc Update(UpdateRequest) returns (UpdateReply);
 }
 
 message AttachRequest {
@@ -49,3 +50,9 @@ message WatchStateReply {
   int64 ts_ms = 1;
   repeated SourceItem items = 2;
 }
+
+message UpdateRequest {
+  string attach_id = 1;
+  map<string,string> options = 2; // profile/model_id, etc.
+}
+message UpdateReply { bool ok = 1; string msg = 2; }
