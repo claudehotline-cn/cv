@@ -398,8 +398,8 @@ void Application::startVsmWatchIfConfigured() {
     if (default_profile.empty() && !profiles_.empty()) default_profile = profiles_.front().name;
     if (default_profile.empty()) default_profile = "det_720p";
 
-    int interval_ms = 1500;
-    if (const char* v = std::getenv("VA_VSM_WATCH_MS")) { try { int t = std::stoi(v); if (t>100) interval_ms = t; } catch (...) {} }
+    int interval_ms = app_config_.control_plane.watch_interval_ms;
+    if (const char* v = std::getenv("VA_VSM_WATCH_MS")) { try { int t = std::stoi(v); if (t>0) interval_ms = t; } catch (...) {} }
 
     vsm_watch_stop_.store(false);
     vsm_watch_thread_ = std::make_unique<std::thread>([this, addr, default_profile, interval_ms]() {
@@ -409,9 +409,9 @@ void Application::startVsmWatchIfConfigured() {
                 // gRPC channel with optional keepalive
                 grpc::ChannelArguments args;
                 auto env_int = [](const char* k, int defv){ if(const char* v=getenv(k)){ try { return std::stoi(v);} catch(...){} } return defv;};
-                int ka_time = env_int("VA_VSM_KEEPALIVE_TIME_MS", 20000);
-                int ka_timeout = env_int("VA_VSM_KEEPALIVE_TIMEOUT_MS", 10000);
-                int ka_permit = env_int("VA_VSM_KEEPALIVE_PERMIT_WITHOUT_CALLS", 1);
+                int ka_time = app_config_.control_plane.keepalive_time_ms; ka_time = env_int("VA_VSM_KEEPALIVE_TIME_MS", ka_time);
+                int ka_timeout = app_config_.control_plane.keepalive_timeout_ms; ka_timeout = env_int("VA_VSM_KEEPALIVE_TIMEOUT_MS", ka_timeout);
+                int ka_permit = app_config_.control_plane.keepalive_permit_without_calls ? 1 : 0; ka_permit = env_int("VA_VSM_KEEPALIVE_PERMIT_WITHOUT_CALLS", ka_permit);
                 args.SetInt("grpc.keepalive_time_ms", ka_time);
                 args.SetInt("grpc.keepalive_timeout_ms", ka_timeout);
                 args.SetInt("grpc.keepalive_permit_without_calls", ka_permit);
@@ -419,7 +419,7 @@ void Application::startVsmWatchIfConfigured() {
                 std::unique_ptr<vsm::v1::SourceControl::Stub> stub = vsm::v1::SourceControl::NewStub(channel);
                 grpc::ClientContext ctx;
                 // Set a generous deadline to detect dead streams
-                int deadline_ms = env_int("VA_VSM_WATCH_DEADLINE_MS", 60000);
+                int deadline_ms = app_config_.control_plane.watch_deadline_ms; deadline_ms = env_int("VA_VSM_WATCH_DEADLINE_MS", deadline_ms);
                 auto ddl = std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_ms);
                 ctx.set_deadline(ddl);
                 vsm::v1::WatchStateRequest req; req.set_interval_ms(interval_ms);
@@ -511,9 +511,9 @@ void Application::startVsmWatchIfConfigured() {
                     last.swap(cur);
                 }
                 // reset backoff on activity; else apply backoff with jitter
-                static int backoff_ms = env_int("VA_VSM_BACKOFF_MS_START", 500);
-                static int backoff_max = env_int("VA_VSM_BACKOFF_MS_MAX", 10000);
-                static double jitter = [](){ if(const char* j=getenv("VA_VSM_BACKOFF_JITTER")) { try { return std::stod(j);} catch(...){} } return 0.2; }();
+                static int backoff_ms = app_config_.control_plane.backoff_start_ms; backoff_ms = env_int("VA_VSM_BACKOFF_MS_START", backoff_ms);
+                static int backoff_max = app_config_.control_plane.backoff_max_ms; backoff_max = env_int("VA_VSM_BACKOFF_MS_MAX", backoff_max);
+                static double jitter = app_config_.control_plane.backoff_jitter; if(const char* j=getenv("VA_VSM_BACKOFF_JITTER")) { try { jitter = std::stod(j);} catch(...){} }
                 if (!had_data) {
                     int delay = backoff_ms;
                     // jitter +/-
@@ -531,7 +531,7 @@ void Application::startVsmWatchIfConfigured() {
             } catch (const std::exception& ex) {
                 VA_LOG_WARN() << "[ControlPlane] VSM watch exception: " << ex.what();
                 // keep same backoff path as above when exceptions occur
-                static int backoff_ms = 500; static int backoff_max = 10000; static double jitter = 0.2;
+                static int backoff_ms = app_config_.control_plane.backoff_start_ms; static int backoff_max = app_config_.control_plane.backoff_max_ms; static double jitter = app_config_.control_plane.backoff_jitter;
                 int jspan = static_cast<int>(backoff_ms * jitter);
                 int delay = backoff_ms + ((jspan>0)? ((int)(std::chrono::steady_clock::now().time_since_epoch().count()) % (2*jspan+1)) - jspan : 0);
                 std::this_thread::sleep_for(std::chrono::milliseconds(std::max(0, delay)));

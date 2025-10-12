@@ -358,6 +358,16 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
             payload.control_plane.enabled = cp["enabled"].as<bool>(payload.control_plane.enabled);
             payload.control_plane.grpc_addr = cp["grpc_addr"].as<std::string>(payload.control_plane.grpc_addr);
             payload.control_plane.vsm_addr = cp["vsm_addr"].as<std::string>(payload.control_plane.vsm_addr);
+            // Optional tunables
+            payload.control_plane.watch_interval_ms = cp["watch_interval_ms"].as<int>(payload.control_plane.watch_interval_ms);
+            payload.control_plane.debounce_ms = cp["debounce_ms"].as<int>(payload.control_plane.debounce_ms);
+            payload.control_plane.keepalive_time_ms = cp["keepalive_time_ms"].as<int>(payload.control_plane.keepalive_time_ms);
+            payload.control_plane.keepalive_timeout_ms = cp["keepalive_timeout_ms"].as<int>(payload.control_plane.keepalive_timeout_ms);
+            payload.control_plane.keepalive_permit_without_calls = cp["keepalive_permit_without_calls"].as<bool>(payload.control_plane.keepalive_permit_without_calls);
+            payload.control_plane.watch_deadline_ms = cp["watch_deadline_ms"].as<int>(payload.control_plane.watch_deadline_ms);
+            payload.control_plane.backoff_start_ms = cp["backoff_start_ms"].as<int>(payload.control_plane.backoff_start_ms);
+            payload.control_plane.backoff_max_ms = cp["backoff_max_ms"].as<int>(payload.control_plane.backoff_max_ms);
+            payload.control_plane.backoff_jitter = cp["backoff_jitter"].as<double>(payload.control_plane.backoff_jitter);
         }
     }
     return payload;
