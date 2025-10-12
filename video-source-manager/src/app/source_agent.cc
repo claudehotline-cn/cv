@@ -17,6 +17,11 @@
 
 namespace vsm {
 
+// SSE metrics (file-scope, exported via /metrics)
+static std::atomic<int> g_sse_conn{0};
+static std::atomic<unsigned long long> g_sse_rejects{0};
+static int g_sse_max_conn = [](){ int v=16; if(const char* p=getenv("VSM_SSE_MAX_CONN")){ try{ int t=std::stoi(p); if(t>0) v=t; }catch(...){} } return v; }();
+
 SourceAgent::SourceAgent() = default;
 SourceAgent::~SourceAgent() { Stop(); }
 
@@ -51,6 +56,10 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
       out << "vsm_stream_loss_ratio{attach_id=\"" << s.attach_id << "\"} " << s.loss_pct << "\n";
       out << "vsm_stream_last_ok_unixts{attach_id=\"" << s.attach_id << "\"} " << (unsigned long long)(s.last_ok_unixts) << "\n";
     }
+    // SSE metrics
+    out << "vsm_sse_connections " << g_sse_conn.load() << "\n";
+    out << "vsm_sse_rejects_total " << (unsigned long long)g_sse_rejects.load() << "\n";
+    out << "vsm_sse_max_connections " << g_sse_max_conn << "\n";
     return out.str();
   });
   metrics_->Start();
