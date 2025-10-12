@@ -17,12 +17,31 @@
 #include <grpcpp/grpcpp.h>
 #include "analyzer_control.grpc.pb.h"
 #include "pipeline.pb.h"
+#include "core/error_codes.hpp"
 
 namespace va { namespace control {
 
 class AnalyzerControlServiceImpl final : public va::v1::AnalyzerControl::Service {
 public:
     explicit AnalyzerControlServiceImpl(PipelineController* ctl, va::app::Application* app) : ctl_(ctl), app_(app) {}
+    static ::grpc::Status mapStatus(const std::string& msg) {
+        using va::core::errors::ErrorCode;
+        auto to_code = [&](const std::string& m)->ErrorCode{
+            if (m.find("missing") != std::string::npos) return ErrorCode::INVALID_ARG;
+            if (m.find("not found") != std::string::npos) return ErrorCode::NOT_FOUND;
+            if (m.find("already exists") != std::string::npos) return ErrorCode::ALREADY_EXISTS;
+            if (m.find("unavailable") != std::string::npos) return ErrorCode::UNAVAILABLE;
+            return ErrorCode::INTERNAL;
+        };
+        ErrorCode ec = to_code(msg);
+        switch (ec) {
+            case ErrorCode::INVALID_ARG: return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, msg);
+            case ErrorCode::NOT_FOUND: return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, msg);
+            case ErrorCode::ALREADY_EXISTS: return ::grpc::Status(::grpc::StatusCode::ALREADY_EXISTS, msg);
+            case ErrorCode::UNAVAILABLE: return ::grpc::Status(::grpc::StatusCode::UNAVAILABLE, msg);
+            default: return ::grpc::Status(::grpc::StatusCode::INTERNAL, msg);
+        }
+    }
     ::grpc::Status ApplyPipeline(::grpc::ServerContext*, const va::v1::ApplyPipelineRequest* req,
                                  va::v1::ApplyPipelineReply* resp) override {
         try {
@@ -42,23 +61,23 @@ public:
             if (spec.name.empty()) {
                 resp->set_accepted(false);
                 resp->set_msg("empty pipeline_name");
-                return ::grpc::Status::OK;
+                return mapStatus("missing pipeline_name");
             }
             if (spec.graph_id.empty() && spec.yaml_path.empty()) {
                 resp->set_accepted(false);
                 resp->set_msg("only graph_id or yaml_path supported in this phase");
-                return ::grpc::Status::OK;
+                return mapStatus("missing graph_id/yaml_path");
             }
 
             auto st = ctl_->Apply(spec);
             resp->set_accepted(st.ok());
             resp->set_msg(st.message());
-            return ::grpc::Status::OK;
+            return st.ok()? ::grpc::Status::OK : mapStatus(st.message());
         } catch (const std::exception& ex) {
             VA_LOG_C(::va::core::LogLevel::Error, "control") << "[gRPC] ApplyPipeline exception: " << ex.what();
             resp->set_accepted(false);
             resp->set_msg(std::string("exception: ") + ex.what());
-            return ::grpc::Status::OK;
+            return ::grpc::Status(::grpc::StatusCode::INTERNAL, resp->msg());
         } catch (...) {
             VA_LOG_C(::va::core::LogLevel::Error, "control") << "[gRPC] ApplyPipeline unknown exception";
             resp->set_accepted(false);
@@ -75,7 +94,7 @@ public:
             auto st = ctl_->Remove(req->pipeline_name());
             resp->set_removed(st.ok());
             resp->set_msg(st.message());
-            return ::grpc::Status::OK;
+            return st.ok()? ::grpc::Status::OK : mapStatus(st.message());
         } catch (const std::exception& ex) {
             VA_LOG_C(::va::core::LogLevel::Error, "control") << "[gRPC] RemovePipeline exception: " << ex.what();
             resp->set_removed(false); resp->set_msg(std::string("exception: ") + ex.what());
@@ -95,7 +114,7 @@ public:
             if (!ctl_) { resp->set_ok(false); resp->set_msg("no controller"); return ::grpc::Status::OK; }
             auto st = ctl_->HotSwapModel(req->pipeline_name(), req->node(), req->model_uri());
             resp->set_ok(st.ok()); resp->set_msg(st.message());
-            return ::grpc::Status::OK;
+            return st.ok()? ::grpc::Status::OK : mapStatus(st.message());
         } catch (const std::exception& ex) {
             VA_LOG_C(::va::core::LogLevel::Error, "control") << "[gRPC] HotSwapModel exception: " << ex.what();
             resp->set_ok(false); resp->set_msg(std::string("exception: ") + ex.what());
@@ -154,7 +173,7 @@ public:
             std::optional<std::string> model;
             if (!req->model_id().empty()) model = req->model_id();
             auto r = app_->subscribeStream(req->stream_id(), req->profile(), req->source_uri(), model);
-            if (!r) { resp->set_ok(false); resp->set_msg(app_->lastError()); return ::grpc::Status::OK; }
+            if (!r) { resp->set_ok(false); resp->set_msg(app_->lastError()); return mapStatus(resp->msg()); }
             resp->set_ok(true); resp->set_msg(""); resp->set_subscription_id(*r);
             return ::grpc::Status::OK;
         } catch (const std::exception& ex) {
@@ -203,6 +222,7 @@ public:
             VA_LOG_C(::va::core::LogLevel::Info, "control") << "[gRPC] SetEngine provider='" << desc.provider << "' device=" << desc.device_index;
             if (!app_->setEngine(desc)) {
                 resp->set_ok(false); resp->set_msg(app_->lastError());
+                return mapStatus(resp->msg());
             } else {
                 resp->set_ok(true); resp->set_msg("");
             }
