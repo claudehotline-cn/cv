@@ -1,6 +1,17 @@
 #include "control_plane_embedded/adapters/graph_adapter_yaml.hpp"
 #include "analyzer/multistage/builder_yaml.hpp"
 #include "analyzer/multistage/runner.hpp"
+#include "analyzer/multistage/registry.hpp"
+#include "analyzer/multistage/node_preproc_letterbox.hpp"
+#include "analyzer/multistage/node_model.hpp"
+#include "analyzer/multistage/node_nms.hpp"
+#include "analyzer/multistage/node_overlay.hpp"
+#include "analyzer/multistage/node_roi_batch.hpp"
+#include "analyzer/multistage/node_roi_batch_cuda.hpp"
+#include "analyzer/multistage/node_kpt_decode.hpp"
+#include "analyzer/multistage/node_overlay_kpt.hpp"
+#include "analyzer/multistage/node_join.hpp"
+#include "analyzer/multistage/node_reid_smooth.hpp"
 #include "core/logger.hpp"
 #include <filesystem>
 
@@ -9,10 +20,37 @@ namespace va { namespace control {
 using va::analyzer::multistage::Graph;
 
 namespace {
+static void ensure_ms_nodes_registered() {
+    using va::analyzer::multistage::NodeRegistry;
+    using va::analyzer::multistage::NodePreprocLetterbox;
+    using va::analyzer::multistage::NodeModel;
+    using va::analyzer::multistage::NodeNmsYolo;
+    using va::analyzer::multistage::NodeOverlay;
+    using va::analyzer::multistage::NodeRoiBatch;
+    using va::analyzer::multistage::NodeRoiBatchCuda;
+    using va::analyzer::multistage::NodeKptDecode;
+    using va::analyzer::multistage::NodeOverlayKpt;
+    using va::analyzer::multistage::NodeJoin;
+    using va::analyzer::multistage::NodeReidSmooth;
+    static std::once_flag once;
+    std::call_once(once, []{
+        MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
+        MS_REGISTER_NODE("model.ort", NodeModel);
+        MS_REGISTER_NODE("post.yolo.nms", NodeNmsYolo);
+        MS_REGISTER_NODE("overlay.cuda", NodeOverlay);
+        va::analyzer::multistage::NodeRegistry::instance().reg("overlay.cpu", [](const std::unordered_map<std::string,std::string>& cfg){ return std::make_shared<NodeOverlay>(cfg); });
+        MS_REGISTER_NODE("roi.batch", NodeRoiBatch);
+        MS_REGISTER_NODE("roi.batch.cuda", NodeRoiBatchCuda);
+        MS_REGISTER_NODE("post.yolo.kpt", NodeKptDecode);
+        MS_REGISTER_NODE("overlay.kpt", NodeOverlayKpt);
+        MS_REGISTER_NODE("join", NodeJoin);
+        MS_REGISTER_NODE("reid.smooth", NodeReidSmooth);
+    });
+}
 static std::string resolve_yaml(const PlainPipelineSpec& spec) {
     if (!spec.yaml_path.empty()) return spec.yaml_path;
     if (spec.graph_id.empty()) return {};
-    // 尝试在常见目录搜索 config/graphs/<graph_id>.yaml
+    // 尝试在常见目录下查找 config/graphs/<graph_id>.yaml
     std::vector<std::filesystem::path> candidates;
     std::filesystem::path cwd = std::filesystem::current_path();
     candidates.push_back(cwd / "config" / "graphs");
@@ -35,6 +73,7 @@ static std::string resolve_yaml(const PlainPipelineSpec& spec) {
 }
 
 OpaquePtr GraphAdapterYaml::BuildGraph(const PlainPipelineSpec& spec, std::string* err) {
+    ensure_ms_nodes_registered();
     auto g = std::make_unique<Graph>();
     std::string file = resolve_yaml(spec);
     if (file.empty()) { if (err) *err = "yaml not found by graph_id/yaml_path"; return {}; }
@@ -47,17 +86,19 @@ OpaquePtr GraphAdapterYaml::BuildGraph(const PlainPipelineSpec& spec, std::strin
 
 class SimpleExecutor : public IExecutor {
 public:
-    explicit SimpleExecutor(Graph* g) : g_(g) {}
+    explicit SimpleExecutor(Graph* g, va::core::EngineManager* em) : g_(g), em_(em) {}
     bool Start(std::string* /*err*/) override {
         if (!g_) return false;
-        // 打开节点（无独立线程，此处仅作为生命周期占位）
+        // 打开节点（无数据/单线程，此处仅为控制面占位）
         va::analyzer::multistage::NodeContext ctx{};
+        ctx.engine_registry = reinterpret_cast<void*>(em_);
         opened_ = g_->open_all(ctx);
         return opened_;
     }
     void Stop() override {
         if (!g_) return;
         va::analyzer::multistage::NodeContext ctx{};
+        ctx.engine_registry = reinterpret_cast<void*>(em_);
         g_->close_all(ctx);
         opened_ = false;
     }
@@ -68,13 +109,14 @@ public:
     std::string CollectStatusJson() override { return "{\"phase\":\"Ready\"}"; }
 private:
     Graph* g_ {nullptr};
+    va::core::EngineManager* em_ {nullptr};
     bool opened_ {false};
 };
 
 std::unique_ptr<IExecutor> GraphAdapterYaml::CreateExecutor(void* graph, std::string* /*err*/) {
     auto g = reinterpret_cast<Graph*>(graph);
     if (!g) return {};
-    return std::make_unique<SimpleExecutor>(g);
+    return std::make_unique<SimpleExecutor>(g, engine_manager_);
 }
 
 } } // namespace

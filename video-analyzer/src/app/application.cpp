@@ -292,14 +292,14 @@ bool Application::start() {
         try {
             // 构造适配器与控制器
             if (!graph_adapter_) {
-                graph_adapter_.reset(reinterpret_cast<va::control::IGraphAdapter*>(new va::control::GraphAdapterYaml()));
+                graph_adapter_.reset(reinterpret_cast<va::control::IGraphAdapter*>(new va::control::GraphAdapterYaml(&engine_manager_)));
             }
             if (!pipeline_controller_) {
                 pipeline_controller_ = std::make_unique<va::control::PipelineController>(graph_adapter_.get());
             }
             std::string addr = app_config_.control_plane.grpc_addr.empty()? std::string("0.0.0.0:9090") : app_config_.control_plane.grpc_addr;
             if (const char* ep = std::getenv("VA_GRPC_ADDR")) { addr = ep; }
-            grpc_server_ = va::control::StartGrpcServer(addr, pipeline_controller_.get());
+            grpc_server_ = va::control::StartGrpcServer(addr, pipeline_controller_.get(), this);
             if (!grpc_server_.get()) {
                 VA_LOG_WARN() << "[ControlPlane] gRPC start failed at " << addr;
             } else {

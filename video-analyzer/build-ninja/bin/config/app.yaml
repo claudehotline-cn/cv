@@ -1,10 +1,24 @@
 engine:
   type: ort-cuda
+  provider: cuda
   device: 0
   options:
     # Default to FFmpeg RTSP source for better stability on Windows
-    use_ffmpeg_source: true
-    use_nvdec: false
+    use_ffmpeg_source: false
+    use_nvdec: true
+    use_nvenc: true
+    use_multistage: true
+    use_io_binding: true
+    device_output_views: true
+    stage_device_outputs: false
+    use_cuda_nms": true
+    render_passthrough: false
+    render_cuda": true
+    use_cuda_preproc: true
+    graph_id: analyzer_multistage_example
+    warmup_runs: auto
+    overlay_thickness: 3                                                       
+    overlay_alpha: 0.25
     trt_fp16: true
     trt_workspace_mb: 2048
 sfu:
@@ -37,7 +51,11 @@ security:
     source_per_stream_per_sec: 0.2
     model_per_stream_per_sec: 0.5
 observability:
-  log_level: debug
+  log_level: debug # info|debug|trace|warn|error
+  log_format: text # text|json
+  module_levels: 
+    transport.webrtc: debug                                                                
+    encoder.ffmpeg: debug                                                                        
   console: true
   file:
     path: D:\Projects\ai\cv\logs\video-analyzer-release.log
@@ -48,3 +66,9 @@ observability:
     interval_ms: 5000
   metrics:
     prom_endpoint: "0.0.0.0:9090"
+    extended_labels: true
+    registry_enabled: true
+control_plane:
+  enabled: true
+  grpc_addr: "0.0.0.0:50051"
+  metrics_enabled: true

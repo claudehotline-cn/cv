@@ -19,9 +19,9 @@ profiles:
       preset: veryfast
       tune: zerolatency
       profile: baseline
-      codec: h264_nvenc
+      codec: h264
     publish:
-      whip_url_template: ""
+      whip_url_template: "${whip_base}/${stream}_det_720p/whip"
   seg_720p:
     task: seg
     model:
@@ -42,6 +42,6 @@ profiles:
       preset: veryfast
       tune: zerolatency
       profile: baseline
-      codec: h264_nvenc
+      codec: h264
     publish:
-      whip_url_template: ""
+      whip_url_template: "${whip_base}/${stream}_seg_720p/whip"

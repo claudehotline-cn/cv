@@ -10,6 +10,7 @@ public:
     explicit NodeOverlay(const std::unordered_map<std::string,std::string>& cfg);
     bool open(NodeContext&) override;
     bool process(Packet& p, NodeContext& ctx) override;
+    std::vector<std::string> inputs() const override { return { std::string("rois:") + rois_key_ }; }
 private:
     std::string rois_key_ {"det"};
     // Renderer resolved in open() via context (or created lazily)
@@ -18,4 +19,3 @@ private:
 };
 
 } } } // namespace
-

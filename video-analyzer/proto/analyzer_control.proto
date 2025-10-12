@@ -10,6 +10,12 @@ service AnalyzerControl {
   rpc HotSwapModel(HotSwapModelRequest) returns (HotSwapModelReply);
   rpc Drain(DrainRequest) returns (DrainReply);
   rpc GetStatus(GetStatusRequest) returns (GetStatusReply);
+  // M1+: 控制数据面最小集
+  rpc SubscribePipeline(SubscribePipelineRequest) returns (SubscribePipelineReply);
+  rpc UnsubscribePipeline(UnsubscribePipelineRequest) returns (UnsubscribePipelineReply);
+  rpc SetEngine(SetEngineRequest) returns (SetEngineReply);
+  rpc QueryRuntime(QueryRuntimeRequest) returns (QueryRuntimeReply);
+  rpc ListPipelines(ListPipelinesRequest) returns (ListPipelinesReply);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -36,3 +42,67 @@ message DrainReply   { bool drained = 1; }
 message GetStatusRequest { string pipeline_name = 1; }
 message GetStatusReply   { string phase = 1; string metrics_json = 2; }
 
+// 订阅/取消订阅数据面管线（映射 Application.subscribeStream/unsubscribeStream）
+message SubscribePipelineRequest {
+  string stream_id = 1;
+  string profile = 2;
+  string source_uri = 3;
+  string model_id = 4; // optional
+}
+message SubscribePipelineReply {
+  bool ok = 1;
+  string msg = 2;
+  string subscription_id = 3; // pipeline_key
+}
+message UnsubscribePipelineRequest {
+  string stream_id = 1;
+  string profile = 2;
+}
+message UnsubscribePipelineReply {
+  bool ok = 1;
+  string msg = 2;
+}
+
+// 设置引擎配置（合并语义）：覆盖提供的字段，其他沿用当前引擎
+message SetEngineRequest {
+  string type = 1;      // optional
+  string provider = 2;  // optional
+  int32 device = 3;     // optional
+  map<string,string> options = 4; // optional
+}
+message SetEngineReply {
+  bool ok = 1;
+  string msg = 2;
+  string provider = 3;
+  bool gpu_active = 4;
+  bool io_binding = 5;
+  bool device_binding = 6;
+}
+
+message QueryRuntimeRequest {}
+message QueryRuntimeReply {
+  string provider = 1;
+  bool gpu_active = 2;
+  bool io_binding = 3;
+  bool device_binding = 4;
+}
+
+message ListPipelinesRequest {}
+message PipelineItem {
+  string key = 1;
+  string stream_id = 2;
+  string profile = 3;
+  string source_uri = 4;
+  string model_id = 5;
+  string task = 6;
+  bool running = 7;
+  double fps = 8;
+  uint64 processed_frames = 9;
+  uint64 dropped_frames = 10;
+  uint64 transport_packets = 11;
+  uint64 transport_bytes = 12;
+  string decoder_label = 13;
+}
+message ListPipelinesReply {
+  repeated PipelineItem items = 1;
+}

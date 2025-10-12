@@ -1,6 +1,7 @@
 #include "analyzer/multistage/graph.hpp"
 #include "core/logger.hpp"
 #include <unordered_set>
+#include <algorithm>
 #include <queue>
 
 namespace va { namespace analyzer { namespace multistage {
@@ -22,7 +23,22 @@ void Graph::add_edge(const std::string& src, const std::string& dst) {
             << "' (one or both nodes not found at add_edge time)";
         return;
     }
-    edges_.emplace_back(itS->second, itD->second);
+    edges_.push_back(Edge{itS->second, itD->second, std::string(), false, false});
+}
+
+void Graph::add_edge_cond(const std::string& src, const std::string& dst,
+                          const std::string& attr_key, bool when_not) {
+    auto itS = name2id_.find(src);
+    auto itD = name2id_.find(dst);
+    if (itS == name2id_.end() || itD == name2id_.end()) {
+        VA_LOG_C(::va::core::LogLevel::Warn, "composition")
+            << "Graph add_edge_cond ignored: src='" << src << "' dst='" << dst
+            << "' (one or both nodes not found at add_edge time)";
+        return;
+    }
+    std::string key = attr_key;
+    if (key.rfind("attr:", 0) == 0) key = key.substr(5);
+    edges_.push_back(Edge{itS->second, itD->second, key, when_not, true});
 }
 
 bool Graph::finalize() {
@@ -30,7 +46,7 @@ bool Graph::finalize() {
     const int n = static_cast<int>(nodes_.size());
     std::vector<int> indeg(n, 0);
     std::vector<std::vector<int>> adj(n);
-    for (auto& e : edges_) { indeg[e.second]++; adj[e.first].push_back(e.second); }
+    for (auto& e : edges_) { indeg[e.to]++; adj[e.from].push_back(e.to); }
     std::queue<int> q;
     for (int i=0;i<n;++i) if (indeg[i]==0) q.push(i);
     topo_.clear(); topo_.reserve(n);
@@ -89,11 +105,36 @@ bool Graph::finalize() {
     return true;
 }
 
+static bool attr_truthy(const Attr& a) {
+    if (std::holds_alternative<int64_t>(a)) return std::get<int64_t>(a) != 0;
+    if (std::holds_alternative<double>(a)) return std::get<double>(a) != 0.0;
+    if (std::holds_alternative<float>(a)) return std::get<float>(a) != 0.0f;
+    if (std::holds_alternative<std::string>(a)) {
+        std::string v = std::get<std::string>(a);
+        std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+        return (v=="1"||v=="true"||v=="yes"||v=="on");
+    }
+    return false;
+}
+
 bool Graph::run(Packet& p, NodeContext& ctx) {
     if (!opened_) {
         if (!open_all(ctx)) return false;
     }
     for (int id : topo_) {
+        // Conditional gate: if there are incoming conditional edges, require at least one satisfied
+        bool has_cond = false, pass = false;
+        for (const auto& e : edges_) {
+            if (e.to != id || !e.has_cond) continue;
+            has_cond = true;
+            auto it = p.attrs.find(e.attr_key);
+            bool truth = (it != p.attrs.end()) ? attr_truthy(it->second) : false;
+            if (e.when_not) truth = !truth;
+            if (truth) { pass = true; break; }
+        }
+        if (has_cond && !pass) {
+            continue; // skip this node for this packet
+        }
         if (!nodes_[id].node->process(p, ctx)) {
             VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph node failed: name='" << nodes_[id].name << "' type='" << nodes_[id].type << "'";
             return false;

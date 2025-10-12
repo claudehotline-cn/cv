@@ -5,6 +5,7 @@
 #include <csignal>
 #include <chrono>
 #include <iostream>
+#include <filesystem>
 #include <memory>
 #include <thread>
 
@@ -29,6 +30,14 @@ int main(int argc, char* argv[]) {
 
     va::app::Application app;
     if (!app.initialize(config_dir)) {
+        // 早期失败时，日志系统可能尚未配置，直接向控制台输出诊断信息
+        try {
+            std::cerr << "Failed to initialize application. config_dir='" << config_dir
+                      << "' cwd='" << std::filesystem::current_path().string()
+                      << "' (expect app.yaml or profiles.yaml)" << std::endl;
+        } catch (...) {
+            std::cerr << "Failed to initialize application." << std::endl;
+        }
         VA_LOG_ERROR() << "Failed to initialize application";
         return 1;
     }

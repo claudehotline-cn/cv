@@ -721,6 +721,10 @@ OrtModelSession::RuntimeInfo OrtModelSession::runtimeInfo() const {
     return {};
 }
 
+std::vector<std::string> OrtModelSession::outputNames() const {
+    return {};
+}
+
 #endif // USE_ONNXRUNTIME
 
 } // namespace va::analyzer

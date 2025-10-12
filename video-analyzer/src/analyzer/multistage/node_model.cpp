@@ -92,6 +92,10 @@ bool NodeModel::open(NodeContext& ctx) {
                 st.device_binding = ri.device_binding_active;
                 st.cpu_fallback = ri.cpu_fallback;
                 em->updateRuntimeStatus(std::move(st));
+                VA_LOG_C(::va::core::LogLevel::Info, "app") << "[RuntimeSummary][post-open] provider=" << ri.provider
+                    << " gpu_active=" << std::boolalpha << ri.gpu_active
+                    << " io_binding=" << ri.io_binding_active
+                    << " device_binding=" << ri.device_binding_active;
             } catch (...) { /* best-effort */ }
         }
     }

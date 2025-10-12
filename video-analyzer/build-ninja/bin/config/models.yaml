@@ -4,14 +4,14 @@ models:
       v12l:
         onnx: "model/yolov12l.onnx"
         defaults:
-          confidence_threshold: 0.65
+          confidence_threshold: 0.25
           nms_threshold: 0.45
         input_width: 640
         input_height: 640
       v12x:
         onnx: "model/yolov12x.onnx"
         defaults:
-          confidence_threshold: 0.65
+          confidence_threshold: 0.25
           nms_threshold: 0.45
         input_width: 640
         input_height: 640
@@ -24,7 +24,7 @@ models:
       v12s_seg:
         onnx: "model/yolov12s-seg.onnx"
         defaults:
-          confidence_threshold: 0.65
+          confidence_threshold: 0.25
           nms_threshold: 0.45
         input_width: 640
         input_height: 640

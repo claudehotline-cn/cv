@@ -205,8 +205,6 @@ target_sources(${PROJECT_NAME}
         src/control_plane_embedded/controllers/pipeline_controller.hpp
         src/control_plane_embedded/adapters/graph_adapter_yaml.cpp
         src/control_plane_embedded/adapters/graph_adapter_yaml.hpp
-        src/control_plane_embedded/api/grpc_server.cpp
-        src/control_plane_embedded/api/grpc_server.hpp
         src/control_plane_embedded/exporters/prometheus_exporter.cpp
         src/control_plane_embedded/exporters/prometheus_exporter.hpp
         src/control_plane_embedded/io/from_vsm_link.hpp)
@@ -269,6 +267,10 @@ if (USE_GRPC)
 
         if (VA_ENABLE_GRPC_SERVER)
             add_definitions(-DVA_ENABLE_GRPC_SERVER)
+            target_sources(${PROJECT_NAME}
+                PRIVATE
+                    src/control_plane_embedded/api/grpc_server.cpp
+                    src/control_plane_embedded/api/grpc_server.hpp)
         endif()
     else()
         message(WARNING "gRPC/Protobuf not found; building without gRPC (USE_GRPC=OFF)")
@@ -315,34 +317,7 @@ if (CUDAToolkit_FOUND)
 endif()
 
 
-# Copy ONNX Runtime runtime DLLs next to the executable on Windows to avoid loader errors
-if (WIN32 AND DEFINED ONNXRUNTIME_ROOT)
-    set(ORT_DLL_DIR "${ONNXRUNTIME_ROOT}/lib")
-    if (EXISTS "${ORT_DLL_DIR}/onnxruntime.dll")
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ORT_DLL_DIR}/onnxruntime.dll"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime.dll")
-    endif()
-    if (EXISTS "${ORT_DLL_DIR}/onnxruntime_providers_shared.dll")
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ORT_DLL_DIR}/onnxruntime_providers_shared.dll"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime_providers_shared.dll")
-    endif()
-    if (EXISTS "${ORT_DLL_DIR}/onnxruntime_providers_cuda.dll")
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ORT_DLL_DIR}/onnxruntime_providers_cuda.dll"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime_providers_cuda.dll")
-    endif()
-    if (EXISTS "${ORT_DLL_DIR}/onnxruntime_providers_tensorrt.dll")
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ORT_DLL_DIR}/onnxruntime_providers_tensorrt.dll"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime_providers_tensorrt.dll")
-    endif()
-endif()
+## Removed DLL copy from build scripts per request
 
 # Some ORT builds place headers under include/onnxruntime/core/session
 if (ONNXRUNTIME_INCLUDE_DIR)
@@ -384,29 +359,12 @@ endif()
 
 # --- Post-build: copy runtime DLLs to bin (Windows) ---
 if (WIN32)
-    # Minimal copy for onnxruntime.dll (optional), prefer explicit DLL dir when provided
-    if (DEFINED ONNXRUNTIME_DLL_DIR AND EXISTS "${ONNXRUNTIME_DLL_DIR}")
-        set(ORT_DLL_DIR "${ONNXRUNTIME_DLL_DIR}")
-    elseif (DEFINED ONNXRUNTIME_ROOT)
-        set(ORT_DLL_DIR "${ONNXRUNTIME_ROOT}/lib")
-    endif()
-    if (DEFINED ORT_DLL_DIR)
-        if (EXISTS "${ORT_DLL_DIR}/onnxruntime.dll")
-            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${ORT_DLL_DIR}/onnxruntime.dll"
-                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime.dll")
-        endif()
-    endif()
+    # Note: 为避免构建脚本内复制依赖，这里不做任何 DLL 拷贝。
+    # 运行时依赖请在部署脚本或手动复制解决。
 endif()
 
 if (WIN32)
-    # Custom target: copy runtime deps (runs only when explicitly built)
-    add_custom_target(va_copy_runtime_deps
-        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/tools/copy_runtime_deps.ps1"
-            "$<TARGET_FILE_DIR:${PROJECT_NAME}>" "${ONNXRUNTIME_ROOT}" "${VCPKG_ROOT_DIR}" "${FFMPEG_LOCAL_ROOT}" "${ONNXRUNTIME_DLL_DIR}"
-        VERBATIM)
-    add_dependencies(va_copy_runtime_deps ${PROJECT_NAME})
+    # 不创建任何自动复制目标，避免构建阶段触发复制。
 endif()
 
 # Ensure vcpkg include path is visible for header-only deps (ixwebsocket, rtc/libdatachannel, jsoncpp, etc.)
@@ -418,6 +376,25 @@ endif()
 
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 iphlpapi psapi crypt32 bcrypt)
+    # Some environments with Ninja+MSVC miss Windows SDK lib directory in LIB paths.
+    # Add UM lib directory explicitly when available to avoid LNK1181 on ws2_32.lib.
+    if(DEFINED ENV{WindowsSdkDir})
+        # Try both WindowsSDKVersion (with trailing slash) and WindowsSDKLibVersion (sometimes used)
+        if(DEFINED ENV{WindowsSDKVersion})
+            string(REGEX REPLACE "/$" "" _SDK_VER "$ENV{WindowsSDKVersion}")
+            set(_WS_UM_LIB "$ENV{WindowsSdkDir}/Lib/${_SDK_VER}/um/x64")
+            if (EXISTS "${_WS_UM_LIB}/ws2_32.lib")
+                target_link_directories(${PROJECT_NAME} PRIVATE "${_WS_UM_LIB}")
+            endif()
+        endif()
+        if(DEFINED ENV{WindowsSDKLibVersion})
+            string(REGEX REPLACE "/$" "" _SDK_LIB_VER "$ENV{WindowsSDKLibVersion}")
+            set(_WS_UM_LIB2 "$ENV{WindowsSdkDir}/Lib/${_SDK_LIB_VER}/um/x64")
+            if (EXISTS "${_WS_UM_LIB2}/ws2_32.lib")
+                target_link_directories(${PROJECT_NAME} PRIVATE "${_WS_UM_LIB2}")
+            endif()
+        endif()
+    endif()
     # Ensure MSVC STL/UCRT/WinSDK include paths are visible to Ninja+MSVC in some CI shells
     if(DEFINED ENV{VCToolsInstallDir})
         target_include_directories(${PROJECT_NAME} PRIVATE "$ENV{VCToolsInstallDir}/include")

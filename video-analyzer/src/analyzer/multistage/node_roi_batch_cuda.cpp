@@ -38,7 +38,7 @@ bool NodeRoiBatchCuda::process(Packet& p, NodeContext& ctx) {
     const auto& rois = it->second;
     staged_.clear();
 
-#if VA_MS_RBC_HAS_CUDA
+#if VA_MS_RBC_HAS_CUDA && defined(VA_HAS_CUDA_KERNELS)
     if (p.frame.has_device_surface && p.frame.device.on_gpu && p.frame.device.fmt == va::core::PixelFormat::NV12) {
         const int src_w = p.frame.device.width;
         const int src_h = p.frame.device.height;
@@ -109,4 +109,3 @@ bool NodeRoiBatchCuda::process(Packet& p, NodeContext& ctx) {
 }
 
 } } } // namespace
-
