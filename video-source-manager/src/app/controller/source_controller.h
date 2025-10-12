@@ -22,6 +22,7 @@ struct StreamStat {
   double jitter_ms {0.0};
   double loss_pct {0.0};
   std::string phase {"Ready"};
+  uint64_t last_ok_unixts {0};
 };
 
 class SourceController {
@@ -39,6 +40,11 @@ public:
               std::string* err);
   std::vector<StreamStat> Collect();
 
+  // Registry persistence (simple TSV: attach_id \t uri \t profile \t model_id)
+  void SetRegistryPath(const std::string& path) { std::lock_guard<std::mutex> lk(mu_); registry_path_ = path; }
+  bool LoadRegistry(std::string* err);
+  bool SaveRegistry(std::string* err);
+
 private:
   struct Session {
     std::unique_ptr<FfmpegRtspReader> reader;
@@ -49,6 +55,7 @@ private:
   };
   std::mutex mu_;
   std::unordered_map<std::string, std::unique_ptr<Session>> sessions_; // attach_id -> Session
+  std::string registry_path_ {"vsm_registry.tsv"};
 };
 
 } // namespace vsm
