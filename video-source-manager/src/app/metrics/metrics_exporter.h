@@ -19,12 +19,14 @@ public:
 
 private:
   void ServerLoop();
+  void WakeAccept();
 
   int port_;
   BuilderFn builder_;
   std::atomic<bool> running_{false};
   std::thread th_;
+  // server socket for graceful shutdown
+  int server_fd_{-1};
 };
 
 } // namespace vsm::metrics
-
