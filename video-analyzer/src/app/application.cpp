@@ -411,8 +411,8 @@ void Application::startVsmWatchIfConfigured() {
                 grpc::ClientContext ctx;
                 vsm::v1::WatchStateRequest req; req.set_interval_ms(interval_ms);
                 std::unique_ptr<grpc::ClientReader<vsm::v1::WatchStateReply>> reader(stub->WatchState(&ctx, req));
-                struct Item { std::string uri; std::string profile; };
-                std::unordered_map<std::string, Item> last; // attach_id -> {uri,profile}
+                struct Item { std::string uri; std::string profile; std::string model; };
+                std::unordered_map<std::string, Item> last; // attach_id -> {uri,profile,model}
                 std::unordered_map<std::string, long long> last_change_ms;
                 auto now_ms = [](){ return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
                 int debounce_ms = 300; if (const char* v = std::getenv("VA_VSM_DEBOUNCE_MS")) { try { int t = std::stoi(v); if (t>=0) debounce_ms = t; } catch (...) {} }
@@ -421,7 +421,7 @@ void Application::startVsmWatchIfConfigured() {
                     std::unordered_map<std::string, Item> cur;
                     cur.reserve(static_cast<size_t>(rep.items_size()));
                     for (const auto& it : rep.items()) {
-                        Item item{it.source_uri(), it.profile()};
+                        Item item{it.source_uri(), it.profile(), it.model_id()};
                         cur[it.attach_id()] = item;
                     }
                     // create/update
@@ -429,10 +429,10 @@ void Application::startVsmWatchIfConfigured() {
                         const std::string& sid = kv.first; const Item& item = kv.second;
                         const std::string prof = item.profile.empty()? default_profile : item.profile;
                         // find existing pipeline
-                        bool exists = false; std::string exist_uri;
+                        bool exists = false; std::string exist_uri; std::string exist_model;
                         for (const auto& pinfo : track_manager_->listPipelines()) {
                             if (pinfo.stream_id == sid && pinfo.profile_id == prof) {
-                                exists = true; exist_uri = pinfo.source_uri; break;
+                                exists = true; exist_uri = pinfo.source_uri; exist_model = pinfo.model_id; break;
                             }
                         }
                         long long nowts = now_ms();
@@ -457,6 +457,15 @@ void Application::startVsmWatchIfConfigured() {
                                     if (ok) VA_LOG_INFO() << "[ControlPlane] auto-switchSource stream=" << sid << " profile=" << prof;
                                     else VA_LOG_WARN() << "[ControlPlane] auto-switchSource failed stream=" << sid << " err=" << last_error_;
                                     mark(std::string("sw:")+sid+":"+prof);
+                                }
+                            }
+                            // exists: if model changed and provided, switch model
+                            if (!item.model.empty() && exist_model != item.model) {
+                                if (!too_soon(std::string("md:")+sid+":"+prof)) {
+                                    bool okm = switchModel(sid, prof, item.model);
+                                    if (okm) VA_LOG_INFO() << "[ControlPlane] auto-switchModel stream=" << sid << " profile=" << prof << " model=" << item.model;
+                                    else VA_LOG_WARN() << "[ControlPlane] auto-switchModel failed stream=" << sid << " model=" << item.model << " err=" << last_error_;
+                                    mark(std::string("md:")+sid+":"+prof);
                                 }
                             }
                         }
