@@ -53,19 +53,7 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     (void)body; (void)ctype;
     auto ok = [&](const std::string& data){ *status=200; return std::string("{\"success\":true,\"data\":")+data+"}"; };
     auto err = [&](int st, const std::string& msg){ *status=st; return std::string("{\"success\":false,\"message\":\"")+vsm::rest::jsonEscape(msg)+"\"}"; };
-    // naive JSON body parser for flat string pairs: {"k":"v",...}
-    auto parse_json_kv = [&](std::unordered_map<std::string,std::string>& out){
-      std::string s = body; size_t i=0; auto skip=[&](){ while(i<s.size() && (s[i]==' '||s[i]=='\n'||s[i]=='\r'||s[i]=='\t')) ++i; };
-      skip(); if (i>=s.size() || s[i] != '{') return; ++i; skip();
-      while (i<s.size() && s[i] != '}'){
-        skip(); if (i>=s.size()||s[i] != '"') break; ++i; size_t k0=i; while(i<s.size()&&s[i]!='"') ++i; if(i>=s.size()) break; std::string k=s.substr(k0,i-k0); ++i; skip(); if(i>=s.size()||s[i]!=':') break; ++i; skip();
-        std::string v;
-        if (i<s.size() && s[i]=='"'){ ++i; size_t v0=i; while(i<s.size()&&s[i]!='"') ++i; if(i>=s.size()) break; v=s.substr(v0,i-v0); ++i; }
-        else { size_t v0=i; while(i<s.size() && s[i]!=',' && s[i]!='}') ++i; v=s.substr(v0,i-v0); }
-        out[k]=v; skip(); if (i<s.size() && s[i]==','){ ++i; skip(); }
-      }
-    };
-    std::unordered_map<std::string,std::string> jbody; if (!body.empty() && body.find('{') != std::string::npos) parse_json_kv(jbody);
+    std::unordered_map<std::string,std::string> jbody; if (!body.empty() && body.find('{') != std::string::npos) vsm::rest::parseJsonObjectFlat(body, jbody);
     if (method=="GET" && (path=="/api/source/list")) {
       auto vec = controller_->Collect();
       std::ostringstream o; o<<"["; bool first=true; for (auto& s: vec){ if(!first)o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; }

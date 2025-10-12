@@ -217,4 +217,44 @@ std::string jsonEscape(const std::string& s) {
   return o;
 }
 
+namespace {
+struct JsonCursor { const char* p; const char* end; };
+static inline void skipWS(JsonCursor& c){ while(c.p<c.end && (*c.p==' '||*c.p=='\n'||*c.p=='\r'||*c.p=='\t')) ++c.p; }
+static bool parseHex4(JsonCursor& c, unsigned& out){ out=0; for(int i=0;i<4;++i){ if(c.p>=c.end) return false; char ch=*c.p++; unsigned v=0; if(ch>='0'&&ch<='9') v=ch-'0'; else if(ch>='a'&&ch<='f') v=10+ch-'a'; else if(ch>='A'&&ch<='F') v=10+ch-'A'; else return false; out=(out<<4)|v; } return true; }
+static void appendUtf8(unsigned cp, std::string& out){ if(cp<=0x7F) out.push_back((char)cp); else if(cp<=0x7FF){ out.push_back((char)(0xC0|((cp>>6)&0x1F))); out.push_back((char)(0x80|(cp&0x3F))); } else if(cp<=0xFFFF){ out.push_back((char)(0xE0|((cp>>12)&0x0F))); out.push_back((char)(0x80|((cp>>6)&0x3F))); out.push_back((char)(0x80|(cp&0x3F))); } else { out.push_back((char)(0xF0|((cp>>18)&0x07))); out.push_back((char)(0x80|((cp>>12)&0x3F))); out.push_back((char)(0x80|((cp>>6)&0x3F))); out.push_back((char)(0x80|(cp&0x3F))); } }
+static bool parseString(JsonCursor& c, std::string& out){ if(c.p>=c.end || *c.p!='"') return false; ++c.p; while(c.p<c.end){ char ch=*c.p++; if(ch=='"') return true; if(ch=='\\'){ if(c.p>=c.end) return false; char e=*c.p++; switch(e){ case '"': out.push_back('"'); break; case '\\': out.push_back('\\'); break; case '/': out.push_back('/'); break; case 'b': out.push_back('\b'); break; case 'f': out.push_back('\f'); break; case 'n': out.push_back('\n'); break; case 'r': out.push_back('\r'); break; case 't': out.push_back('\t'); break; case 'u': { unsigned cp; if(!parseHex4(c,cp)) return false; // surrogate pairs
+            if(cp>=0xD800 && cp<=0xDBFF){ if(c.p+2<=c.end && *c.p=='\\' && *(c.p+1)=='u'){ c.p+=2; unsigned cp2; if(!parseHex4(c,cp2)) return false; if(cp2>=0xDC00 && cp2<=0xDFFF){ unsigned u = 0x10000 + (((cp-0xD800)<<10)|(cp2-0xDC00)); appendUtf8(u,out); break; } }
+            }
+            appendUtf8(cp,out); break; }
+          default: return false; }
+        } else { out.push_back(ch); }
+      }
+      return false;
+}
+static bool parseLiteral(JsonCursor& c, const char* lit, std::string* out){ const char* q=lit; const char* start=c.p; while(*q && c.p<c.end && *c.p==*q){ ++c.p; ++q; } if(*q==0){ if(out) *out=std::string(start,c.p-start); return true; } c.p=start; return false; }
+static bool parseNumber(JsonCursor& c, std::string& out){ const char* start=c.p; if(c.p<c.end && (*c.p=='-'||*c.p=='+')) ++c.p; if(c.p<c.end && *c.p=='0'){ ++c.p; } else { if(c.p>=c.end || !std::isdigit((unsigned char)*c.p)) return false; while(c.p<c.end && std::isdigit((unsigned char)*c.p)) ++c.p; }
+ if(c.p<c.end && *c.p=='.'){ ++c.p; if(c.p>=c.end || !std::isdigit((unsigned char)*c.p)) return false; while(c.p<c.end && std::isdigit((unsigned char)*c.p)) ++c.p; }
+ if(c.p<c.end && (*c.p=='e'||*c.p=='E')){ ++c.p; if(c.p<c.end && (*c.p=='+'||*c.p=='-')) ++c.p; if(c.p>=c.end || !std::isdigit((unsigned char)*c.p)) return false; while(c.p<c.end && std::isdigit((unsigned char)*c.p)) ++c.p; }
+ out.assign(start, c.p-start); return true; }
+static bool parseValue(JsonCursor& c, std::string& asStr);
+static bool parseArray(JsonCursor& c, std::string& out){ const char* start=c.p; if(*c.p!='[') return false; int depth=0; do{ if(*c.p=='[') ++depth; if(*c.p==']') --depth; ++c.p; } while(c.p<c.end && depth>0); if(depth==0){ out.assign(start, c.p-start); return true; } return false; }
+static bool parseObjectRaw(JsonCursor& c, std::string& out){ const char* start=c.p; if(*c.p!='{') return false; int depth=0; do{ if(*c.p=='{') ++depth; if(*c.p=='}') --depth; ++c.p; } while(c.p<c.end && depth>0); if(depth==0){ out.assign(start, c.p-start); return true; } return false; }
+static bool parseValue(JsonCursor& c, std::string& asStr){ skipWS(c); if(c.p>=c.end) return false; char ch=*c.p; if(ch=='"'){ return parseString(c, asStr); } else if(ch=='{' ){ return parseObjectRaw(c, asStr); } else if(ch=='['){ return parseArray(c, asStr); } else if(std::isdigit((unsigned char)ch) || ch=='-' || ch=='+'){ return parseNumber(c, asStr); } else { if(parseLiteral(c, "true", &asStr)) return true; if(parseLiteral(c, "false", &asStr)) return true; if(parseLiteral(c, "null", &asStr)) return true; }
+  return false; }
+} // anon
+
+bool parseJsonObjectFlat(const std::string& json,
+                         std::unordered_map<std::string,std::string>& out) {
+  JsonCursor c{ json.data(), json.data()+json.size() };
+  skipWS(c); if (c.p>=c.end || *c.p!='{') return false; ++c.p; skipWS(c);
+  while (c.p<c.end && *c.p!='}') {
+    std::string key; if(!parseString(c,key)) return false; skipWS(c); if (c.p>=c.end || *c.p!=':') return false; ++c.p; skipWS(c);
+    std::string val; if(!parseValue(c,val)) return false; out[key]=val; skipWS(c);
+    if (c.p<c.end && *c.p==','){ ++c.p; skipWS(c); continue; }
+    if (c.p<c.end && *c.p=='}'){ break; }
+  }
+  if (c.p>=c.end || *c.p!='}') return false; ++c.p; skipWS(c);
+  return true;
+}
+
 } // namespace vsm::rest

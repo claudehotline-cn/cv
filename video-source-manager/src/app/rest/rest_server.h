@@ -36,8 +36,10 @@ private:
   int server_fd_{-1};
 };
 
-// Helpers to build JSON safely
+// Helpers to构建/解析 JSON（最小实现）
 std::string jsonEscape(const std::string& s);
+// 解析顶层 JSON 对象的一级键值，支持 string/number/bool/null，数组/对象将原样序列化后作为字符串返回。
+bool parseJsonObjectFlat(const std::string& json,
+                         std::unordered_map<std::string,std::string>& out);
 
 } // namespace vsm::rest
-
