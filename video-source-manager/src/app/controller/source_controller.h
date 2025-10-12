@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
 
 namespace vsm {
 
@@ -42,6 +43,8 @@ public:
   bool GetOne(const std::string& attach_id, StreamStat* out);
   uint64_t Revision() const { return revision_.load(); }
   std::pair<uint64_t, std::vector<StreamStat>> Snapshot();
+  // Block until revision changes or timeout_ms elapses. Returns new_rev.
+  bool WaitForChange(uint64_t since, int timeout_ms, uint64_t* new_rev);
 
   // Registry persistence (simple TSV: attach_id \t uri \t profile \t model_id)
   void SetRegistryPath(const std::string& path) { std::lock_guard<std::mutex> lk(mu_); registry_path_ = path; }
@@ -60,6 +63,7 @@ private:
   std::unordered_map<std::string, std::unique_ptr<Session>> sessions_; // attach_id -> Session
   std::string registry_path_ {"vsm_registry.tsv"};
   std::atomic<uint64_t> revision_{0};
+  std::condition_variable cv_;
 };
 
 } // namespace vsm

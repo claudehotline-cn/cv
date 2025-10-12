@@ -71,92 +71,85 @@ void RestServer::Loop() {
     int cfd = ::accept(server_fd_, (sockaddr*)&caddr, &clen);
     if (cfd < 0) { continue; }
 #endif
-    // read headers
+    std::thread([this,cfd]() {
 #ifdef _WIN32
-    int rcv_ms = 2000; ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&rcv_ms, sizeof(rcv_ms));
+      int rcv_ms = 2000; ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&rcv_ms, sizeof(rcv_ms));
 #else
-    struct timeval tv; tv.tv_sec = 2; tv.tv_usec = 0; ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+      struct timeval tv; tv.tv_sec = 2; tv.tv_usec = 0; ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
-    std::string req; req.reserve(4096);
-    char buf[2048]; bool header_done=false; size_t max=1<<20; size_t content_length=0;
-    for (;;) {
+      std::string req; req.reserve(4096);
+      char buf[2048]; bool header_done=false; size_t max=1<<20; size_t content_length=0;
+      for (;;) {
 #ifdef _WIN32
-      int n = ::recv(cfd, buf, sizeof(buf), 0);
+        int n = ::recv(cfd, buf, sizeof(buf), 0);
 #else
-      ssize_t n = ::recv(cfd, buf, sizeof(buf), 0);
+        ssize_t n = ::recv(cfd, buf, sizeof(buf), 0);
 #endif
-      if (n<=0) break; req.append(buf, buf+n);
-      auto p = req.find("\r\n\r\n");
-      if (p != std::string::npos) { header_done = true; break; }
-      if (req.size() > max) break;
-    }
-    if (!header_done) { closesock(cfd); continue; }
-    // parse request line and headers
-    std::string method, path;
-    {
-      auto line_end = req.find("\r\n");
-      if (line_end != std::string::npos) {
-        std::istringstream iss(req.substr(0,line_end));
-        std::string http; iss >> method >> path >> http;
+        if (n<=0) break; req.append(buf, buf+n);
+        auto p = req.find("\r\n\r\n");
+        if (p != std::string::npos) { header_done = true; break; }
+        if (req.size() > max) break;
       }
-      // headers for content-length
-      auto hdrs = req.substr(0, req.find("\r\n\r\n")+2);
-      auto pos = hdrs.find("Content-Length:");
-      if (pos == std::string::npos) pos = hdrs.find("content-length:");
-      if (pos != std::string::npos) {
-        auto end = hdrs.find("\r\n", pos);
-        auto val = hdrs.substr(pos, end-pos);
-        auto cpos = val.find(":"); if (cpos != std::string::npos) {
-          try { content_length = (size_t)std::stoll(val.substr(cpos+1)); } catch(...) {}
+      if (!header_done) { closesock(cfd); return; }
+      std::string method, path;
+      {
+        auto line_end = req.find("\r\n");
+        if (line_end != std::string::npos) {
+          std::istringstream iss(req.substr(0,line_end));
+          std::string http; iss >> method >> path >> http;
+        }
+        auto hdrs = req.substr(0, req.find("\r\n\r\n")+2);
+        auto pos = hdrs.find("Content-Length:");
+        if (pos == std::string::npos) pos = hdrs.find("content-length:");
+        if (pos != std::string::npos) {
+          auto end = hdrs.find("\r\n", pos);
+          auto val = hdrs.substr(pos, end-pos);
+          auto cpos = val.find(":"); if (cpos != std::string::npos) {
+            try { content_length = (size_t)std::stoll(val.substr(cpos+1)); } catch(...) {}
+          }
         }
       }
-    }
-    // read body if any
-    std::string body;
-    auto after = req.find("\r\n\r\n");
-    if (after != std::string::npos) {
-      size_t already = req.size() - (after+4);
-      body.assign(req.data()+after+4, already);
-      while (body.size() < content_length && body.size() < max) {
+      std::string body;
+      auto after = req.find("\r\n\r\n");
+      if (after != std::string::npos) {
+        size_t already = req.size() - (after+4);
+        body.assign(req.data()+after+4, already);
+        while (body.size() < content_length && body.size() < max) {
 #ifdef _WIN32
-        int n2 = ::recv(cfd, buf, sizeof(buf), 0);
+          int n2 = ::recv(cfd, buf, sizeof(buf), 0);
 #else
-        ssize_t n2 = ::recv(cfd, buf, sizeof(buf), 0);
+          ssize_t n2 = ::recv(cfd, buf, sizeof(buf), 0);
 #endif
-        if (n2 <= 0) break;
-        body.append(buf, buf+n2);
+          if (n2 <= 0) break;
+          body.append(buf, buf+n2);
+        }
       }
-    }
-    // parse query
-    auto query = parseQuery(path);
-    // strip query from path
-    auto qpos = path.find('?'); if (qpos != std::string::npos) path = path.substr(0, qpos);
+      auto query = parseQuery(path);
+      auto qpos = path.find('?'); if (qpos != std::string::npos) path = path.substr(0, qpos);
 
-    int status = 200; std::string ctype = "application/json; charset=utf-8";
-    std::string resp;
-    try {
-      resp = handler_ ? handler_(method, path, query, body, &status, &ctype) : std::string("{}");
-    } catch (...) {
-      status = 500; resp = "{\"success\":false,\"message\":\"internal error\"}"; ctype = "application/json; charset=utf-8";
-    }
+      int status = 200; std::string ctype = "application/json; charset=utf-8";
+      std::string resp;
+      try { resp = handler_ ? handler_(method, path, query, body, &status, &ctype) : std::string("{}"); }
+      catch (...) { status = 500; resp = "{\"success\":false,\"message\":\"internal error\"}"; ctype = "application/json; charset=utf-8"; }
 
-    std::ostringstream oss;
-    if (status == 200) oss << "HTTP/1.1 200 OK\r\n";
-    else if (status == 400) oss << "HTTP/1.1 400 Bad Request\r\n";
-    else if (status == 404) oss << "HTTP/1.1 404 Not Found\r\n";
-    else if (status == 405) oss << "HTTP/1.1 405 Method Not Allowed\r\n";
-    else oss << "HTTP/1.1 500 Internal Server Error\r\n";
-    oss << "Content-Type: " << ctype << "\r\n";
-    oss << "Connection: close\r\n";
-    oss << "Content-Length: " << resp.size() << "\r\n\r\n";
-    oss << resp;
-    auto s = oss.str();
+      std::ostringstream oss;
+      if (status == 200) oss << "HTTP/1.1 200 OK\r\n";
+      else if (status == 400) oss << "HTTP/1.1 400 Bad Request\r\n";
+      else if (status == 404) oss << "HTTP/1.1 404 Not Found\r\n";
+      else if (status == 405) oss << "HTTP/1.1 405 Method Not Allowed\r\n";
+      else oss << "HTTP/1.1 500 Internal Server Error\r\n";
+      oss << "Content-Type: " << ctype << "\r\n";
+      oss << "Connection: close\r\n";
+      oss << "Content-Length: " << resp.size() << "\r\n\r\n";
+      oss << resp;
+      auto s = oss.str();
 #ifdef _WIN32
-    ::send(cfd, s.c_str(), (int)s.size(), 0);
+      ::send(cfd, s.c_str(), (int)s.size(), 0);
 #else
-    ::send(cfd, s.c_str(), s.size(), 0);
+      ::send(cfd, s.c_str(), s.size(), 0);
 #endif
-    closesock(cfd);
+      closesock(cfd);
+    }).detach();
   }
 
   if (server_fd_ >= 0) { closesock(server_fd_); server_fd_=-1; }
@@ -225,4 +218,3 @@ std::string jsonEscape(const std::string& s) {
 }
 
 } // namespace vsm::rest
-

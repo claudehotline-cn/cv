@@ -24,6 +24,7 @@ bool SourceController::Attach(const std::string& attach_id, const std::string& s
   // Persist registry best-effort
   try { SaveRegistry(nullptr); } catch (...) {}
   revision_.fetch_add(1);
+  cv_.notify_all();
   return true;
 }
 
@@ -35,6 +36,7 @@ bool SourceController::Detach(const std::string& attach_id, std::string* /*err*/
   sessions_.erase(it);
   try { SaveRegistry(nullptr); } catch (...) {}
   revision_.fetch_add(1);
+  cv_.notify_all();
   return true;
 }
 
@@ -68,6 +70,7 @@ bool SourceController::Update(const std::string& attach_id,
   if (auto m = options.find("model_id"); m != options.end()) sess->model_id = m->second;
   try { SaveRegistry(nullptr); } catch (...) {}
   revision_.fetch_add(1);
+  cv_.notify_all();
   return true;
 }
 
@@ -142,6 +145,15 @@ bool SourceController::GetOne(const std::string& attach_id, StreamStat* out) {
 std::pair<uint64_t, std::vector<StreamStat>> SourceController::Snapshot() {
   uint64_t rev = revision_.load();
   return {rev, Collect()};
+}
+
+bool SourceController::WaitForChange(uint64_t since, int timeout_ms, uint64_t* new_rev) {
+  std::unique_lock<std::mutex> lk(mu_);
+  if (revision_.load() != since) { if (new_rev) *new_rev = revision_.load(); return true; }
+  if (timeout_ms <= 0) { if (new_rev) *new_rev = revision_.load(); return false; }
+  cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms), [&]{ return revision_.load() != since; });
+  if (new_rev) *new_rev = revision_.load();
+  return revision_.load() != since;
 }
 
 } // namespace vsm

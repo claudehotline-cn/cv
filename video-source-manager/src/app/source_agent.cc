@@ -83,10 +83,16 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     }
     if (method=="GET" && path=="/api/source/watch") {
       uint64_t since = 0; if (auto it=query.find("since"); it!=query.end()) { try { since = std::stoull(it->second); } catch(...){} }
+      int timeout_ms = 25000; if (auto it=query.find("timeout_ms"); it!=query.end()) { try { timeout_ms = std::stoi(it->second); } catch(...){} }
+      bool full = false; if (auto it=query.find("full"); it!=query.end()) { full = (it->second=="1"||it->second=="true"); }
+      uint64_t new_rev = since;
+      bool changed = controller_->WaitForChange(since, timeout_ms, &new_rev);
+      if (!changed && !full) {
+        std::ostringstream o; o<<"{\"rev\":"<<new_rev<<",\"items\":[]}"; return ok(o.str());
+      }
       auto snap = controller_->Snapshot();
       std::ostringstream o; o<<"{\"rev\":"<<snap.first<<",\"items\":";
       o<<"["; bool first=true; for (auto& s: snap.second){ if(!first)o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; } o<<"]}";
-      (void)since; // simple immediate snapshot for now
       return ok(o.str());
     }
     *status = 404; return "{}";
