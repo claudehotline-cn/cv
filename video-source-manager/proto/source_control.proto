@@ -8,15 +8,15 @@ service SourceControl {
 }
 
 message AttachRequest {
-  string attach_id   = 1;   // 会话标识
-  string source_uri  = 2;   // rtsp://...
-  string pipeline_id = 3;   // 路由到的 pipeline
+  string attach_id   = 1;
+  string source_uri  = 2;
+  string pipeline_id = 3;
   map<string,string> options = 4;
 }
 message AttachReply { bool accepted = 1; string msg = 2; }
 
 message DetachRequest { string attach_id = 1; }
-message DetachReply { bool removed = 1; string msg = 2; }
+message DetachReply   { bool removed = 1; string msg = 2; }
 
 message GetHealthRequest {}
 message GetHealthReply {
@@ -28,6 +28,6 @@ message StreamStat {
   double rtt_ms    = 3;
   double jitter_ms = 4;
   double loss_pct  = 5;
-  string phase     = 6;   // Ready/Connecting/Backoff/Failed
+  string phase     = 6; // Ready/Connecting/Backoff/Failed
 }
 

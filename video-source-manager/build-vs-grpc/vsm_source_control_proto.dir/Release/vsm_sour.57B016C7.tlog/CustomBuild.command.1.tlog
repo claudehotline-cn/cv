@@ -1,0 +1,30 @@
+^D:\PROJECTS\AI\CV\VIDEO-SOURCE-MANAGER\BUILD-VS-GRPC\CMAKEFILES\188C33400D4F8B0986D4CD940F2B6514\SOURCE_CONTROL.PB.CC.RULE
+setlocal
+D:\Projects\vcpkg\installed\x64-windows\tools\protobuf\protoc.exe --cpp_out D:/Projects/ai/cv/video-source-manager/build-vs-grpc/generated -I D:/Projects/ai/cv/video-source-manager/proto D:/Projects/ai/cv/video-source-manager/proto/source_control.proto
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\PROJECTS\AI\CV\VIDEO-SOURCE-MANAGER\BUILD-VS-GRPC\CMAKEFILES\188C33400D4F8B0986D4CD940F2B6514\SOURCE_CONTROL.GRPC.PB.CC.RULE
+setlocal
+D:\Projects\vcpkg\installed\x64-windows\tools\protobuf\protoc.exe --grpc_out D:/Projects/ai/cv/video-source-manager/build-vs-grpc/generated --plugin=protoc-gen-grpc=D:/Projects/vcpkg/installed/x64-windows/tools/grpc/grpc_cpp_plugin.exe -I D:/Projects/ai/cv/video-source-manager/proto D:/Projects/ai/cv/video-source-manager/proto/source_control.proto
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\PROJECTS\AI\CV\VIDEO-SOURCE-MANAGER\CMAKELISTS.TXT
+setlocal
+H:\CMake\bin\cmake.exe -SD:/Projects/ai/cv/video-source-manager -BD:/Projects/ai/cv/video-source-manager/build-vs-grpc --check-stamp-file D:/Projects/ai/cv/video-source-manager/build-vs-grpc/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

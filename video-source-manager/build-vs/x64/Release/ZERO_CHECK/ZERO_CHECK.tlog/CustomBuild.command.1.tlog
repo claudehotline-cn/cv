@@ -1,0 +1,10 @@
+^D:\PROJECTS\AI\CV\VIDEO-SOURCE-MANAGER\BUILD-VS\CMAKEFILES\FB6F761C912C0CC8C12B000907A51CB6\GENERATE.STAMP.RULE
+setlocal
+H:\CMake\bin\cmake.exe -SD:/Projects/ai/cv/video-source-manager -BD:/Projects/ai/cv/video-source-manager/build-vs --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/Projects/ai/cv/video-source-manager/build-vs/VideoSourceManager.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

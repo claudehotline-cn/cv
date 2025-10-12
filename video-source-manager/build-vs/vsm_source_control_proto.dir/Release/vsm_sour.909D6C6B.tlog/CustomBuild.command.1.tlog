@@ -1,0 +1,30 @@
+^D:\PROJECTS\AI\CV\VIDEO-SOURCE-MANAGER\BUILD-VS\CMAKEFILES\B8D5B90A68CE3340EB2BAB2FC907CE03\SOURCE_CONTROL.PB.CC.RULE
+setlocal
+H:\anaconda3\Library\bin\protoc.exe --cpp_out D:/Projects/ai/cv/video-source-manager/build-vs/generated -I D:/Projects/ai/cv/video-source-manager/proto D:/Projects/ai/cv/video-source-manager/proto/source_control.proto
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\PROJECTS\AI\CV\VIDEO-SOURCE-MANAGER\BUILD-VS\CMAKEFILES\B8D5B90A68CE3340EB2BAB2FC907CE03\SOURCE_CONTROL.GRPC.PB.CC.RULE
+setlocal
+H:\anaconda3\Library\bin\protoc.exe --grpc_out D:/Projects/ai/cv/video-source-manager/build-vs/generated --plugin=protoc-gen-grpc=H:/anaconda3/Library/bin/grpc_cpp_plugin.exe -I D:/Projects/ai/cv/video-source-manager/proto D:/Projects/ai/cv/video-source-manager/proto/source_control.proto
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\PROJECTS\AI\CV\VIDEO-SOURCE-MANAGER\CMAKELISTS.TXT
+setlocal
+H:\CMake\bin\cmake.exe -SD:/Projects/ai/cv/video-source-manager -BD:/Projects/ai/cv/video-source-manager/build-vs --check-stamp-file D:/Projects/ai/cv/video-source-manager/build-vs/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
