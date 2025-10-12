@@ -15,6 +15,7 @@ public:
   using HandlerFn = std::function<std::string(const std::string& method,
                                               const std::string& path,
                                               const std::unordered_map<std::string,std::string>& query,
+                                              const std::unordered_map<std::string,std::string>& headers,
                                               const std::string& body,
                                               int* status,
                                               std::string* content_type)>;
@@ -26,6 +27,7 @@ public:
 private:
   void Loop();
   static std::unordered_map<std::string,std::string> parseQuery(const std::string& path);
+  static std::unordered_map<std::string,std::string> parseHeaders(const std::string& raw);
   static std::string urlDecode(const std::string& in);
   void WakeAccept();
 

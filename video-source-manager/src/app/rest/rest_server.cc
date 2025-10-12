@@ -92,6 +92,7 @@ void RestServer::Loop() {
       }
       if (!header_done) { closesock(cfd); return; }
       std::string method, path;
+      std::unordered_map<std::string,std::string> headers;
       {
         auto line_end = req.find("\r\n");
         if (line_end != std::string::npos) {
@@ -99,15 +100,8 @@ void RestServer::Loop() {
           std::string http; iss >> method >> path >> http;
         }
         auto hdrs = req.substr(0, req.find("\r\n\r\n")+2);
-        auto pos = hdrs.find("Content-Length:");
-        if (pos == std::string::npos) pos = hdrs.find("content-length:");
-        if (pos != std::string::npos) {
-          auto end = hdrs.find("\r\n", pos);
-          auto val = hdrs.substr(pos, end-pos);
-          auto cpos = val.find(":"); if (cpos != std::string::npos) {
-            try { content_length = (size_t)std::stoll(val.substr(cpos+1)); } catch(...) {}
-          }
-        }
+        headers = parseHeaders(hdrs);
+        if (auto it = headers.find("content-length"); it != headers.end()) { try { content_length = (size_t)std::stoll(it->second); } catch(...){} }
       }
       std::string body;
       auto after = req.find("\r\n\r\n");
@@ -129,7 +123,7 @@ void RestServer::Loop() {
 
       int status = 200; std::string ctype = "application/json; charset=utf-8";
       std::string resp;
-      try { resp = handler_ ? handler_(method, path, query, body, &status, &ctype) : std::string("{}"); }
+      try { resp = handler_ ? handler_(method, path, query, headers, body, &status, &ctype) : std::string("{}"); }
       catch (...) { status = 500; resp = "{\"success\":false,\"message\":\"internal error\"}"; ctype = "application/json; charset=utf-8"; }
 
       std::ostringstream oss;
@@ -174,6 +168,32 @@ std::unordered_map<std::string,std::string> RestServer::parseQuery(const std::st
     pos = amp + 1;
   }
   return q;
+}
+
+std::unordered_map<std::string,std::string> RestServer::parseHeaders(const std::string& raw) {
+  std::unordered_map<std::string,std::string> h;
+  auto first_end = raw.find("\r\n");
+  if (first_end == std::string::npos) return h;
+  size_t pos = first_end + 2;
+  while (pos < raw.size()) {
+    auto end = raw.find("\r\n", pos);
+    if (end == std::string::npos) break;
+    if (end == pos) break;
+    auto line = raw.substr(pos, end-pos);
+    auto colon = line.find(":");
+    if (colon != std::string::npos) {
+      std::string k = line.substr(0, colon);
+      std::string v = line.substr(colon+1);
+      // lower-case key and trim value
+      std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+      auto ltrim=[&](std::string& s){ size_t i=0; while(i<s.size() && (s[i]==' '||s[i]=='\t')) ++i; s.erase(0,i); };
+      auto rtrim=[&](std::string& s){ while(!s.empty() && (s.back()==' '||s.back()=='\t')) s.pop_back(); };
+      ltrim(v); rtrim(v);
+      h[k]=v;
+    }
+    pos = end + 2;
+  }
+  return h;
 }
 
 std::string RestServer::urlDecode(const std::string& in) {

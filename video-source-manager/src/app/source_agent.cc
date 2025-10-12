@@ -4,6 +4,7 @@
 #include "app/metrics/metrics_exporter.h"
 #include "app/rest/rest_server.h"
 #include <sstream>
+#include <algorithm>
 #include <string>
 
 namespace vsm {
@@ -49,11 +50,14 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
   int rest_port = 7071; if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v=std::stoi(p); if (v>0 && v<65536) rest_port = v; } catch(...){} }
   auto handler = [this](const std::string& method, const std::string& path,
                         const std::unordered_map<std::string,std::string>& query,
+                        const std::unordered_map<std::string,std::string>& headers,
                         const std::string& body, int* status, std::string* ctype) -> std::string {
     (void)body; (void)ctype;
     auto ok = [&](const std::string& data){ *status=200; return std::string("{\"success\":true,\"data\":")+data+"}"; };
     auto err = [&](int st, const std::string& msg){ *status=st; return std::string("{\"success\":false,\"message\":\"")+vsm::rest::jsonEscape(msg)+"\"}"; };
-    std::unordered_map<std::string,std::string> jbody; if (!body.empty() && body.find('{') != std::string::npos) vsm::rest::parseJsonObjectFlat(body, jbody);
+    std::unordered_map<std::string,std::string> jbody;
+    bool is_json = false; if (auto it=headers.find("content-type"); it!=headers.end()) { auto v=it->second; std::transform(v.begin(), v.end(), v.begin(), ::tolower); is_json = (v.find("application/json")!=std::string::npos) || (v.find("json")!=std::string::npos); }
+    if (!body.empty() && (is_json || body.find('{') != std::string::npos)) vsm::rest::parseJsonObjectFlat(body, jbody);
     if (method=="GET" && (path=="/api/source/list")) {
       auto vec = controller_->Collect();
       std::ostringstream o; o<<"["; bool first=true; for (auto& s: vec){ if(!first)o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; }
@@ -92,7 +96,7 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
       uint64_t new_rev = since;
       bool changed = controller_->WaitForChange(since, timeout_ms, &new_rev);
       if (!changed && !full) {
-        std::ostringstream o; o<<"{\"rev\":"<<new_rev<<",\"items\":[]}"; return ok(o.str());
+        std::ostringstream o; o<<"{\"rev\":"<<new_rev<<",\"items\":[],\"keepalive\":true}"; return ok(o.str());
       }
       auto snap = controller_->Snapshot();
       std::ostringstream o; o<<"{\"rev\":"<<snap.first<<",\"items\":";
