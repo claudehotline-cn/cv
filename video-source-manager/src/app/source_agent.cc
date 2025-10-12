@@ -121,6 +121,10 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
                                           const std::unordered_map<std::string,std::string>& query,
                                           const std::unordered_map<std::string,std::string>& /*headers*/){
     (void)method; (void)path;
+    // simple concurrency limit
+    static std::atomic<int> sse_conn{0};
+    static int max_conn = [](){ int v=16; if(const char* p=getenv("VSM_SSE_MAX_CONN")){ try{ int t=std::stoi(p); if(t>0) v=t; }catch(...){} } return v; }();
+
     auto send_all = [&](const std::string& s){
       const char* p = s.c_str(); size_t left = s.size();
       while (left > 0) {
@@ -132,8 +136,37 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
         if (n <= 0) break; p += n; left -= (size_t)n;
       }
     };
+    auto send_http = [&](int code, const std::string& ctype, const std::string& body){
+      std::ostringstream hs; hs << "HTTP/1.1 " << code << (code==200?" OK":"") << "\r\n";
+      hs << "Content-Type: " << ctype << "\r\n";
+      hs << "Content-Length: " << body.size() << "\r\n";
+      hs << "Connection: close\r\n\r\n";
+      hs << body;
+      send_all(hs.str());
+    };
+
+    int cur = sse_conn.fetch_add(1) + 1;
+    if (cur > max_conn) {
+      sse_conn.fetch_sub(1);
+      std::string body = "{\"success\":false,\"message\":\"too many sse connections\"}";
+      send_http(429, "application/json; charset=utf-8", body);
+      return;
+    }
+
+    auto cleanup = [&](){ sse_conn.fetch_sub(1); };
+    // Write SSE headers
+    {
+      std::ostringstream hs;
+      hs << "HTTP/1.1 200 OK\r\n";
+      hs << "Content-Type: text/event-stream\r\n";
+      hs << "Cache-Control: no-cache\r\n";
+      hs << "Connection: keep-alive\r\n\r\n";
+      send_all(hs.str());
+    }
+
     uint64_t since = 0; if (auto it=query.find("since"); it!=query.end()) { try { since = std::stoull(it->second); } catch(...){} }
-    int keepalive_ms = 15000; if (auto it=query.find("keepalive_ms"); it!=query.end()) { try { keepalive_ms = std::stoi(it->second); } catch(...){} }
+    int keepalive_ms = [](){ int d=15000; if(const char* p=getenv("VSM_SSE_KEEPALIVE_MS")){ try{ int t=std::stoi(p); if(t>0) d=t; }catch(...){} } return d; }();
+    if (auto it=query.find("keepalive_ms"); it!=query.end()) { try { keepalive_ms = std::stoi(it->second); } catch(...){} }
     int max_sec = 300; if (auto it=query.find("max_sec"); it!=query.end()) { try { max_sec = std::stoi(it->second); } catch(...){} }
     auto start_tp = std::chrono::steady_clock::now();
     uint64_t rev = since;
@@ -159,6 +192,7 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
         send_all(": keepalive\n\n");
       }
     }
+    cleanup();
   });
   rest_server->Start();
   return grpc_->Start();

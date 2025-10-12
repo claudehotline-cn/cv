@@ -123,26 +123,13 @@ void RestServer::Loop() {
 
       int status = 200; std::string ctype = "application/json; charset=utf-8";
       std::string resp;
-      // SSE fast-path: delegate streaming
+      // SSE fast-path: delegate full response (including headers) to handler
       if (method == "GET" && path == "/api/source/watch_sse" && streaming_handler_) {
-        // write SSE headers and hand over socket
-        std::ostringstream hs;
-        hs << "HTTP/1.1 200 OK\r\n";
-        hs << "Content-Type: text/event-stream\r\n";
-        hs << "Cache-Control: no-cache\r\n";
-        hs << "Connection: keep-alive\r\n\r\n";
-        auto sh = hs.str();
-#ifdef _WIN32
-        ::send(cfd, sh.c_str(), (int)sh.size(), 0);
-#else
-        ::send(cfd, sh.c_str(), sh.size(), 0);
-#endif
-        // streaming handler is responsible for writing events and closing socket
         try { streaming_handler_(cfd, method, path, query, headers); }
         catch (...) { /* ignore */ }
-        // ensure socket is closed
+        // handler is responsible to close socket; close defensively
         closesock(cfd);
-        return; // detached thread ends here
+        return; // end thread
       }
       try { resp = handler_ ? handler_(method, path, query, headers, body, &status, &ctype) : std::string("{}"); }
       catch (...) { status = 500; resp = "{\"success\":false,\"message\":\"internal error\"}"; ctype = "application/json; charset=utf-8"; }
