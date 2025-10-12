@@ -726,10 +726,48 @@ bool Application::switchModel(const std::string& stream_id,
         return false;
     }
 
-    if (!track_manager_->switchModel(stream_id, profile_name, model_opt->id)) {
+    // Retry with simple capped exponential backoff on failure
+    auto env_int = [](const char* key, int defv){ if(const char* v=getenv(key)){ try { int t=std::stoi(v); return t; } catch(...){} } return defv; };
+    const int max_attempts = std::max(1, env_int("VA_SWITCH_MODEL_MAX_ATTEMPTS", 3));
+    int backoff_ms = std::max(0, env_int("VA_SWITCH_MODEL_BACKOFF_MS_START", 150));
+    const int backoff_ms_max = std::max(backoff_ms, env_int("VA_SWITCH_MODEL_BACKOFF_MS_MAX", 1200));
+
+    bool switched = false;
+    for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+        if (track_manager_->switchModel(stream_id, profile_name, model_opt->id)) {
+            switched = true;
+            break;
+        }
+        // failed, prepare next
+        if (attempt < max_attempts) {
+            int jitter = (int)(std::chrono::steady_clock::now().time_since_epoch().count() % 21) - 10; // [-10,10] ms
+            std::this_thread::sleep_for(std::chrono::milliseconds(std::max(0, backoff_ms + jitter)));
+            backoff_ms = std::min(backoff_ms * 2, backoff_ms_max);
+        }
+    }
+    if (!switched) {
         last_error_ = "failed to switch model";
         return false;
     }
+
+    // After model switch, update analyzer params (confidence/iou) derived from model or fallback params
+    try {
+        float conf = model_opt->conf > 0.0f ? model_opt->conf : 0.0f;
+        float iou  = model_opt->iou  > 0.0f ? model_opt->iou  : 0.0f;
+        // If model doesn't carry thresholds, fallback to task defaults
+        auto pit = profile_index_.find(profile_name);
+        if (pit != profile_index_.end()) {
+            auto p = resolveParams(pit->second.task);
+            if (p) {
+                if (conf <= 0.0f) conf = p->conf;
+                if (iou  <= 0.0f) iou  = p->iou;
+            }
+        }
+        va::analyzer::AnalyzerParams ap{};
+        if (conf > 0.0f) ap.confidence_threshold = conf;
+        if (iou  > 0.0f) ap.iou_threshold = iou;
+        (void)updateParams(stream_id, profile_name, ap); // best-effort; last_error_ already set by callee if fails
+    } catch (...) { /* best-effort */ }
 
     last_error_.clear();
     return true;
