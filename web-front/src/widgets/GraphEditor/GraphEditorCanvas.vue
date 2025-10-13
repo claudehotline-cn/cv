@@ -1,0 +1,113 @@
+<template>
+  <div class="ge">
+    <div class="toolbar">
+      <el-button-group>
+        <el-button size="small" @click="addNode('source')">源</el-button>
+        <el-button size="small" @click="addNode('preprocess')">预处理</el-button>
+        <el-button size="small" @click="addNode('model')">模型</el-button>
+        <el-button size="small" @click="addNode('nms')">NMS</el-button>
+        <el-button size="small" @click="addNode('overlay')">Overlay</el-button>
+        <el-button size="small" @click="addNode('sink')">输出</el-button>
+      </el-button-group>
+      <el-button size="small" text @click="autoLayout">自动排布</el-button>
+      <el-button size="small" text @click="loadSample">加载示例</el-button>
+      <el-button size="small" text @click="emit('export', toJSON())">导出JSON</el-button>
+      <el-upload :show-file-list="false" accept="application/json" :on-change="onImport">
+        <el-button size="small" text>导入JSON</el-button>
+      </el-upload>
+      <div style="margin-left:auto"><el-button size="small" type="danger" text @click="removeSelected">删除</el-button></div>
+    </div>
+    <div ref="containerRef" class="canvas"></div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { Graph } from '@antv/x6'
+import { Selection } from '@antv/x6-plugin-selection'
+import { Transform } from '@antv/x6-plugin-transform'
+import { Snapline } from '@antv/x6-plugin-snapline'
+import { Dnd } from '@antv/x6-plugin-dnd'
+
+import sample from './samples/demo.json'
+
+const props = defineProps<{ modelValue?: any }>()
+const emit = defineEmits<{ (e:'update:selection', data:any):void; (e:'export', json:any):void; (e:'update:modelValue', v:any):void }>()
+
+const containerRef = ref<HTMLDivElement|null>(null)
+let graph: Graph
+let dnd: Dnd
+
+onMounted(()=>{
+  graph = new Graph({
+    container: containerRef.value!,
+    background: { color: '#0b0e14' },
+    grid: { visible: true, size: 10, type:'dot' },
+    connecting: {
+      router: 'manhattan',
+      connector: { name:'rounded', args:{ radius:6 } },
+      allowBlank: false, allowLoop: false, allowMulti: false, snap: true,
+      createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2 } } }) },
+      validateConnection({ sourceCell, targetCell }) {
+        if (!sourceCell || !targetCell) return false
+        const st = (sourceCell.getData() as any)?.type
+        const tt = (targetCell.getData() as any)?.type
+        if (st==='sink') return false
+        if (tt==='source') return false
+        return true
+      }
+    }
+  })
+  graph.use(new Selection({ enabled:true, multiple:true, rubberband:true, movable:true }))
+  graph.use(new Transform({ resizing:true, rotating:false }))
+  graph.use(new Snapline({ enabled:true }))
+
+  graph.on('cell:selected', ({ cell }) => emit('update:selection', toNodeData(cell)))
+  graph.on('cell:changed', () => emit('update:modelValue', toJSON()))
+  graph.on('edge:connected', () => emit('update:modelValue', toJSON()))
+
+  if (props.modelValue) fromJSON(props.modelValue)
+})
+
+onBeforeUnmount(()=> graph?.dispose())
+
+function addNode(kind: string) {
+  const labelMap: Record<string,string> = { source:'Source', preprocess:'Preprocess', model:'Model', nms:'NMS', overlay:'Overlay', sink:'Sink' }
+  const x = 100 + Math.random()*300, y = 80 + Math.random()*240
+  graph.addNode({
+    x, y, width: 140, height: 44,
+    attrs: { body: { stroke: 'rgba(255,255,255,.1)', fill: '#141822', rx: 8, ry: 8 }, label: { text: labelMap[kind] || kind, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
+    data: { type: kind, name: `${kind}-${Date.now()%10000}`, params: {} }
+  })
+  emit('update:modelValue', toJSON())
+}
+
+function removeSelected(){ const cells = graph.getSelectedCells(); graph.removeCells(cells); emit('update:modelValue', toJSON()) }
+
+function toNodeData(cell:any){ if (!cell || cell.isEdge()) return null; const { id } = cell; const data = cell.getData(); return { id, ...(data||{}) } }
+function toJSON(){ const nodes = graph.getNodes().map(n => { const d = n.getData() || {}; return { id: n.id, name: d.name, type: d.type, params: d.params, position: n.getPosition() } }); const edges = graph.getEdges().map(e => ({ source: e.getSourceCellId(), target: e.getTargetCellId() })); return { nodes, edges } }
+function fromJSON(json:any){ graph.clearCells(); const id2node: Record<string, any> = {}; json.nodes?.forEach((n:any)=>{ id2node[n.id] = graph.addNode({ id: n.id, x: (n.position?.x ?? 100), y: (n.position?.y ?? 100), width: 140, height:44, attrs: { body:{ stroke:'rgba(255,255,255,.1)', fill:'#141822', rx:8, ry:8 }, label:{ text: n.name || n.type, fill:'#e5edf6', fontSize:13, fontWeight:600 } }, data: { type:n.type, name:n.name, params:n.params||{} } }) }); json.edges?.forEach((e:any)=>{ if (id2node[e.source] && id2node[e.target]){ graph.addEdge({ source: e.source, target: e.target, attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2 } } }) } }) }
+function onImport(file:any){ try{ const fr = new FileReader(); fr.onload = () => { const json = JSON.parse(String(fr.result)); fromJSON(json); emit('update:modelValue', toJSON()) }; fr.readAsText(file.raw) }catch{} }
+function autoLayout(){ const layers = ['source','preprocess','model','nms','overlay','sink']; const groups: Record<string, any[]> = {}; graph.getNodes().forEach(n=>{ const t = (n.getData() as any)?.type || 'other'; (groups[t]||(groups[t]=[])).push(n) }); const colW = 200; const baseX = 80; const baseY = 80; const rowH = 70; layers.forEach((t,idx)=>{ (groups[t]||[]).forEach((n,i)=> n.position({ x: baseX + idx*colW, y: baseY + i*rowH })) }); emit('update:modelValue', toJSON()) }
+
+function loadSample(){ try{ fromJSON(sample as any); emit('update:modelValue', toJSON()) } catch {}
+}
+
+function highlightInvalid(ids: string[]){
+  const set = new Set(ids)
+  graph.getNodes().forEach(n => {
+    const isBad = set.has(n.id)
+    n.setAttrs({ body: { stroke: isBad ? '#ff5d6c' : 'rgba(255,255,255,.1)', strokeWidth: isBad ? 2 : 1 } })
+  })
+}
+
+function clearHighlight(){ graph.getNodes().forEach(n => n.setAttrs({ body: { stroke: 'rgba(255,255,255,.1)', strokeWidth: 1 } })) }
+
+defineExpose({ toJSON, fromJSON, autoLayout, highlightInvalid, clearHighlight })
+</script>
+
+<style scoped>
+.ge{ display:flex; flex-direction:column; height:100%; }
+.toolbar{ display:flex; align-items:center; gap:8px; padding:6px 6px 6px 0; }
+.canvas{ flex:1; border:1px solid rgba(255,255,255,.08); border-radius:10px; overflow:hidden; min-height: 420px; }
+</style>

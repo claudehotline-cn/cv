@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "ts": 1710000040000, "level": "Info", "pipeline": "camera_01", "type": "ok", "msg": "Pipeline running" },
+    { "ts": 1710000050000, "level": "Warning", "pipeline": "camera_02", "type": "warn", "msg": "High latency detected" },
+    { "ts": 1710000060000, "level": "Error", "pipeline": "camera_03", "type": "error", "msg": "RTSP disconnect" }
+  ]
+}

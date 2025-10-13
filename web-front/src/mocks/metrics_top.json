@@ -1,0 +1,8 @@
+{
+  "items": [
+    { "name": "camera_01", "value": 28.5 },
+    { "name": "camera_02", "value": 26.1 },
+    { "name": "camera_03", "value": 24.7 },
+    { "name": "camera_04", "value": 22.3 }
+  ]
+}

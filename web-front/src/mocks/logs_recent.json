@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "ts": 1710000000000, "level": "Info", "pipeline": "camera_01", "node": "decoder", "msg": "NVDEC initialized" },
+    { "ts": 1710000015000, "level": "Warning", "pipeline": "camera_02", "node": "source",  "msg": "RTSP reconnect attempt" },
+    { "ts": 1710000030000, "level": "Error", "pipeline": "camera_03", "node": "model",   "msg": "Inference timeout" }
+  ]
+}

@@ -1,53 +1,48 @@
 <template>
   <div class="whep">
-    <el-form :inline="true" :model="form">
-      <el-form-item label="WHEP URL">
-        <el-input v-model="form.url" placeholder="http://127.0.0.1:8083/whep?stream=camera_01:det_720p" style="width:420px"/>
-      </el-form-item>
-      <el-form-item>
-        <el-button @click="start" :loading="loading" type="primary">播放</el-button>
-        <el-button @click="stop" :disabled="!pc">停止</el-button>
-      </el-form-item>
-    </el-form>
-    <video ref="video" autoplay playsinline controls style="width:100%;max-height:420px;background:#000"></video>
-    <div v-if="err" class="err">{{ err }}</div>
+    <div class="mock-video" :class="{ active: playing }">
+      <div class="noise"></div>
+      <div class="label">{{ displayText }}</div>
+    </div>
+    <div class="controls">
+      <slot name="right"></slot>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
-const form = ref({ url: '' })
-const video = ref<HTMLVideoElement | null>(null)
-let pc: RTCPeerConnection | null = null
-let abort: AbortController | null = null
-const loading = ref(false)
-const err = ref('')
+import { computed, ref, watch } from 'vue'
 
-async function start(){
-  err.value = ''
-  if(!form.value.url){ err.value = '请填写 WHEP URL'; return }
-  loading.value = true
-  try{
-    pc = new RTCPeerConnection()
-    pc.addTransceiver('video', { direction: 'recvonly' })
-    pc.ontrack = (e) => { if (video.value && e.streams?.[0]) { video.value.srcObject = e.streams[0] } }
-    const offer = await pc.createOffer()
-    await pc.setLocalDescription(offer)
-    abort = new AbortController()
-    const r = await fetch(form.value.url, { method:'POST', headers:{ 'Content-Type':'application/sdp' }, body: offer.sdp, signal: abort.signal })
-    if(!r.ok){ throw new Error(await r.text()) }
-    const sdp = await r.text()
-    await pc.setRemoteDescription({ type:'answer', sdp })
-  } catch(e:any){ err.value = String(e?.message||e) }
-  finally { loading.value=false }
+const props = withDefaults(defineProps<{ whepUrl?: string; autoplay?: boolean }>(), {
+  whepUrl: '',
+  autoplay: true
+})
+
+const playing = ref(false)
+
+watch(() => props.whepUrl, (val) => {
+  playing.value = props.autoplay && !!val
+})
+
+function refresh() {
+  playing.value = false
+  requestAnimationFrame(() => {
+    playing.value = props.autoplay && !!props.whepUrl
+  })
 }
 
-function stop(){ if(pc){ pc.close(); pc=null } if(abort){ abort.abort(); abort=null } if(video.value){ video.value.srcObject = null }
-}
-onUnmounted(stop)
+defineExpose({ refresh })
+
+const displayText = computed(() => props.whepUrl ? `Mock Stream · ${props.whepUrl}` : '未选择数据源')
 </script>
 
 <style scoped>
-.err{ color:#f56c6c; margin-top: 8px; }
+.whep{ position:relative; width:100%; padding-top:56.25%; background: #05070e; border-radius:10px; overflow:hidden; }
+.mock-video{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#9dbad9; font-size:16px; letter-spacing:.4px; transition: all .3s ease; background: linear-gradient(135deg, rgba(34,178,255,.15), rgba(20,24,34,.9)); }
+.mock-video .noise{ position:absolute; inset:0; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,.05) 0, rgba(255,255,255,.05) 1px, transparent 1px, transparent 2px); opacity:.4; animation: noise 1.2s steps(10) infinite; }
+.mock-video .label{ position:relative; z-index:1; padding:6px 14px; border-radius:20px; background: rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.15); }
+.mock-video.active{ box-shadow: 0 0 0 2px rgba(34,178,255,.25); }
+.controls{ position:absolute; right:12px; bottom:12px; display:flex; gap:8px; z-index:2; }
+@keyframes noise{ 0%{ transform:translateY(0);} 100%{ transform:translateY(-50%);} }
 </style>
 

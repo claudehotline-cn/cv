@@ -1,0 +1,5 @@
+[
+  { "id": "camera_01", "name": "Front Gate", "uri": "rtsp://.../cam01", "phase": "Ready", "fps": 25, "loss": 0.1, "jitter": 12 },
+  { "id": "camera_02", "name": "Lobby",     "uri": "rtsp://.../cam02", "phase": "Pending", "fps": 24, "loss": 0.5, "jitter": 18 },
+  { "id": "camera_03", "name": "Parking",   "uri": "rtsp://.../cam03", "phase": "Failed",  "fps": 0,  "loss": 0.0, "jitter": 0 }
+]
