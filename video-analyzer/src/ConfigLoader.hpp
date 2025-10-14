@@ -117,6 +117,20 @@ struct AppConfigPayload {
     std::string sfu_whip_base;
     std::string sfu_whep_base;
     ObservabilityConfig observability;
+    struct DatabasePoolConfig {
+        int min {4};
+        int max {16};
+        int timeout_ms {2000};
+    };
+    struct DatabaseConfig {
+        std::string driver; // e.g., mysql
+        std::string host;
+        int port {0};
+        std::string user;
+        std::string password;
+        std::string db;
+        DatabasePoolConfig pool;
+    } database;
     struct ControlPlaneConfig {
         bool enabled {false};
         std::string grpc_addr; // e.g., 0.0.0.0:9090

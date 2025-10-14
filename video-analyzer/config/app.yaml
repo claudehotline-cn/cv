@@ -68,6 +68,19 @@ observability:
     prom_endpoint: "0.0.0.0:9090"
     extended_labels: true
     registry_enabled: true
+
+# Database configuration (MySQL)
+database:
+  driver: mysql
+  host: 127.0.0.1
+  port: 13306
+  user: root
+  password: "123456"
+  db: cv_cp
+  pool:
+    min: 4
+    max: 16
+    timeout_ms: 2000
 control_plane:
   enabled: true
   grpc_addr: "0.0.0.0:50051"

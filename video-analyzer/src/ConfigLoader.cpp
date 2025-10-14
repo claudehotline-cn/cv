@@ -370,6 +370,24 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
             payload.control_plane.backoff_jitter = cp["backoff_jitter"].as<double>(payload.control_plane.backoff_jitter);
         }
     }
+    // database
+    if (v["database"]) {
+        const auto db = v["database"];
+        if (db && db.IsMap()) {
+            payload.database.driver = db["driver"].as<std::string>(payload.database.driver);
+            payload.database.host = db["host"].as<std::string>(payload.database.host);
+            payload.database.port = db["port"].as<int>(payload.database.port);
+            payload.database.user = db["user"].as<std::string>(payload.database.user);
+            payload.database.password = db["password"].as<std::string>(payload.database.password);
+            payload.database.db = db["db"].as<std::string>(payload.database.db);
+            if (db["pool"] && db["pool"].IsMap()) {
+                const auto pool = db["pool"];
+                payload.database.pool.min = pool["min"].as<int>(payload.database.pool.min);
+                payload.database.pool.max = pool["max"].as<int>(payload.database.pool.max);
+                payload.database.pool.timeout_ms = pool["timeout_ms"].as<int>(payload.database.pool.timeout_ms);
+            }
+        }
+    }
     return payload;
 }
 

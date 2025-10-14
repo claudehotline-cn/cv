@@ -12,6 +12,7 @@
 
 #include <json/json.h>
 #include "core/error_codes.hpp"
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +30,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <ctime>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -176,6 +178,7 @@ Json::Value transportStatsToJson(const va::media::ITransport::Stats& stats) {
 class SimpleHttpServer {
 public:
     using Handler = std::function<HttpResponse(const HttpRequest&)>;
+    using StreamHandler = std::function<void(int /*client_socket*/, const HttpRequest&)>;
 
     explicit SimpleHttpServer(const RestServerOptions& options)
         : options_(options) {
@@ -195,6 +198,11 @@ public:
     void addRoute(const std::string& method, const std::string& pattern, Handler handler) {
         std::lock_guard<std::mutex> lock(routes_mutex_);
         routes_.push_back(Route{method, pattern, buildRegex(pattern), extractParams(pattern), std::move(handler)});
+    }
+
+    void addStreamRoute(const std::string& method, const std::string& pattern, StreamHandler handler) {
+        std::lock_guard<std::mutex> lock(routes_mutex_);
+        stream_routes_.push_back(StreamRoute{method, pattern, buildRegex(pattern), extractParams(pattern), std::move(handler)});
     }
 
     bool start() {
@@ -235,11 +243,20 @@ private:
         Handler handler;
     };
 
+    struct StreamRoute {
+        std::string method;
+        std::string pattern;
+        std::regex regex;
+        std::vector<std::string> params;
+        StreamHandler handler;
+    };
+
     RestServerOptions options_;
     std::atomic<bool> running_ {false};
     std::thread server_thread_;
     std::mutex routes_mutex_;
     std::vector<Route> routes_;
+    std::vector<StreamRoute> stream_routes_;
     int server_socket_ {-1};
 
     static std::regex buildRegex(const std::string& pattern) {
@@ -371,6 +388,29 @@ private:
             close(client_socket);
 #endif
             return;
+        }
+
+        // SSE streaming routes: handled specially (write headers and stream data; no Content-Length)
+        {
+            bool matched_stream = false;
+            std::lock_guard<std::mutex> lock(routes_mutex_);
+            for (auto& route : stream_routes_) {
+                std::map<std::string, std::string> params;
+                if (matchRoute(request.method, request.path, route, params)) {
+                    request.params = std::move(params);
+                    try {
+                        route.handler(client_socket, request);
+                    } catch (...) {
+                        // best-effort: close socket
+                    }
+#ifdef _WIN32
+                    closesocket(client_socket);
+#else
+                    close(client_socket);
+#endif
+                    return;
+                }
+            }
         }
 
         if (request.method == "OPTIONS") {
@@ -553,6 +593,23 @@ private:
         }
         return false;
     }
+
+    bool matchRoute(const std::string& method,
+                    const std::string& path,
+                    StreamRoute& route,
+                    std::map<std::string, std::string>& params) const {
+        if (method != route.method) {
+            return false;
+        }
+        std::smatch matches;
+        if (std::regex_match(path, matches, route.regex)) {
+            for (size_t i = 0; i < route.params.size(); ++i) {
+                params[route.params[i]] = matches[i + 1];
+            }
+            return true;
+        }
+        return false;
+    }
 };
 
 HttpResponse jsonResponse(const Json::Value& value, int status = 200) {
@@ -579,6 +636,152 @@ Json::Value successPayload() {
     root["code"] = "OK";
     return root;
 }
+
+std::unordered_map<std::string,std::string> parseQueryKV(const std::string& q) {
+    std::unordered_map<std::string,std::string> kv;
+    if (q.empty()) return kv;
+    size_t pos = 0;
+    while (pos < q.size()) {
+        auto eq = q.find('=', pos);
+        if (eq == std::string::npos) break;
+        auto amp = q.find('&', eq+1);
+        std::string key = q.substr(pos, eq-pos);
+        std::string val = amp==std::string::npos ? q.substr(eq+1) : q.substr(eq+1, amp-eq-1);
+        // decode + and %XX
+        auto decode = [](const std::string& in){ std::string out; out.reserve(in.size()); for (size_t i=0;i<in.size();++i){ if(in[i]=='+') out.push_back(' '); else if(in[i]=='%' && i+2<in.size()){ char hex[3] = {in[i+1], in[i+2], 0}; int v = 0; try { v = std::stoi(hex, nullptr, 16); } catch(...){} out.push_back(static_cast<char>(v)); i+=2; } else out.push_back(in[i]); } return out; };
+        // lower-case key to ease matching
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+        kv[key] = decode(val);
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+    return kv;
+}
+
+// --- Minimal HTTP client (best-effort) for Control Plane to query VSM REST ---
+static std::optional<std::string> http_get_body(const std::string& host, int port, const std::string& path, int timeout_ms) {
+#ifdef _WIN32
+    SOCKET sock = INVALID_SOCKET;
+    addrinfo hints{}; hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM; hints.ai_protocol = IPPROTO_TCP;
+    addrinfo* result = nullptr;
+    std::string port_str = std::to_string(port);
+    if (getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result) != 0 || !result) {
+        return std::nullopt;
+    }
+    sock = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (sock == INVALID_SOCKET) { freeaddrinfo(result); return std::nullopt; }
+    // timeouts
+    int to = timeout_ms; setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
+    if (connect(sock, result->ai_addr, static_cast<int>(result->ai_addrlen)) == SOCKET_ERROR) {
+        closesocket(sock); freeaddrinfo(result); return std::nullopt;
+    }
+    freeaddrinfo(result);
+    std::ostringstream req;
+    req << "GET " << path << " HTTP/1.1\r\n";
+    req << "Host: " << host << "\r\n";
+    req << "Connection: close\r\n\r\n";
+    std::string reqs = req.str();
+    int sent = 0; while (sent < static_cast<int>(reqs.size())) {
+        int n = send(sock, reqs.c_str() + sent, static_cast<int>(reqs.size()) - sent, 0);
+        if (n <= 0) { closesocket(sock); return std::nullopt; }
+        sent += n;
+    }
+    std::string resp; resp.reserve(4096);
+    char buf[4096];
+    for(;;){ int n = recv(sock, buf, sizeof(buf), 0); if (n <= 0) break; resp.append(buf, buf + n); }
+    closesocket(sock);
+    auto pos = resp.find("\r\n\r\n"); if (pos == std::string::npos) return std::nullopt; return resp.substr(pos + 4);
+#else
+    (void)host; (void)port; (void)path; (void)timeout_ms; return std::nullopt;
+#endif
+}
+
+static std::optional<Json::Value> vsm_sources_snapshot(int timeout_ms) {
+    std::string host = "127.0.0.1";
+    int port = 7071;
+    if (const char* p = std::getenv("VSM_REST_HOST")) host = p;
+    if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v = std::stoi(p); if (v > 0 && v < 65536) port = v; } catch (...) {} }
+    auto body = http_get_body(host, port, "/api/source/list", timeout_ms);
+    if (!body) return std::nullopt;
+    try {
+        Json::CharReaderBuilder b; std::string errs; std::istringstream iss(*body); Json::Value root; if (!Json::parseFromStream(b, iss, &root, &errs)) return std::nullopt;
+        if (root.isObject() && root.isMember("data") && root["data"].isArray()) return root["data"];
+        if (root.isArray()) return root;
+    } catch (...) {}
+    return std::nullopt;
+}
+
+static std::optional<Json::Value> vsm_source_describe(const std::string& id, int timeout_ms) {
+    std::string host = "127.0.0.1";
+    int port = 7071;
+    if (const char* p = std::getenv("VSM_REST_HOST")) host = p;
+    if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v = std::stoi(p); if (v > 0 && v < 65536) port = v; } catch (...) {} }
+    std::string path = std::string("/api/source/describe?id=") + id;
+    auto body = http_get_body(host, port, path, timeout_ms);
+    if (!body) return std::nullopt;
+    try {
+        Json::CharReaderBuilder b; std::string errs; std::istringstream iss(*body); Json::Value root; if (!Json::parseFromStream(b, iss, &root, &errs)) return std::nullopt;
+        if (root.isObject() && root.isMember("data") && root["data"].isObject()) return root["data"];
+        if (root.isObject()) return root;
+    } catch (...) {}
+    return std::nullopt;
+}
+
+// --- YAML helpers to extract 'requires' and map to JSON ---
+namespace {
+static Json::Value yamlToJsonObject(const YAML::Node& n) {
+    Json::Value obj(Json::objectValue);
+    if (!n || !n.IsMap()) return obj;
+    for (auto it : n) {
+        std::string key;
+        try { key = it.first.as<std::string>(""); } catch (...) { continue; }
+        const YAML::Node& val = it.second;
+        if (val.IsScalar()) {
+            obj[key] = val.as<std::string>("");
+        } else if (val.IsSequence()) {
+            Json::Value arr(Json::arrayValue);
+            for (std::size_t i=0;i<val.size();++i) {
+                if (val[i].IsScalar()) arr.append(val[i].as<std::string>(""));
+                else if (val[i].IsSequence()) {
+                    std::string joined;
+                    for (std::size_t j=0;j<val[i].size();++j) {
+                        if (j) joined += ",";
+                        joined += val[i][j].as<std::string>("");
+                    }
+                    arr.append(joined);
+                } else if (val[i].IsMap()) {
+                    // Best-effort: flatten map as k1:v1;k2:v2
+                    std::string flat; bool first=true;
+                    for (auto kv : val[i]) {
+                        if (!first) flat += ";"; first=false;
+                        flat += kv.first.as<std::string>("");
+                        flat += ":";
+                        flat += kv.second.as<std::string>("");
+                    }
+                    arr.append(flat);
+                }
+            }
+            obj[key] = arr;
+        } else if (val.IsMap()) {
+            obj[key] = yamlToJsonObject(val);
+        }
+    }
+    return obj;
+}
+
+static std::optional<Json::Value> loadRequiresFromYaml(const std::string& file) {
+    try {
+        YAML::Node root = YAML::LoadFile(file);
+        YAML::Node req = root["requires"];
+        if (!req || !req.IsMap()) {
+            req = root["analyzer"]["multistage"]["requires"];
+        }
+        if (req && req.IsMap()) return yamlToJsonObject(req);
+    } catch (...) { /* ignore */ }
+    return std::nullopt;
+}
+} // anonymous namespace (YAML helpers)
 
 va::analyzer::AnalyzerParams buildParamsFromJson(const Json::Value& json) {
     va::analyzer::AnalyzerParams params;
@@ -654,6 +857,9 @@ struct RestServer::Impl {
 
         // Multistage graph management
         server.addRoute("GET", "/api/graphs", graphsListHandler);
+        // Preflight compatibility check
+        auto preflightHandler = [this](const HttpRequest& req) { return handlePreflight(req); };
+        server.addRoute("POST", "/api/preflight", preflightHandler);
         server.addRoute("POST", "/api/graph/set", graphSwitchHandler);
         // Control-plane mapping
         server.addRoute("POST", "/api/control/apply_pipeline", cpApplyHandler);
@@ -686,6 +892,16 @@ struct RestServer::Impl {
         server.addRoute("GET", "/pipelines", pipelinesHandler);
         server.addRoute("GET", "/api/pipelines", pipelinesHandler);
 
+        // Aggregated sources view + long-poll watch
+        auto sourcesHandler = [this](const HttpRequest& req) { return handleSources(req); };
+        auto sourcesWatchHandler = [this](const HttpRequest& req) { return handleSourcesWatch(req); };
+        server.addRoute("GET", "/sources", sourcesHandler);
+        server.addRoute("GET", "/api/sources", sourcesHandler);
+        server.addRoute("GET", "/sources/watch", sourcesWatchHandler);
+        server.addRoute("GET", "/api/sources/watch", sourcesWatchHandler);
+        // SSE variants (experimental): watch via EventSource
+        // server.addStreamRoute("GET", "/api/sources/watch_sse", [this](int fd, const HttpRequest& req){ streamSourcesSSE(fd, req); });
+
         // Prometheus metrics endpoint
         auto metricsHandler = [this](const HttpRequest& req) { return handleMetrics(req); };
         server.addRoute("GET", "/metrics", metricsHandler);
@@ -693,6 +909,18 @@ struct RestServer::Impl {
         auto metricsCfgSet = [this](const HttpRequest& req) { return handleMetricsConfigSet(req); };
         server.addRoute("GET", "/api/metrics", metricsCfgGet);
         server.addRoute("POST", "/api/metrics/set", metricsCfgSet);
+
+        // Observability: logs/events
+        auto logsRecentHandler = [this](const HttpRequest& req) { return handleLogsRecent(req); };
+        auto logsWatchHandler  = [this](const HttpRequest& req) { return handleLogsWatch(req); };
+        auto eventsRecentHandler = [this](const HttpRequest& req) { return handleEventsRecent(req); };
+        auto eventsWatchHandler  = [this](const HttpRequest& req) { return handleEventsWatch(req); };
+        server.addRoute("GET", "/api/logs", logsRecentHandler);
+        server.addRoute("GET", "/api/logs/watch", logsWatchHandler);
+        // server.addStreamRoute("GET", "/api/logs/watch_sse", [this](int fd, const HttpRequest& req){ streamLogsSSE(fd, req); });
+        server.addRoute("GET", "/api/events/recent", eventsRecentHandler);
+        server.addRoute("GET", "/api/events/watch", eventsWatchHandler);
+        // server.addStreamRoute("GET", "/api/events/watch_sse", [this](int fd, const HttpRequest& req){ streamEventsSSE(fd, req); });
     }
 
     bool start() {
@@ -905,6 +1133,18 @@ struct RestServer::Impl {
         sfu["whep_base"] = config.sfu_whep_base;
         data["sfu"] = sfu;
 
+        // Database summary (no secrets)
+        {
+            const auto& dbc = app.appConfig().database;
+            Json::Value db(Json::objectValue);
+            db["driver"] = dbc.driver;
+            db["host"] = dbc.host;
+            db["port"] = dbc.port;
+            db["db"] = dbc.db;
+            if (!dbc.user.empty()) db["user"] = "***";
+            data["database"] = db;
+        }
+
         data["ffmpeg_enabled"] = app.ffmpegEnabled();
         data["model_count"] = static_cast<Json::UInt64>(app.detectionModels().size());
         data["profile_count"] = static_cast<Json::UInt64>(app.profiles().size());
@@ -962,6 +1202,12 @@ struct RestServer::Impl {
                           Json::Value node(Json::objectValue);
                           node["id"] = p.stem().string();
                           node["path"] = fkey;
+                          // Best-effort parse of optional 'requires'
+                          try {
+                              if (auto req = loadRequiresFromYaml(fkey)) {
+                                  node["requires"] = *req;
+                              }
+                          } catch (...) { /* ignore */ }
                           arr.append(node);
                       }
                   }
@@ -991,6 +1237,82 @@ struct RestServer::Impl {
               return jsonResponse(payload, 200);
           } catch (const std::exception& ex) {
               return errorResponse(ex.what(), 400);
+          }
+      }
+
+      // POST /api/preflight
+      HttpResponse handlePreflight(const HttpRequest& req) {
+          try {
+              const Json::Value body = parseJson(req.body);
+              // Resolve requires
+              Json::Value requires(Json::objectValue);
+              if (body.isMember("requires") && body["requires"].isObject()) {
+                  requires = body["requires"];
+              } else if (body.isMember("graph_id") && body["graph_id"].isString()) {
+                  const std::string gid = body["graph_id"].asString();
+                  auto dirs = graphDirCandidates();
+                  std::error_code ec;
+                  for (const auto& dir : dirs) {
+                      auto p1 = dir / (gid + ".yaml");
+                      auto p2 = dir / (gid + ".yml");
+                      if (std::filesystem::exists(p1, ec)) {
+                          if (auto r = loadRequiresFromYaml((std::filesystem::weakly_canonical(p1, ec)).string())) { requires = *r; break; }
+                      } else if (std::filesystem::exists(p2, ec)) {
+                          if (auto r = loadRequiresFromYaml((std::filesystem::weakly_canonical(p2, ec)).string())) { requires = *r; break; }
+                      }
+                  }
+              }
+              // Source caps
+              Json::Value caps(Json::objectValue);
+              if (body.isMember("source_caps") && body["source_caps"].isObject()) {
+                  caps = body["source_caps"];
+              } else if (body.isMember("source") && body["source"].isObject()) {
+                  const auto& s = body["source"]; caps = s.isMember("caps") && s["caps"].isObject() ? s["caps"] : s;
+              }
+              // Caps 可缺省：若无能力信息则无法校验，返回 ok=true（降级）
+
+              // Validate
+              std::vector<std::string> reasons;
+              auto get_vec2i = [](const Json::Value& v) -> std::pair<int,int> {
+                  if (v.isArray() && v.size()>=2) return { v[0].asInt(), v[1].asInt() };
+                  return {0,0};
+              };
+              auto in_str_list = [](const Json::Value& arr, const std::string& s){ if(!arr.isArray() || !arr.size()) return true; for(const auto& x: arr){ if(x.isString() && x.asString()==s) return true; } return false; };
+
+              // pixel format
+              std::string pix = caps.isMember("pix_fmt") ? caps["pix_fmt"].asString() : (caps.isMember("pixel_format")? caps["pixel_format"].asString() : "");
+              if (!caps.isNull() && caps.isObject() && !pix.empty() && requires.isMember("color_format") && !in_str_list(requires["color_format"], pix)) {
+                  reasons.push_back(std::string("像素格式不匹配: ") + pix);
+              }
+              // resolution
+              auto res = (caps.isObject() && caps.isMember("resolution")) ? get_vec2i(caps["resolution"]) : std::make_pair(0,0);
+              auto maxr = requires.isMember("max_resolution") ? get_vec2i(requires["max_resolution"]) : std::make_pair(99999,99999);
+              auto minr = requires.isMember("min_resolution") ? get_vec2i(requires["min_resolution"]) : std::make_pair(0,0);
+              if ((res.first>0 && res.second>0)) {
+                  if (res.first > maxr.first || res.second > maxr.second) {
+                      reasons.push_back("分辨率超过上限: " + std::to_string(res.first) + "x" + std::to_string(res.second) + " > " + std::to_string(maxr.first) + "x" + std::to_string(maxr.second));
+                  }
+                  if (res.first < minr.first || res.second < minr.second) {
+                      reasons.push_back("分辨率低于下限: " + std::to_string(res.first) + "x" + std::to_string(res.second) + " < " + std::to_string(minr.first) + "x" + std::to_string(minr.second));
+                  }
+              }
+              // fps
+              int fps = (caps.isObject() && caps.isMember("fps")) ? caps["fps"].asInt() : ((caps.isObject() && caps.isMember("frame_rate"))? caps["frame_rate"].asInt() : 0);
+              auto fr = requires.isMember("fps_range") ? get_vec2i(requires["fps_range"]) : std::make_pair(0, 1000);
+              if (fps>0 && (fps < fr.first || fps > fr.second)) {
+                  reasons.push_back("帧率不在范围 " + std::to_string(fr.first) + "-" + std::to_string(fr.second) + ": " + std::to_string(fps));
+              }
+
+              Json::Value payload = successPayload();
+              Json::Value data(Json::objectValue);
+              data["ok"] = reasons.empty();
+              Json::Value arr(Json::arrayValue); for(const auto& r: reasons) arr.append(r); data["reasons"] = arr;
+              if (!requires.isNull()) data["requires"] = requires;
+              if (!caps.isNull()) data["caps"] = caps;
+              payload["data"] = data;
+              return jsonResponse(payload, 200);
+          } catch (const std::exception& ex) {
+              return errorResponse(ex.what(), 500);
           }
       }
 
@@ -1506,6 +1828,133 @@ struct RestServer::Impl {
             return errorResponse(std::string("metrics set failed: ") + ex.what(), 400);
         }
     }
+
+    // --- SSE helpers and streams ---
+    static void sseSendAll(int fd, const std::string& s) {
+#ifdef _WIN32
+        send(fd, s.c_str(), static_cast<int>(s.size()), 0);
+#else
+        send(fd, s.c_str(), s.size(), 0);
+#endif
+    }
+    static void sseWriteHeaders(int fd) {
+        std::ostringstream hs;
+        hs << "HTTP/1.1 200 OK\r\n";
+        hs << "Content-Type: text/event-stream\r\n";
+        hs << "Cache-Control: no-cache\r\n";
+        hs << "Connection: keep-alive\r\n\r\n";
+        sseSendAll(fd, hs.str());
+    }
+    static void sseEvent(int fd, const char* event, const Json::Value& data) {
+        Json::StreamWriterBuilder b; std::string body = Json::writeString(b, data);
+        std::ostringstream ss;
+        if (event && *event) { ss << "event: " << event << "\n"; }
+        // split body by lines to avoid CRLF issues
+        std::istringstream is(body);
+        std::string line; ss << "data: ";
+        bool first = true;
+        while (std::getline(is, line)) {
+            if (!first) ss << "\ndata: ";
+            if (!line.empty() && line.back()=='\r') line.pop_back();
+            ss << line; first = false;
+        }
+        ss << "\n\n";
+        sseSendAll(fd, ss.str());
+    }
+    static void sseKeepAlive(int fd) {
+        sseSendAll(fd, "\n");
+    }
+
+    void streamSourcesSSE(int fd, const HttpRequest& req) {
+        sseWriteHeaders(fd);
+        auto q = parseQueryKV(req.query);
+        auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try{ return static_cast<uint64_t>(std::stoull(it->second)); }catch(...){ return def; } };
+        auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try{ return std::stoi(it->second); }catch(...){ return def; } };
+        const int interval_ms = (std::max)(80, get_int("interval_ms", 300));
+        const int keepalive_ms = (std::max)(1000, get_int("keepalive_ms", 15000));
+
+        auto make_snapshot = [&]() {
+            struct Agg { std::string id; std::string uri; bool running{false}; double fps{0.0}; };
+            std::unordered_map<std::string, Agg> by_id;
+            for (const auto& info : app.pipelines()) {
+                auto it = by_id.find(info.stream_id);
+                if (it == by_id.end()) {
+                    Agg a; a.id = info.stream_id; a.uri = info.source_uri; a.running = info.running; a.fps = info.metrics.fps; by_id.emplace(info.stream_id, a);
+                } else {
+                    it->second.running = it->second.running || info.running;
+                    if (info.metrics.fps > it->second.fps) it->second.fps = info.metrics.fps;
+                    if (it->second.uri.empty()) it->second.uri = info.source_uri;
+                }
+            }
+            // Merge VSM lightweight list
+            if (auto snap = vsm_sources_snapshot(600); snap && snap->isArray()) {
+                for (const auto& s : *snap) {
+                    std::string id = s.isMember("id")? s["id"].asString() : (s.isMember("attach_id")? s["attach_id"].asString() : "");
+                    if (id.empty()) continue; auto& a = by_id[id]; if (a.id.empty()) a.id = id; if (a.uri.empty() && s.isMember("uri")) a.uri = s["uri"].asString();
+                }
+            }
+            Json::Value items(Json::arrayValue);
+            for (auto& kv : by_id) {
+                const auto& a = kv.second; Json::Value n(Json::objectValue);
+                n["id"] = a.id; n["name"] = a.id; n["uri"] = a.uri; n["status"] = a.running?"Running":"Stopped"; n["fps"] = a.fps;
+                items.append(n);
+            }
+            return items;
+        };
+        auto fingerprint = [&]() {
+            std::string key; key.reserve(64);
+            for (const auto& p : app.pipelines()) { key += p.stream_id; key += p.running? '1':'0'; key += ';'; }
+            return std::hash<std::string>{}(key);
+        };
+
+        uint64_t last_rev = 0; uint64_t last_keep = 0;
+        // Initial burst
+        {
+            Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(fingerprint()); data["items"] = make_snapshot();
+            sseEvent(fd, "sources", data); last_rev = data["rev"].asUInt64();
+        }
+        auto start = std::chrono::steady_clock::now();
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+            auto rev = fingerprint();
+            if (rev != last_rev) {
+                Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(rev); data["items"] = make_snapshot(); sseEvent(fd, "sources", data); last_rev = rev; last_keep = 0; continue;
+            }
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+            if (elapsed - last_keep >= keepalive_ms) { sseKeepAlive(fd); last_keep = static_cast<uint64_t>(elapsed); }
+        }
+    }
+
+    void streamLogsSSE(int fd, const HttpRequest& req) {
+        sseWriteHeaders(fd);
+        auto q = parseQueryKV(req.query);
+        std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+        std::string level = q.count("level") ? q["level"] : std::string("info");
+        auto fingerprint = [&](){ std::string key; key.reserve(64); for (const auto& p : app.pipelines()) { if (!p.running) continue; if (!pipeline.empty() && p.profile_id != pipeline) continue; key += p.stream_id; key += ';'; } if(!level.empty()){ key+="#"; key+=level; } return std::hash<std::string>{}(key); };
+        auto make_items = [&](){ Json::Value arr(Json::arrayValue); auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr))*1000ULL); for (const auto& info : app.pipelines()) { if (!info.running) continue; if (!pipeline.empty() && info.profile_id!=pipeline) continue; Json::Value e(Json::objectValue); e["ts"] = now_ms; e["pipeline"] = info.profile_id; e["level"] = level; e["type"] = level; e["msg"] = std::string("running bytes=") + std::to_string(info.transport_stats.bytes); arr.append(e);} return arr; };
+        uint64_t last = 0; const int interval_ms = 500; const int keepalive_ms = 15000; uint64_t last_keep = 0; auto start = std::chrono::steady_clock::now();
+        // initial
+        { Json::Value d(Json::objectValue); d["rev"] = static_cast<Json::UInt64>(fingerprint()); d["items"] = make_items(); sseEvent(fd, "logs", d); last = d["rev"].asUInt64(); }
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms)); auto rev = fingerprint(); if (rev!=last) { Json::Value d(Json::objectValue); d["rev"] = static_cast<Json::UInt64>(rev); d["items"] = make_items(); sseEvent(fd, "logs", d); last=rev; last_keep=0; continue; }
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count(); if (elapsed-last_keep>=keepalive_ms) { sseKeepAlive(fd); last_keep = static_cast<uint64_t>(elapsed); }
+        }
+    }
+
+    void streamEventsSSE(int fd, const HttpRequest& req) {
+        sseWriteHeaders(fd);
+        auto q = parseQueryKV(req.query);
+        std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+        std::string level = q.count("level") ? q["level"] : std::string("info");
+        auto fingerprint = [&](){ std::string key; key.reserve(64); for (const auto& p : app.pipelines()) { if (!p.running) continue; if (!pipeline.empty() && p.profile_id != pipeline) continue; key += p.stream_id; key += ';'; } if(!level.empty()){ key+="#"; key+=level; } return std::hash<std::string>{}(key); };
+        auto make_items = [&](){ Json::Value arr(Json::arrayValue); auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr))*1000ULL); for (const auto& info : app.pipelines()) { if (!info.running) continue; if (!pipeline.empty() && info.profile_id!=pipeline) continue; Json::Value e(Json::objectValue); e["ts"] = now_ms; e["pipeline"] = info.profile_id; e["level"] = level; e["type"] = level; e["msg"] = std::string("pipeline running packets=") + std::to_string(info.transport_stats.packets); arr.append(e);} return arr; };
+        uint64_t last = 0; const int interval_ms = 700; const int keepalive_ms = 15000; uint64_t last_keep = 0; auto start = std::chrono::steady_clock::now();
+        { Json::Value d(Json::objectValue); d["rev"] = static_cast<Json::UInt64>(fingerprint()); d["items"] = make_items(); sseEvent(fd, "events", d); last = d["rev"].asUInt64(); }
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms)); auto rev = fingerprint(); if (rev!=last) { Json::Value d(Json::objectValue); d["rev"] = static_cast<Json::UInt64>(rev); d["items"] = make_items(); sseEvent(fd, "events", d); last=rev; last_keep=0; continue; }
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count(); if (elapsed-last_keep>=keepalive_ms) { sseKeepAlive(fd); last_keep = static_cast<uint64_t>(elapsed); }
+        }
+    }
     HttpResponse handleLoggingSet(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
@@ -1587,7 +2036,7 @@ struct RestServer::Impl {
         return jsonResponse(payload, 200);
     }
 
-    HttpResponse handlePipelines(const HttpRequest& /*req*/) {
+      HttpResponse handlePipelines(const HttpRequest& /*req*/) {
         Json::Value payload = successPayload();
         Json::Value data(Json::arrayValue);
         for (const auto& info : app.pipelines()) {
@@ -1877,6 +2326,277 @@ struct RestServer::Impl {
               return jsonResponse(payload, 200);
           } catch (const std::exception& ex) {
               return errorResponse(ex.what(), 400);
+          }
+      }
+
+      HttpResponse handleSources(const HttpRequest& /*req*/) {
+          Json::Value payload = successPayload();
+          Json::Value data(Json::arrayValue);
+          // Aggregate by stream_id
+          struct Agg { std::string id; std::string uri; bool running{false}; double fps{0.0}; };
+          std::unordered_map<std::string, Agg> by_id;
+          for (const auto& info : app.pipelines()) {
+              auto it = by_id.find(info.stream_id);
+              if (it == by_id.end()) {
+                  Agg a; a.id = info.stream_id; a.uri = info.source_uri; a.running = info.running; a.fps = info.metrics.fps; by_id.emplace(info.stream_id, a);
+              } else {
+                  it->second.running = it->second.running || info.running;
+                  if (info.metrics.fps > it->second.fps) it->second.fps = info.metrics.fps;
+                  if (it->second.uri.empty()) it->second.uri = info.source_uri;
+              }
+          }
+          // Enrich from VSM if available (list and per-source describe)
+          std::unordered_map<std::string, Json::Value> vsm_list_map;
+          // Fallback map by normalized URI to tolerate id mismatches between CP pipeline id and VSM attach id
+          std::unordered_map<std::string, Json::Value> vsm_list_by_uri;
+          auto normalize_uri = [](std::string u){
+              // very lightweight normalization: trim spaces and lower-case
+              u.erase(u.begin(), std::find_if(u.begin(), u.end(), [](unsigned char ch){ return !std::isspace(ch); }));
+              u.erase(std::find_if(u.rbegin(), u.rend(), [](unsigned char ch){ return !std::isspace(ch); }).base(), u.end());
+              std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+              return u;
+          };
+          if (auto snap = vsm_sources_snapshot(600); snap && snap->isArray()) {
+              for (const auto& s : *snap) {
+                  std::string id = s.isMember("id")? s["id"].asString() : (s.isMember("attach_id")? s["attach_id"].asString() : "");
+                  if (id.empty()) continue; vsm_list_map[id] = s;
+                  auto& a = by_id[id]; if (a.id.empty()) a.id = id;
+                  if (a.uri.empty() && s.isMember("uri")) a.uri = s["uri"].asString();
+                  if (s.isMember("uri") && s["uri"].isString()) {
+                      vsm_list_by_uri[normalize_uri(s["uri"].asString())] = s;
+                  }
+                  std::string phase = s.isMember("phase")? s["phase"].asString() : std::string();
+                  if (!phase.empty()) {
+                      std::string p = toLower(phase);
+                      if (p.find("ready")!=std::string::npos || p.find("run")!=std::string::npos) a.running = true;
+                      if (p.find("stop")!=std::string::npos) a.running = false;
+                  }
+                  if (s.isMember("fps") && s["fps"].isNumeric()) {
+                      double vf = s["fps"].asDouble(); if (vf > a.fps) a.fps = vf;
+                  }
+              }
+          }
+          for (auto& kv : by_id) {
+              const auto& a = kv.second;
+              Json::Value node(Json::objectValue);
+              node["id"] = a.id;
+              node["name"] = a.id;
+              node["uri"] = a.uri;
+              node["status"] = a.running ? "Running" : "Stopped";
+              node["fps"] = a.fps;
+              // Optional: merge VSM per-source metrics (jitter/rtt/loss) and phase/profile
+              if (auto it = vsm_list_map.find(a.id); it != vsm_list_map.end()) {
+                  const auto& s = it->second;
+                  if (s.isMember("profile")) node["profile"] = s["profile"];
+                  if (s.isMember("phase"))   node["phase"] = s["phase"];
+                  // Prefer lightweight caps from VSM list to avoid per-source describe when possible
+                  if (s.isMember("caps"))    node["caps"] = s["caps"];
+              } else if (!a.uri.empty()) {
+                  // Fallback by URI when ids differ (e.g., CP uses stream_id while VSM uses attach_id)
+                  auto it2 = vsm_list_by_uri.find(normalize_uri(a.uri));
+                  if (it2 != vsm_list_by_uri.end()) {
+                      const auto& s = it2->second;
+                      if (s.isMember("profile")) node["profile"] = s["profile"];
+                      if (s.isMember("phase"))   node["phase"] = s["phase"];
+                      if (s.isMember("caps"))    node["caps"] = s["caps"];
+                  }
+              }
+              // Enrich with detailed metrics from VSM describe (only if needed or available)
+              if (auto desc = vsm_source_describe(a.id, 400); desc && desc->isObject()) {
+                  const auto& d = *desc;
+                  if (d.isMember("jitter_ms")) node["jitter_ms"] = d["jitter_ms"];
+                  if (d.isMember("rtt_ms"))    node["rtt_ms"] = d["rtt_ms"];
+                  if (d.isMember("loss_ratio"))node["loss_ratio"] = d["loss_ratio"];
+                  if (d.isMember("phase"))     node["phase"] = d["phase"];
+                  if (!node.isMember("caps") && d.isMember("caps")) node["caps"] = d["caps"];
+              }
+              // caps: not provided by VSM currently; leave absent to be determined by future extension
+              data.append(node);
+          }
+          payload["data"] = data;
+          return jsonResponse(payload, 200);
+      }
+
+      HttpResponse handleSourcesWatch(const HttpRequest& req) {
+          // Long-poll style: if since==current rev, wait up to timeout_ms for change; else return immediately
+          auto q = parseQueryKV(req.query);
+          auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try{ return static_cast<uint64_t>(std::stoull(it->second)); }catch(...){ return def; } };
+          auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try{ return std::stoi(it->second); }catch(...){ return def; } };
+
+          auto snapshot = [&]() {
+              // Reuse aggregation
+              struct Agg { std::string id; std::string uri; bool running{false}; double fps{0.0}; };
+              std::unordered_map<std::string, Agg> by_id;
+              for (const auto& info : app.pipelines()) {
+                  auto it = by_id.find(info.stream_id);
+                  if (it == by_id.end()) {
+                      Agg a; a.id = info.stream_id; a.uri = info.source_uri; a.running = info.running; a.fps = info.metrics.fps; by_id.emplace(info.stream_id, a);
+                  } else {
+                      it->second.running = it->second.running || info.running;
+                      if (info.metrics.fps > it->second.fps) it->second.fps = info.metrics.fps;
+                      if (it->second.uri.empty()) it->second.uri = info.source_uri;
+                  }
+              }
+              // compute fingerprint
+              std::string concat;
+              concat.reserve(by_id.size()*32);
+              for (auto& kv : by_id) {
+                  concat += kv.second.id; concat += '|';
+                  concat += kv.second.running ? '1' : '0'; concat += '|';
+                  concat += std::to_string(static_cast<int>(kv.second.fps)); concat += ';';
+              }
+              uint64_t rev = std::hash<std::string>{}(concat);
+              Json::Value items(Json::arrayValue);
+              for (auto& kv : by_id) {
+                  const auto& a = kv.second;
+                  Json::Value node(Json::objectValue);
+                  node["id"] = a.id; node["name"] = a.id; node["uri"] = a.uri; node["status"] = a.running ? "Running" : "Stopped"; node["fps"] = a.fps; items.append(node);
+              }
+              return std::make_pair(rev, items);
+          };
+
+          const uint64_t since = get_uint64("since", 0);
+          { /* avoid Windows min/max macros issues by not using std::max here */ }
+          int tmp_timeout = get_int("timeout_ms", 12000); if (tmp_timeout < 100) tmp_timeout = 100; const int timeout_ms = tmp_timeout;
+          int tmp_interval = get_int("interval_ms", 300); if (tmp_interval < 80) tmp_interval = 80; const int interval_ms = tmp_interval;
+
+          auto snap = snapshot();
+          if (since == 0 || since != snap.first) {
+              Json::Value payload = successPayload();
+              Json::Value data(Json::objectValue);
+              data["rev"] = static_cast<Json::UInt64>(snap.first);
+              data["items"] = snap.second;
+              payload["data"] = data;
+              return jsonResponse(payload, 200);
+          }
+          // wait loop
+          auto start = std::chrono::steady_clock::now();
+          while (true) {
+              std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+              auto cur = snapshot();
+              if (cur.first != since) {
+                  Json::Value payload = successPayload();
+                  Json::Value data(Json::objectValue);
+                  data["rev"] = static_cast<Json::UInt64>(cur.first);
+                  data["items"] = cur.second;
+                  payload["data"] = data;
+                  return jsonResponse(payload, 200);
+              }
+              auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+              if (elapsed >= timeout_ms) {
+                  // keepalive payload with same rev, empty items to signal no-change
+                  Json::Value payload = successPayload();
+                  Json::Value data(Json::objectValue);
+                  data["rev"] = static_cast<Json::UInt64>(since);
+                  data["items"] = Json::arrayValue;
+                  payload["data"] = data;
+                  return jsonResponse(payload, 200);
+              }
+          }
+      }
+
+      // --- Observability: logs ---
+      HttpResponse handleLogsRecent(const HttpRequest& req) {
+          auto q = parseQueryKV(req.query);
+          std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+          std::string level = q.count("level") ? q["level"] : std::string();
+          int limit = 200; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
+          Json::Value payload = successPayload();
+          Json::Value arr(Json::arrayValue);
+          // synthesize lightweight rows from running pipelines
+          int emitted = 0;
+          auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
+          for (const auto& info : app.pipelines()) {
+              if (!info.running) continue;
+              if (!pipeline.empty() && info.profile_id != pipeline) continue;
+              Json::Value row(Json::objectValue);
+              row["ts"] = now_ms;
+              std::string lvl = level.empty()? std::string("Info") : level; row["level"] = lvl;
+              row["pipeline"] = info.profile_id;
+              row["node"] = "pipeline";
+              row["msg"] = std::string("running fps=") + std::to_string(info.metrics.fps);
+              arr.append(row);
+              if (++emitted >= limit) break;
+          }
+          Json::Value data(Json::objectValue); data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+      }
+
+      HttpResponse handleLogsWatch(const HttpRequest& req) {
+          auto q = parseQueryKV(req.query);
+          std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+          std::string level = q.count("level") ? q["level"] : std::string();
+          auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
+          auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try { return std::stoi(it->second); } catch(...) { return def; } };
+          auto fingerprint = [&](){ std::string key; key.reserve(128); for (const auto& p : app.pipelines()) { if (!pipeline.empty() && p.profile_id != pipeline) continue; key += p.stream_id; key += ':'; key += (p.running? '1':'0'); key += ';'; } if(!level.empty()){ key+="#"; key+=level; } return std::hash<std::string>{}(key); };
+          const uint64_t since = get_uint64("since", 0);
+          int tmp_to = get_int("timeout_ms", 12000); if (tmp_to < 100) tmp_to = 100; const int timeout_ms = tmp_to;
+          int tmp_iv = get_int("interval_ms", 300);  if (tmp_iv < 80)  tmp_iv = 80;  const int interval_ms = tmp_iv;
+          auto rev_now = fingerprint();
+          if (!since || since != rev_now) {
+              Json::Value payload = successPayload(); Json::Value data(Json::objectValue);
+              data["rev"] = static_cast<Json::UInt64>(rev_now);
+              Json::Value items(Json::arrayValue);
+              auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
+              for (const auto& info : app.pipelines()) {
+                  if (!info.running) continue; if (!pipeline.empty() && info.profile_id != pipeline) continue;
+                  Json::Value row(Json::objectValue);
+                  row["ts"] = now_ms; row["level"] = level.empty()? "Info" : level; row["pipeline"] = info.profile_id; row["node"] = "pipeline"; row["msg"] = std::string("running fps=") + std::to_string(info.metrics.fps);
+                  items.append(row);
+              }
+              data["items"] = items; payload["data"] = data; return jsonResponse(payload, 200);
+          }
+          auto start = std::chrono::steady_clock::now();
+          while (true) {
+              std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms)); auto cur = fingerprint();
+              if (cur != since) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(cur); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200); }
+              auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+              if (elapsed >= timeout_ms) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(since); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200); }
+          }
+      }
+
+      // --- Observability: events ---
+      HttpResponse handleEventsRecent(const HttpRequest& req) {
+          auto q = parseQueryKV(req.query);
+          std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+          std::string level = q.count("level") ? q["level"] : std::string();
+          int limit = 50; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
+          Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
+          int emitted = 0; auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
+          for (const auto& info : app.pipelines()) {
+              if (!info.running) continue; if (!pipeline.empty() && info.profile_id != pipeline) continue;
+              Json::Value e(Json::objectValue);
+              e["ts"] = now_ms; e["pipeline"] = info.profile_id; e["level"] = level.empty()? "info" : level; e["type"] = e["level"]; e["msg"] = std::string("pipeline running packets=") + std::to_string(info.transport_stats.packets);
+              arr.append(e); if (++emitted >= limit) break;
+          }
+          data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+      }
+      HttpResponse handleEventsWatch(const HttpRequest& req) {
+          auto q = parseQueryKV(req.query);
+          std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+          std::string level = q.count("level") ? q["level"] : std::string();
+          auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
+          auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try { return std::stoi(it->second); } catch(...) { return def; } };
+          auto fingerprint = [&](){ std::string key; key.reserve(64); for (const auto& p : app.pipelines()) { if (!p.running) continue; if (!pipeline.empty() && p.profile_id != pipeline) continue; key += p.stream_id; key += ';'; } if(!level.empty()){ key+="#"; key+=level; } return std::hash<std::string>{}(key); };
+          const uint64_t since = get_uint64("since", 0);
+          int tmp_to = get_int("timeout_ms", 12000); if (tmp_to < 100) tmp_to = 100; const int timeout_ms = tmp_to;
+          int tmp_iv = get_int("interval_ms", 300);  if (tmp_iv < 80)  tmp_iv = 80;  const int interval_ms = tmp_iv;
+          auto rev_now = fingerprint();
+          if (!since || since != rev_now) {
+              Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(rev_now);
+              Json::Value items(Json::arrayValue); auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
+              for (const auto& info : app.pipelines()) {
+                  if (!info.running) continue; if (!pipeline.empty() && info.profile_id != pipeline) continue;
+                  Json::Value e(Json::objectValue); e["ts"] = now_ms; e["pipeline"] = info.profile_id; e["level"] = level.empty()? "info" : level; e["type"] = e["level"]; e["msg"] = std::string("running bytes=") + std::to_string(info.transport_stats.bytes);
+                  items.append(e);
+              }
+              data["items"] = items; payload["data"] = data; return jsonResponse(payload, 200);
+          }
+          auto start = std::chrono::steady_clock::now();
+          while (true) {
+              std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms)); auto cur = fingerprint();
+              if (cur != since) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(cur); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200); }
+              auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+              if (elapsed >= timeout_ms) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(since); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200); }
           }
       }
 };
