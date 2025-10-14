@@ -62,7 +62,7 @@ const filtered = computed(()=> list.value.filter(filteredFn).map((it,idx)=>({ ..
 
 async function refresh(){ const data = await dataProvider.logsRecent({ pipeline: pipeline.value, level: level.value, limit: 500 }); list.value = (data as any).items || []; requestAnimationFrame(()=> vlistRef.value?.scrollToBottom && vlistRef.value.scrollToBottom()) }
 let unsubscribe: null | (()=>void) = null
-function startSSE(){ stopSSE(); esConnected.value = true; unsubscribe = dataProvider.logsSubscribe((obj)=>{ list.value.push(obj); if (tailing.value) vlistRef.value?.scrollToBottom && vlistRef.value.scrollToBottom(); if (list.value.length > 5000) list.value.splice(0, list.value.length - 5000) }) }
+function startSSE(){ stopSSE(); esConnected.value = true; unsubscribe = dataProvider.logsSubscribe((obj)=>{ list.value.push(obj); if (tailing.value) vlistRef.value?.scrollToBottom && vlistRef.value.scrollToBottom(); if (list.value.length > 5000) list.value.splice(0, list.value.length - 5000) }, { pipeline: pipeline.value || undefined, level: level.value || undefined }) }
 function stopSSE(){ if (unsubscribe) unsubscribe(); unsubscribe=null; esConnected.value=false }
 function clear(){ list.value = [] }
 
@@ -89,6 +89,9 @@ function exportLogs(){
 }
 
 onMounted(async ()=>{ try{ const data = await dataProvider.listPipelines(); pipelines.value = (data as any).items?.map((i:any)=>i.name) ?? [] } catch{}; await refresh(); startSSE() })
+import { watch } from 'vue'
+watch(pipeline, () => { if (esConnected.value) startSSE() })
+watch(level,    () => { if (esConnected.value) startSSE() })
 onBeforeUnmount(()=> stopSSE())
 </script>
 

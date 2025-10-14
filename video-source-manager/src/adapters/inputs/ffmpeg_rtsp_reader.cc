@@ -21,6 +21,24 @@ void FfmpegRtspReader::Loop() {
   if (!cap.open(uri_)) {
     running_ = false; return;
   }
+  // Initialize caps once
+  try {
+    int w = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int h = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+    width_.store(w > 0 ? w : 0);
+    height_.store(h > 0 ? h : 0);
+    double fourcc = cap.get(cv::CAP_PROP_FOURCC);
+    if (fourcc > 0) {
+      int code = static_cast<int>(fourcc);
+      char c1 = (char)(code & 0xFF);
+      char c2 = (char)((code >> 8) & 0xFF);
+      char c3 = (char)((code >> 16) & 0xFF);
+      char c4 = (char)((code >> 24) & 0xFF);
+      codec_.assign(1, c1); codec_.push_back(c2); codec_.push_back(c3); codec_.push_back(c4);
+    }
+    // pix_fmt_ remains 'BGR' (OpenCV decoded frame)
+    // color_space_ default 'BT.709'
+  } catch (...) { /* ignore */ }
   cv::Mat frame;
   auto last = std::chrono::steady_clock::now();
   uint64_t cnt = 0;

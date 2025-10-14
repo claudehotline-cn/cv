@@ -20,6 +20,11 @@ public:
   double RttMs() const { return rtt_ms_; }
   double LossRatio() const { return loss_ratio_; }
   uint64_t LastOkUnixSec() const { return last_ok_unix_sec_; }
+  int Width() const { return width_.load(); }
+  int Height() const { return height_.load(); }
+  const std::string& Codec() const { return codec_; }
+  const std::string& PixFmt() const { return pix_fmt_; }
+  const std::string& ColorSpace() const { return color_space_; }
 
 private:
   void Loop();
@@ -31,6 +36,11 @@ private:
   std::atomic<double> rtt_ms_{0.0};
   std::atomic<double> loss_ratio_{0.0};
   std::atomic<uint64_t> last_ok_unix_sec_{0};
+  std::atomic<int> width_{0};
+  std::atomic<int> height_{0};
+  std::string codec_;
+  std::string pix_fmt_ {"BGR"};
+  std::string color_space_ {"BT.709"};
 };
 
 } // namespace vsm

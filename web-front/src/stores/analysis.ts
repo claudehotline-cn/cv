@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { dataProvider } from '@/api/dataProvider'
+import { getSystemInfo } from '@/api/cp'
 
 type SourceItem = { id: string; name?: string; uri?: string; status?: string; caps?: any }
 type ModelItem = { id: string; task?: string; family?: string; variant?: string; path?: string }
@@ -23,6 +24,7 @@ export const useAnalysisStore = defineStore('analysis', {
     autoPlay: (localStorage.getItem('va_autoplay') ?? 'on') !== 'off',
     analyzing: false,
     whepUrl: '' as string,
+    whepBase: '' as string,
     stats: { fps: '0.0', p95: '0', alerts: 0 } as { fps: string; p95: string; alerts: number }
   }),
   getters: {
@@ -41,16 +43,19 @@ export const useAnalysisStore = defineStore('analysis', {
       if (this.sources.length || this.loading) return
       this.loading = true
       try {
-        const [sourcesResp, modelsResp, pipelinesResp, graphsResp] = await Promise.all([
+        const [sysResp, sourcesResp, modelsResp, pipelinesResp, graphsResp] = await Promise.all([
+          getSystemInfo().catch(() => ({ data: {} } as any)),
           dataProvider.listSources(),
           dataProvider.listModels?.() ?? Promise.resolve({ items: [] }),
           dataProvider.listPipelines?.() ?? Promise.resolve({ items: [] }),
           (dataProvider as any).listGraphs?.() ?? Promise.resolve({ items: [] })
         ])
-        this.sources = (sourcesResp as any).items ?? (sourcesResp as any) ?? []
-        this.models = ((modelsResp as any).items ?? []) as ModelItem[]
-        this.pipelines = ((pipelinesResp as any).items ?? []) as PipelineItem[]
-        this.graphs = ((graphsResp as any).items ?? []) as GraphItem[]
+        const sysData = (sysResp as any).data || {}
+        this.whepBase = (sysData.sfu?.whep_base || '').toString()
+        this.sources = (sourcesResp as any).data ?? (sourcesResp as any).items ?? (sourcesResp as any) ?? []
+        this.models = ((modelsResp as any).data ?? (modelsResp as any).items ?? []) as ModelItem[]
+        this.pipelines = ((pipelinesResp as any).data ?? (pipelinesResp as any).items ?? []) as PipelineItem[]
+        this.graphs = ((graphsResp as any).data ?? (graphsResp as any).items ?? []) as GraphItem[]
         if (this.sources.length) {
           const run = this.sources.find(s => (s as any).status === 'Running')
           this.setSource((run?.id) || this.sources[0].id)
@@ -74,7 +79,7 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     setSource(id: string) {
       this.currentSourceId = id
-      this.whepUrl = id ? `mock://whep/${id}` : ''
+      this.updateWhepUrl()
       this.refreshStats()
     },
     setModel(id: string) {
@@ -83,11 +88,20 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     setPipeline(name: string) {
       this.currentPipeline = name
+      this.updateWhepUrl()
       this.refreshStats()
     },
     setGraph(id: string) {
       this.currentGraphId = id
       this.refreshStats()
+    },
+    updateWhepUrl() {
+      const base = (this.whepBase || '').replace(/\/+$/, '')
+      if (base && this.currentSourceId && this.currentPipeline) {
+        this.whepUrl = `${base}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}`
+      } else {
+        this.whepUrl = this.currentSourceId ? `mock://whep/${this.currentSourceId}` : ''
+      }
     },
     setAutoPlay(v: boolean){ this.autoPlay = v; localStorage.setItem('va_autoplay', v ? 'on' : 'off') },
     setAnalyzing(v: boolean) {
@@ -100,10 +114,27 @@ export const useAnalysisStore = defineStore('analysis', {
         this.setAnalyzing(false)
         return pf
       }
-      this.setAnalyzing(true)
-      return { ok:true } as const
+      try {
+        const src = this.sources.find(s => s.id === this.currentSourceId)
+        const profile = this.currentPipeline
+        const uri = src?.uri || ''
+        const model = this.currentModelUri || undefined
+        // 调用 CP 创建会话
+        // @ts-ignore
+        if (typeof window !== 'undefined') { const mod = await import('@/api/cp'); await mod.subscribePipeline(this.currentSourceId, profile, uri, model) }
+        this.setAnalyzing(true)
+        return { ok: true } as const
+      } catch (e:any) {
+        this.setAnalyzing(false)
+        return { ok:false, reasons:[ e?.message || 'subscribe failed' ] } as any
+      }
     },
     async stopAnalysis() {
+      try {
+        const profile = this.currentPipeline
+        // @ts-ignore
+        if (typeof window !== 'undefined') { const mod = await import('@/api/cp'); await mod.unsubscribePipeline(this.currentSourceId, profile) }
+      } catch (e) {}
       this.setAnalyzing(false)
     },
     async hotswapModel(id: string) {

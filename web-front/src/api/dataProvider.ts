@@ -12,6 +12,8 @@ export const isMock = !!(import.meta as any).env?.VITE_USE_MOCK
 
 function delay<T>(data: T, ms = 300): Promise<T> { return new Promise(res => setTimeout(() => res(data), ms)) }
 
+function apiBase() { return (((import.meta as any).env?.VITE_API_BASE) || '/').replace(/\/$/, '') }
+
 export const dataProvider = {
   // Metrics
   async metricsQuery(params: { metric: string; from: number; to: number; stepSec: number; pipeline?: string }) {
@@ -30,57 +32,173 @@ export const dataProvider = {
   // Logs
   async logsRecent(params?: { pipeline?: string; level?: string; since?: number; limit?: number }) {
     if (isMock) return delay(logsRecent as any)
-    throw new Error('No backend configured')
+    const q = new URLSearchParams()
+    if (params?.pipeline) q.set('pipeline', params.pipeline)
+    if (params?.level)    q.set('level', params.level)
+    if (params?.since)    q.set('since', String(params.since))
+    if (params?.limit)    q.set('limit', String(params.limit))
+    const r = await fetch(apiBase() + '/api/logs' + (q.toString()?('?'+q.toString()):''))
+    if (!r.ok) throw new Error('logsRecent failed')
+    return r.json()
   },
-  logsSubscribe(cb: (ev: any) => void) {
-    if (!isMock) return () => {}
-    const levels = ['Info','Warning','Error']
-    const pipes = (pipelinesList as any).items.map((i: any) => i.name)
-    const id = setInterval(() => {
-      const ev = { ts: Date.now(), level: levels[Math.floor(Math.random()*levels.length)], pipeline: pipes[Math.floor(Math.random()*pipes.length)], node: 'model', msg: 'mock log event' }
-      cb(ev)
-    }, 1500)
-    return () => clearInterval(id)
+  logsSubscribe(cb: (ev: any) => void, opts?: { pipeline?: string; level?: string }) {
+    if (isMock) {
+      const levels = ['Info','Warning','Error']
+      const pipes = (pipelinesList as any).items.map((i: any) => i.name)
+      const id = setInterval(() => { const ev = { ts: Date.now(), level: levels[Math.floor(Math.random()*levels.length)], pipeline: pipes[Math.floor(Math.random()*pipes.length)], node: 'model', msg: 'mock log event' }; cb(ev) }, 1500)
+      return () => clearInterval(id)
+    }
+    const base = apiBase()
+    const canSSE = typeof window !== 'undefined' && typeof (window as any).EventSource === 'function'
+    if (canSSE) {
+      const url = new URL(base + '/api/logs/watch_sse')
+      if (opts?.pipeline) url.searchParams.set('pipeline', opts.pipeline)
+      if (opts?.level)    url.searchParams.set('level', opts.level)
+      const es = new (window as any).EventSource(url.toString())
+      const onMsg = (e: MessageEvent) => { try { const j = JSON.parse((e as any).data || '{}'); const arr = Array.isArray(j?.items)? j.items : []; arr.forEach(cb) } catch {} }
+      es.addEventListener('logs', onMsg as any)
+      es.addEventListener('message', onMsg as any)
+      return () => { try { es.close() } catch {} }
+    }
+    let stopped = false; let since = 0
+    async function loop(){
+      while(!stopped){
+        const url = new URL(base + '/api/logs/watch')
+        if (since) url.searchParams.set('since', String(since))
+        if (opts?.pipeline) url.searchParams.set('pipeline', opts.pipeline)
+        if (opts?.level)    url.searchParams.set('level', opts.level)
+        url.searchParams.set('timeout_ms','12000'); url.searchParams.set('interval_ms','300')
+        try { const r = await fetch(url.toString(), { cache:'no-cache' }); if(r.ok){ const j=await r.json(); const d=j?.data||j; const rev=Number(d?.rev||0); const items = Array.isArray(d?.items)? d.items: []; if (rev && rev !== since) { since = rev; for (const it of items) cb(it) } } } catch {}
+      }
+    }
+    loop(); return () => { stopped = true }
   },
 
   // Events
   async eventsRecent(params?: { limit?: number }) {
     if (isMock) return delay(eventsRecent as any)
-    throw new Error('No backend configured')
+    const q = new URLSearchParams()
+    if (params?.limit) q.set('limit', String(params.limit))
+    const r = await fetch(apiBase() + '/api/events/recent' + (q.toString()?('?'+q.toString()):''))
+    if (!r.ok) throw new Error('eventsRecent failed')
+    return r.json()
   },
-  eventsSubscribe(cb: (ev: any) => void) {
-    if (!isMock) return () => {}
-    const types = ['ok','warn','error','success']
-    const pipes = (pipelinesList as any).items.map((i: any) => i.name)
-    const id = setInterval(() => {
-      const ty = types[Math.floor(Math.random()*types.length)]
-      const ev = { ts: Date.now(), level: ty, pipeline: pipes[Math.floor(Math.random()*pipes.length)], type: ty, msg: `mock ${ty}` }
-      cb(ev)
-    }, 2000)
-    return () => clearInterval(id)
+  eventsSubscribe(cb: (ev: any) => void, opts?: { pipeline?: string; level?: string }) {
+    if (isMock) {
+      const types = ['ok','warn','error','success']
+      const pipes = (pipelinesList as any).items.map((i: any) => i.name)
+      const id = setInterval(() => { const ty = types[Math.floor(Math.random()*types.length)]; const ev = { ts: Date.now(), level: ty, pipeline: pipes[Math.floor(Math.random()*pipes.length)], type: ty, msg: `mock ${ty}` }; cb(ev) }, 2000)
+      return () => clearInterval(id)
+    }
+    const base = apiBase()
+    const canSSE = typeof window !== 'undefined' && typeof (window as any).EventSource === 'function'
+    if (canSSE) {
+      const url = new URL(base + '/api/events/watch_sse')
+      if (opts?.pipeline) url.searchParams.set('pipeline', opts.pipeline)
+      if (opts?.level)    url.searchParams.set('level', opts.level)
+      const es = new (window as any).EventSource(url.toString())
+      const onMsg = (e: MessageEvent) => { try { const j=JSON.parse((e as any).data||'{}'); const arr = Array.isArray(j?.items)? j.items: []; arr.forEach(cb) } catch {} }
+      es.addEventListener('events', onMsg as any)
+      es.addEventListener('message', onMsg as any)
+      return () => { try { es.close() } catch {} }
+    }
+    let stopped = false; let since = 0
+    async function loop(){
+      while(!stopped){
+        const url = new URL(base + '/api/events/watch')
+        if (since) url.searchParams.set('since', String(since))
+        if (opts?.pipeline) url.searchParams.set('pipeline', opts.pipeline)
+        if (opts?.level)    url.searchParams.set('level', opts.level)
+        url.searchParams.set('timeout_ms','12000'); url.searchParams.set('interval_ms','300')
+        try { const r = await fetch(url.toString(), { cache:'no-cache' }); if(r.ok){ const j=await r.json(); const d=j?.data||j; const rev=Number(d?.rev||0); const items = Array.isArray(d?.items)? d.items: []; if (rev && rev !== since) { since = rev; for (const it of items) cb(it) } } } catch {}
+      }
+    }
+    loop(); return () => { stopped = true }
   },
 
   // Lists
-  async listPipelines() { if (isMock) return delay(pipelinesList as any); throw new Error('No backend configured') },
-  async listSources() { if (isMock) return delay(sourcesList as any); throw new Error('No backend configured') },
-  async listModels() { if (isMock) return delay(modelsList as any); throw new Error('No backend configured') },
-  async listGraphs() { if (isMock) return delay(graphsList as any); throw new Error('No backend configured') },
+  async listPipelines() {
+    if (isMock) return delay(pipelinesList as any)
+    const r = await fetch(apiBase() + '/api/pipelines')
+    if (!r.ok) throw new Error('listPipelines failed')
+    return r.json()
+  },
+  async listSources() {
+    if (isMock) return delay(sourcesList as any)
+    const r = await fetch(apiBase() + '/api/sources')
+    if (!r.ok) throw new Error('listSources failed')
+    return r.json()
+  },
+  // 长轮询 watch：回调拿到 { rev, items }，返回取消函数
+  watchSources(cb: (payload: { rev: number, items: any[] }) => void, opts?: { intervalMs?: number; timeoutMs?: number }) {
+    // Prefer SSE if available
+    if (typeof window !== 'undefined' && typeof (window as any).EventSource === 'function') {
+      const es = new (window as any).EventSource(apiBase() + '/api/sources/watch_sse')
+      const onMsg = (e: MessageEvent) => { try { const j=JSON.parse((e as any).data||'{}'); const rev=Number(j?.rev||0); const items = Array.isArray(j?.items)? j.items: []; if (rev) cb({ rev, items }) } catch {} }
+      es.addEventListener('sources', onMsg as any)
+      es.addEventListener('message', onMsg as any)
+      return () => { try { es.close() } catch {} }
+    }
+    let stopped = false
+    let since = 0
+    const base = apiBase()
+    const interval = Math.max(100, opts?.intervalMs ?? 0)
+    async function loop(){
+      while(!stopped){
+        const url = new URL(base + '/api/sources/watch')
+        if (since) url.searchParams.set('since', String(since))
+        if (opts?.timeoutMs) url.searchParams.set('timeout_ms', String(opts.timeoutMs))
+        try{
+          const r = await fetch(url.toString(), { cache:'no-cache' })
+          if (!r.ok) throw new Error('watchSources failed')
+          const j = await r.json()
+          const d = j?.data || j
+          const rev = Number(d?.rev||0)
+          const items = Array.isArray(d?.items) ? d.items : []
+          // 更新 since 并派发
+          if (rev && rev !== since){ since = rev; cb({ rev, items }) }
+        }catch(e){ /* 忽略错误并稍后重试 */ }
+        if (interval) await new Promise(res => setTimeout(res, interval))
+      }
+    }
+    loop()
+    return () => { stopped = true }
+  },
+  async listModels() {
+    if (isMock) return delay(modelsList as any)
+    const r = await fetch(apiBase() + '/api/models')
+    if (!r.ok) throw new Error('listModels failed')
+    return r.json()
+  },
+  async listGraphs() {
+    if (isMock) return delay(graphsList as any)
+    const r = await fetch(apiBase() + '/api/graphs')
+    if (!r.ok) throw new Error('listGraphs failed')
+    return r.json()
+  },
   async preflightCheck(payload: { source: any; graph: any }) {
-    if (!isMock) throw new Error('No backend configured')
-    const reasons: string[] = []
-    const caps = payload.source?.caps || {}
-    const req = payload.graph?.requires || {}
-    const pix = caps.pix_fmt || ''
-    if (Array.isArray(req.color_format) && !req.color_format.includes(pix)) reasons.push(`像素格式不兼容: ${pix}`)
-    const [w,h] = caps.resolution || [0,0]
-    const max = req.max_resolution || [99999,99999]
-    const min = req.min_resolution || [0,0]
-    if (w>max[0] || h>max[1]) reasons.push(`分辨率超出最大: ${w}x${h} > ${max[0]}x${max[1]}`)
-    if (w<min[0] || h<min[1]) reasons.push(`分辨率低于最小: ${w}x${h} < ${min[0]}x${min[1]}`)
-    const fps = caps.fps || 0
-    const fr = req.fps_range || [0,999]
-    if (fps<fr[0] || fps>fr[1]) reasons.push(`帧率不在范围 ${fr[0]}-${fr[1]}: ${fps}`)
-    return delay({ ok: reasons.length===0, reasons } as any)
+    if (isMock) {
+      const reasons: string[] = []
+      const caps = payload.source?.caps || {}
+      const req = payload.graph?.requires || {}
+      const pix = caps.pix_fmt || ''
+      if (Array.isArray(req.color_format) && !req.color_format.includes(pix)) reasons.push(`像素格式不匹配: ${pix}`)
+      const [w,h] = caps.resolution || [0,0]
+      const max = req.max_resolution || [99999,99999]
+      const min = req.min_resolution || [0,0]
+      if (w>max[0] || h>max[1]) reasons.push(`分辨率超过上限: ${w}x${h} > ${max[0]}x${max[1]}`)
+      if (w<min[0] || h<min[1]) reasons.push(`分辨率低于下限: ${w}x${h} < ${min[0]}x${min[1]}`)
+      const fps = caps.fps || 0
+      const fr = req.fps_range || [0,999]
+      if (fps<fr[0] || fps>fr[1]) reasons.push(`帧率不在范围 ${fr[0]}-${fr[1]}: ${fps}`)
+      return delay({ ok: reasons.length===0, reasons } as any)
+    }
+    const body = { source: payload.source, graph_id: payload.graph?.graph_id, requires: payload.graph?.requires }
+    const r = await fetch(apiBase() + '/api/preflight', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    if (!r.ok) throw new Error('preflight failed')
+    const j = await r.json()
+    const d = j?.data || j
+    return { ok: !!d?.ok, reasons: d?.reasons || [] } as any
   },
 
   // Mutations (mock only updates nothing)

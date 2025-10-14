@@ -36,7 +36,11 @@ function decorate(items: any[]){
 
 async function load(){
   loading.value = true
-  try { const data = await dataProvider.listPipelines(); rows.value = decorate((data as any).items || []) }
+  try {
+    const data = await dataProvider.listPipelines();
+    const items = (data as any)?.data ?? (data as any)?.items ?? data
+    rows.value = decorate(items || [])
+  }
   catch (e:any) { ElMessage.error(e?.message || 'Load failed') }
   finally { loading.value = false }
 }

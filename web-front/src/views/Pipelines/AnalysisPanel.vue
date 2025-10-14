@@ -17,7 +17,7 @@
             <el-option v-for="m in models" :key="m.id" :label="modelLabel(m)" :value="m.id" />
           </el-select>
           <el-switch v-model="autoPlay" active-text="自动播放" style="margin-left:8px" />
-          <el-switch v-model="analyzing" active-text="实时分析" inactive-text="暂停" style="margin-left:8px" />
+          <el-switch v-model="analyzing" :disabled="!preflight.ok && !store.analyzing" active-text="实时分析" inactive-text="暂停" style="margin-left:8px" />
           <el-button text size="small" @click="refresh">
             <el-icon><RefreshRight /></el-icon>
             刷新
@@ -236,3 +236,4 @@ watch(() => route.query.pipeline, (val) => {
 .meta-item{ display:flex; gap:8px; font-size:13px; line-height:1.8; color: var(--va-text-2); }
 .meta-item strong{ color: var(--va-text-1); font-weight:600; }
 </style>
+

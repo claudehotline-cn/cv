@@ -52,6 +52,11 @@ std::vector<StreamStat> SourceController::Collect() {
       st.rtt_ms = kv.second->reader->RttMs();
       st.loss_pct = kv.second->reader->LossRatio();
       st.last_ok_unixts = kv.second->reader->LastOkUnixSec();
+      st.width = kv.second->reader->Width();
+      st.height = kv.second->reader->Height();
+      st.codec = kv.second->reader->Codec();
+      st.pix_fmt = kv.second->reader->PixFmt();
+      st.color_space = kv.second->reader->ColorSpace();
     }
     if (kv.second) { st.profile = kv.second->profile; st.model_id = kv.second->model_id; }
     out.push_back(st);
@@ -137,6 +142,11 @@ bool SourceController::GetOne(const std::string& attach_id, StreamStat* out) {
     st.rtt_ms = it->second->reader->RttMs();
     st.loss_pct = it->second->reader->LossRatio();
     st.last_ok_unixts = it->second->reader->LastOkUnixSec();
+    st.width = it->second->reader->Width();
+    st.height = it->second->reader->Height();
+    st.codec = it->second->reader->Codec();
+    st.pix_fmt = it->second->reader->PixFmt();
+    st.color_space = it->second->reader->ColorSpace();
   }
   if (it->second) { st.profile = it->second->profile; st.model_id = it->second->model_id; }
   if (out) *out = st; return true;
@@ -157,3 +167,12 @@ bool SourceController::WaitForChange(uint64_t since, int timeout_ms, uint64_t* n
 }
 
 } // namespace vsm
+
+
+
+
+
+
+
+
+

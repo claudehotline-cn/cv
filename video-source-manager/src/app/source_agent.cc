@@ -80,13 +80,38 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     if (!body.empty() && (is_json || body.find('{') != std::string::npos)) vsm::rest::parseJsonObjectFlat(body, jbody);
     if (method=="GET" && (path=="/api/source/list")) {
       auto vec = controller_->Collect();
-      std::ostringstream o; o<<"["; bool first=true; for (auto& s: vec){ if(!first)o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; }
+      std::ostringstream o; o<<"["; bool first=true; for (auto& s: vec){ if(!first)o<<","; first=false; 
+        o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)
+         <<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)
+         <<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)
+         <<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)
+         <<"\",\"fps\":"<<s.fps
+         <<",\"phase\":\""<<s.phase<<"\""
+         <<",\"caps\":{\"codec\":\""<<vsm::rest::jsonEscape(s.codec)
+         <<"\",\"resolution\":["<<s.width<<","<<s.height<<"]"
+         <<",\"fps\":"<<s.fps
+         <<",\"pix_fmt\":\""<<vsm::rest::jsonEscape(s.pix_fmt)
+         <<"\",\"color_space\":\""<<vsm::rest::jsonEscape(s.color_space)<<"\"}}"; }
       o<<"]"; return ok(o.str());
     }
     if (method=="GET" && (path=="/api/source/describe" || path=="/api/source/health")) {
       auto it = query.find("id"); if (it==query.end()||it->second.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id");
       vsm::StreamStat st; if(!controller_->GetOne(it->second, &st)) return err(vsm::errors::ErrorCode::NOT_FOUND, "not found");
-      std::ostringstream o; o<<"{\"id\":\""<<vsm::rest::jsonEscape(st.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(st.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(st.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(st.model_id)<<"\",\"fps\":"<<st.fps<<",\"jitter_ms\":"<<st.jitter_ms<<",\"rtt_ms\":"<<st.rtt_ms<<",\"loss_ratio\":"<<st.loss_pct<<",\"last_ok_unixts\":"<<st.last_ok_unixts<<",\"phase\":\""<<st.phase<<"\"}"; 
+      std::ostringstream o; o<<"{\"id\":\""<<vsm::rest::jsonEscape(st.attach_id)
+        <<"\",\"uri\":\""<<vsm::rest::jsonEscape(st.source_uri)
+        <<"\",\"profile\":\""<<vsm::rest::jsonEscape(st.profile)
+        <<"\",\"model_id\":\""<<vsm::rest::jsonEscape(st.model_id)
+        <<"\",\"fps\":"<<st.fps
+        <<",\"jitter_ms\":"<<st.jitter_ms
+        <<",\"rtt_ms\":"<<st.rtt_ms
+        <<",\"loss_ratio\":"<<st.loss_pct
+        <<",\"last_ok_unixts\":"<<st.last_ok_unixts
+        <<",\"phase\":\""<<st.phase<<"\""
+        <<",\"caps\":{\"codec\":\""<<vsm::rest::jsonEscape(st.codec)
+        <<"\",\"resolution\":["<<st.width<<","<<st.height<<"]"
+        <<",\"fps\":"<<st.fps
+        <<",\"pix_fmt\":\""<<vsm::rest::jsonEscape(st.pix_fmt)
+        <<"\",\"color_space\":\""<<vsm::rest::jsonEscape(st.color_space)<<"\"}}"; 
       return ok(o.str());
     }
     if (method=="POST" && path=="/api/source/add") {
@@ -119,8 +144,23 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
         std::ostringstream o; o<<"{\"rev\":"<<new_rev<<",\"items\":[],\"keepalive\":true}"; return ok(o.str());
       }
       auto snap = controller_->Snapshot();
-      std::ostringstream o; o<<"{\"rev\":"<<snap.first<<",\"items\":";
-      o<<"["; bool first=true; for (auto& s: snap.second){ if(!first)o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; } o<<"]}";
+      std::ostringstream o; o << "{\"rev\":" << snap.first << ",\"items\":[";
+      bool first=true; 
+      for (auto& s : snap.second) {
+        if (!first) o << ","; first=false;
+        o << "{\"id\":\"" << vsm::rest::jsonEscape(s.attach_id)
+          << "\",\"uri\":\"" << vsm::rest::jsonEscape(s.source_uri)
+          << "\",\"profile\":\"" << vsm::rest::jsonEscape(s.profile)
+          << "\",\"model_id\":\"" << vsm::rest::jsonEscape(s.model_id)
+          << "\",\"fps\":" << s.fps
+          << ",\"phase\":\"" << s.phase << "\",";
+        o << "\"caps\":{\"codec\":\"" << vsm::rest::jsonEscape(s.codec)
+          << "\",\"resolution\":[" << s.width << "," << s.height << "]"
+          << ",\"fps\":" << s.fps
+          << ",\"pix_fmt\":\"" << vsm::rest::jsonEscape(s.pix_fmt)
+          << "\",\"color_space\":\"" << vsm::rest::jsonEscape(s.color_space) << "\"}}";
+      }
+      o << "]}";
       return ok(o.str());
     }
     *status = 404; return "{}";
@@ -196,7 +236,18 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
         o << "event: update\n";
         // data payload
         o << "data: {\"rev\":" << snap.first << ",\"items\":[";
-        bool first=true; for (auto& s: snap.second){ if(!first) o<<","; first=false; o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)<<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)<<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)<<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)<<"\",\"fps\":"<<s.fps<<",\"phase\":\""<<s.phase<<"\"}"; }
+        bool first=true; for (auto& s: snap.second){ if(!first) o<<","; first=false; 
+          o<<"{\"id\":\""<<vsm::rest::jsonEscape(s.attach_id)
+            <<"\",\"uri\":\""<<vsm::rest::jsonEscape(s.source_uri)
+            <<"\",\"profile\":\""<<vsm::rest::jsonEscape(s.profile)
+            <<"\",\"model_id\":\""<<vsm::rest::jsonEscape(s.model_id)
+            <<"\",\"fps\":"<<s.fps
+            <<",\"phase\":\""<<s.phase<<"\",";
+          o<<"\"caps\":{\"codec\":\""<<vsm::rest::jsonEscape(s.codec)
+            <<"\",\"resolution\":["<<s.width<<","<<s.height<<"]"
+            <<",\"fps\":"<<s.fps
+            <<",\"pix_fmt\":\""<<vsm::rest::jsonEscape(s.pix_fmt)
+            <<"\",\"color_space\":\""<<vsm::rest::jsonEscape(s.color_space)<<"\"}}"; }
         o << "]}\n\n";
         send_all(o.str());
       } else {
@@ -218,3 +269,7 @@ void SourceAgent::Stop() {
 }
 
 } // namespace vsm
+
+
+
+

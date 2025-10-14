@@ -12,6 +12,7 @@
       <template #title><el-icon><DataLine/></el-icon><span>Pipelines</span></template>
       <el-menu-item index="/pipelines">列表</el-menu-item>
       <el-menu-item index="/pipelines/editor">编辑器</el-menu-item>
+      <el-menu-item index="/pipelines/analysis">分析</el-menu-item>
     </el-sub-menu>
     <el-menu-item index="/sources"><el-icon><Connection/></el-icon><span>Sources</span></el-menu-item>
     <el-menu-item index="/models"><el-icon><Box/></el-icon><span>Models</span></el-menu-item>
@@ -38,4 +39,3 @@ const active = useRoute().path
 .menu{ border-right: none; padding-top: 8px; }
 .copyright{ color: var(--va-text-2); opacity: .6; font-size: 12px; padding: 12px; }
 </style>
-

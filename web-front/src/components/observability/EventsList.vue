@@ -41,7 +41,7 @@ function typeIconComp(e:any) {
 async function refresh() {
   loading.value = true
   try {
-    const data = await dataProvider.eventsRecent({ limit: props.limit })
+    const data = await dataProvider.eventsRecent({ limit: props.limit, ...(props.pipeline? { pipeline: props.pipeline } : {}), ...(level.value ? { level: level.value } : {}) })
     events.value = (data as any).items ?? []
   } finally { loading.value = false }
 }
@@ -53,7 +53,7 @@ function startSSE() {
   const unsub = dataProvider.eventsSubscribe((obj) => {
     events.value.unshift(obj)
     if (events.value.length > (props.limit ?? 30)) events.value.pop()
-  })
+  }, { pipeline: props.pipeline || undefined, level: level.value || undefined })
   // @ts-ignore
   es = { close: unsub } as any
 }
@@ -67,6 +67,8 @@ const filtered = computed(() => {
 })
 
 watch(() => props.useSSE, (v) => { if (v) { stopPolling(); startSSE() } else { stopSSE(); startPolling() } })
+watch(() => props.pipeline, () => { if (props.useSSE) startSSE(); else refresh() })
+watch(level, () => { if (props.useSSE) startSSE(); else refresh() })
 
 onMounted(async () => { await refresh(); props.useSSE ? startSSE() : startPolling() })
 onBeforeUnmount(() => { stopPolling(); stopSSE() })

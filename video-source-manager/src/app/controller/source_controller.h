@@ -24,6 +24,12 @@ struct StreamStat {
   double loss_pct {0.0};
   std::string phase {"Ready"};
   uint64_t last_ok_unixts {0};
+  // caps (optional)
+  int width {0};
+  int height {0};
+  std::string codec;
+  std::string pix_fmt;
+  std::string color_space;
 };
 
 class SourceController {

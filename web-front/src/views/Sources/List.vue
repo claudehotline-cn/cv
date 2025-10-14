@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Link, Grid, List } from '@element-plus/icons-vue'
@@ -28,11 +28,13 @@ const pipelines = ref<{ name: string }[]>([])
 
 const router = useRouter()
 const route = useRoute()
+let timer: any = null
+let unwatch: any = null
 
 async function fetchList() {
   try {
     const resp = await dataProvider.listSources()
-    const items = (resp as any)?.items ?? (resp as any[])
+    const items = (resp as any)?.data ?? (resp as any)?.items ?? (resp as any[])
     rows.value = (items || []).map((it: any) => ({
       ...it,
       group: it.group || (it.id?.split('_')[0] ?? 'default')
@@ -44,7 +46,8 @@ async function fetchList() {
 
 async function fetchPipelines() {
   const resp = await dataProvider.listPipelines()
-  pipelines.value = (resp as any).items?.map((i:any) => ({ name: i.name })) ?? []
+  const items = (resp as any)?.data ?? (resp as any)?.items ?? []
+  pipelines.value = (items as any[]).map((i:any) => ({ name: i.name }))
 }
 
 async function attach() {
@@ -81,7 +84,17 @@ onMounted(() => {
   if (typeof route.query.q === 'string') keyword.value = route.query.q
   if (typeof route.query.view === 'string' && (route.query.view === 'card' || route.query.view === 'table')) viewMode.value = route.query.view
   fetchList()
+  // 长轮询 /api/sources/watch，降级：用定时刷新兜底
+  try {
+    unwatch = (dataProvider as any).watchSources?.(({ items }: any) => {
+      if (!Array.isArray(items)) return
+      rows.value = items.map((it: any) => ({ ...it, group: it.group || (it.id?.split('_')[0] ?? 'default') }))
+    }, { intervalMs: 350, timeoutMs: 12000 })
+  } catch {}
+  if (!unwatch) timer = setInterval(fetchList, 3000)
 })
+
+onBeforeUnmount(() => { if (timer) { clearInterval(timer); timer = null } if (unwatch) { try { unwatch() } catch {} unwatch = null } })
 
 watch(keyword, updateRoute)
 watch(viewMode, updateRoute)
