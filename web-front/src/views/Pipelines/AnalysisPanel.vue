@@ -47,6 +47,7 @@
               :value="m.id"
             />
           </el-select>
+          <el-switch v-model="autoPlay" active-text="自动播放" style="margin-left:8px" />
           <el-button text size="small" @click="refresh">
             <el-icon><RefreshRight /></el-icon>
             刷新
@@ -161,6 +162,8 @@ const analyzing = computed({
   }
 })
 
+const autoPlay = computed({ get:()=>store.autoPlay, set:(v:boolean)=>store.setAutoPlay(v) })
+
 function sourceLabel(s: any) {
   return `${s.name || s.id} (${s.phase || 'Unknown'})`
 }
@@ -228,4 +231,7 @@ watch(() => route.query.pipeline, () => syncFromRoute())
 .meta-item{ display:flex; gap:8px; font-size:13px; line-height:1.8; color: var(--va-text-2); }
 .meta-item strong{ color: var(--va-text-1); font-weight:600; }
 </style>
+
+
+
 

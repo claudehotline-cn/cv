@@ -6,11 +6,11 @@ import { Search, Link, Grid, List } from '@element-plus/icons-vue'
 import SourcesAttachDrawer from './SourcesAttachDrawer.vue'
 import { dataProvider } from '@/api/dataProvider'
 
-type SourceItem = { id: string; name?: string; uri?: string; phase?: string; fps?: number; loss?: number; jitter?: number; group?: string }
+type SourceItem = { id: string; name?: string; uri?: string; status?: string; fps?: number; loss?: number; jitter?: number; group?: string }
 
 const rows = ref<SourceItem[]>([])
 const keyword = ref('')
-const statusFilter = ref<'All'|'Ready'|'Pending'|'Failed'>('All')
+const statusFilter = ref<'All'|'Running'|'Stopped'|'Error'>('All')
 const groupFilter = ref<string>('All')
 const viewMode = ref<'table'|'card'>('table')
 const attachVisible = ref(false)
@@ -47,9 +47,9 @@ async function detach(row: SourceItem) {
 }
 
 const router = useRouter()
-function preview(row: SourceItem) {
-  router.push({ path: '/pipelines/analysis', query: { source: row.id } })
-}
+function preview(row: SourceItem) { router.push({ path: '/pipelines/analysis', query: { source: row.id } }) }
+async function start(row: SourceItem){ await (dataProvider as any).startSource?.(row.id); row.status = 'Starting'; setTimeout(()=> row.status='Running', 800) }
+async function stop(row: SourceItem){ await (dataProvider as any).stopSource?.(row.id); row.status = 'Stopping'; setTimeout(()=> row.status='Stopped', 800) }
 
 const route = useRoute()
 onMounted(() => {
@@ -88,14 +88,14 @@ const filtered = computed(() => rows.value.filter(r => {
     const matches = [`${r.id}`, r.name || '', r.uri || ''].some(v => v.toLowerCase().includes(k))
     if (!matches) return false
   }
-  if (statusFilter.value !== 'All' && r.phase !== statusFilter.value) return false
+  if (statusFilter.value !== 'All' && r.status !== statusFilter.value) return false
   if (groupFilter.value !== 'All' && (r.group || 'default') !== groupFilter.value) return false
   return true
 }))
 
-function statusType(phase?: string) {
-  if (phase === 'Ready') return 'success'
-  if (phase === 'Failed') return 'danger'
+function statusType(status?: string) {
+  if (status === 'Running') return 'success'
+  if (status === 'Error') return 'danger'
   return 'warning'
 }
 
@@ -120,9 +120,9 @@ function setGroup(val: string) {
       ]" size="small" />
       <el-divider direction="vertical" class="divider" />
       <el-check-tag :checked="statusFilter==='All'" @change="() => setStatus('All')">全部</el-check-tag>
-      <el-check-tag :checked="statusFilter==='Ready'" type="success" @change="() => setStatus('Ready')">Ready</el-check-tag>
-      <el-check-tag :checked="statusFilter==='Pending'" type="info" @change="() => setStatus('Pending')">Pending</el-check-tag>
-      <el-check-tag :checked="statusFilter==='Failed'" type="danger" @change="() => setStatus('Failed')">Failed</el-check-tag>
+      <el-check-tag :checked="statusFilter==='Running'" type="success" @change="() => setStatus('Running')">Running</el-check-tag>
+      <el-check-tag :checked="statusFilter==='Stopped'" type="info" @change="() => setStatus('Stopped')">Stopped</el-check-tag>
+      <el-check-tag :checked="statusFilter==='Error'" type="danger" @change="() => setStatus('Error')">Error</el-check-tag>
       <el-select v-model="groupFilter" size="small" class="group-select">
         <el-option v-for="g in groups" :key="g" :label="g === 'All' ? '全部分组' : g" :value="g" />
       </el-select>
@@ -135,7 +135,7 @@ function setGroup(val: string) {
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column prop="uri" label="URI" min-width="240" show-overflow-tooltip />
         <el-table-column label="状态" width="120">
-          <template #default="{ row }"><el-tag :type="statusType(row.phase)" effect="dark">{{ row.phase }}</el-tag></template>
+          <template #default="{ row }"><el-tag :type="statusType(row.status)" effect="dark">{{ row.status }}</el-tag></template>
         </el-table-column>
         <el-table-column label="FPS / 丢包 / 抖动" min-width="220">
           <template #default="{ row }"><span>{{ row.fps }} / {{ row.loss }}% / {{ row.jitter }}ms</span></template>
@@ -156,7 +156,7 @@ function setGroup(val: string) {
           <el-card shadow="hover" class="source-card">
             <div class="card-head">
               <div class="title">{{ item.name || item.id }}</div>
-              <el-tag :type="statusType(item.phase)" size="small" effect="dark">{{ item.phase }}</el-tag>
+              <el-tag :type="statusType(item.status)" size="small" effect="dark">{{ item.status }}</el-tag>
             </div>
             <div class="card-body">
               <div class="line">ID: {{ item.id }}</div>
@@ -190,4 +190,11 @@ function setGroup(val: string) {
 .line{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .card-actions{ display:flex; justify-content:flex-end; gap:6px; margin-top:12px; }
 </style>
+
+
+
+
+
+
+
 

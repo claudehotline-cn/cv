@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import { dataProvider } from '@/api/dataProvider'
 
-type SourceItem = { id: string; name?: string; uri?: string; phase?: string }
+type SourceItem = { id: string; name?: string; uri?: string; phase?: string; status?: string; caps?: any }
 type ModelItem = { id: string; task?: string; family?: string; variant?: string; path?: string }
+type GraphItem = { graph_id: string; name?: string; requires?: any }
 type PipelineItem = { name: string; status?: string; fps?: number; input_fps?: number; alerts?: number }
 
 function randomFps() { return (22 + Math.random() * 6).toFixed(1) }
@@ -14,9 +15,12 @@ export const useAnalysisStore = defineStore('analysis', {
     sources: [] as SourceItem[],
     models: [] as ModelItem[],
     pipelines: [] as PipelineItem[],
+    graphs: [] as GraphItem[],
     currentSourceId: '' as string,
     currentModelUri: '' as string,
     currentPipeline: '' as string,
+    currentGraphId: '' as string,
+    autoPlay: (localStorage.getItem('va_autoplay') ?? 'on') !== 'off',
     analyzing: false,
     whepUrl: '' as string,
     stats: { fps: '0.0', p95: '0', alerts: 0 } as { fps: string; p95: string; alerts: number }
@@ -34,19 +38,25 @@ export const useAnalysisStore = defineStore('analysis', {
       if (this.sources.length || this.loading) return
       this.loading = true
       try {
-        const [sourcesResp, modelsResp, pipelinesResp] = await Promise.all([
+        const [sourcesResp, modelsResp, pipelinesResp, graphsResp] = await Promise.all([
           dataProvider.listSources(),
           dataProvider.listModels?.() ?? Promise.resolve({ items: [] }),
-          dataProvider.listPipelines?.() ?? Promise.resolve({ items: [] })
+          dataProvider.listPipelines?.() ?? Promise.resolve({ items: [] }),
+          (dataProvider as any).listGraphs?.() ?? Promise.resolve({ items: [] })
         ])
         this.sources = (sourcesResp as any).items ?? (sourcesResp as any) ?? []
         this.models = ((modelsResp as any).items ?? []) as ModelItem[]
         this.pipelines = ((pipelinesResp as any).items ?? []) as PipelineItem[]
+        this.graphs = ((graphsResp as any).items ?? []) as GraphItem[]
         if (this.sources.length) {
-          this.setSource(this.sources[0].id)
+          const run = this.sources.find(s => (s as any).status === 'Running')
+          this.setSource((run?.id) || this.sources[0].id)
         }
         if (this.pipelines.length) {
           this.currentPipeline = this.pipelines[0].name
+        }
+        if (this.graphs.length) {
+          this.currentGraphId = this.graphs[0].graph_id
         }
         if (this.models.length) {
           this.currentModelUri = this.models[0].id
@@ -69,12 +79,25 @@ export const useAnalysisStore = defineStore('analysis', {
       this.currentPipeline = name
       this.refreshStats()
     },
+    setGraph(id: string) {
+      this.currentGraphId = id
+      this.refreshStats()
+    },
+    setAutoPlay(v: boolean){ this.autoPlay = v; localStorage.setItem('va_autoplay', v ? 'on' : 'off') },
     setAnalyzing(v: boolean) {
       this.analyzing = v
       this.refreshStats()
     },
     async startAnalysis() {
+      // Preflight (mock)
+      try {
+        const src = this.sources.find(s => s.id === this.currentSourceId)
+        const graph = this.graphs.find(g => g.graph_id === this.currentGraphId)
+        const pf = await (dataProvider as any).preflightCheck?.({ source: src, graph })
+        if (pf && !pf.ok) { this.setAnalyzing(false); return { ok:false, reasons: pf.reasons } }
+      } catch {}
       this.setAnalyzing(true)
+      return { ok:true }
     },
     async stopAnalysis() {
       this.setAnalyzing(false)
