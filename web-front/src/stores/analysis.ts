@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { dataProvider } from '@/api/dataProvider'
 
-type SourceItem = { id: string; name?: string; uri?: string; phase?: string; status?: string; caps?: any }
+type SourceItem = { id: string; name?: string; uri?: string; status?: string; caps?: any }
 type ModelItem = { id: string; task?: string; family?: string; variant?: string; path?: string }
 type GraphItem = { graph_id: string; name?: string; requires?: any }
 type PipelineItem = { name: string; status?: string; fps?: number; input_fps?: number; alerts?: number }
@@ -31,6 +31,9 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     currentModel(state) {
       return state.models.find(m => m.id === state.currentModelUri) || null
+    },
+    currentGraph(state) {
+      return state.graphs.find(g => g.graph_id === state.currentGraphId) || null
     }
   },
   actions: {
@@ -62,6 +65,9 @@ export const useAnalysisStore = defineStore('analysis', {
           this.currentModelUri = this.models[0].id
         }
         this.refreshStats()
+        if (this.autoPlay && !this.analyzing) {
+          await this.startAnalysis()
+        }
       } finally {
         this.loading = false
       }
@@ -89,21 +95,28 @@ export const useAnalysisStore = defineStore('analysis', {
       this.refreshStats()
     },
     async startAnalysis() {
-      // Preflight (mock)
-      try {
-        const src = this.sources.find(s => s.id === this.currentSourceId)
-        const graph = this.graphs.find(g => g.graph_id === this.currentGraphId)
-        const pf = await (dataProvider as any).preflightCheck?.({ source: src, graph })
-        if (pf && !pf.ok) { this.setAnalyzing(false); return { ok:false, reasons: pf.reasons } }
-      } catch {}
+      const pf = await this.preflight()
+      if (!pf.ok) {
+        this.setAnalyzing(false)
+        return pf
+      }
       this.setAnalyzing(true)
-      return { ok:true }
+      return { ok:true } as const
     },
     async stopAnalysis() {
       this.setAnalyzing(false)
     },
     async hotswapModel(id: string) {
       this.setModel(id)
+    },
+    async preflight() {
+      try {
+        const src = this.sources.find(s => s.id === this.currentSourceId)
+        const graph = this.graphs.find(g => g.graph_id === this.currentGraphId)
+        const pf = await (dataProvider as any).preflightCheck?.({ source: src, graph })
+        if (pf) return pf
+      } catch (e) {}
+      return { ok: true, reasons: [] }
     },
     refreshStats() {
       const pipeline = this.pipelines.find(p => p.name === this.currentPipeline)

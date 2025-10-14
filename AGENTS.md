@@ -48,6 +48,7 @@ This document is a concise contributor guide for this repository. It explains ho
 - Respect staged plans; prefer minimal, targeted patches.
 - Do not change public interfaces unless the plan/owner confirms.
 - When adding GPU paths, keep CPU fallback intact; guard features behind options and verify via automated tests before merging.
+- 使用apply_patch 修改文件。
 
 ## Constraints
 
