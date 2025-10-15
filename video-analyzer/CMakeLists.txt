@@ -77,6 +77,7 @@ option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
 option(USE_GRPC "Enable gRPC control plane endpoints" OFF)
 option(VA_ENABLE_GRPC_SERVER "Build gRPC server implementation (requires working gRPC toolchain)" OFF)
 option(VA_BUILD_TESTS "Build unit test targets" OFF)
+option(VA_WITH_MYSQL "Enable MySQL-backed storage (mysql-connector-c++)" OFF)
 ## 默认 CUDA 架构（可在配置时覆盖）
 ## 示例覆盖：-DVA_CUDA_ARCHS=89 或 -DCMAKE_CUDA_ARCHITECTURES=89
 set(VA_CUDA_ARCHS "89" CACHE STRING "CUDA SM architectures for NVCC (e.g. 89;90;120)")
@@ -379,6 +380,18 @@ find_library(JSONCPP_LIB_RELEASE NAMES jsoncpp PATHS ${VCPKG_LIB_DIR} NO_DEFAULT
 find_library(JSONCPP_LIB_DEBUG NAMES jsoncpp PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
 if (JSONCPP_LIB_RELEASE OR JSONCPP_LIB_DEBUG)
     target_link_vcpkg_library(${PROJECT_NAME} "${JSONCPP_LIB_DEBUG}" "${JSONCPP_LIB_RELEASE}")
+endif()
+
+# Optional: MySQL Connector/C++ via vcpkg (unofficial-mysql-connector-cpp)
+if (VA_WITH_MYSQL)
+    find_package(unofficial-mysql-connector-cpp CONFIG QUIET)
+    if (unofficial-mysql-connector-cpp_FOUND)
+        message(STATUS "MySQL connector found via vcpkg: enabling VA_WITH_MYSQL")
+        target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::mysql-connector-cpp::connector)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VA_WITH_MYSQL)
+    else()
+        message(WARNING "VA_WITH_MYSQL=ON but mysql-connector-c++ not found (vcpkg target 'unofficial::mysql-connector-cpp::connector'). Building without MySQL.")
+    endif()
 endif()
 
 # --- Post-build: copy runtime DLLs to bin (Windows) ---
