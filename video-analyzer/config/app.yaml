@@ -81,6 +81,12 @@ database:
     min: 4
     max: 16
     timeout_ms: 2000
+  retention:
+    enabled: false        # 是否启用定期清理（默认关闭）
+    events_seconds: 86400 # 事件保留时长（秒），0 表示不清理
+    logs_seconds: 86400   # 日志保留时长（秒），0 表示不清理
+    interval_seconds: 600 # 清理周期（秒）
+    jitter_percent: 10    # 抖动百分比，避免同时触发
 control_plane:
   enabled: true
   grpc_addr: "0.0.0.0:50051"

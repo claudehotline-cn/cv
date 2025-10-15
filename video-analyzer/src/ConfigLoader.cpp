@@ -386,6 +386,17 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
                 payload.database.pool.max = pool["max"].as<int>(payload.database.pool.max);
                 payload.database.pool.timeout_ms = pool["timeout_ms"].as<int>(payload.database.pool.timeout_ms);
             }
+            if (db["retention"] && db["retention"].IsMap()) {
+                const auto r = db["retention"];
+                payload.database.retention.enabled = r["enabled"].as<bool>(payload.database.retention.enabled);
+                // Support both *_seconds or legacy *_sec keys if present
+                payload.database.retention.events_seconds = r["events_seconds"].as<std::uint64_t>(r["events_sec"].as<std::uint64_t>(payload.database.retention.events_seconds));
+                payload.database.retention.logs_seconds = r["logs_seconds"].as<std::uint64_t>(r["logs_sec"].as<std::uint64_t>(payload.database.retention.logs_seconds));
+                payload.database.retention.interval_seconds = r["interval_seconds"].as<int>(payload.database.retention.interval_seconds);
+                payload.database.retention.jitter_percent = r["jitter_percent"].as<int>(payload.database.retention.jitter_percent);
+                if (payload.database.retention.jitter_percent < 0) payload.database.retention.jitter_percent = 0;
+                if (payload.database.retention.jitter_percent > 100) payload.database.retention.jitter_percent = 100;
+            }
         }
     }
     return payload;

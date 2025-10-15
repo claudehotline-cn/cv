@@ -130,6 +130,15 @@ struct AppConfigPayload {
         std::string password;
         std::string db;
         DatabasePoolConfig pool;
+        struct RetentionConfig {
+            bool enabled {false};
+            std::uint64_t events_seconds {0};
+            std::uint64_t logs_seconds {0};
+            // How often to run purge (seconds). <=0 disables scheduler even if enabled.
+            int interval_seconds {600};
+            // Random jitter percentage to avoid thundering herd (0-100)
+            int jitter_percent {10};
+        } retention;
     } database;
     struct ControlPlaneConfig {
         bool enabled {false};

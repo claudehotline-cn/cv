@@ -833,6 +833,9 @@ struct RestServer::Impl {
     std::vector<va::storage::LogRow> q_logs;
     std::unique_ptr<std::thread> db_thread;
     std::atomic<bool> db_stop{false};
+    // Periodic DB retention worker (best-effort)
+    std::unique_ptr<std::thread> retention_thread;
+    std::atomic<bool> retention_stop{false};
 
     static std::uint64_t now_ms() {
         using namespace std::chrono;
@@ -876,6 +879,59 @@ struct RestServer::Impl {
             dbq_cv.notify_all();
             if (db_thread->joinable()) db_thread->join();
             db_thread.reset();
+        }
+    }
+
+    void startRetentionWorker() {
+        const auto& r = app.appConfig().database.retention;
+        if (!r.enabled) return;
+        if (r.interval_seconds <= 0) return;
+        if (!events_repo && !logs_repo) return;
+        retention_stop.store(false, std::memory_order_relaxed);
+        retention_thread = std::make_unique<std::thread>([this]() {
+            const auto& r = app.appConfig().database.retention;
+            auto interval = std::chrono::seconds(r.interval_seconds > 0 ? r.interval_seconds : 600);
+            // Add simple jitter to avoid thundering herd when multiple instances start at same time
+            auto jitter_pct = (r.jitter_percent >= 0 && r.jitter_percent <= 100) ? r.jitter_percent : 10;
+            auto jitter_ms = (interval.count() * jitter_pct / 100) * 1000;
+            if (jitter_ms < 0) jitter_ms = 0;
+            {
+                // initial jittered delay
+                int64_t delay_ms = (jitter_ms > 0) ? (std::rand() % (jitter_ms + 1)) : 0;
+                if (delay_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+            }
+            while (!retention_stop.load(std::memory_order_relaxed)) {
+                const auto start = std::chrono::steady_clock::now();
+                if (events_repo && app.appConfig().database.retention.events_seconds > 0) {
+                    std::string err; if (events_repo->purgeOlderThanSeconds(app.appConfig().database.retention.events_seconds, &err)) {
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Info, "db.retention", 10000) << "events purge ok";
+                    } else if (!err.empty()) {
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "db.retention", 10000) << "events purge failed: " << err;
+                    }
+                }
+                if (logs_repo && app.appConfig().database.retention.logs_seconds > 0) {
+                    std::string err; if (logs_repo->purgeOlderThanSeconds(app.appConfig().database.retention.logs_seconds, &err)) {
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Info, "db.retention", 10000) << "logs purge ok";
+                    } else if (!err.empty()) {
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "db.retention", 10000) << "logs purge failed: " << err;
+                    }
+                }
+                // sleep until next interval (with jitter each round)
+                auto elapsed = std::chrono::steady_clock::now() - start;
+                auto remaining = interval - std::chrono::duration_cast<std::chrono::seconds>(elapsed);
+                if (remaining.count() < 1) remaining = std::chrono::seconds(1);
+                // add jitter again
+                int64_t delay_ms = (jitter_ms > 0) ? (std::rand() % (jitter_ms + 1)) : 0;
+                std::this_thread::sleep_for(remaining + std::chrono::milliseconds(delay_ms));
+            }
+        });
+    }
+
+    void stopRetentionWorker() {
+        if (retention_thread) {
+            retention_stop.store(true, std::memory_order_relaxed);
+            if (retention_thread->joinable()) retention_thread->join();
+            retention_thread.reset();
         }
     }
 
@@ -928,6 +984,7 @@ struct RestServer::Impl {
                     events_repo = std::make_unique<va::storage::EventRepo>(db_pool, dbc);
                     sessions_repo = std::make_unique<va::storage::SessionRepo>(db_pool, dbc);
                     startDbWorker();
+                    startRetentionWorker();
                 }
             }
         } catch (...) {
@@ -936,7 +993,7 @@ struct RestServer::Impl {
         registerRoutes();
     }
 
-    ~Impl() { stopDbWorker(); }
+    ~Impl() { stopDbWorker(); stopRetentionWorker(); }
 
     void registerRoutes() {
         auto subscribeHandler = [this](const HttpRequest& req) { return handleSubscribe(req); };
