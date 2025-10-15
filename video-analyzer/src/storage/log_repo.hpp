@@ -2,6 +2,7 @@
 
 #include "storage/db_pool.hpp"
 #include "storage/db_records.hpp"
+#include "ConfigLoader.hpp"
 
 #include <memory>
 #include <string>
@@ -11,7 +12,9 @@ namespace va::storage {
 
 class LogRepo {
 public:
-    explicit LogRepo(std::shared_ptr<DbPool> pool) : pool_(std::move(pool)) {}
+    LogRepo(std::shared_ptr<DbPool> pool,
+            const AppConfigPayload::DatabaseConfig& cfg)
+        : pool_(std::move(pool)), cfg_(cfg) {}
 
     bool append(const std::vector<LogRow>& rows, std::string* err = nullptr);
     bool listRecent(const std::string& pipeline,
@@ -20,9 +23,19 @@ public:
                     std::vector<LogRow>* out,
                     std::string* err = nullptr);
 
+    bool listRecentFiltered(const std::string& pipeline,
+                            const std::string& level,
+                            const std::string& stream_id,
+                            const std::string& node,
+                            std::uint64_t from_ts_ms,
+                            std::uint64_t to_ts_ms,
+                            int limit,
+                            std::vector<LogRow>* out,
+                            std::string* err = nullptr);
+
 private:
     std::shared_ptr<DbPool> pool_;
+    AppConfigPayload::DatabaseConfig cfg_;
 };
 
 } // namespace va::storage
-

@@ -177,7 +177,9 @@ list(APPEND SOURCES
     src/analyzer/multistage/node_join.cpp
     src/analyzer/multistage/node_reid_smooth.cpp
     src/core/source_reconnects.cpp
-    src/core/nvdec_events.cpp)
+    src/core/nvdec_events.cpp
+    # Storage: DB repositories
+    src/storage/session_repo.cpp)
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
 if (HAVE_CUDA_KERNELS)
@@ -384,13 +386,62 @@ endif()
 
 # Optional: MySQL Connector/C++ via vcpkg (unofficial-mysql-connector-cpp)
 if (VA_WITH_MYSQL)
+    # 1) Prefer vcpkg package (mysql-connector-c++ 8.x, DevAPI). This only enables VA_WITH_MYSQL
+    #    and allows DB feature gating; JDBC legacy headers are detected separately below.
     find_package(unofficial-mysql-connector-cpp CONFIG QUIET)
     if (unofficial-mysql-connector-cpp_FOUND)
-        message(STATUS "MySQL connector found via vcpkg: enabling VA_WITH_MYSQL")
+        message(STATUS "MySQL connector (vcpkg, 8.x) found: enabling VA_WITH_MYSQL")
         target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::mysql-connector-cpp::connector)
         target_compile_definitions(${PROJECT_NAME} PRIVATE VA_WITH_MYSQL)
     else()
-        message(WARNING "VA_WITH_MYSQL=ON but mysql-connector-c++ not found (vcpkg target 'unofficial::mysql-connector-cpp::connector'). Building without MySQL.")
+        message(WARNING "mysql-connector-c++ (vcpkg) not found; will try Oracle legacy JDBC include/lib hints")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VA_WITH_MYSQL)
+    endif()
+
+    # 2) Detect Oracle Connector/C++ (legacy JDBC API) to enable HAVE_MYSQL_JDBC
+    #    Hints: set MYSQL_CONCPP_DIR to the connector root (contains include/, lib/ or lib64/)
+    set(_MYSQL_CONCPP_HINTS)
+    if (DEFINED ENV{MYSQL_CONCPP_DIR})
+        list(APPEND _MYSQL_CONCPP_HINTS "$ENV{MYSQL_CONCPP_DIR}/include")
+    endif()
+    # Prefer repo-bundled binaries if present
+    set(MYSQL_LOCAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mysql-connector-c++-9.4.0-winx64")
+    if (EXISTS "${MYSQL_LOCAL_ROOT}")
+        list(APPEND _MYSQL_CONCPP_HINTS "${MYSQL_LOCAL_ROOT}/include")
+    endif()
+    # Common Windows install locations
+    list(APPEND _MYSQL_CONCPP_HINTS
+        "C:/Program Files/MySQL/Connector C++ 1.1/include"
+        "C:/Program Files (x86)/MySQL/Connector C++ 1.1/include"
+        "C:/Program Files/MySQL/Connector C++ 8.0/include")
+
+    find_path(MYSQL_JDBC_INCLUDE_DIR NAMES mysql/jdbc.h PATHS ${_MYSQL_CONCPP_HINTS})
+    if (MYSQL_JDBC_INCLUDE_DIR)
+        message(STATUS "Found legacy JDBC headers at: ${MYSQL_JDBC_INCLUDE_DIR}")
+        target_include_directories(${PROJECT_NAME} PRIVATE ${MYSQL_JDBC_INCLUDE_DIR})
+        # Try to locate libmysqlcppconn (legacy connector library)
+        set(_MYSQL_CONCPP_LIB_HINTS)
+        if (DEFINED ENV{MYSQL_CONCPP_DIR})
+            list(APPEND _MYSQL_CONCPP_LIB_HINTS "$ENV{MYSQL_CONCPP_DIR}/lib" "$ENV{MYSQL_CONCPP_DIR}/lib64" "$ENV{MYSQL_CONCPP_DIR}/lib/vs14" "$ENV{MYSQL_CONCPP_DIR}/lib64/vs14")
+        endif()
+        if (EXISTS "${MYSQL_LOCAL_ROOT}")
+            list(APPEND _MYSQL_CONCPP_LIB_HINTS "${MYSQL_LOCAL_ROOT}/lib" "${MYSQL_LOCAL_ROOT}/lib64" "${MYSQL_LOCAL_ROOT}/lib/vs14" "${MYSQL_LOCAL_ROOT}/lib64/vs14")
+        endif()
+        list(APPEND _MYSQL_CONCPP_LIB_HINTS
+            "C:/Program Files/MySQL/Connector C++ 1.1/lib"
+            "C:/Program Files/MySQL/Connector C++ 1.1/lib64"
+            "C:/Program Files (x86)/MySQL/Connector C++ 1.1/lib"
+            "C:/Program Files/MySQL/Connector C++ 8.0/lib64")
+        find_library(MYSQL_CPP_CONN_LIB NAMES mysqlcppconn PATHS ${_MYSQL_CONCPP_LIB_HINTS})
+        if (MYSQL_CPP_CONN_LIB)
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${MYSQL_CPP_CONN_LIB})
+            target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_MYSQL_JDBC)
+            message(STATUS "Linking against legacy Connector/C++: ${MYSQL_CPP_CONN_LIB}")
+        else()
+            message(WARNING "Found mysql/jdbc.h but could not locate lib 'mysqlcppconn'; DB features may fail to link.")
+        endif()
+    else()
+        message(STATUS "mysql/jdbc.h not found; DB layer will run in disabled (NullDbPool) mode.")
     endif()
 endif()
 

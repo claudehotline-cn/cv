@@ -10,6 +10,11 @@
 #include "core/nvdec_events.hpp"
 #include "core/metrics_text_builder.hpp"
 
+#include "storage/db_pool.hpp"
+#include "storage/log_repo.hpp"
+#include "storage/event_repo.hpp"
+#include "storage/session_repo.hpp"
+
 #include <json/json.h>
 #include "core/error_codes.hpp"
 #include <yaml-cpp/yaml.h>
@@ -22,6 +27,7 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
+#include <condition_variable>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -814,11 +820,123 @@ struct RestServer::Impl {
     RestServerOptions options;
     va::app::Application& app;
     SimpleHttpServer server;
+    // Optional DB-backed storage
+    std::shared_ptr<va::storage::DbPool> db_pool;
+    std::unique_ptr<va::storage::LogRepo> logs_repo;
+    std::unique_ptr<va::storage::EventRepo> events_repo;
+    std::unique_ptr<va::storage::SessionRepo> sessions_repo;
+
+    // Async DB writer (best-effort)
+    std::mutex dbq_mutex;
+    std::condition_variable dbq_cv;
+    std::vector<va::storage::EventRow> q_events;
+    std::vector<va::storage::LogRow> q_logs;
+    std::unique_ptr<std::thread> db_thread;
+    std::atomic<bool> db_stop{false};
+
+    static std::uint64_t now_ms() {
+        using namespace std::chrono;
+        return static_cast<std::uint64_t>(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+    }
+
+    void startDbWorker() {
+        if (!events_repo && !logs_repo) return;
+        db_stop.store(false, std::memory_order_relaxed);
+        db_thread = std::make_unique<std::thread>([this]() {
+            const auto flush_interval = std::chrono::milliseconds(500);
+            for (;;) {
+                std::vector<va::storage::EventRow> evts;
+                std::vector<va::storage::LogRow> logs;
+                {
+                    std::unique_lock<std::mutex> lk(dbq_mutex);
+                    dbq_cv.wait_for(lk, flush_interval, [this]{ return db_stop.load(std::memory_order_relaxed) || !q_events.empty() || !q_logs.empty(); });
+                    if (db_stop.load(std::memory_order_relaxed) && q_events.empty() && q_logs.empty()) {
+                        break;
+                    }
+                    evts.swap(q_events);
+                    logs.swap(q_logs);
+                }
+                if (!evts.empty() && events_repo) {
+                    std::string err; if (!events_repo->append(evts, &err)) {
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Error, "db", 5000) << "events append failed: " << err;
+                    }
+                }
+                if (!logs.empty() && logs_repo) {
+                    std::string err; if (!logs_repo->append(logs, &err)) {
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Error, "db", 5000) << "logs append failed: " << err;
+                    }
+                }
+            }
+        });
+    }
+
+    void stopDbWorker() {
+        if (db_thread) {
+            db_stop.store(true, std::memory_order_relaxed);
+            dbq_cv.notify_all();
+            if (db_thread->joinable()) db_thread->join();
+            db_thread.reset();
+        }
+    }
+
+    void emitEvent(const std::string& level,
+                   const std::string& type,
+                   const std::string& pipeline,
+                   const std::string& node,
+                   const std::string& stream_id,
+                   const std::string& msg,
+                   const std::string& extra_json = std::string()) {
+        if (!events_repo) return;
+        va::storage::EventRow r;
+        r.ts_ms = static_cast<std::int64_t>(now_ms());
+        r.level = level; r.type = type; r.pipeline = pipeline; r.node = node; r.stream_id = stream_id; r.msg = msg; r.extra_json = extra_json;
+        {
+            std::lock_guard<std::mutex> lk(dbq_mutex);
+            if (q_events.size() > 4096) q_events.clear();
+            q_events.emplace_back(std::move(r));
+        }
+        dbq_cv.notify_one();
+    }
+
+    void emitLog(const std::string& level,
+                 const std::string& pipeline,
+                 const std::string& node,
+                 const std::string& stream_id,
+                 const std::string& message,
+                 const std::string& extra_json = std::string()) {
+        if (!logs_repo) return;
+        va::storage::LogRow r;
+        r.ts_ms = static_cast<std::int64_t>(now_ms());
+        r.level = level; r.pipeline = pipeline; r.node = node; r.stream_id = stream_id; r.message = message; r.extra_json = extra_json;
+        {
+            std::lock_guard<std::mutex> lk(dbq_mutex);
+            if (q_logs.size() > 4096) q_logs.clear();
+            q_logs.emplace_back(std::move(r));
+        }
+        dbq_cv.notify_one();
+    }
 
     Impl(RestServerOptions opts, va::app::Application& application)
         : options(std::move(opts)), app(application), server(options) {
+        // Initialize DB pool and repositories if configured
+        try {
+            const auto& dbc = app.appConfig().database;
+            if (!dbc.driver.empty() && toLower(dbc.driver) == "mysql" && !dbc.host.empty() && dbc.port > 0) {
+                db_pool = va::storage::DbPool::create(dbc);
+                if (db_pool && db_pool->valid()) {
+                    logs_repo = std::make_unique<va::storage::LogRepo>(db_pool, dbc);
+                    events_repo = std::make_unique<va::storage::EventRepo>(db_pool, dbc);
+                    sessions_repo = std::make_unique<va::storage::SessionRepo>(db_pool, dbc);
+                    startDbWorker();
+                }
+            }
+        } catch (...) {
+            // Best-effort: keep server running even if DB init fails
+        }
         registerRoutes();
     }
+
+    ~Impl() { stopDbWorker(); }
 
     void registerRoutes() {
         auto subscribeHandler = [this](const HttpRequest& req) { return handleSubscribe(req); };
@@ -915,12 +1033,22 @@ struct RestServer::Impl {
         auto logsWatchHandler  = [this](const HttpRequest& req) { return handleLogsWatch(req); };
         auto eventsRecentHandler = [this](const HttpRequest& req) { return handleEventsRecent(req); };
         auto eventsWatchHandler  = [this](const HttpRequest& req) { return handleEventsWatch(req); };
+        auto sessionsWatchHandler = [this](const HttpRequest& req) { return handleSessionsWatch(req); };
         server.addRoute("GET", "/api/logs", logsRecentHandler);
         server.addRoute("GET", "/api/logs/watch", logsWatchHandler);
         // server.addStreamRoute("GET", "/api/logs/watch_sse", [this](int fd, const HttpRequest& req){ streamLogsSSE(fd, req); });
         server.addRoute("GET", "/api/events/recent", eventsRecentHandler);
         server.addRoute("GET", "/api/events/watch", eventsWatchHandler);
+        server.addRoute("GET", "/api/sessions/watch", sessionsWatchHandler);
         // server.addStreamRoute("GET", "/api/events/watch_sse", [this](int fd, const HttpRequest& req){ streamEventsSSE(fd, req); });
+
+        // Database: health check
+        auto dbPingHandler = [this](const HttpRequest& req) { return handleDbPing(req); };
+        server.addRoute("GET", "/api/db/ping", dbPingHandler);
+
+        // Sessions: list recent
+        auto sessionsListHandler = [this](const HttpRequest& req) { return handleSessionsList(req); };
+        server.addRoute("GET", "/api/sessions", sessionsListHandler);
     }
 
     bool start() {
@@ -962,6 +1090,9 @@ struct RestServer::Impl {
             if (!ok) return errorResponse(err.empty()? "apply failed" : err, 409);
             Json::Value payload = successPayload();
             payload["accepted"] = ok;
+            // Record DB event/log (best-effort)
+            emitEvent("info", "apply_pipeline", spec.name, "control", std::string(), std::string("apply ") + spec.name);
+            emitLog("info", spec.name, "control", std::string(), "apply_pipeline accepted");
             return jsonResponse(payload, 200);
         } catch (const std::exception& ex) {
             return errorResponse(std::string("exception: ") + ex.what(), 500);
@@ -1002,6 +1133,8 @@ struct RestServer::Impl {
             payload["accepted"] = accepted;
             Json::Value errs(Json::arrayValue); for (const auto& e : errors) errs.append(e);
             payload["errors"] = errs;
+            emitEvent("info", "apply_pipelines", std::string(), "control", std::string(), std::string("accepted=") + std::to_string(accepted));
+            emitLog("info", std::string(), "control", std::string(), "apply_pipelines finished");
             return jsonResponse(payload, 200);
         } catch (const std::exception& ex) {
             return errorResponse(std::string("exception: ") + ex.what(), 500);
@@ -1234,6 +1367,8 @@ struct RestServer::Impl {
               VA_LOG_C(::va::core::LogLevel::Info, "rest") << "Graph switched at runtime to id='" << graph_id << "' via /api/graph/set";
               Json::Value payload = successPayload();
               payload["graph_id"] = graph_id;
+              emitEvent("info", "graph_switch", std::string(), "control", std::string(), std::string("graph_id=") + graph_id);
+              emitLog("info", std::string(), "control", std::string(), std::string("graph_switch ") + graph_id);
               return jsonResponse(payload, 200);
           } catch (const std::exception& ex) {
               return errorResponse(ex.what(), 400);
@@ -2106,6 +2241,13 @@ struct RestServer::Impl {
             VA_LOG_C(::va::core::LogLevel::Info, "rest") << "subscribe -> building pipeline...";
             auto result = app.subscribeStream(stream_id, profile, uri, model_override);
             if (!result) {
+                // Record Failed session attempt (best-effort)
+                if (sessions_repo) {
+                    std::string err; std::int64_t id = 0;
+                    const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                    (void)sessions_repo->start(stream_id, profile, model_override.value_or(std::string()), uri, now_ms, &id, &err);
+                    (void)sessions_repo->completeLatest(stream_id, profile, "Failed", app.lastError().empty()? std::string("subscribe failed") : app.lastError(), now_ms, &err);
+                }
                 return errorResponse(app.lastError(), 400);
             }
             VA_LOG_C(::va::core::LogLevel::Info, "rest") << "subscribe -> pipeline created key=" << *result;
@@ -2120,6 +2262,15 @@ struct RestServer::Impl {
                 data["model_id"] = *model_override;
             }
             payload["data"] = data;
+            // Sessions: start record
+            if (sessions_repo) {
+                std::string err; std::int64_t id = 0;
+                const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                (void)sessions_repo->start(stream_id, profile, model_override.value_or(std::string()), uri, now_ms, &id, &err);
+            }
+            // DB: event + log
+            emitEvent("info", "subscribe", profile, "rest", stream_id, std::string("uri=") + uri);
+            emitLog("info", profile, "rest", stream_id, std::string("subscribe accepted: ") + *result);
             return jsonResponse(payload, 201);
         } catch (const std::exception& ex) {
             return errorResponse(ex.what(), 400);
@@ -2146,6 +2297,13 @@ struct RestServer::Impl {
             }
 
             Json::Value payload = successPayload();
+            // Sessions: complete latest
+            if (sessions_repo) {
+                std::string err; const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                (void)sessions_repo->completeLatest(*stream_opt, *profile_opt, "Stopped", std::string(), now_ms, &err);
+            }
+            emitEvent("info", "unsubscribe", *profile_opt, "rest", *stream_opt, "ok");
+            emitLog("info", *profile_opt, "rest", *stream_opt, "unsubscribe accepted");
             return jsonResponse(payload, 200);
         } catch (const std::exception& ex) {
             return errorResponse(ex.what(), 400);
@@ -2176,6 +2334,8 @@ struct RestServer::Impl {
             }
 
             Json::Value payload = successPayload();
+            emitEvent("info", "switch_source", *profile_opt, "rest", *stream_opt, std::string("uri=") + *uri_opt);
+            emitLog("info", *profile_opt, "rest", *stream_opt, std::string("switch_source -> ") + *uri_opt);
             return jsonResponse(payload, 200);
         } catch (const std::exception& ex) {
             return errorResponse(ex.what(), 400);
@@ -2206,6 +2366,8 @@ struct RestServer::Impl {
             }
 
             Json::Value payload = successPayload();
+            emitEvent("info", "switch_model", *profile_opt, "rest", *stream_opt, std::string("model=") + *model_opt);
+            emitLog("info", *profile_opt, "rest", *stream_opt, std::string("switch_model -> ") + *model_opt);
             return jsonResponse(payload, 200);
         } catch (const std::exception& ex) {
             return errorResponse(ex.what(), 400);
@@ -2236,6 +2398,8 @@ struct RestServer::Impl {
             }
 
             Json::Value payload = successPayload();
+            emitEvent("info", "switch_task", *profile_opt, "rest", *stream_opt, std::string("task=") + *task_opt);
+            emitLog("info", *profile_opt, "rest", *stream_opt, std::string("switch_task -> ") + *task_opt);
             return jsonResponse(payload, 200);
         } catch (const std::exception& ex) {
             return errorResponse(ex.what(), 400);
@@ -2264,6 +2428,8 @@ struct RestServer::Impl {
             Json::Value payload = successPayload();
             payload["conf"] = params.confidence_threshold;
             payload["iou"] = params.iou_threshold;
+            emitEvent("info", "update_params", *profile_opt, "rest", *stream_opt, "params updated");
+            emitLog("info", *profile_opt, "rest", *stream_opt, "params updated");
             return jsonResponse(payload, 200);
         } catch (const std::exception& ex) {
             return errorResponse(ex.what(), 400);
@@ -2500,10 +2666,30 @@ struct RestServer::Impl {
           auto q = parseQueryKV(req.query);
           std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
           std::string level = q.count("level") ? q["level"] : std::string();
+          std::string stream_id = q.count("stream_id") ? q["stream_id"] : std::string();
+          std::string node = q.count("node") ? q["node"] : std::string();
+          auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
+          const uint64_t from_ts = get_uint64("from_ts", 0);
+          const uint64_t to_ts   = get_uint64("to_ts", 0);
           int limit = 200; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
+          // Try DB first if available
+          if (logs_repo) {
+              std::vector<va::storage::LogRow> rows; std::string err;
+              if (logs_repo->listRecentFiltered(pipeline, level, stream_id, node, from_ts, to_ts, limit, &rows, &err)) {
+                  Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
+                  for (const auto& r : rows) {
+                      Json::Value row(Json::objectValue);
+                      row["ts"] = static_cast<Json::UInt64>(r.ts_ms);
+                      row["level"] = r.level; if(!r.pipeline.empty()) row["pipeline"] = r.pipeline; if(!r.node.empty()) row["node"] = r.node; if(!r.stream_id.empty()) row["stream_id"] = r.stream_id; row["msg"] = r.message;
+                      if(!r.extra_json.empty()) { Json::Value ej; try{ Json::CharReaderBuilder b; std::string errs; std::istringstream is(r.extra_json); Json::parseFromStream(b, is, &ej, &errs); }catch(...){ ej = Json::Value(Json::nullValue);} row["extra"] = ej; }
+                      arr.append(row);
+                  }
+                  data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+              } else { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "rest", 5000) << "logs listRecentFiltered failed: " << err; }
+          }
+          // Fallback: synthesize lightweight rows from running pipelines
           Json::Value payload = successPayload();
           Json::Value arr(Json::arrayValue);
-          // synthesize lightweight rows from running pipelines
           int emitted = 0;
           auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
           for (const auto& info : app.pipelines()) {
@@ -2559,7 +2745,27 @@ struct RestServer::Impl {
           auto q = parseQueryKV(req.query);
           std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
           std::string level = q.count("level") ? q["level"] : std::string();
+          std::string stream_id = q.count("stream_id") ? q["stream_id"] : std::string();
+          std::string node = q.count("node") ? q["node"] : std::string();
+          auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
+          const uint64_t from_ts = get_uint64("from_ts", 0);
+          const uint64_t to_ts   = get_uint64("to_ts", 0);
           int limit = 50; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
+          // Try DB first if available
+          if (events_repo) {
+              std::vector<va::storage::EventRow> rows; std::string err;
+              if (events_repo->listRecentFiltered(pipeline, level, stream_id, node, from_ts, to_ts, limit, &rows, &err)) {
+                  Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
+                  for (const auto& r : rows) {
+                      Json::Value e(Json::objectValue);
+                      e["ts"] = static_cast<Json::UInt64>(r.ts_ms);
+                      e["level"] = r.level; e["type"] = r.type; if(!r.pipeline.empty()) e["pipeline"] = r.pipeline; if(!r.node.empty()) e["node"] = r.node; if(!r.stream_id.empty()) e["stream_id"] = r.stream_id; e["msg"] = r.msg; if(!r.extra_json.empty()) { Json::Value ej; try{ Json::CharReaderBuilder b; std::string errs; std::istringstream is(r.extra_json); Json::parseFromStream(b, is, &ej, &errs); }catch(...){ ej = Json::Value(Json::nullValue);} e["extra"] = ej; }
+                      arr.append(e);
+                  }
+                  data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+              } else { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "rest", 5000) << "events listRecentFiltered failed: " << err; }
+          }
+          // Fallback synthesized
           Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
           int emitted = 0; auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
           for (const auto& info : app.pipelines()) {
@@ -2570,6 +2776,69 @@ struct RestServer::Impl {
           }
           data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
       }
+      
+      // --- Database: health check ---
+      HttpResponse handleDbPing(const HttpRequest&) {
+          Json::Value payload;
+          bool ok = false;
+          std::string err;
+          if (db_pool && db_pool->valid()) {
+              ok = db_pool->ping(&err);
+          } else {
+              err = "database disabled";
+          }
+          payload["ok"] = ok;
+          if (!ok && !err.empty()) payload["error"] = err;
+          return jsonResponse(payload, ok ? 200 : 503);
+      }
+
+      // --- Sessions: list recent ---
+      HttpResponse handleSessionsList(const HttpRequest& req) {
+          auto q = parseQueryKV(req.query);
+          std::string stream = q.count("stream_id") ? q["stream_id"] : std::string();
+          std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+          int limit = 50; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
+          if (sessions_repo) {
+              std::vector<va::storage::SessionRow> rows; std::string err;
+              if (sessions_repo->listRecent(stream, pipeline, limit, &rows, &err)) {
+                  Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
+                  for (const auto& r : rows) {
+                      Json::Value s(Json::objectValue);
+                      s["id"] = static_cast<Json::UInt64>(r.id);
+                      s["stream_id"] = r.stream_id; s["pipeline"] = r.pipeline; if(!r.model_id.empty()) s["model_id"] = r.model_id; s["status"] = r.status; if(!r.error_msg.empty()) s["error_msg"] = r.error_msg;
+                      if (r.started_ms>0) s["started_at"] = static_cast<Json::UInt64>(r.started_ms);
+                      if (r.stopped_ms>0) s["stopped_at"] = static_cast<Json::UInt64>(r.stopped_ms);
+                      arr.append(s);
+                  }
+                  data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+              }
+          }
+          // Fallback: empty
+          Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200);
+      }
+      HttpResponse handleSessionsWatch(const HttpRequest& req) {
+          auto q = parseQueryKV(req.query);
+          std::string stream = q.count("stream_id") ? q["stream_id"] : std::string();
+          std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
+          auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
+          auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try { return std::stoi(it->second); } catch(...) { return def; } };
+          const uint64_t since = get_uint64("since", 0);
+          int tmp_to = get_int("timeout_ms", 12000); if (tmp_to < 100) tmp_to = 100; const int timeout_ms = tmp_to;
+          int tmp_iv = get_int("interval_ms", 300);  if (tmp_iv < 80)  tmp_iv = 80;  const int interval_ms = tmp_iv;
+          int limit = 50; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
+          auto fingerprint = [&](){ std::string key; key.reserve(64); for (const auto& p : app.pipelines()) { if (!p.running) continue; if (!pipeline.empty() && p.profile_id != pipeline) continue; if (!stream.empty() && p.stream_id != stream) continue; key += p.stream_id; key += ';'; } return std::hash<std::string>{}(key); };
+          auto snapshot = [&](){ Json::Value items(Json::arrayValue); if (sessions_repo) { std::vector<va::storage::SessionRow> rows; std::string err; if (sessions_repo->listRecent(stream, pipeline, limit, &rows, &err)) { for (const auto& r : rows) { Json::Value s(Json::objectValue); s["id"] = static_cast<Json::UInt64>(r.id); s["stream_id"] = r.stream_id; s["pipeline"] = r.pipeline; if(!r.model_id.empty()) s["model_id"] = r.model_id; s["status"] = r.status; if(!r.error_msg.empty()) s["error_msg"] = r.error_msg; if (r.started_ms>0) s["started_at"] = static_cast<Json::UInt64>(r.started_ms); if (r.stopped_ms>0) s["stopped_at"] = static_cast<Json::UInt64>(r.stopped_ms); items.append(s); } } else { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "rest", 5000) << "sessions listRecent failed"; } } else { auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL); for (const auto& info : app.pipelines()) { if (!info.running) continue; if (!pipeline.empty() && info.profile_id != pipeline) continue; if (!stream.empty() && info.stream_id != stream) continue; Json::Value s(Json::objectValue); s["stream_id"] = info.stream_id; s["pipeline"] = info.profile_id; s["status"] = "Running"; s["started_at"] = now_ms; items.append(s); } } return items; };
+          auto rev_now = fingerprint();
+          if (!since || since != rev_now) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(rev_now); data["items"] = snapshot(); payload["data"] = data; return jsonResponse(payload, 200); }
+          auto start = std::chrono::steady_clock::now();
+          while (true) {
+              std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms)); auto cur = fingerprint();
+              if (cur != since) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(cur); data["items"] = snapshot(); payload["data"] = data; return jsonResponse(payload, 200); }
+              auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+              if (elapsed >= timeout_ms) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(since); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200); }
+          }
+      }
+
       HttpResponse handleEventsWatch(const HttpRequest& req) {
           auto q = parseQueryKV(req.query);
           std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();

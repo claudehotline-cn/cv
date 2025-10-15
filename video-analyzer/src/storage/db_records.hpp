@@ -28,5 +28,15 @@ struct LogRow {
     std::string extra_json; // optional JSON string
 };
 
-} // namespace va::storage
+struct SessionRow {
+    std::int64_t id {0};
+    std::string stream_id;
+    std::string pipeline;
+    std::string model_id;   // nullable
+    std::string status;     // Running/Stopped/Failed
+    std::string error_msg;  // nullable
+    std::int64_t started_ms {0}; // milliseconds since epoch
+    std::int64_t stopped_ms {0}; // 0 if NULL
+};
 
+} // namespace va::storage
