@@ -10,48 +10,13 @@
 namespace va::storage {
 
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-static sql::Connection* make_conn(const AppConfigPayload::DatabaseConfig& cfg, std::string* err) {
-    try {
-        thread_local std::unique_ptr<sql::Connection> tls_conn;
-        if (!tls_conn) {
-            sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
-            if (!driver) { if (err) *err = "mysql driver unavailable"; return nullptr; }
-            std::ostringstream url; url << "tcp://" << cfg.host << ":" << cfg.port;
-            tls_conn.reset(driver->connect(url.str(), cfg.user, cfg.password));
-            if (!tls_conn) { if (err) *err = "mysql connect returned null"; return nullptr; }
-            tls_conn->setSchema(cfg.db);
-        } else {
-            try {
-                if (tls_conn->isClosed()) {
-                    tls_conn.reset();
-                    return make_conn(cfg, err);
-                } else {
-                    std::unique_ptr<sql::Statement> st(tls_conn->createStatement());
-                    std::unique_ptr<sql::ResultSet> rs(st->executeQuery("SELECT 1"));
-                    (void)rs;
-                }
-            } catch (...) {
-                tls_conn.reset();
-                return make_conn(cfg, err);
-            }
-        }
-        return tls_conn.get();
-    } catch (const sql::SQLException& ex) {
-        if (err) { std::ostringstream os; os << "mysql error (" << ex.getErrorCode() << "): " << ex.what(); *err = os.str(); }
-    } catch (const std::exception& ex) {
-        if (err) *err = ex.what();
-    } catch (...) {
-        if (err) *err = "unknown mysql exception";
-    }
-    return nullptr;
-}
 #endif
 
 bool EventRepo::append(const std::vector<EventRow>& rows, std::string* err) {
     if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
     if (rows.empty()) return true;
-    auto conn = make_conn(cfg_, err);
+    auto conn = pool_->acquire(err);
     if (!conn) return false;
     try {
         const std::size_t chunk = 128;
@@ -96,7 +61,7 @@ bool EventRepo::listRecent(const std::string& pipeline, const std::string& level
     if (out) out->clear();
     if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-    auto conn = make_conn(cfg_, err);
+    auto conn = pool_->acquire(err);
     if (!conn) return false;
     try {
         std::ostringstream sql;
@@ -139,7 +104,7 @@ bool EventRepo::listRecent(const std::string& pipeline, const std::string& level
 bool EventRepo::purgeOlderThanSeconds(std::uint64_t seconds, std::string* err) {
     if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-    auto conn = make_conn(cfg_, err);
+    auto conn = pool_->acquire(err);
     if (!conn) return false;
     try {
         std::unique_ptr<sql::PreparedStatement> ps(conn->prepareStatement("DELETE FROM events WHERE ts < NOW() - INTERVAL ? SECOND"));
@@ -170,7 +135,7 @@ bool EventRepo::listRecentFiltered(const std::string& pipeline,
     if (out) out->clear();
     if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-    auto conn = make_conn(cfg_, err);
+    auto conn = pool_->acquire(err);
     if (!conn) return false;
     try {
         std::ostringstream sql;
