@@ -16,6 +16,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/observability/metrics', component: () => import('@/views/Observability/Metrics.vue'), meta: { title: 'Metrics' } },
   { path: '/observability/logs', component: () => import('@/views/Observability/Logs.vue'), meta: { title: 'Logs' } },
   { path: '/observability/events', component: () => import('@/views/Observability/Events.vue'), meta: { title: 'Events' } },
+  { path: '/observability/sessions', component: () => import('@/views/Observability/Sessions.vue'), meta: { title: 'Sessions' } },
   { path: '/settings', component: () => import('@/views/Settings.vue'), meta: { title: 'Settings' } },
   { path: '/about', component: () => import('@/views/About.vue'), meta: { title: 'About' } },
   { path: '/:pathMatch(.*)*', component: { template: '<div style="padding:24px"><h2>404 Not Found</h2><p>页面不存在</p></div>' }, meta: { title: '404' } }

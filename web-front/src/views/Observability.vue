@@ -21,6 +21,15 @@
   </el-row>
 
   <el-row :gutter="16" style="margin-top:12px">
+    <el-col :span="8">
+      <el-card shadow="hover" @click="$router.push('/observability/sessions')" class="nav-card">
+        <template #header><strong>Sessions</strong></template>
+        <div>会话生命周期（订阅/取消/失败）</div>
+      </el-card>
+    </el-col>
+  </el-row>
+
+  <el-row :gutter="16" style="margin-top:12px">
     <el-col :span="24">
       <el-card>
         <template #header>
@@ -53,4 +62,3 @@ onUnmounted(()=>{ if(timer) clearInterval(timer) })
 .card-header{ display:flex; align-items:center; justify-content:space-between; }
 .nav-card{ cursor: pointer; user-select:none }
 </style>
-

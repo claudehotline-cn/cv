@@ -176,6 +176,40 @@ export const dataProvider = {
     if (!r.ok) throw new Error('listGraphs failed')
     return r.json()
   },
+  // Sessions
+  async listSessions(params?: { stream_id?: string; pipeline?: string; limit?: number }) {
+    const q = new URLSearchParams()
+    if (params?.stream_id) q.set('stream_id', params.stream_id)
+    if (params?.pipeline)  q.set('pipeline', params.pipeline)
+    if (params?.limit)     q.set('limit', String(params.limit))
+    const r = await fetch(apiBase() + '/api/sessions' + (q.toString()?('?'+q.toString()):''))
+    if (!r.ok) throw new Error('listSessions failed')
+    return r.json()
+  },
+  watchSessions(cb: (payload: { rev: number, items: any[] }) => void, opts?: { stream_id?: string; pipeline?: string; intervalMs?: number; timeoutMs?: number }) {
+    let stopped = false
+    let since = 0
+    const base = apiBase()
+    const interval = Math.max(100, opts?.intervalMs ?? 0)
+    async function loop(){
+      while(!stopped){
+        const url = new URL(base + '/api/sessions/watch')
+        if (since) url.searchParams.set('since', String(since))
+        if (opts?.stream_id) url.searchParams.set('stream_id', opts.stream_id)
+        if (opts?.pipeline)  url.searchParams.set('pipeline', opts.pipeline)
+        if (opts?.timeoutMs) url.searchParams.set('timeout_ms', String(opts.timeoutMs))
+        url.searchParams.set('interval_ms', String(Math.max(80, opts?.intervalMs ?? 300)))
+        try{
+          const r = await fetch(url.toString(), { cache:'no-cache' })
+          if(!r.ok) throw new Error('watchSessions failed')
+          const j = await r.json(); const d = j?.data || j; const rev = Number(d?.rev||0); const items = Array.isArray(d?.items)? d.items: []
+          if (rev && rev !== since){ since = rev; cb({ rev, items }) }
+        }catch{}
+        if (interval) await new Promise(res => setTimeout(res, interval))
+      }
+    }
+    loop(); return () => { stopped = true }
+  },
   async preflightCheck(payload: { source: any; graph: any }) {
     if (isMock) {
       const reasons: string[] = []
