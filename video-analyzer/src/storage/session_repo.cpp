@@ -10,24 +10,6 @@
 namespace va::storage {
 
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-static std::unique_ptr<sql::Connection> make_conn(const AppConfigPayload::DatabaseConfig& cfg, std::string* err) {
-    try {
-        sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
-        if (!driver) { if (err) *err = "mysql driver unavailable"; return {}; }
-        std::ostringstream url; url << "tcp://" << cfg.host << ":" << cfg.port;
-        std::unique_ptr<sql::Connection> c(driver->connect(url.str(), cfg.user, cfg.password));
-        if (!c) { if (err) *err = "mysql connect returned null"; return {}; }
-        c->setSchema(cfg.db);
-        return c;
-    } catch (const sql::SQLException& ex) {
-        if (err) { std::ostringstream os; os << "mysql error (" << ex.getErrorCode() << "): " << ex.what(); *err = os.str(); }
-    } catch (const std::exception& ex) {
-        if (err) *err = ex.what();
-    } catch (...) {
-        if (err) *err = "unknown mysql exception";
-    }
-    return {};
-}
 #endif
 
 bool SessionRepo::start(const std::string& stream_id,
@@ -39,13 +21,13 @@ bool SessionRepo::start(const std::string& stream_id,
                         std::string* err) {
     if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-    auto conn = make_conn(cfg_, err);
+    auto conn = pool_->acquire(err);
     if (!conn) return false;
     try {
         // Ensure foreign keys (best-effort)
         if (!stream_id.empty() && !source_uri.empty()) {
             try {
-                std::unique_ptr<sql::PreparedStatement> ps0(conn->prepareStatement(
+            std::unique_ptr<sql::PreparedStatement> ps0(conn->prepareStatement(
                     "INSERT INTO sources (id, uri, status, created_at, updated_at) VALUES (?,?, 'Unknown', NOW(), NOW()) "
                     "ON DUPLICATE KEY UPDATE uri=VALUES(uri), updated_at=NOW()"));
                 ps0->setString(1, stream_id);
@@ -98,7 +80,7 @@ bool SessionRepo::completeLatest(const std::string& stream_id,
                                  std::string* err) {
     if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-    auto conn = make_conn(cfg_, err);
+    auto conn = pool_->acquire(err);
     if (!conn) return false;
     try {
         std::unique_ptr<sql::PreparedStatement> ps(conn->prepareStatement(
@@ -132,7 +114,7 @@ bool SessionRepo::listRecent(const std::string& stream_id,
     if (out) out->clear();
     if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
-    auto conn = make_conn(cfg_, err);
+    auto conn = pool_->acquire(err);
     if (!conn) return false;
     try {
         std::ostringstream sql;
