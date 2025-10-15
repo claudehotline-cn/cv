@@ -33,6 +33,9 @@ public:
                             std::vector<LogRow>* out,
                             std::string* err = nullptr);
 
+    // Maintenance: delete rows older than given seconds
+    bool purgeOlderThanSeconds(std::uint64_t seconds, std::string* err = nullptr);
+
 private:
     std::shared_ptr<DbPool> pool_;
     AppConfigPayload::DatabaseConfig cfg_;

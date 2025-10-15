@@ -1046,6 +1046,10 @@ struct RestServer::Impl {
         auto dbPingHandler = [this](const HttpRequest& req) { return handleDbPing(req); };
         server.addRoute("GET", "/api/db/ping", dbPingHandler);
 
+        // Retention: manual purge endpoint (admin)
+        auto dbPurgeHandler = [this](const HttpRequest& req) { return handleDbPurge(req); };
+        server.addRoute("POST", "/api/db/retention/purge", dbPurgeHandler);
+
         // Sessions: list recent
         auto sessionsListHandler = [this](const HttpRequest& req) { return handleSessionsList(req); };
         server.addRoute("GET", "/api/sessions", sessionsListHandler);
@@ -2790,6 +2794,22 @@ struct RestServer::Impl {
           payload["ok"] = ok;
           if (!ok && !err.empty()) payload["error"] = err;
           return jsonResponse(payload, ok ? 200 : 503);
+      }
+
+      HttpResponse handleDbPurge(const HttpRequest& req) {
+          try {
+              Json::Value body = parseJson(req.body);
+              uint64_t events_sec = 0, logs_sec = 0;
+              if (body.isMember("events_seconds") && body["events_seconds"].isUInt64()) events_sec = body["events_seconds"].asUInt64();
+              if (body.isMember("logs_seconds") && body["logs_seconds"].isUInt64()) logs_sec = body["logs_seconds"].asUInt64();
+              if (events_sec==0 && logs_sec==0) return errorResponse("missing events_seconds/logs_seconds", 400);
+              Json::Value payload = successPayload(); Json::Value res(Json::objectValue);
+              if (events_sec>0 && events_repo) { std::string err; bool ok = events_repo->purgeOlderThanSeconds(events_sec, &err); res["events_ok"] = ok; if(!ok) res["events_error"]=err; }
+              if (logs_sec>0 && logs_repo)   { std::string err; bool ok = logs_repo->purgeOlderThanSeconds(logs_sec, &err);   res["logs_ok"] = ok;   if(!ok) res["logs_error"]=err; }
+              payload["data"] = res; return jsonResponse(payload, 200);
+          } catch (const std::exception& ex) {
+              return errorResponse(ex.what(), 400);
+          }
       }
 
       // --- Sessions: list recent ---
