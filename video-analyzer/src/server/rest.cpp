@@ -1093,11 +1093,13 @@ struct RestServer::Impl {
         auto sessionsWatchHandler = [this](const HttpRequest& req) { return handleSessionsWatch(req); };
         server.addRoute("GET", "/api/logs", logsRecentHandler);
         server.addRoute("GET", "/api/logs/watch", logsWatchHandler);
-        // server.addStreamRoute("GET", "/api/logs/watch_sse", [this](int fd, const HttpRequest& req){ streamLogsSSE(fd, req); });
+        // SSE: logs
+        server.addStreamRoute("GET", "/api/logs/watch_sse", [this](int fd, const HttpRequest& req){ streamLogsSSE(fd, req); });
         server.addRoute("GET", "/api/events/recent", eventsRecentHandler);
         server.addRoute("GET", "/api/events/watch", eventsWatchHandler);
         server.addRoute("GET", "/api/sessions/watch", sessionsWatchHandler);
-        // server.addStreamRoute("GET", "/api/events/watch_sse", [this](int fd, const HttpRequest& req){ streamEventsSSE(fd, req); });
+        // SSE: events
+        server.addStreamRoute("GET", "/api/events/watch_sse", [this](int fd, const HttpRequest& req){ streamEventsSSE(fd, req); });
 
         // Database: health check
         auto dbPingHandler = [this](const HttpRequest& req) { return handleDbPing(req); };
