@@ -177,16 +177,20 @@ export const dataProvider = {
     return r.json()
   },
   // Sessions
-  async listSessions(params?: { stream_id?: string; pipeline?: string; limit?: number }) {
+  async listSessions(params?: { stream_id?: string; pipeline?: string; limit?: number; from_ts?: number; to_ts?: number; page?: number; page_size?: number }) {
     const q = new URLSearchParams()
     if (params?.stream_id) q.set('stream_id', params.stream_id)
     if (params?.pipeline)  q.set('pipeline', params.pipeline)
     if (params?.limit)     q.set('limit', String(params.limit))
+    if (params?.from_ts)   q.set('from_ts', String(params.from_ts))
+    if (params?.to_ts)     q.set('to_ts', String(params.to_ts))
+    if (params?.page)      q.set('page', String(params.page))
+    if (params?.page_size) q.set('page_size', String(params.page_size))
     const r = await fetch(apiBase() + '/api/sessions' + (q.toString()?('?'+q.toString()):''))
     if (!r.ok) throw new Error('listSessions failed')
     return r.json()
   },
-  watchSessions(cb: (payload: { rev: number, items: any[] }) => void, opts?: { stream_id?: string; pipeline?: string; intervalMs?: number; timeoutMs?: number }) {
+  watchSessions(cb: (payload: { rev: number, items: any[] }) => void, opts?: { stream_id?: string; pipeline?: string; intervalMs?: number; timeoutMs?: number; from_ts?: number; to_ts?: number }) {
     let stopped = false
     let since = 0
     const base = apiBase()
@@ -197,6 +201,7 @@ export const dataProvider = {
         if (since) url.searchParams.set('since', String(since))
         if (opts?.stream_id) url.searchParams.set('stream_id', opts.stream_id)
         if (opts?.pipeline)  url.searchParams.set('pipeline', opts.pipeline)
+        // 后端 watch 暂不支持时间窗
         if (opts?.timeoutMs) url.searchParams.set('timeout_ms', String(opts.timeoutMs))
         url.searchParams.set('interval_ms', String(Math.max(80, opts?.intervalMs ?? 300)))
         try{

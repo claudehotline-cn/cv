@@ -2871,15 +2871,23 @@ struct RestServer::Impl {
           }
       }
 
-      // --- Sessions: list recent ---
+      // --- Sessions: list with pagination/time-window ---
       HttpResponse handleSessionsList(const HttpRequest& req) {
           auto q = parseQueryKV(req.query);
           std::string stream = q.count("stream_id") ? q["stream_id"] : std::string();
           std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
-          int limit = 50; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
+          auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
+          auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try { return std::stoi(it->second); } catch(...) { return def; } };
+          const uint64_t from_ts = get_uint64("from_ts", 0);
+          const uint64_t to_ts   = get_uint64("to_ts", 0);
+          int page = get_int("page", 1);
+          int page_size = get_int("page_size", 0);
+          int limit = get_int("limit", 50);
+          if (page_size <= 0) page_size = limit > 0 ? limit : 50;
+
           if (sessions_repo) {
-              std::vector<va::storage::SessionRow> rows; std::string err;
-              if (sessions_repo->listRecent(stream, pipeline, limit, &rows, &err)) {
+              std::vector<va::storage::SessionRow> rows; std::uint64_t total = 0; std::string err;
+              if (sessions_repo->listRangePaginated(stream, pipeline, from_ts, to_ts, page, page_size, &rows, &total, &err)) {
                   Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
                   for (const auto& r : rows) {
                       Json::Value s(Json::objectValue);
@@ -2889,11 +2897,11 @@ struct RestServer::Impl {
                       if (r.stopped_ms>0) s["stopped_at"] = static_cast<Json::UInt64>(r.stopped_ms);
                       arr.append(s);
                   }
-                  data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+                  data["items"] = arr; data["total"] = static_cast<Json::UInt64>(total); payload["data"] = data; return jsonResponse(payload, 200);
               }
           }
           // Fallback: empty
-          Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200);
+          Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["items"] = Json::arrayValue; data["total"] = static_cast<Json::UInt64>(0); payload["data"] = data; return jsonResponse(payload, 200);
       }
       HttpResponse handleSessionsWatch(const HttpRequest& req) {
           auto q = parseQueryKV(req.query);

@@ -155,4 +155,86 @@ bool SessionRepo::listRecent(const std::string& stream_id,
 #endif
 }
 
+bool SessionRepo::listRangePaginated(const std::string& stream_id,
+                                     const std::string& pipeline,
+                                     std::uint64_t from_ts_ms,
+                                     std::uint64_t to_ts_ms,
+                                     int page,
+                                     int page_size,
+                                     std::vector<SessionRow>* out,
+                                     std::uint64_t* total,
+                                     std::string* err) {
+    if (out) out->clear();
+    if (total) *total = 0;
+    if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
+#if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
+    auto conn = pool_->acquire(err);
+    if (!conn) return false;
+    try {
+        if (page <= 0) page = 1;
+        if (page_size <= 0 || page_size > 1000) page_size = 50;
+        const int offset = (page - 1) * page_size;
+
+        // 1) Count total with filters
+        {
+            std::ostringstream sqlc;
+            sqlc << "SELECT COUNT(*) AS cnt FROM sessions WHERE 1=1 ";
+            if (!stream_id.empty()) sqlc << "AND stream_id=? ";
+            if (!pipeline.empty())  sqlc << "AND pipeline=? ";
+            if (from_ts_ms > 0)     sqlc << "AND started_at >= FROM_UNIXTIME(?) ";
+            if (to_ts_ms > 0)       sqlc << "AND started_at <= FROM_UNIXTIME(?) ";
+            std::unique_ptr<sql::PreparedStatement> ps(conn->prepareStatement(sqlc.str()));
+            int idx = 1;
+            if (!stream_id.empty()) ps->setString(idx++, stream_id);
+            if (!pipeline.empty())  ps->setString(idx++, pipeline);
+            if (from_ts_ms > 0)     ps->setInt64(idx++, static_cast<std::int64_t>(from_ts_ms/1000));
+            if (to_ts_ms > 0)       ps->setInt64(idx++, static_cast<std::int64_t>(to_ts_ms/1000));
+            std::unique_ptr<sql::ResultSet> rs(ps->executeQuery());
+            if (rs && rs->next()) {
+                if (total) *total = static_cast<std::uint64_t>(rs->getInt64("cnt"));
+            }
+        }
+
+        // 2) Page query
+        std::ostringstream sql;
+        sql << "SELECT id, stream_id, pipeline, model_id, status, error_msg, "
+               "UNIX_TIMESTAMP(started_at) AS started_sec, UNIX_TIMESTAMP(stopped_at) AS stopped_sec "
+               "FROM sessions WHERE 1=1 ";
+        if (!stream_id.empty()) sql << "AND stream_id=? ";
+        if (!pipeline.empty())  sql << "AND pipeline=? ";
+        if (from_ts_ms > 0)     sql << "AND started_at >= FROM_UNIXTIME(?) ";
+        if (to_ts_ms > 0)       sql << "AND started_at <= FROM_UNIXTIME(?) ";
+        sql << "ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?";
+        std::unique_ptr<sql::PreparedStatement> ps(conn->prepareStatement(sql.str()));
+        int idx = 1;
+        if (!stream_id.empty()) ps->setString(idx++, stream_id);
+        if (!pipeline.empty())  ps->setString(idx++, pipeline);
+        if (from_ts_ms > 0)     ps->setInt64(idx++, static_cast<std::int64_t>(from_ts_ms/1000));
+        if (to_ts_ms > 0)       ps->setInt64(idx++, static_cast<std::int64_t>(to_ts_ms/1000));
+        ps->setInt(idx++, page_size);
+        ps->setInt(idx++, offset);
+        std::unique_ptr<sql::ResultSet> rs(ps->executeQuery());
+        while (rs->next()) {
+            SessionRow r;
+            r.id = rs->getInt64("id");
+            r.stream_id = rs->getString("stream_id");
+            r.pipeline = rs->getString("pipeline");
+            r.model_id = rs->isNull("model_id") ? std::string() : rs->getString("model_id");
+            r.status = rs->getString("status");
+            r.error_msg = rs->isNull("error_msg") ? std::string() : rs->getString("error_msg");
+            r.started_ms = rs->getInt64("started_sec") * 1000;
+            r.stopped_ms = rs->isNull("stopped_sec") ? 0 : (rs->getInt64("stopped_sec") * 1000);
+            out->push_back(std::move(r));
+        }
+        return true;
+    } catch (const sql::SQLException& ex) {
+        if (err) { std::ostringstream os; os << "mysql query error (" << ex.getErrorCode() << "): " << ex.what(); *err = os.str(); }
+    } catch (const std::exception& ex) { if (err) *err = ex.what(); }
+    return false;
+#else
+    if (err) *err = "not implemented";
+    return false;
+#endif
+}
+
 } // namespace va::storage

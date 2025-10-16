@@ -1,0 +1,15 @@
+{
+  "items": [
+    { "id": 101, "stream_id": "cam_01", "pipeline": "det_720p",  "status": "Running", "error_msg": "", "started_at": 1710000000000, "stopped_at": null },
+    { "id": 102, "stream_id": "cam_02", "pipeline": "det_720p",  "status": "Stopped", "error_msg": "", "started_at": 1710001000000, "stopped_at": 1710004600000 },
+    { "id": 103, "stream_id": "cam_03", "pipeline": "seg_1080p", "status": "Failed",  "error_msg": "RTSP timeout", "started_at": 1710002000000, "stopped_at": 1710002060000 },
+    { "id": 104, "stream_id": "cam_01", "pipeline": "det_720p",  "status": "Stopped", "error_msg": "", "started_at": 1709999000000, "stopped_at": 1710000200000 },
+    { "id": 105, "stream_id": "cam_04", "pipeline": "kpt_720p",  "status": "Running", "error_msg": "", "started_at": 1710003000000, "stopped_at": null },
+    { "id": 106, "stream_id": "cam_05", "pipeline": "det_480p",  "status": "Stopped", "error_msg": "", "started_at": 1709998000000, "stopped_at": 1710000100000 },
+    { "id": 107, "stream_id": "cam_06", "pipeline": "roi_720p",  "status": "Running", "error_msg": "", "started_at": 1710003500000, "stopped_at": null },
+    { "id": 108, "stream_id": "cam_07", "pipeline": "det_720p",  "status": "Stopped", "error_msg": "", "started_at": 1709997000000, "stopped_at": 1710000300000 },
+    { "id": 109, "stream_id": "cam_08", "pipeline": "seg_1080p", "status": "Failed",  "error_msg": "Subscription error", "started_at": 1710002500000, "stopped_at": 1710002510000 },
+    { "id": 110, "stream_id": "cam_09", "pipeline": "det_720p",  "status": "Running", "error_msg": "", "started_at": 1710003600000, "stopped_at": null }
+  ]
+}
+

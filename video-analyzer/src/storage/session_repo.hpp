@@ -35,10 +35,24 @@ public:
 
     // List recent sessions with optional filters.
     bool listRecent(const std::string& stream_id,
-                    const std::string& pipeline,
-                    int limit,
-                    std::vector<SessionRow>* out,
-                    std::string* err = nullptr);
+                     const std::string& pipeline,
+                     int limit,
+                     std::vector<SessionRow>* out,
+                     std::string* err = nullptr);
+
+    // List sessions with optional time range and pagination.
+    // from_ts_ms/to_ts_ms: epoch milliseconds (0 to ignore)
+    // page: 1-based; page_size: items per page (1..1000)
+    // On success returns true and fills 'out' and 'total'
+    bool listRangePaginated(const std::string& stream_id,
+                            const std::string& pipeline,
+                            std::uint64_t from_ts_ms,
+                            std::uint64_t to_ts_ms,
+                            int page,
+                            int page_size,
+                            std::vector<SessionRow>* out,
+                            std::uint64_t* total,
+                            std::string* err = nullptr);
 
 private:
     std::shared_ptr<DbPool> pool_;

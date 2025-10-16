@@ -33,8 +33,15 @@
   - 项目构建成功后必须进行测试，不需要询问。
   - 可以使用 `d:\Projects\ai\cv\video-analyzer\test\scripts` 下的脚本测试，新编写脚本也放在该目录下。
   - 常用目标：`VideoAnalyzer`、`install`、`package`（若已定义）。
-  - 前端测试：使用**playwright mcp**服务操作浏览器进行测试。
+  - 前端测试：使用**playwright mcp**服务操作浏览器进行测试，使用**playwright mcp**时：
+    1) 不要调用 browser_snapshot。
+    2) 任何截图一律保存为文件且只返回文件路径；禁止内联 base64。
+    3) 仅使用这些工具：browser_navigate, browser_click, browser_type, browser_evaluate, browser_tabs。
+    4) 优先用 browser_evaluate 精确返回结构化 JSON（最多 10 条关键字段），禁止返回整页 HTML/DOM。
+    5) 只有我说要导出 PDF 时，才允许使用与 PDF 相关的能力。
+    6) 工具输出必须“最小充分”：不重复、不赘述、不粘贴大文本或二进制。
   - 需要操作数据库的测试，请使用`mysqlsh`工具验证数据库中的数据是否正确。
+  - 测试源：rtsp://127.0.0.1:8554/camera_01
 
 ## 代码风格与命名规范
 
@@ -61,6 +68,7 @@
 ## 面向 Agent 的说明
 
 - 软件设计需满足开闭原则、里氏替换原则、依赖倒置原则、单一职责原则。
+- 项目构建成功后必须进行测试，不需要询问。
 - 遵循分阶段计划；优先提交最小且定向的补丁。
 - 未经方案/负责人确认，不要变更公共接口。
 - 新增 GPU 路径时保留 CPU 回退；以选项开关保护特性，并在合并前通过自动化测试验证。
