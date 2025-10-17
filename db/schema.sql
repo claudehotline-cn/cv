@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS `events` (
   PRIMARY KEY (`id`),
   INDEX `idx_events_ts` (`ts` DESC),
   INDEX `idx_events_pipeline_ts` (`pipeline`, `ts` DESC),
+  INDEX `idx_events_stream_ts` (`stream_id`, `ts` DESC),
+  INDEX `idx_events_node_ts` (`node`, `ts` DESC),
   CHECK (JSON_VALID(`extra`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -115,8 +117,9 @@ CREATE TABLE IF NOT EXISTS `logs` (
   PRIMARY KEY (`id`),
   INDEX `idx_logs_ts` (`ts` DESC),
   INDEX `idx_logs_pipeline_ts` (`pipeline`, `ts` DESC),
+  INDEX `idx_logs_stream_ts` (`stream_id`, `ts` DESC),
+  INDEX `idx_logs_node_ts` (`node`, `ts` DESC),
   CHECK (JSON_VALID(`extra`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- End of schema
-

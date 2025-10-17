@@ -181,4 +181,117 @@ bool EventRepo::listRecentFiltered(const std::string& pipeline,
 #endif
 }
 
+bool EventRepo::listRecentFilteredPaged(const std::string& pipeline,
+                                        const std::string& level,
+                                        const std::string& stream_id,
+                                        const std::string& node,
+                                        std::uint64_t from_ts_ms,
+                                        std::uint64_t to_ts_ms,
+                                        int page,
+                                        int page_size,
+                                        std::vector<EventRow>* out,
+                                        std::int64_t* total,
+                                        std::string* err) {
+    if (out) out->clear();
+    if (total) *total = 0;
+    if (!pool_ || !pool_->valid()) { if (err) *err = "database disabled"; return false; }
+#if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
+    auto conn = pool_->acquire(err);
+    if (!conn) return false;
+    try {
+        auto split_csv = [](const std::string& s){ std::vector<std::string> v; std::string cur; for(char c: s){ if(c==','){ if(!cur.empty()) { v.push_back(cur); cur.clear(); } } else { cur.push_back(c); } } if(!cur.empty()) v.push_back(cur); return v; };
+        const std::vector<std::string> stream_list = split_csv(stream_id);
+        const std::vector<std::string> node_list = split_csv(node);
+        // Count
+        {
+            std::ostringstream sql;
+            sql << "SELECT COUNT(*) AS c FROM events WHERE 1=1 ";
+            if (!pipeline.empty()) sql << "AND pipeline=? ";
+            if (!level.empty())    sql << "AND level=? ";
+            if (!stream_id.empty()) {
+                if (stream_list.size() > 1) { sql << "AND stream_id IN ("; for (size_t i=0;i<stream_list.size();++i){ if(i) sql << ','; sql << '?'; } sql << ") "; }
+                else { sql << "AND stream_id=? "; }
+            }
+            if (!node.empty()) {
+                if (node_list.size() > 1) { sql << "AND node IN ("; for (size_t i=0;i<node_list.size();++i){ if(i) sql << ','; sql << '?'; } sql << ") "; }
+                else { sql << "AND node=? "; }
+            }
+            if (from_ts_ms > 0)     sql << "AND ts >= FROM_UNIXTIME(?) ";
+            if (to_ts_ms > 0)       sql << "AND ts <= FROM_UNIXTIME(?) ";
+            std::unique_ptr<sql::PreparedStatement> ps(conn->prepareStatement(sql.str()));
+            int idx = 1;
+            if (!pipeline.empty())   ps->setString(idx++, pipeline);
+            if (!level.empty())      ps->setString(idx++, level);
+            if (!stream_id.empty()) {
+                if (stream_list.size() > 1) { for (const auto& s : stream_list) ps->setString(idx++, s); }
+                else { ps->setString(idx++, stream_id); }
+            }
+            if (!node.empty()) {
+                if (node_list.size() > 1) { for (const auto& s : node_list) ps->setString(idx++, s); }
+                else { ps->setString(idx++, node); }
+            }
+            if (from_ts_ms > 0)      ps->setInt64(idx++, static_cast<std::int64_t>(from_ts_ms/1000));
+            if (to_ts_ms > 0)        ps->setInt64(idx++, static_cast<std::int64_t>(to_ts_ms/1000));
+            std::unique_ptr<sql::ResultSet> rs(ps->executeQuery());
+            if (rs->next()) { if (total) *total = rs->getInt64("c"); }
+        }
+
+        if (page < 1) page = 1;
+        if (page_size <= 0 || page_size > 1000) page_size = 100;
+        std::int64_t offset = static_cast<std::int64_t>((page - 1) * page_size);
+
+        std::ostringstream sql;
+        sql << "SELECT UNIX_TIMESTAMP(ts) AS ts_sec, level, type, pipeline, node, stream_id, msg, JSON_EXTRACT(extra,'$') AS extra FROM events WHERE 1=1 ";
+        if (!pipeline.empty()) sql << "AND pipeline=? ";
+        if (!level.empty())    sql << "AND level=? ";
+        if (!stream_id.empty()) {
+            if (stream_list.size() > 1) { sql << "AND stream_id IN ("; for (size_t i=0;i<stream_list.size();++i){ if(i) sql << ','; sql << '?'; } sql << ") "; }
+            else { sql << "AND stream_id=? "; }
+        }
+        if (!node.empty()) {
+            if (node_list.size() > 1) { sql << "AND node IN ("; for (size_t i=0;i<node_list.size();++i){ if(i) sql << ','; sql << '?'; } sql << ") "; }
+            else { sql << "AND node=? "; }
+        }
+        if (from_ts_ms > 0)     sql << "AND ts >= FROM_UNIXTIME(?) ";
+        if (to_ts_ms > 0)       sql << "AND ts <= FROM_UNIXTIME(?) ";
+        sql << "ORDER BY ts DESC LIMIT ? OFFSET ?";
+        std::unique_ptr<sql::PreparedStatement> ps(conn->prepareStatement(sql.str()));
+        int idx = 1;
+        if (!pipeline.empty())   ps->setString(idx++, pipeline);
+        if (!level.empty())      ps->setString(idx++, level);
+        if (!stream_id.empty()) {
+            if (stream_list.size() > 1) { for (const auto& s : stream_list) ps->setString(idx++, s); }
+            else { ps->setString(idx++, stream_id); }
+        }
+        if (!node.empty()) {
+            if (node_list.size() > 1) { for (const auto& s : node_list) ps->setString(idx++, s); }
+            else { ps->setString(idx++, node); }
+        }
+        if (from_ts_ms > 0)      ps->setInt64(idx++, static_cast<std::int64_t>(from_ts_ms/1000));
+        if (to_ts_ms > 0)        ps->setInt64(idx++, static_cast<std::int64_t>(to_ts_ms/1000));
+        ps->setInt(idx++, page_size);
+        ps->setInt64(idx++, offset);
+        std::unique_ptr<sql::ResultSet> rs(ps->executeQuery());
+        while (rs->next()) {
+            EventRow r;
+            const std::int64_t secs = rs->getInt64("ts_sec"); r.ts_ms = secs * 1000;
+            r.level = rs->getString("level"); r.type = rs->getString("type");
+            r.pipeline = rs->isNull("pipeline") ? std::string() : rs->getString("pipeline");
+            r.node = rs->isNull("node") ? std::string() : rs->getString("node");
+            r.stream_id = rs->isNull("stream_id") ? std::string() : rs->getString("stream_id");
+            r.msg = rs->getString("msg");
+            r.extra_json = rs->isNull("extra") ? std::string() : rs->getString("extra");
+            out->push_back(std::move(r));
+        }
+        return true;
+    } catch (const sql::SQLException& ex) {
+        if (err) { std::ostringstream os; os << "mysql query error (" << ex.getErrorCode() << "): " << ex.what(); *err = os.str(); }
+    } catch (const std::exception& ex) { if (err) *err = ex.what(); }
+    return false;
+#else
+    if (err) *err = "not implemented";
+    return false;
+#endif
+}
+
 } // namespace va::storage
