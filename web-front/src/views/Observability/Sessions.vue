@@ -8,6 +8,8 @@
       <el-switch v-model="auto" active-text="自动刷新" style="margin-left:12px" @change="onAutoChange" />
       <el-button size="small" @click="exportCsv" style="margin-left:8px">导出 CSV</el-button>
     </div>
+    <el-alert v-if="errorMsg" :title="errorMsg" type="error" show-icon style="margin:8px 0" />
+    <div class="filter-actions"><el-button size="small" @click="resetFilters">清空筛选</el-button></div>
     <el-table :data="pagedRows" size="small" stripe>
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="stream_id" label="Stream" />
@@ -37,6 +39,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { dataProvider } from '@/api/dataProvider'
 
 const rows = ref<any[]>([])
+const errorMsg = ref('')
 const pagedRows = computed(()=>{
   const start = (page.value-1) * pageSize.value
   return rows.value.slice(start, start + pageSize.value)
@@ -51,6 +54,7 @@ const total = ref(0)
 let stopWatch: any = null
 
 function fmt(v: any){ if(!v) return ''; const d = new Date(Number(v)); if(!isFinite(d.getTime())) return ''; return d.toLocaleString() }
+function last30Days(): [number, number] { const now = Date.now(); return [now - 30*24*3600*1000, now] }
 
 async function load(){
   try {
@@ -60,7 +64,8 @@ async function load(){
     const d = (j?.data || j)?.items || []
     rows.value = Array.isArray(d) ? d : []
     total.value = Number((j?.data || j)?.total || rows.value.length || 0)
-  } catch (e) { /* 后端不可用时保持空表，不再回退 mock */ }
+    errorMsg.value = ''
+  } catch (e:any) { rows.value = []; total.value = 0; errorMsg.value = e?.message || '加载会话失败' }
 }
 
 function startWatch(){
@@ -85,10 +90,24 @@ function exportCsv(){
   const a = document.createElement('a'); a.href = url; a.download = 'sessions.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(url), 1000)
 }
 
+function resetFilters(){
+  streamId.value = ''
+  pipeline.value = ''
+  dateRange.value = last30Days()
+  page.value = 1
+  load()
+  if (auto.value) startWatch()
+}
+
 watch([streamId, pipeline, dateRange], ()=>{ page.value = 1; load(); if (auto.value) startWatch() })
 
-onMounted(()=>{ load(); if (auto.value) startWatch() })
+onMounted(()=>{ if (!Array.isArray(dateRange.value) || dateRange.value.length!==2) { const now=Date.now(); dateRange.value = [now-30*24*3600*1000, now] as any } load(); if (auto.value) startWatch() })
 onUnmounted(()=>{ if(stopWatch) stopWatch() })
+
+function onSessionsError(ev:any){ try { errorMsg.value = ev?.detail || '加载会话失败' } catch { errorMsg.value = '加载会话失败' } }
+if (typeof window !== 'undefined') {
+  try { window.addEventListener('sessions-error', onSessionsError as any) } catch {}
+}
 
 </script>
 
