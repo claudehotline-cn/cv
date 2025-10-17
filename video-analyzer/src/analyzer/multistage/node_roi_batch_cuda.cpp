@@ -36,6 +36,7 @@ bool NodeRoiBatchCuda::process(Packet& p, NodeContext& ctx) {
     auto it = p.rois.find(in_rois_key_);
     if (it == p.rois.end()) { p.tensors.erase(out_key_); return true; }
     const auto& rois = it->second;
+    last_total_rois_ = static_cast<int>(rois.size());
     staged_.clear();
 
 #if VA_MS_RBC_HAS_CUDA && defined(VA_HAS_CUDA_KERNELS)
@@ -48,6 +49,7 @@ bool NodeRoiBatchCuda::process(Packet& p, NodeContext& ctx) {
         const int pitch_uv = p.frame.device.pitch1;
         int use_n = static_cast<int>(rois.size());
         if (max_rois_ > 0) use_n = std::min(use_n, max_rois_);
+        last_used_rois_ = use_n;
         if (use_n <= 0) { p.tensors.erase(out_key_); return true; }
 
         // Allocate one contiguous device buffer: N*3*H*W floats
@@ -104,7 +106,9 @@ bool NodeRoiBatchCuda::process(Packet& p, NodeContext& ctx) {
     {
         static thread_local std::unique_ptr<NodeRoiBatch> cpu;
         if (!cpu) cpu = std::make_unique<NodeRoiBatch>(std::unordered_map<std::string,std::string>{{"in_rois",in_rois_key_},{"out",out_key_},{"out_w",std::to_string(out_w_)},{"out_h",std::to_string(out_h_)},{"max_rois",std::to_string(max_rois_)}});
-        return cpu->process(p, ctx);
+        bool ok = cpu->process(p, ctx);
+        last_used_rois_ = std::min(last_total_rois_, max_rois_>0? max_rois_: last_total_rois_);
+        return ok;
     }
 }
 

@@ -201,6 +201,40 @@ public:
                 last_blocked_nodes_.push_back("encoder");
                 last_drain_reason_ = "encoder_backpressure";
             }
+            // Per-node probes: ROI batch truncation and model failures
+            if (g_) {
+                g_->for_each_node([&](const std::string& name, const std::string& type, const std::unordered_map<std::string,std::string>& /*cfg*/){
+                    (void)name;
+                    if (type == "roi.batch.cuda") {
+                        auto itid = std::string(name); // name not used in cast; rely on type
+                        // dynamic cast via hidden knowledge of registry types
+                        // We cannot fetch node object here; Graph::for_each_node exposes cfg; use with_node for live node
+                    }
+                });
+                // use with_node to access live node objects
+                for (const auto& probe : std::vector<std::pair<std::string,std::string>>{
+                    {"roi.batch.cuda", "roi_batch.cuda"}, {"roi.batch", "roi_batch.cpu"}, {"model.ort", "model"}}) {
+                    const std::string& t = probe.first; const std::string& tag = probe.second;
+                    // iterate names by scanning nodes again to find names of type t
+                    g_->for_each_node([&](const std::string& nm, const std::string& tp, const std::unordered_map<std::string,std::string>& cfg){
+                        if (tp != t) return;
+                        (void)cfg;
+                        g_->with_node(nm, [&](va::analyzer::multistage::NodePtr& n, std::string& /*type*/, std::unordered_map<std::string,std::string>& /*cfg_mut*/){
+                            if (t == "roi.batch.cuda") {
+                                auto* rb = dynamic_cast<va::analyzer::multistage::NodeRoiBatchCuda*>(n.get());
+                                if (rb) { int tot = rb->last_total_rois(); int used = rb->last_used_rois(); if (tot > used) { last_blocked_nodes_.push_back(tag); if (last_drain_reason_.empty()) last_drain_reason_ = "roi_truncated"; } }
+                            } else if (t == "roi.batch") {
+                                auto* rb = dynamic_cast<va::analyzer::multistage::NodeRoiBatch*>(n.get());
+                                if (rb) { int tot = rb->last_total_rois(); int used = rb->last_used_rois(); if (tot > used) { last_blocked_nodes_.push_back(tag); if (last_drain_reason_.empty()) last_drain_reason_ = "roi_truncated"; } }
+                            } else if (t == "model.ort") {
+                                auto* mm = dynamic_cast<va::analyzer::multistage::NodeModel*>(n.get());
+                                if (mm) { if (mm->infer_fail_count() > 0) { last_blocked_nodes_.push_back(tag); if (last_drain_reason_.empty()) last_drain_reason_ = "infer_failed_recent"; } }
+                            }
+                            return true;
+                        });
+                    });
+                }
+            }
         } catch (...) { /* ignore */ }
         return Status::OK();
     }

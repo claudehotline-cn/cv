@@ -14,11 +14,14 @@ namespace va { namespace analyzer { namespace multistage {
     std::vector<std::string> outputs() const override { return out_keys_; }
     // Hot-swap model at runtime (reload session with new model path)
     bool hotSwapModel(const std::string& new_model_path, NodeContext& ctx);
+    // Introspection: recent inference failure count (monotonic)
+    uint64_t infer_fail_count() const { return infer_fail_count_; }
   private:
     std::string in_key_ {"tensor:det_input"};
     std::vector<std::string> out_keys_ {"tensor:det_raw"};
     std::shared_ptr<va::analyzer::IModelSession> session_;
     std::string model_path_;
+    std::atomic<uint64_t> infer_fail_count_{0};
   };
 
 } } } // namespace

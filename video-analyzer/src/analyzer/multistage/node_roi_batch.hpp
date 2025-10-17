@@ -19,6 +19,8 @@ public:
     bool process(Packet& p, NodeContext& ctx) override;
     std::vector<std::string> inputs() const override { return {in_rois_key_}; }
     std::vector<std::string> outputs() const override { return {out_key_}; }
+    int last_total_rois() const { return last_total_rois_; }
+    int last_used_rois() const { return last_used_rois_; }
 private:
     std::string in_rois_key_ {"det"};
     std::string out_key_ {"tensor:roi_batch"};
@@ -27,7 +29,8 @@ private:
     bool normalize_ {true};
     int max_rois_ {0};
     std::vector<float> buffer_;
+    int last_total_rois_ {0};
+    int last_used_rois_ {0};
 };
 
 } } } // namespace
-

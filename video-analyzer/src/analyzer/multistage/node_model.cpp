@@ -107,7 +107,7 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
     auto it = p.tensors.find(in_key_);
     if (it == p.tensors.end()) return false;
     std::vector<va::core::TensorView> outs;
-    if (!session_ || !session_->run(it->second, outs)) return false;
+    if (!session_ || !session_->run(it->second, outs)) { infer_fail_count_.fetch_add(1, std::memory_order_relaxed); return false; }
     // Map outputs to keys (support multiple outputs and auto keys)
     if (!outs.empty()) {
         const size_t n_model = outs.size();

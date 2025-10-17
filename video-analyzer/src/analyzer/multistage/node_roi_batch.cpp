@@ -25,6 +25,7 @@ bool NodeRoiBatch::process(Packet& p, NodeContext& /*ctx*/) {
         return true;
     }
     const auto& rois = it->second;
+    last_total_rois_ = static_cast<int>(rois.size());
     if (p.frame.bgr.empty()) {
         VA_LOG_C(::va::core::LogLevel::Warn, "ms.roi_batch") << "frame.bgr is empty; ROI batch requires host BGR";
         return false;
@@ -35,6 +36,7 @@ bool NodeRoiBatch::process(Packet& p, NodeContext& /*ctx*/) {
 
     int use_n = static_cast<int>(rois.size());
     if (max_rois_ > 0) use_n = std::min(use_n, max_rois_);
+    last_used_rois_ = use_n;
     if (use_n <= 0) {
         // Produce empty batch tensor [0,3,H,W] by convention -> skip setting tensor
         p.tensors.erase(out_key_);
@@ -88,4 +90,3 @@ bool NodeRoiBatch::process(Packet& p, NodeContext& /*ctx*/) {
 }
 
 } } } // namespace
-
