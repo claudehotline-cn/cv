@@ -12,7 +12,7 @@
       </div>
       <div class="item">
         <div class="k">Writer Queues</div>
-        <div class="v">logs: {{ val('log_writer_queue') }} | events: {{ val('event_writer_queue') }}</div>
+        <div class="v">logs: {{ valLike('writer_queue_logs') }} | events: {{ valLike('writer_queue_events') }}</div>
       </div>
       <div class="item">
         <div class="k">Retention</div>

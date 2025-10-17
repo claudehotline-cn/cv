@@ -114,8 +114,8 @@ async function load(){
       retention_last_ms: ['va_db_retention_last_ms','retention_last_ms'],
       retention_runs_total: ['va_db_retention_runs_total','retention_runs_total'],
       retention_failures_total: ['va_db_retention_failures_total','retention_failures_total'],
-      log_writer_queue: ['log_writer_queue','va_log_writer_queue'],
-      event_writer_queue: ['event_writer_queue','va_event_writer_queue']
+      log_writer_queue: ['log_writer_queue','va_log_writer_queue','va_db_writer_queue_logs','db_writer_queue_logs'],
+      event_writer_queue: ['event_writer_queue','va_event_writer_queue','va_db_writer_queue_events','db_writer_queue_events']
     }
     for (const alias of Object.keys(mapping)){
       const key = findKey(m, mapping[alias])
