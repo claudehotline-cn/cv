@@ -317,7 +317,7 @@ private:
             return;
         }
 
-        if (listen(server_socket_, 16) < 0) {
+        if (listen(server_socket_, 64) < 0) {
             VA_LOG_C(::va::core::LogLevel::Error, "rest") << "listen failed";
             running_ = false;
 #ifdef _WIN32
@@ -353,6 +353,15 @@ private:
         char buffer[buffer_size];
         int received = 0;
 
+        // Apply per-connection recv/send timeouts to avoid long stalls (e.g., misbehaving clients)
+#ifdef _WIN32
+        {
+            int to_ms = 4000; // 4s
+            setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to_ms), sizeof(to_ms));
+            setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&to_ms), sizeof(to_ms));
+        }
+#endif
+
         do {
 #ifdef _WIN32
             received = recv(client_socket, buffer, static_cast<int>(buffer_size), 0);
@@ -366,6 +375,24 @@ private:
                 }
             }
         } while (received > 0);
+
+        // If headers not fully received (no CRLF CRLF), return 408 to prevent blocking
+        if (request_data.find("\r\n\r\n") == std::string::npos) {
+            HttpResponse response;
+            response.status_code = 408; // Request Timeout
+            Json::Value error(Json::objectValue);
+            error["success"] = false;
+            error["message"] = "request timeout while reading headers";
+            response.body = Json::writeString(Json::StreamWriterBuilder{}, error);
+            const auto raw = buildResponse(response);
+            sendAll(client_socket, raw);
+#ifdef _WIN32
+            closesocket(client_socket);
+#else
+            close(client_socket);
+#endif
+            return;
+        }
 
         if (request_data.empty()) {
 #ifdef _WIN32
@@ -399,23 +426,33 @@ private:
         // SSE streaming routes: handled specially (write headers and stream data; no Content-Length)
         {
             bool matched_stream = false;
-            std::lock_guard<std::mutex> lock(routes_mutex_);
-            for (auto& route : stream_routes_) {
-                std::map<std::string, std::string> params;
-                if (matchRoute(request.method, request.path, route, params)) {
-                    request.params = std::move(params);
-                    try {
-                        route.handler(client_socket, request);
-                    } catch (...) {
-                        // best-effort: close socket
+            StreamHandler stream_handler;
+            std::map<std::string, std::string> sparams;
+            {
+                std::lock_guard<std::mutex> lock(routes_mutex_);
+                for (auto& route : stream_routes_) {
+                    std::map<std::string, std::string> params;
+                    if (matchRoute(request.method, request.path, route, params)) {
+                        sparams = std::move(params);
+                        stream_handler = route.handler; // copy out of lock
+                        matched_stream = true;
+                        break;
                     }
-#ifdef _WIN32
-                    closesocket(client_socket);
-#else
-                    close(client_socket);
-#endif
-                    return;
                 }
+            }
+            if (matched_stream) {
+                request.params = std::move(sparams);
+                try {
+                    stream_handler(client_socket, request);
+                } catch (...) {
+                    // best-effort: close socket
+                }
+#ifdef _WIN32
+                closesocket(client_socket);
+#else
+                close(client_socket);
+#endif
+                return;
             }
         }
 
@@ -434,6 +471,7 @@ private:
 
         size_t content_length = 0;
         bool has_content_length = false;
+        bool expect_continue = false;
         for (const auto& entry : request.headers) {
             std::string header_name = toLower(entry.first);
             if (header_name == "content-length") {
@@ -443,11 +481,21 @@ private:
                 } catch (...) {
                     content_length = 0;
                 }
-                break;
+                continue;
+            }
+            if (header_name == "expect") {
+                std::string v = toLower(entry.second);
+                // Common pattern from clients like Postman when sending large bodies
+                if (v.find("100-continue") != std::string::npos) expect_continue = true;
             }
         }
 
         if (has_content_length && request.body.size() < content_length) {
+            if (expect_continue) {
+                // Send 100-continue to prompt client to transmit the body
+                const std::string cont = "HTTP/1.1 100 Continue\r\n\r\n";
+                sendAll(client_socket, cont);
+            }
             size_t remaining = content_length - request.body.size();
             while (remaining > 0) {
                 const size_t chunk_size = (std::min)(remaining, static_cast<size_t>(buffer_size));
@@ -466,24 +514,30 @@ private:
 
         HttpResponse response;
         bool matched = false;
+        Handler normal_handler;
+        std::map<std::string, std::string> nparams;
         {
             std::lock_guard<std::mutex> lock(routes_mutex_);
             for (auto& route : routes_) {
                 std::map<std::string, std::string> params;
                 if (matchRoute(request.method, request.path, route, params)) {
-                    request.params = std::move(params);
-                    try {
-                        response = route.handler(request);
-                    } catch (const std::exception& ex) {
-                        Json::Value error;
-                        error["success"] = false;
-                        error["message"] = ex.what();
-                        response.status_code = 500;
-                        response.body = Json::writeString(Json::StreamWriterBuilder{}, error);
-                    }
+                    nparams = std::move(params);
+                    normal_handler = route.handler; // copy out of lock
                     matched = true;
                     break;
                 }
+            }
+        }
+        if (matched) {
+            request.params = std::move(nparams);
+            try {
+                response = normal_handler(request);
+            } catch (const std::exception& ex) {
+                Json::Value error;
+                error["success"] = false;
+                error["message"] = ex.what();
+                response.status_code = 500;
+                response.body = Json::writeString(Json::StreamWriterBuilder{}, error);
             }
         }
 
@@ -539,10 +593,13 @@ private:
             request.path = uri;
         }
 
-        while (std::getline(iss, line) && line != "\r") {
+        // Read headers until an empty line after CRLF. We must trim trailing '\r' first
+        // and break when the resulting line is empty. This avoids consuming the body as headers.
+        while (std::getline(iss, line)) {
             if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
             }
+            if (line.empty()) break;
             auto colon = line.find(':');
             if (colon != std::string::npos) {
                 std::string key = line.substr(0, colon);
@@ -836,6 +893,10 @@ struct RestServer::Impl {
     // Periodic DB retention worker (best-effort)
     std::unique_ptr<std::thread> retention_thread;
     std::atomic<bool> retention_stop{false};
+    // Retention metrics
+    std::atomic<std::uint64_t> retention_runs_total{0};
+    std::atomic<std::uint64_t> retention_failures_total{0};
+    std::atomic<std::uint64_t> retention_last_ms{0};
 
     static std::uint64_t now_ms() {
         using namespace std::chrono;
@@ -902,10 +963,12 @@ struct RestServer::Impl {
             }
             while (!retention_stop.load(std::memory_order_relaxed)) {
                 const auto start = std::chrono::steady_clock::now();
+                bool any_fail = false;
                 if (events_repo && app.appConfig().database.retention.events_seconds > 0) {
                     std::string err; if (events_repo->purgeOlderThanSeconds(app.appConfig().database.retention.events_seconds, &err)) {
                         VA_LOG_THROTTLED(::va::core::LogLevel::Info, "db.retention", 10000) << "events purge ok";
                     } else if (!err.empty()) {
+                        any_fail = true;
                         VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "db.retention", 10000) << "events purge failed: " << err;
                     }
                 }
@@ -913,9 +976,14 @@ struct RestServer::Impl {
                     std::string err; if (logs_repo->purgeOlderThanSeconds(app.appConfig().database.retention.logs_seconds, &err)) {
                         VA_LOG_THROTTLED(::va::core::LogLevel::Info, "db.retention", 10000) << "logs purge ok";
                     } else if (!err.empty()) {
+                        any_fail = true;
                         VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "db.retention", 10000) << "logs purge failed: " << err;
                     }
                 }
+                auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+                retention_last_ms.store(static_cast<std::uint64_t>(dur_ms), std::memory_order_relaxed);
+                retention_runs_total.fetch_add(1, std::memory_order_relaxed);
+                if (any_fail) retention_failures_total.fetch_add(1, std::memory_order_relaxed);
                 // sleep until next interval (with jitter each round)
                 auto elapsed = std::chrono::steady_clock::now() - start;
                 auto remaining = interval - std::chrono::duration_cast<std::chrono::seconds>(elapsed);
@@ -1105,8 +1173,10 @@ struct RestServer::Impl {
         auto dbPingHandler = [this](const HttpRequest& req) { return handleDbPing(req); };
         server.addRoute("GET", "/api/db/ping", dbPingHandler);
 
-        // Retention: manual purge endpoint (admin)
+        // Retention: status + manual purge endpoint (admin)
         auto dbPurgeHandler = [this](const HttpRequest& req) { return handleDbPurge(req); };
+        auto dbRetentionStatusHandler = [this](const HttpRequest& req) { return handleDbRetentionStatus(req); };
+        server.addRoute("GET",  "/api/db/retention/status", dbRetentionStatusHandler);
         server.addRoute("POST", "/api/db/retention/purge", dbPurgeHandler);
 
         // Sessions: list recent
@@ -1971,6 +2041,57 @@ struct RestServer::Impl {
                 << static_cast<unsigned long long>(info.zc.eagain_retry_count) << "\n";
         }
 
+        // Retention metrics
+        out << "# HELP va_db_retention_runs_total Retention job runs total\n";
+        out << "# TYPE va_db_retention_runs_total counter\n";
+        out << "va_db_retention_runs_total " << static_cast<unsigned long long>(retention_runs_total.load(std::memory_order_relaxed)) << "\n";
+        out << "# HELP va_db_retention_failures_total Retention job failures total\n";
+        out << "# TYPE va_db_retention_failures_total counter\n";
+        out << "va_db_retention_failures_total " << static_cast<unsigned long long>(retention_failures_total.load(std::memory_order_relaxed)) << "\n";
+        out << "# HELP va_db_retention_last_ms Last retention job duration in ms\n";
+        out << "# TYPE va_db_retention_last_ms gauge\n";
+        out << "va_db_retention_last_ms " << static_cast<unsigned long long>(retention_last_ms.load(std::memory_order_relaxed)) << "\n";
+
+        // DB pool metrics
+        if (db_pool && db_pool->valid()) {
+            va::storage::DbPool::Stats st{}; bool ok = db_pool->getStats(&st);
+            if (ok) {
+                out << "# HELP va_db_pool_max Maximum pool size\n";
+                out << "# TYPE va_db_pool_max gauge\n";
+                out << "va_db_pool_max " << st.max << "\n";
+                out << "# HELP va_db_pool_min Minimum pool size\n";
+                out << "# TYPE va_db_pool_min gauge\n";
+                out << "va_db_pool_min " << st.min << "\n";
+                out << "# HELP va_db_pool_created Connections created by pool\n";
+                out << "# TYPE va_db_pool_created gauge\n";
+                out << "va_db_pool_created " << static_cast<unsigned long long>(st.created) << "\n";
+                out << "# HELP va_db_pool_idle Idle connections\n";
+                out << "# TYPE va_db_pool_idle gauge\n";
+                out << "va_db_pool_idle " << static_cast<unsigned long long>(st.idle) << "\n";
+                out << "# HELP va_db_pool_in_use Connections currently in-use (approx)\n";
+                out << "# TYPE va_db_pool_in_use gauge\n";
+                unsigned long long in_use = 0ULL;
+                if (st.created >= st.idle) in_use = static_cast<unsigned long long>(st.created - st.idle);
+                out << "va_db_pool_in_use " << in_use << "\n";
+            }
+        }
+
+        // Async DB writer queue lengths
+        {
+            std::size_t qev = 0, qlg = 0;
+            {
+                std::lock_guard<std::mutex> lk(dbq_mutex);
+                qev = q_events.size();
+                qlg = q_logs.size();
+            }
+            out << "# HELP va_db_writer_queue_events Pending events rows in queue\n";
+            out << "# TYPE va_db_writer_queue_events gauge\n";
+            out << "va_db_writer_queue_events " << static_cast<unsigned long long>(qev) << "\n";
+            out << "# HELP va_db_writer_queue_logs Pending logs rows in queue\n";
+            out << "# TYPE va_db_writer_queue_logs gauge\n";
+            out << "va_db_writer_queue_logs " << static_cast<unsigned long long>(qlg) << "\n";
+        }
+
         HttpResponse resp;
         resp.status_code = 200;
         resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8";
@@ -2039,6 +2160,10 @@ struct RestServer::Impl {
         std::ostringstream hs;
         hs << "HTTP/1.1 200 OK\r\n";
         hs << "Content-Type: text/event-stream\r\n";
+        // CORS for EventSource (SSE)
+        hs << "Access-Control-Allow-Origin: *\r\n";
+        hs << "Access-Control-Allow-Methods: GET, OPTIONS\r\n";
+        hs << "Access-Control-Allow-Headers: Content-Type,Authorization,Last-Event-ID,Cache-Control,X-Requested-With\r\n";
         hs << "Cache-Control: no-cache\r\n";
         hs << "Connection: keep-alive\r\n\r\n";
         sseSendAll(fd, hs.str());
@@ -2724,7 +2849,7 @@ struct RestServer::Impl {
           }
       }
 
-      // --- Observability: logs ---
+      // --- Observability: logs (DB only; no fallback) ---
       HttpResponse handleLogsRecent(const HttpRequest& req) {
           auto q = parseQueryKV(req.query);
           std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
@@ -2734,40 +2859,28 @@ struct RestServer::Impl {
           auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
           const uint64_t from_ts = get_uint64("from_ts", 0);
           const uint64_t to_ts   = get_uint64("to_ts", 0);
-          int limit = 200; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
-          // Try DB first if available
-          if (logs_repo) {
-              std::vector<va::storage::LogRow> rows; std::string err;
-              if (logs_repo->listRecentFiltered(pipeline, level, stream_id, node, from_ts, to_ts, limit, &rows, &err)) {
-                  Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
-                  for (const auto& r : rows) {
-                      Json::Value row(Json::objectValue);
-                      row["ts"] = static_cast<Json::UInt64>(r.ts_ms);
-                      row["level"] = r.level; if(!r.pipeline.empty()) row["pipeline"] = r.pipeline; if(!r.node.empty()) row["node"] = r.node; if(!r.stream_id.empty()) row["stream_id"] = r.stream_id; row["msg"] = r.message;
-                      if(!r.extra_json.empty()) { Json::Value ej; try{ Json::CharReaderBuilder b; std::string errs; std::istringstream is(r.extra_json); Json::parseFromStream(b, is, &ej, &errs); }catch(...){ ej = Json::Value(Json::nullValue);} row["extra"] = ej; }
-                      arr.append(row);
-                  }
-                  data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
-              } else { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "rest", 5000) << "logs listRecentFiltered failed: " << err; }
+          int page = 1; if (auto it=q.find("page"); it!=q.end()) { try { page = std::stoi(it->second); } catch(...){} }
+          int page_size = 0; if (auto it=q.find("page_size"); it!=q.end()) { try { page_size = std::stoi(it->second); } catch(...){} }
+          if (page_size <= 0) {
+              int legacy_limit = 0; if (auto it=q.find("limit"); it!=q.end()) { try { legacy_limit = std::stoi(it->second); } catch(...){} }
+              page_size = (legacy_limit > 0 ? legacy_limit : 200);
           }
-          // Fallback: synthesize lightweight rows from running pipelines
-          Json::Value payload = successPayload();
-          Json::Value arr(Json::arrayValue);
-          int emitted = 0;
-          auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
-          for (const auto& info : app.pipelines()) {
-              if (!info.running) continue;
-              if (!pipeline.empty() && info.profile_id != pipeline) continue;
+          if (!logs_repo) {
+              return errorResponse("database disabled", 503);
+          }
+          std::vector<va::storage::LogRow> rows; std::string err; std::int64_t total = 0;
+          if (!logs_repo->listRecentFilteredPaged(pipeline, level, stream_id, node, from_ts, to_ts, page, page_size, &rows, &total, &err)) {
+              return errorResponse(err.empty()? std::string("db query failed") : err, 503);
+          }
+          Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
+          for (const auto& r : rows) {
               Json::Value row(Json::objectValue);
-              row["ts"] = now_ms;
-              std::string lvl = level.empty()? std::string("Info") : level; row["level"] = lvl;
-              row["pipeline"] = info.profile_id;
-              row["node"] = "pipeline";
-              row["msg"] = std::string("running fps=") + std::to_string(info.metrics.fps);
+              row["ts"] = static_cast<Json::UInt64>(r.ts_ms);
+              row["level"] = r.level; if(!r.pipeline.empty()) row["pipeline"] = r.pipeline; if(!r.node.empty()) row["node"] = r.node; if(!r.stream_id.empty()) row["stream_id"] = r.stream_id; row["msg"] = r.message;
+              if(!r.extra_json.empty()) { Json::Value ej; try{ Json::CharReaderBuilder b; std::string errs; std::istringstream is(r.extra_json); Json::parseFromStream(b, is, &ej, &errs); }catch(...){ ej = Json::Value(Json::nullValue);} row["extra"] = ej; }
               arr.append(row);
-              if (++emitted >= limit) break;
           }
-          Json::Value data(Json::objectValue); data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+          data["items"] = arr; data["total"] = static_cast<Json::UInt64>(total); data["page"] = page; data["page_size"] = page_size; payload["data"] = data; return jsonResponse(payload, 200);
       }
 
       HttpResponse handleLogsWatch(const HttpRequest& req) {
@@ -2803,7 +2916,7 @@ struct RestServer::Impl {
           }
       }
 
-      // --- Observability: events ---
+      // --- Observability: events (DB only; no fallback) ---
       HttpResponse handleEventsRecent(const HttpRequest& req) {
           auto q = parseQueryKV(req.query);
           std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
@@ -2813,31 +2926,27 @@ struct RestServer::Impl {
           auto get_uint64 = [&](const char* k, uint64_t def){ auto it=q.find(k); if(it==q.end()) return def; try { return static_cast<uint64_t>(std::stoull(it->second)); } catch(...) { return def; } };
           const uint64_t from_ts = get_uint64("from_ts", 0);
           const uint64_t to_ts   = get_uint64("to_ts", 0);
-          int limit = 50; if (auto it=q.find("limit"); it!=q.end()) { try { limit = std::stoi(it->second); } catch(...){} }
-          // Try DB first if available
-          if (events_repo) {
-              std::vector<va::storage::EventRow> rows; std::string err;
-              if (events_repo->listRecentFiltered(pipeline, level, stream_id, node, from_ts, to_ts, limit, &rows, &err)) {
-                  Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
-                  for (const auto& r : rows) {
-                      Json::Value e(Json::objectValue);
-                      e["ts"] = static_cast<Json::UInt64>(r.ts_ms);
-                      e["level"] = r.level; e["type"] = r.type; if(!r.pipeline.empty()) e["pipeline"] = r.pipeline; if(!r.node.empty()) e["node"] = r.node; if(!r.stream_id.empty()) e["stream_id"] = r.stream_id; e["msg"] = r.msg; if(!r.extra_json.empty()) { Json::Value ej; try{ Json::CharReaderBuilder b; std::string errs; std::istringstream is(r.extra_json); Json::parseFromStream(b, is, &ej, &errs); }catch(...){ ej = Json::Value(Json::nullValue);} e["extra"] = ej; }
-                      arr.append(e);
-                  }
-                  data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
-              } else { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "rest", 5000) << "events listRecentFiltered failed: " << err; }
+          int page = 1; if (auto it=q.find("page"); it!=q.end()) { try { page = std::stoi(it->second); } catch(...){} }
+          int page_size = 0; if (auto it=q.find("page_size"); it!=q.end()) { try { page_size = std::stoi(it->second); } catch(...){} }
+          if (page_size <= 0) {
+              int legacy_limit = 0; if (auto it=q.find("limit"); it!=q.end()) { try { legacy_limit = std::stoi(it->second); } catch(...){} }
+              page_size = (legacy_limit > 0 ? legacy_limit : 50);
           }
-          // Fallback synthesized
+          if (!events_repo) {
+              return errorResponse("database disabled", 503);
+          }
+          std::vector<va::storage::EventRow> rows; std::string err; std::int64_t total = 0;
+          if (!events_repo->listRecentFilteredPaged(pipeline, level, stream_id, node, from_ts, to_ts, page, page_size, &rows, &total, &err)) {
+              return errorResponse(err.empty()? std::string("db query failed") : err, 503);
+          }
           Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
-          int emitted = 0; auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
-          for (const auto& info : app.pipelines()) {
-              if (!info.running) continue; if (!pipeline.empty() && info.profile_id != pipeline) continue;
+          for (const auto& r : rows) {
               Json::Value e(Json::objectValue);
-              e["ts"] = now_ms; e["pipeline"] = info.profile_id; e["level"] = level.empty()? "info" : level; e["type"] = e["level"]; e["msg"] = std::string("pipeline running packets=") + std::to_string(info.transport_stats.packets);
-              arr.append(e); if (++emitted >= limit) break;
+              e["ts"] = static_cast<Json::UInt64>(r.ts_ms);
+              e["level"] = r.level; e["type"] = r.type; if(!r.pipeline.empty()) e["pipeline"] = r.pipeline; if(!r.node.empty()) e["node"] = r.node; if(!r.stream_id.empty()) e["stream_id"] = r.stream_id; e["msg"] = r.msg; if(!r.extra_json.empty()) { Json::Value ej; try{ Json::CharReaderBuilder b; std::string errs; std::istringstream is(r.extra_json); Json::parseFromStream(b, is, &ej, &errs); }catch(...){ ej = Json::Value(Json::nullValue);} e["extra"] = ej; }
+              arr.append(e);
           }
-          data["items"] = arr; payload["data"] = data; return jsonResponse(payload, 200);
+          data["items"] = arr; data["total"] = static_cast<Json::UInt64>(total); data["page"] = page; data["page_size"] = page_size; payload["data"] = data; return jsonResponse(payload, 200);
       }
       
       // --- Database: health check ---
@@ -2871,6 +2980,22 @@ struct RestServer::Impl {
           }
       }
 
+        HttpResponse handleDbRetentionStatus(const HttpRequest&) {
+            Json::Value payload = successPayload();
+            Json::Value data(Json::objectValue);
+            Json::Value cfg(Json::objectValue);
+            const auto& r = app.appConfig().database.retention;
+            cfg["enabled"] = r.enabled;
+            cfg["events_seconds"] = static_cast<Json::UInt64>(r.events_seconds);
+            cfg["logs_seconds"] = static_cast<Json::UInt64>(r.logs_seconds);
+            cfg["interval_seconds"] = static_cast<Json::UInt64>(r.interval_seconds);
+            cfg["jitter_percent"] = r.jitter_percent;
+            Json::Value m(Json::objectValue);
+            m["runs_total"] = static_cast<Json::UInt64>(retention_runs_total.load(std::memory_order_relaxed));
+            m["failures_total"] = static_cast<Json::UInt64>(retention_failures_total.load(std::memory_order_relaxed));
+            m["last_ms"] = static_cast<Json::UInt64>(retention_last_ms.load(std::memory_order_relaxed));
+            data["config"] = cfg; data["metrics"] = m; payload["data"] = data; return jsonResponse(payload, 200);
+        }
       // --- Sessions: list with pagination/time-window ---
       HttpResponse handleSessionsList(const HttpRequest& req) {
           auto q = parseQueryKV(req.query);
@@ -2884,24 +3009,23 @@ struct RestServer::Impl {
           int page_size = get_int("page_size", 0);
           int limit = get_int("limit", 50);
           if (page_size <= 0) page_size = limit > 0 ? limit : 50;
-
-          if (sessions_repo) {
-              std::vector<va::storage::SessionRow> rows; std::uint64_t total = 0; std::string err;
-              if (sessions_repo->listRangePaginated(stream, pipeline, from_ts, to_ts, page, page_size, &rows, &total, &err)) {
-                  Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
-                  for (const auto& r : rows) {
-                      Json::Value s(Json::objectValue);
-                      s["id"] = static_cast<Json::UInt64>(r.id);
-                      s["stream_id"] = r.stream_id; s["pipeline"] = r.pipeline; if(!r.model_id.empty()) s["model_id"] = r.model_id; s["status"] = r.status; if(!r.error_msg.empty()) s["error_msg"] = r.error_msg;
-                      if (r.started_ms>0) s["started_at"] = static_cast<Json::UInt64>(r.started_ms);
-                      if (r.stopped_ms>0) s["stopped_at"] = static_cast<Json::UInt64>(r.stopped_ms);
-                      arr.append(s);
-                  }
-                  data["items"] = arr; data["total"] = static_cast<Json::UInt64>(total); payload["data"] = data; return jsonResponse(payload, 200);
-              }
+          if (!sessions_repo) {
+              return errorResponse("database disabled", 503);
           }
-          // Fallback: empty
-          Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["items"] = Json::arrayValue; data["total"] = static_cast<Json::UInt64>(0); payload["data"] = data; return jsonResponse(payload, 200);
+          std::vector<va::storage::SessionRow> rows; std::uint64_t total = 0; std::string err;
+          if (!sessions_repo->listRangePaginated(stream, pipeline, from_ts, to_ts, page, page_size, &rows, &total, &err)) {
+              return errorResponse(err.empty()? std::string("db query failed") : err, 503);
+          }
+          Json::Value payload = successPayload(); Json::Value data(Json::objectValue); Json::Value arr(Json::arrayValue);
+          for (const auto& r : rows) {
+              Json::Value s(Json::objectValue);
+              s["id"] = static_cast<Json::UInt64>(r.id);
+              s["stream_id"] = r.stream_id; s["pipeline"] = r.pipeline; if(!r.model_id.empty()) s["model_id"] = r.model_id; s["status"] = r.status; if(!r.error_msg.empty()) s["error_msg"] = r.error_msg;
+              if (r.started_ms>0) s["started_at"] = static_cast<Json::UInt64>(r.started_ms);
+              if (r.stopped_ms>0) s["stopped_at"] = static_cast<Json::UInt64>(r.stopped_ms);
+              arr.append(s);
+          }
+          data["items"] = arr; data["total"] = static_cast<Json::UInt64>(total); payload["data"] = data; return jsonResponse(payload, 200);
       }
       HttpResponse handleSessionsWatch(const HttpRequest& req) {
           auto q = parseQueryKV(req.query);

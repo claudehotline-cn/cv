@@ -1,0 +1,138 @@
+{
+  "results": [
+    {
+      "ms": 61,
+      "url": "http://127.0.0.1:8082/api/system/info",
+      "status": 200,
+      "sample": {
+        "code": "OK",
+        "data": {
+          "database": {
+            "db": "cv_cp",
+            "driver": "mysql",
+            "host": "127.0.0.1",
+            "port": 13306,
+            "user": "***"
+          },
+          "engine": {
+            "device": 0,
+            "options": "@{allow_cpu_fallback=True; device_output_views=True; enable_profiling=False; graph_id=analyzer_multistage_example; io_binding_input_bytes=0; io_binding_output_bytes=0; overlay_alpha=0.25; overlay_draw_labels=True; overlay_thickness=3; prefer_pinned_memory=True; render_cuda=True; render_passthrough=False; stage_device_outputs=False; tensorrt_fp16=True; tensorrt_int8=False; tensorrt_workspace_mb=2048; use_cuda_nms=True; use_cuda_preproc=True; use_ffmpeg_source=False; use_io_binding=True; use_multistage=True; use_nvdec=True; use_nvenc=True; warmup_runs=auto}",
+            "type": "ort-cuda"
+          },
+          "engine_config": {
+            "device": 0,
+            "options": "@{allow_cpu_fallback=True; enable_profiling=False; io_binding_input_bytes=0; io_binding_output_bytes=0; prefer_pinned_memory=True; tensorrt_fp16=True; tensorrt_int8=False; tensorrt_workspace_mb=2048; use_io_binding=True}",
+            "type": "ort-cuda"
+          },
+          "engine_runtime": {
+            "cpu_fallback": false,
+            "device_binding": false,
+            "gpu_active": false,
+            "io_binding": false,
+            "provider": "cuda"
+          },
+          "ffmpeg_enabled": true,
+          "model_count": 5,
+          "observability": {
+            "console": true,
+            "file_max_files": 5,
+            "file_max_size_kb": 10240,
+            "file_path": "D:\\Projects\\ai\\cv\\logs\\video-analyzer-release.log",
+            "log_level": "debug",
+            "metrics": "@{extended_labels=True; registry_enabled=True}",
+            "pipeline_metrics_enabled": true,
+            "pipeline_metrics_interval_ms": 5000
+          },
+          "profile_count": 2,
+          "sfu": {
+            "whep_base": "",
+            "whip_base": ""
+          }
+        },
+        "success": true
+      },
+      "ok": true
+    },
+    {
+      "ms": 18,
+      "url": "http://127.0.0.1:8082/api/logs?page=1&page_size=5",
+      "status": 200,
+      "sample": {
+        "code": "OK",
+        "data": {
+          "items": [
+            "@{level=info; msg=unsubscribe accepted; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622070000}",
+            "@{level=info; msg=subscribe accepted: sessions_1760622065:det_720p; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622068000}"
+          ],
+          "page": 1,
+          "page_size": 5,
+          "total": 2
+        },
+        "success": true
+      },
+      "ok": true
+    },
+    {
+      "ms": 2,
+      "url": "http://127.0.0.1:8082/api/events/recent?page=1&page_size=5",
+      "status": 200,
+      "sample": {
+        "code": "OK",
+        "data": {
+          "items": [
+            "@{level=info; msg=ok; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622070000; type=unsubscribe}",
+            "@{level=info; msg=uri=rtsp://127.0.0.1:8554/camera_01; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622068000; type=subscribe}",
+            "@{level=info; msg=ok; node=rest; pipeline=det_720p; stream_id=evidence_1760621784; ts=1760621789000; type=unsubscribe}"
+          ],
+          "page": 1,
+          "page_size": 5,
+          "total": 3
+        },
+        "success": true
+      },
+      "ok": true
+    },
+    {
+      "ms": 0,
+      "url": "http://127.0.0.1:8082/api/db/ping",
+      "status": 200,
+      "sample": {
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "ms": 0,
+      "url": "http://127.0.0.1:8082/api/db/retention/status",
+      "status": 200,
+      "sample": {
+        "code": "OK",
+        "data": {
+          "config": {
+            "enabled": false,
+            "events_seconds": 86400,
+            "interval_seconds": 600,
+            "jitter_percent": 10,
+            "logs_seconds": 86400
+          },
+          "metrics": {
+            "failures_total": 0,
+            "last_ms": 0,
+            "runs_total": 0
+          }
+        },
+        "success": true
+      },
+      "ok": true
+    },
+    {
+      "ms": 1,
+      "url": "http://127.0.0.1:8082/metrics",
+      "status": 200,
+      "sample": null,
+      "ok": true
+    }
+  ],
+  "ts": "2025-10-17T20:24:36",
+  "base": "http://127.0.0.1:8082"
+}

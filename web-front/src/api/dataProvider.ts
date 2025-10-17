@@ -29,16 +29,23 @@ export const dataProvider = {
     throw new Error('No backend configured')
   },
 
-  // Logs
-  async logsRecent(params?: { pipeline?: string; level?: string; since?: number; limit?: number }) {
+  // Logs (DB list)
+  async logsRecent(params?: { pipeline?: string; level?: string; from_ts?: number; to_ts?: number; limit?: number; page?: number; page_size?: number }) {
     if (isMock) return delay(logsRecent as any)
     const q = new URLSearchParams()
     if (params?.pipeline) q.set('pipeline', params.pipeline)
     if (params?.level)    q.set('level', params.level)
-    if (params?.since)    q.set('since', String(params.since))
+    if (params?.from_ts)  q.set('from_ts', String(params.from_ts))
+    if (params?.to_ts)    q.set('to_ts', String(params.to_ts))
     if (params?.limit)    q.set('limit', String(params.limit))
+    if (params?.page)     q.set('page', String(params.page))
+    if (params?.page_size) q.set('page_size', String(params.page_size))
     const r = await fetch(apiBase() + '/api/logs' + (q.toString()?('?'+q.toString()):''))
-    if (!r.ok) throw new Error('logsRecent failed')
+    if (!r.ok) {
+      let msg = 'logsRecent failed'
+      try { msg = await r.text() } catch {}
+      throw new Error(msg)
+    }
     return r.json()
   },
   logsSubscribe(cb: (ev: any) => void, opts?: { pipeline?: string; level?: string }) {
@@ -74,13 +81,23 @@ export const dataProvider = {
     loop(); return () => { stopped = true }
   },
 
-  // Events
-  async eventsRecent(params?: { limit?: number }) {
+  // Events (DB list)
+  async eventsRecent(params?: { pipeline?: string; level?: string; from_ts?: number; to_ts?: number; limit?: number; page?: number; page_size?: number }) {
     if (isMock) return delay(eventsRecent as any)
     const q = new URLSearchParams()
+    if (params?.pipeline) q.set('pipeline', params.pipeline)
+    if (params?.level)    q.set('level', params.level)
+    if (params?.from_ts)  q.set('from_ts', String(params.from_ts))
+    if (params?.to_ts)    q.set('to_ts', String(params.to_ts))
     if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.page)  q.set('page', String(params.page))
+    if (params?.page_size) q.set('page_size', String(params.page_size))
     const r = await fetch(apiBase() + '/api/events/recent' + (q.toString()?('?'+q.toString()):''))
-    if (!r.ok) throw new Error('eventsRecent failed')
+    if (!r.ok) {
+      let msg = 'eventsRecent failed'
+      try { msg = await r.text() } catch {}
+      throw new Error(msg)
+    }
     return r.json()
   },
   eventsSubscribe(cb: (ev: any) => void, opts?: { pipeline?: string; level?: string }) {
@@ -187,7 +204,12 @@ export const dataProvider = {
     if (params?.page)      q.set('page', String(params.page))
     if (params?.page_size) q.set('page_size', String(params.page_size))
     const r = await fetch(apiBase() + '/api/sessions' + (q.toString()?('?'+q.toString()):''))
-    if (!r.ok) throw new Error('listSessions failed')
+    if (!r.ok) {
+      let msg = 'listSessions failed'
+      try { msg = await r.text() } catch {}
+      try { window.dispatchEvent(new CustomEvent('sessions-error', { detail: msg })) } catch {}
+      throw new Error(msg)
+    }
     return r.json()
   },
   watchSessions(cb: (payload: { rev: number, items: any[] }) => void, opts?: { stream_id?: string; pipeline?: string; intervalMs?: number; timeoutMs?: number; from_ts?: number; to_ts?: number }) {

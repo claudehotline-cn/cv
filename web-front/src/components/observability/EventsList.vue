@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { dataProvider } from '@/api/dataProvider'
-import { ElButton, ElSelect, ElOption } from 'element-plus'
+import { ElButton, ElSelect, ElOption, ElPagination } from 'element-plus'
 import { InfoFilled, WarningFilled, CloseBold, CircleCheckFilled } from '@element-plus/icons-vue'
 
 const props = withDefaults(defineProps<{ limit?: number; compact?: boolean; useSSE?: boolean; autoRefreshMs?: number; pipeline?: string }>(), { limit: 30, compact: false, useSSE: false, autoRefreshMs: 10000 })
 
 const loading = ref(false)
+const errorMsg = ref('')
+const dateRange = ref<any[]>([])
 const events = ref<any[]>([])
 const level = ref('')
 const detailVisible = ref(false)
 const detail = ref<any>(null)
+// DB 分页
+const page = ref(1)
+const pageSize = ref(100)
+const total = ref(0)
+
 let timer: any = null
 let es: EventSource | null = null
 
@@ -41,9 +48,24 @@ function typeIconComp(e:any) {
 async function refresh() {
   loading.value = true
   try {
-    const data = await dataProvider.eventsRecent({ limit: props.limit, ...(props.pipeline? { pipeline: props.pipeline } : {}), ...(level.value ? { level: level.value } : {}) })
-    events.value = (data as any).items ?? []
-  } finally { loading.value = false }
+    const [from_ts, to_ts] = (Array.isArray(dateRange.value) && dateRange.value.length===2) ? [Number(dateRange.value[0]), Number(dateRange.value[1])] : [undefined, undefined] as any
+    // DB 列表模式：带分页参数
+    if (!props.useSSE) {
+      const data = await dataProvider.eventsRecent({ ...(props.pipeline? { pipeline: props.pipeline } : {}), ...(level.value ? { level: level.value } : {}), from_ts, to_ts, page: page.value, page_size: pageSize.value })
+      const d = (data as any)?.data ?? (data as any)
+      const arr = Array.isArray(d?.items) ? d.items : []
+      events.value = arr
+      total.value = Number(d?.total ?? arr.length)
+      errorMsg.value = ''
+    } else {
+      // LIVE 初始加载：给出一页数据，随后以 SSE 持续追加
+      const data = await dataProvider.eventsRecent({ limit: props.limit, ...(props.pipeline? { pipeline: props.pipeline } : {}), ...(level.value ? { level: level.value } : {}), from_ts, to_ts })
+      const d = (data as any)?.data ?? (data as any)
+      events.value = Array.isArray(d?.items) ? d.items : []
+      errorMsg.value = ''
+    }
+  } catch (e:any) { events.value = []; total.value = 0; errorMsg.value = e?.message || '加载事件失败' }
+  finally { loading.value = false }
 }
 
 function startPolling() { stopPolling(); timer = setInterval(refresh, props.autoRefreshMs) }
@@ -66,16 +88,37 @@ const filtered = computed(() => {
   return list.filter(e => (e.level || e.type || '').toLowerCase().includes(level.value.toLowerCase()))
 })
 
-watch(() => props.useSSE, (v) => { if (v) { stopPolling(); startSSE() } else { stopSSE(); startPolling() } })
-watch(() => props.pipeline, () => { if (props.useSSE) startSSE(); else refresh() })
-watch(level, () => { if (props.useSSE) startSSE(); else refresh() })
+watch(() => props.useSSE, async (v) => {
+  if (v) {
+    // 切回 LIVE：重置页码，开启 SSE（不做 DB 刷新）
+    stopPolling(); page.value = 1; startSSE();
+  } else {
+    // 切到 DB：重置页码、初始化默认 30 天窗口（若为空），并立即触发一次刷新
+    stopSSE(); page.value = 1;
+    if (!Array.isArray(dateRange.value) || dateRange.value.length !== 2) {
+      const now = Date.now(); dateRange.value = [now - 30*24*3600*1000, now]
+    }
+    await refresh();
+  }
+})
+watch(() => props.pipeline, () => { page.value=1; if (props.useSSE) startSSE(); else refresh() })
+watch(level, () => { page.value=1; if (props.useSSE) startSSE(); else refresh() })
+watch(dateRange, () => { page.value = 1; if (!props.useSSE) refresh() })
 
-onMounted(async () => { await refresh(); props.useSSE ? startSSE() : startPolling() })
+onMounted(async () => {
+  // 默认 30 天时间窗（DB 模式）
+  if (!props.useSSE && (!Array.isArray(dateRange.value) || dateRange.value.length!==2)) {
+    const now = Date.now(); dateRange.value = [now - 30*24*3600*1000, now]
+  }
+  await refresh(); props.useSSE ? startSSE() : startPolling()
+})
 onBeforeUnmount(() => { stopPolling(); stopSSE() })
 
 function openDetail(e:any){ detail.value = e; detailVisible.value = true }
 function pretty(obj:any){ try{ return JSON.stringify(obj, null, 2) } catch { return String(obj) } }
 async function copyJson(){ try{ await navigator.clipboard.writeText(pretty(detail.value)); } catch{} }
+function onPageChange(p:number){ page.value = p; if (!props.useSSE) refresh() }
+function onSizeChange(ps:number){ pageSize.value = ps; page.value = 1; if (!props.useSSE) refresh() }
 </script>
 
 <template>
@@ -83,6 +126,7 @@ async function copyJson(){ try{ await navigator.clipboard.writeText(pretty(detai
     <div class="toolbar">
       <div class="left"></div>
       <div class="right">
+        <el-date-picker v-model="dateRange" type="datetimerange" value-format="x" size="small" />
         <el-select v-model="level" placeholder="等级" size="small" style="width:120px">
           <el-option label="All" value=""/>
           <el-option label="Info" value="info"/>
@@ -93,6 +137,7 @@ async function copyJson(){ try{ await navigator.clipboard.writeText(pretty(detai
         <el-button size="small" text @click="refresh">刷新</el-button>
       </div>
     </div>
+    <el-alert v-if="errorMsg" :title="errorMsg" type="error" show-icon style="margin:8px 0" />
 
     <div v-for="e in filtered" :key="e.id || e.ts" class="row" @click="openDetail(e)">
       <component :is="typeIconComp(e)" :class="['icon', typeColor(e)]"/>
@@ -105,6 +150,10 @@ async function copyJson(){ try{ await navigator.clipboard.writeText(pretty(detai
           <span>{{ timeAgo(e.ts || e.time || Date.now()) }}</span>
         </div>
       </div>
+    </div>
+
+    <div v-if="!useSSE" class="pager">
+      <el-pagination background layout="prev, pager, next, sizes, total" :total="total" :page-size="pageSize" :current-page="page" @current-change="onPageChange" @size-change="onSizeChange" :page-sizes="[50,100,200,500]" />
     </div>
 
     <el-dialog v-model="detailVisible" title="Event Detail" width="560px">
@@ -137,4 +186,5 @@ async function copyJson(){ try{ await navigator.clipboard.writeText(pretty(detai
 .compact .row{ padding:6px 0 }
 .json{ background:#0b0e14; color:#e5edf6; padding:8px; border-radius:6px; max-height:300px; overflow:auto }
 .kv{ font-size:12px; color:var(--va-text-2); display:flex; gap:14px; flex-wrap:wrap }
+.pager{ display:flex; justify-content:flex-end; margin-top:8px }
 </style>
