@@ -53,6 +53,7 @@
               <el-button text size="small" @click="loadExample">示例</el-button>
               <el-button type="primary" size="small" @click="applyPipeline" :loading="loading">单个 Apply</el-button>
               <el-button size="small" @click="applyPipelines" :loading="loading">批量 Apply</el-button>
+              <el-button text size="small" :disabled="!lastPipelineName" @click="onViewStatus">查看状态</el-button>
             </el-space>
           </div>
         </template>
@@ -72,6 +73,10 @@
           title="后端返回的未识别 overrides 键"
           :description="warnings.join(', ')"
           style="margin-top:8px"/>
+        <div v-if="statusData" class="status-panel">
+          <div class="status-title">状态摘要（{{ lastPipelineName }}）</div>
+          <pre class="status-json">{{ JSON.stringify(statusData, null, 2) }}</pre>
+        </div>
       </el-card>
     </el-col>
   </el-row>
@@ -81,6 +86,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { setEngine, applyPipeline as cpApply, applyPipelines as cpApplyBatch } from '@/api/cp'
+import { http } from '@/api/http'
 
 const loading = ref(false)
 const engine = ref({
@@ -109,6 +115,9 @@ const applyJson = ref('')
 const exampleKey = ref('')
 const warnings = ref<string[]>([])
 let examples: Record<string, any> | null = null
+const statusData = ref<any | null>(null)
+const lastPipelineName = ref<string>('')
+const statusLoading = ref(false)
 
 async function loadExamples(){
   try {
@@ -128,9 +137,13 @@ async function applyPipeline(){
   loading.value = true
   try {
     warnings.value = []
-    const resp: any = await cpApply(JSON.parse(applyJson.value))
+    const spec = JSON.parse(applyJson.value)
+    const resp: any = await cpApply(spec)
     const ws = resp?.warnings || resp?.data?.warnings || []
     if (Array.isArray(ws) && ws.length) warnings.value = ws
+    // 记录 pipeline_name 并拉取状态
+    const name = getPipelineName(spec)
+    if (name) { lastPipelineName.value = name; await fetchStatus(name) }
     ElMessage.success('已提交单个 Pipeline Apply')
   } catch (e:any) {
     ElMessage.error(e?.message || 'Apply 失败')
@@ -147,6 +160,11 @@ async function applyPipelines(){
     const items = obj.items ? obj.items : [obj.single_apply || obj]
     const resp: any = await cpApplyBatch(items)
     ElMessage.success(`已提交 ${items.length} 个 Pipeline Apply`)
+    // 若只有一个条目，尝试获取名称并查询状态
+    if (items.length === 1) {
+      const name = getPipelineName(items[0])
+      if (name) { lastPipelineName.value = name; await fetchStatus(name) }
+    }
   } catch (e:any) {
     ElMessage.error(e?.message || '批量 Apply 失败')
   } finally {
@@ -169,6 +187,29 @@ function loadExample(){
 }
 
 onMounted(() => { loadExamples() })
+
+function getPipelineName(spec: any): string {
+  if (!spec) return ''
+  if (typeof spec.pipeline_name === 'string' && spec.pipeline_name) return spec.pipeline_name
+  if (typeof spec.name === 'string' && spec.name) return spec.name
+  return ''
+}
+
+async function fetchStatus(name: string){
+  try {
+    statusLoading.value = true
+    const r: any = await http.get(`/api/control/status?name=${encodeURIComponent(name)}`)
+    statusData.value = r?.data || r
+  } catch (e:any) {
+    ElMessage.error(e?.message || '获取状态失败')
+  } finally {
+    statusLoading.value = false
+  }
+}
+
+async function onViewStatus(){
+  if (lastPipelineName.value) await fetchStatus(lastPipelineName.value)
+}
 </script>
 
 <style scoped>
@@ -177,5 +218,7 @@ onMounted(() => { loadExamples() })
 .title{ font-weight:600; color: var(--va-text-1); }
 .subtitle{ font-size:12px; color: var(--va-text-2); opacity:.75; }
 .helper{ margin-top:8px; display:flex; justify-content:flex-end; }
+.status-panel{ margin-top:8px; background: rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); border-radius:6px; padding:8px; }
+.status-title{ font-size:12px; color: var(--va-text-2); margin-bottom:4px; }
+.status-json{ font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-all; }
 </style>
-
