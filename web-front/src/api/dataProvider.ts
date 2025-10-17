@@ -18,15 +18,50 @@ export const dataProvider = {
   // Metrics
   async metricsQuery(params: { metric: string; from: number; to: number; stepSec: number; pipeline?: string }) {
     if (isMock) return delay(metricsQuery as any)
-    throw new Error('No backend configured')
+    const r = await fetch(apiBase() + '/metrics', { cache:'no-cache' })
+    if (!r.ok) throw new Error('metricsQuery failed')
+    const txt = await r.text()
+    const map: Record<string, number> = {}
+    for (const line of txt.split(/\r?\n/)){
+      const s = line.trim(); if (!s || s.startsWith('#')) continue
+      const m = s.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)\s+([0-9eE+\-.]+)/)
+      if (m){ map[m[1]] = Number(m[2]) }
+    }
+    const key = Object.keys(map).find(k => k === params.metric || k.includes(params.metric))
+    const v = key ? map[key] : 0
+    return { series: [{ metric: params.metric, points: [{ t: params.to, v }] }] }
   },
   async metricsTop(params: { metric: string; limit: number }) {
     if (isMock) return delay(metricsTop as any)
-    throw new Error('No backend configured')
+    const r = await fetch(apiBase() + '/metrics', { cache:'no-cache' })
+    if (!r.ok) throw new Error('metricsTop failed')
+    const txt = await r.text()
+    const out: Array<{ label: string, value: number }> = []
+    for (const line of txt.split(/\r?\n/)){
+      const s = line.trim(); if (!s || s.startsWith('#')) continue
+      const m = s.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)\s+([0-9eE+\-.]+)/)
+      if (m && (m[1] === params.metric || m[1].includes(params.metric))) out.push({ label: m[1], value: Number(m[2]) })
+    }
+    out.sort((a,b)=>b.value-a.value)
+    return { items: out.slice(0, Math.max(1, params.limit||5)) }
   },
   async metricsMultiQuery(params: { metrics: string[]; from: number; to: number; stepSec: number; pipeline?: string }) {
     if (isMock) return delay(metricsMulti as any)
-    throw new Error('No backend configured')
+    const r = await fetch(apiBase() + '/metrics', { cache:'no-cache' })
+    if (!r.ok) throw new Error('metricsMultiQuery failed')
+    const txt = await r.text()
+    const map: Record<string, number> = {}
+    for (const line of txt.split(/\r?\n/)){
+      const s = line.trim(); if (!s || s.startsWith('#')) continue
+      const m = s.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)\s+([0-9eE+\-.]+)/)
+      if (m){ map[m[1]] = Number(m[2]) }
+    }
+    const series = (params.metrics || []).map(name => {
+      const key = Object.keys(map).find(k => k === name || k.includes(name))
+      const v = key ? map[key] : 0
+      return { metric: name, points: [{ t: params.to, v }] }
+    })
+    return { series }
   },
 
   // Logs (DB list)

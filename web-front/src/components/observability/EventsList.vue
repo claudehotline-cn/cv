@@ -17,6 +17,12 @@ const detail = ref<any>(null)
 const page = ref(1)
 const pageSize = ref(100)
 const total = ref(0)
+const pagerSummary = computed(()=>{
+  if (!total.value) return '0/共0'
+  const start = (page.value - 1) * pageSize.value + 1
+  const end = Math.min(page.value * pageSize.value, total.value)
+  return `${start}-${end}/共${total.value}`
+})
 
 let timer: any = null
 let es: EventSource | null = null
@@ -119,6 +125,24 @@ function pretty(obj:any){ try{ return JSON.stringify(obj, null, 2) } catch { ret
 async function copyJson(){ try{ await navigator.clipboard.writeText(pretty(detail.value)); } catch{} }
 function onPageChange(p:number){ page.value = p; if (!props.useSSE) refresh() }
 function onSizeChange(ps:number){ pageSize.value = ps; page.value = 1; if (!props.useSSE) refresh() }
+function exportCsv(){
+  const rows = events.value || []
+  const header = ['ts','level','type','pipeline','node','stream_id','msg']
+  const lines = [header.join(',')]
+  for (const e of rows){
+    const ts = e.ts || e.time || ''
+    const lvl = e.level || ''
+    const ty = e.type || ''
+    const p = e.pipeline || ''
+    const n = e.node || ''
+    const sid = e.stream_id || ''
+    const msg = String(e.msg||e.message||'').replace(/\n/g,' ')
+    lines.push([ts,lvl,ty,p,n,sid,msg].join(','))
+  }
+  const blob = new Blob(["\ufeff" + lines.join('\n')], { type:'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href=url; a.download=`events_page_${page.value}.csv`; a.click(); setTimeout(()=>URL.revokeObjectURL(url), 300)
+}
 </script>
 
 <template>
@@ -154,6 +178,8 @@ function onSizeChange(ps:number){ pageSize.value = ps; page.value = 1; if (!prop
 
     <div v-if="!useSSE" class="pager">
       <el-pagination background layout="prev, pager, next, sizes, total" :total="total" :page-size="pageSize" :current-page="page" @current-change="onPageChange" @size-change="onSizeChange" :page-sizes="[50,100,200,500]" />
+      <div class="summary">{{ pagerSummary }}</div>
+      <div class="actions"><el-button size="small" @click="exportCsv">导出 CSV</el-button></div>
     </div>
 
     <el-dialog v-model="detailVisible" title="Event Detail" width="560px">
@@ -186,5 +212,7 @@ function onSizeChange(ps:number){ pageSize.value = ps; page.value = 1; if (!prop
 .compact .row{ padding:6px 0 }
 .json{ background:#0b0e14; color:#e5edf6; padding:8px; border-radius:6px; max-height:300px; overflow:auto }
 .kv{ font-size:12px; color:var(--va-text-2); display:flex; gap:14px; flex-wrap:wrap }
-.pager{ display:flex; justify-content:flex-end; margin-top:8px }
+.pager{ display:flex; justify-content:space-between; align-items:center; margin-top:8px }
+.summary{ color: var(--va-text-2); font-size:12px }
+.actions{ display:flex; gap:8px }
 </style>
