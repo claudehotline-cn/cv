@@ -1,0 +1,11 @@
+Usage:
+  va_vsm_cli up   --va=host:50051 --vsm=host:7070 stream=camera_01 profile=det_720p uri=rtsp://... pipeline=p1 graph=analyzer_multistage_example
+  va_vsm_cli down --va=... --vsm=... stream=camera_01 profile=det_720p attach_id=camera_01
+  va_vsm_cli list --va=...
+  va_vsm_cli runtime --va=...
+  va_vsm_cli attach --vsm=... attach_id=<id> uri=<rtsp> [pipeline_id=<id>]
+  va_vsm_cli detach --vsm=... attach_id=<id>
+  va_vsm_cli update --vsm=... attach_id=<id> [profile=<va_profile>] [model=<model_id>]
+  va_vsm_cli apply --va=... pipeline=<id> [graph=<graph_id>|yaml=<path>] [rev=<rev>]
+  va_vsm_cli subscribe --va=... stream=<id> profile=<p> uri=<rtsp> [model=<id>]
+  va_vsm_cli unsubscribe --va=... stream=<id> profile=<p>

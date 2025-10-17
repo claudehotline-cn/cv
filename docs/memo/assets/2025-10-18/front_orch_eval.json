@@ -1,1 +1,7 @@
-{"port":4173,"orchRoute":"unavailable","health":{"vsm_total":0,"vsm_running":0,"va_code":"OK"}}
+{
+  "url": "http://127.0.0.1:4173/orchestration#/orchestration",
+  "hasForm": true,
+  "hasAttachApply": true,
+  "hasDetachRemove": true,
+  "healthSummary": true
+}

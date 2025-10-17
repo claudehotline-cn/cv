@@ -7,6 +7,7 @@
 #include <rtc/rtc.hpp>
 #include <rtc/h264rtppacketizer.hpp>
 #include <rtc/pacinghandler.hpp>
+#include "media/whep_session.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -1151,6 +1152,10 @@ struct WebRTCDataChannelTransport::Impl {
         if (pos != std::string::npos) key = key.substr(0, pos);
 
         std::vector<uint8_t> buffer(data, data + size);
+        // Feed WHEP sessions first (copy inside manager), then move buffer to DataChannel streamer
+        try {
+            va::media::WhepSessionManager::instance().feedFrame(key, buffer);
+        } catch (...) { /* best-effort */ }
         streamer_.PushEncodedFrame(key, std::move(buffer));
 
         std::scoped_lock lock(mutex_);
