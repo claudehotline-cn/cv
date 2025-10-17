@@ -100,7 +100,56 @@ OpaquePtr GraphAdapterYaml::BuildGraph(const PlainPipelineSpec& spec, std::strin
     auto g = std::make_unique<Graph>();
     std::string file = resolve_yaml(spec);
     if (file.empty()) { if (err) *err = "yaml not found by graph_id/yaml_path"; return {}; }
-    overrides_cache_ = spec.overrides; bool ok=false; const bool has_node_ov = std::any_of(overrides_cache_.begin(), overrides_cache_.end(), [](const auto& kv){ return kv.first.rfind("node.",0)==0 || kv.first.rfind("type:",0)==0; }); if (has_node_ov) ok = va::analyzer::multistage::build_graph_from_yaml_with_overrides(file, overrides_cache_, *g); else ok = va::analyzer::multistage::build_graph_from_yaml(file, *g); if (!ok) {
+    // Placeholder expansion: ${key} resolved from overrides.params.key / params.key / key
+    overrides_cache_ = spec.overrides;
+    std::string expanded_file = file;
+    try {
+        // Read YAML
+        std::ifstream ifs(file, std::ios::binary);
+        std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        if (ifs.good() || !content.empty()) {
+            // Find placeholders ${...}
+            std::string out; out.reserve(content.size());
+            for (size_t i = 0; i < content.size(); ) {
+                if (content[i] == '$' && i + 1 < content.size() && content[i+1] == '{') {
+                    size_t j = i + 2; // after ${
+                    while (j < content.size() && content[j] != '}') ++j;
+                    if (j < content.size() && content[j] == '}') {
+                        std::string key = content.substr(i+2, j - (i+2));
+                        auto lookup = [&](const std::string& k)->std::optional<std::string>{
+                            if (auto it = overrides_cache_.find(std::string("overrides.params.") + k); it != overrides_cache_.end()) return it->second;
+                            if (auto it = overrides_cache_.find(std::string("params.") + k); it != overrides_cache_.end()) return it->second;
+                            if (auto it = overrides_cache_.find(k); it != overrides_cache_.end()) return it->second;
+                            return std::nullopt;
+                        };
+                        auto val = lookup(key);
+                        if (val) {
+                            // Insert as-is to let YAML parse types (bool/int/float/string via quotes if user supplied)
+                            out.append(val->begin(), val->end());
+                            i = j + 1;
+                            continue;
+                        }
+                    }
+                }
+                out.push_back(content[i]);
+                ++i;
+            }
+            if (out != content) {
+                // Write to a temp file next to original
+                auto tmp = std::filesystem::path(file).filename().string();
+                std::string tmpname = (std::filesystem::temp_directory_path() / (tmp + ".expanded.yaml")).string();
+                std::ofstream ofs(tmpname, std::ios::binary);
+                ofs.write(out.data(), static_cast<std::streamsize>(out.size()));
+                ofs.close();
+                expanded_file = tmpname;
+                VA_LOG_C(::va::core::LogLevel::Info, "control") << "[GraphAdapterYaml] expanded placeholders into temp: " << expanded_file;
+            }
+        }
+    } catch (...) {
+        // best-effort: fall back to original file
+        expanded_file = file;
+    }
+    bool ok=false; const bool has_node_ov = std::any_of(overrides_cache_.begin(), overrides_cache_.end(), [](const auto& kv){ return kv.first.rfind("node.",0)==0 || kv.first.rfind("type:",0)==0; }); if (has_node_ov) ok = va::analyzer::multistage::build_graph_from_yaml_with_overrides(expanded_file, overrides_cache_, *g); else ok = va::analyzer::multistage::build_graph_from_yaml(expanded_file, *g); if (!ok) {
         if (err) *err = std::string("build_graph_from_yaml failed: ") + file; return {};
     }
     Graph* raw = g.release();
@@ -115,37 +164,28 @@ public:
         // 打开节点（无数据/单线程，此处仅为控制面占位）
         va::analyzer::multistage::NodeContext ctx{};
         ctx.engine_registry = reinterpret_cast<void*>(em_);
-        // Apply engine overrides if present (global)
-        if (em_ && true) {
-            bool touch=false; auto desc = em_->currentEngine();
+        // Apply engine overrides scoped to graph open (per-pipeline)
+        va::core::EngineDescriptor saved_desc; bool touched=false;
+        if (em_) {
+            saved_desc = em_->currentEngine();
+            auto desc = saved_desc;
             for (const auto& kv : overrides_) {
                 const auto& k = kv.first; const auto& v = kv.second;
-                if (k.rfind("engine.options.", 0) == 0) { auto sub = k.substr(std::string("engine.options.").size()); if (!sub.empty()) { desc.options[sub]=v; touch=true; } }
-                else if (k == "engine.provider") { desc.provider = v; touch=true; }
-                else if (k == "engine.name") { desc.name = v; touch=true; }
-                else if (k == "engine.device" || k == "engine.device_index") { try { desc.device_index = std::stoi(v); touch=true; } catch (...) {} }
+                if (k.rfind("engine.options.", 0) == 0) { auto sub = k.substr(std::string("engine.options.").size()); if (!sub.empty()) { desc.options[sub]=v; touched=true; } }
+                else if (k == "engine.provider") { desc.provider = v; touched=true; }
+                else if (k == "engine.name") { desc.name = v; touched=true; }
+                else if (k == "engine.device" || k == "engine.device_index") { try { desc.device_index = std::stoi(v); touched=true; } catch (...) {} }
             }
-            if (touch) em_->setEngine(std::move(desc));
+            if (touched) em_->setEngine(desc);
         }
         opened_ = g_->open_all(ctx);
+        if (em_ && touched) { try { em_->setEngine(saved_desc); } catch(...){} }
         return opened_;
     }
     void Stop() override {
         if (!g_) return;
         va::analyzer::multistage::NodeContext ctx{};
         ctx.engine_registry = reinterpret_cast<void*>(em_);
-        // Apply engine overrides if present (global)
-        if (em_ && true) {
-            bool touch=false; auto desc = em_->currentEngine();
-            for (const auto& kv : overrides_) {
-                const auto& k = kv.first; const auto& v = kv.second;
-                if (k.rfind("engine.options.", 0) == 0) { auto sub = k.substr(std::string("engine.options.").size()); if (!sub.empty()) { desc.options[sub]=v; touch=true; } }
-                else if (k == "engine.provider") { desc.provider = v; touch=true; }
-                else if (k == "engine.name") { desc.name = v; touch=true; }
-                else if (k == "engine.device" || k == "engine.device_index") { try { desc.device_index = std::stoi(v); touch=true; } catch (...) {} }
-            }
-            if (touch) em_->setEngine(std::move(desc));
-        }
         g_->close_all(ctx);
         opened_ = false;
     }
