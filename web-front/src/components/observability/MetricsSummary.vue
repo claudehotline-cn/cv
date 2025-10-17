@@ -19,6 +19,14 @@
         <div class="v">runs: {{ valLike('retention_runs_total') }} | failures: {{ valLike('retention_failures_total') }}</div>
         <div class="v">last_ms: {{ valLike('retention_last_ms') }}</div>
       </div>
+      <div class="item">
+        <div class="k">Writer Queue (logs)</div>
+        <div class="v" :class="levelClass(num('log_writer_queue'))">{{ safe(num('log_writer_queue')) }}</div>
+      </div>
+      <div class="item">
+        <div class="k">Writer Queue (events)</div>
+        <div class="v" :class="levelClass(num('event_writer_queue'))">{{ safe(num('event_writer_queue')) }}</div>
+      </div>
     </div>
     <div v-if="errorMsg" class="err">{{ errorMsg }}</div>
   </el-card>
@@ -30,6 +38,8 @@ import { ref, onMounted } from 'vue'
 function apiBase(){ const b = ((import.meta as any).env?.VITE_API_BASE) || '/'; return String(b).replace(/\/$/, '') }
 
 const metrics = ref<Record<string, number>>({})
+const warnThreshold = 100
+const dangerThreshold = 1000
 const errorMsg = ref('')
 
 function parseProm(text: string){
@@ -57,6 +67,9 @@ onMounted(load)
 
 function val(k: string){ const v = metrics.value[k]; return (typeof v==='number' && isFinite(v)) ? v : '-' }
 function valLike(part: string){ const ent = Object.entries(metrics.value).find(([k])=>k.includes(part)); return ent? ent[1] : '-' }
+function num(k: string){ const v = metrics.value[k]; return (typeof v==='number' && isFinite(v)) ? v : NaN }
+function safe(v: number){ return isFinite(v) ? v : '-' }
+function levelClass(v: number){ if (!isFinite(v)) return ''; if (v >= dangerThreshold) return 'danger'; if (v >= warnThreshold) return 'warn'; return '' }
 </script>
 
 <style scoped>
@@ -65,6 +78,7 @@ function valLike(part: string){ const ent = Object.entries(metrics.value).find((
 .item{ background: rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:8px; padding:10px }
 .k{ font-weight:600; margin-bottom:6px }
 .v{ color: var(--va-text-2); font-size:13px }
+.v.warn{ color:#ffb020 }
+.v.danger{ color:#ff5d6c; font-weight:600 }
 .err{ margin-top:8px; color:#ff5d6c; font-size:12px }
 </style>
-
