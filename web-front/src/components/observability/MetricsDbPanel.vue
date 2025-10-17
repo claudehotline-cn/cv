@@ -38,6 +38,14 @@
         <div class="k">Retention failures</div>
         <div class="v">{{ last('retention_failures_total') }}</div>
       </div>
+      <div class="card">
+        <div class="k">Writer Queue (logs)</div>
+        <div class="v">{{ last('log_writer_queue') }}</div>
+      </div>
+      <div class="card">
+        <div class="k">Writer Queue (events)</div>
+        <div class="v">{{ last('event_writer_queue') }}</div>
+      </div>
     </div>
     <div class="chart">
       <ChartBase :option="option" />
