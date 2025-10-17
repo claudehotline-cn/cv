@@ -116,10 +116,12 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     SOCKET s = ::socket(AF_INET, SOCK_STREAM, 0);
     if (s == INVALID_SOCKET) return false;
     int tv = timeout_ms; ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 #else
     int s = ::socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) return false;
     struct timeval tv; tv.tv_sec = timeout_ms/1000; tv.tv_usec = (timeout_ms%1000)*1000; ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 #endif
     sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_port = htons((uint16_t)port);
     addr.sin_addr.s_addr = inet_addr(host.c_str());
@@ -135,7 +137,7 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     std::ostringstream req;
     std::string h = host;
     req << method << " " << path << " HTTP/1.1\r\n";
-    req << "Host: " << h << "\r\n";
+    req << "Host: " << h << ":" << port << "\r\n";
     if (!body.empty()) req << "Content-Type: application/json; charset=utf-8\r\n";
     req << "Connection: close\r\n";
     if (!body.empty()) req << "Content-Length: " << body.size() << "\r\n";
@@ -168,7 +170,19 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     size_t psep = resp.find("\r\n\r\n"); std::string body_out; if (psep!=std::string::npos) body_out = resp.substr(psep+4);
     if (out_status) *out_status = st; if (out_body) *out_body = body_out; return st>0;
   };
-  auto handler = [this, http_call](const std::string& method, const std::string& path,
+  auto http_call_retry = [&](const std::string& host, int port, const std::string& method,
+                             const std::string& path, const std::string& body,
+                             int timeout_ms, int retries, int* out_status, std::string* out_body) -> bool {
+    int st=0; std::string rb; bool ok=false; int attempt=0;
+    while (attempt <= retries) {
+      ok = http_call(host, port, method, path, body, timeout_ms, &st, &rb);
+      if (ok && st>0) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+      attempt++;
+    }
+    if (out_status) *out_status = st; if (out_body) *out_body = rb; return ok;
+  };
+  auto handler = [this, http_call, http_call_retry](const std::string& method, const std::string& path,
                         const std::unordered_map<std::string,std::string>& query,
                         const std::unordered_map<std::string,std::string>& headers,
                         const std::string& body, int* status, std::string* ctype) -> std::string {
@@ -233,7 +247,7 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
       if (!gid.empty()) pay << ",\"graph_id\":\""<< vsm::rest::jsonEscape(gid) <<"\"";
       if (!tpl.empty()) pay << ",\"template_id\":\""<< vsm::rest::jsonEscape(tpl) <<"\"";
       pay << "}";
-      int st=0; std::string resp; bool okc = http_call(host, va_port, "POST", "/api/control/apply_pipeline", pay.str(), 5000, &st, &resp);
+      int st=0; std::string resp; bool okc = http_call_retry(host, va_port, "POST", "/api/control/apply_pipeline", pay.str(), 8000, 1, &st, &resp);
       if (!okc || st != 200) return err(vsm::errors::map_message("apply failed"), std::string("va apply failed status=")+std::to_string(st));
       return ok("{}");
     }
@@ -245,9 +259,22 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
       std::string host = (std::getenv("VA_REST_HOST")? std::getenv("VA_REST_HOST") : "127.0.0.1");
       int va_port = 8082; if (const char* p = std::getenv("VA_REST_PORT")) { try { int v=std::stoi(p); if (v>0&&v<65536) va_port=v; } catch(...){} }
       std::ostringstream pathq; pathq << "/api/control/pipeline?name=" << pipeline;
-      int st=0; std::string resp; bool okc = http_call(host, va_port, "DELETE", pathq.str(), std::string(), 5000, &st, &resp);
+      int st=0; std::string resp; bool okc = http_call_retry(host, va_port, "DELETE", pathq.str(), std::string(), 8000, 2, &st, &resp);
       if (!okc || st != 200) return err(vsm::errors::map_message("remove failed"), std::string("va remove failed status=")+std::to_string(st));
       return ok("{}");
+    }
+    // Orchestration: Health snapshot (VSM + VA)
+    if (method=="GET" && path=="/api/orch/health") {
+      // VSM snapshot
+      auto vec = controller_->Collect();
+      int total = static_cast<int>(vec.size()); int running=0; for (auto& s: vec) if (s.phase=="Ready") running++;
+      // VA system info
+      std::string host = (std::getenv("VA_REST_HOST")? std::getenv("VA_REST_HOST") : "127.0.0.1");
+      int va_port = 8082; if (const char* p = std::getenv("VA_REST_PORT")) { try { int v=std::stoi(p); if (v>0&&v<65536) va_port=v; } catch(...){} }
+      int st=0; std::string va_body; http_call_retry(host, va_port, "GET", "/api/system/info", std::string(), 4000, 1, &st, &va_body);
+      std::ostringstream o; o << "{\"vsm\":{\"total\":" << total << ",\"running\":" << running << "},\"va\":";
+      if (st==200 && !va_body.empty()) o << va_body; else o << "{\"ok\":false,\"status\":" << st << "}";
+      o << "}"; return ok(o.str());
     }
     if (method=="POST" && path=="/api/source/add") {
       auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };

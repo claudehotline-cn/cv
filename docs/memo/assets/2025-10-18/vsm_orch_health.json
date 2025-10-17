@@ -1,0 +1,95 @@
+{"success":true,"code":"OK","data":{"vsm":{"total":0,"running":0},"va":{
+	"code" : "OK",
+	"data" : 
+	{
+		"database" : 
+		{
+			"db" : "cv_cp",
+			"driver" : "mysql",
+			"host" : "127.0.0.1",
+			"port" : 13306,
+			"user" : "***"
+		},
+		"engine" : 
+		{
+			"device" : 0,
+			"options" : 
+			{
+				"allow_cpu_fallback" : true,
+				"device_output_views" : true,
+				"enable_profiling" : false,
+				"graph_id" : "analyzer_multistage_example",
+				"io_binding_input_bytes" : 0,
+				"io_binding_output_bytes" : 0,
+				"overlay_alpha" : 0.25,
+				"overlay_draw_labels" : true,
+				"overlay_thickness" : 3,
+				"prefer_pinned_memory" : true,
+				"render_cuda" : true,
+				"render_passthrough" : false,
+				"stage_device_outputs" : false,
+				"tensorrt_fp16" : true,
+				"tensorrt_int8" : false,
+				"tensorrt_workspace_mb" : 2048,
+				"use_cuda_nms" : true,
+				"use_cuda_preproc" : true,
+				"use_ffmpeg_source" : false,
+				"use_io_binding" : true,
+				"use_multistage" : true,
+				"use_nvdec" : true,
+				"use_nvenc" : true,
+				"warmup_runs" : "auto"
+			},
+			"type" : "ort-cuda"
+		},
+		"engine_config" : 
+		{
+			"device" : 0,
+			"options" : 
+			{
+				"allow_cpu_fallback" : true,
+				"enable_profiling" : false,
+				"io_binding_input_bytes" : 0,
+				"io_binding_output_bytes" : 0,
+				"prefer_pinned_memory" : true,
+				"tensorrt_fp16" : true,
+				"tensorrt_int8" : false,
+				"tensorrt_workspace_mb" : 2048,
+				"use_io_binding" : true
+			},
+			"type" : "ort-cuda"
+		},
+		"engine_runtime" : 
+		{
+			"cpu_fallback" : false,
+			"device_binding" : true,
+			"gpu_active" : true,
+			"io_binding" : true,
+			"provider" : "cuda"
+		},
+		"ffmpeg_enabled" : true,
+		"model_count" : 5,
+		"observability" : 
+		{
+			"console" : true,
+			"file_max_files" : 5,
+			"file_max_size_kb" : 10240,
+			"file_path" : "D:\\Projects\\ai\\cv\\logs\\video-analyzer-release.log",
+			"log_level" : "debug",
+			"metrics" : 
+			{
+				"extended_labels" : true,
+				"registry_enabled" : true
+			},
+			"pipeline_metrics_enabled" : true,
+			"pipeline_metrics_interval_ms" : 5000
+		},
+		"profile_count" : 2,
+		"sfu" : 
+		{
+			"whep_base" : "",
+			"whip_base" : ""
+		}
+	},
+	"success" : true
+}}}
