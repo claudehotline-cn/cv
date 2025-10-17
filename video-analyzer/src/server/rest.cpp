@@ -1224,11 +1224,24 @@ struct RestServer::Impl {
             if (spec.graph_id.empty() && spec.yaml_path.empty() && spec.template_id.empty()) {
                 return errorResponse("Missing graph_id/yaml_path/template_id", 400);
             }
+            // Build warnings for unknown override keys (best-effort static check)
+            std::vector<std::string> warn_keys;
+            for (const auto& kv : spec.overrides) {
+                const std::string& k = kv.first;
+                auto has_prefix = [&](const char* p){ return k.rfind(p, 0) == 0; };
+                if (has_prefix("engine.") || has_prefix("engine.options.") ||
+                    has_prefix("params.") || has_prefix("overrides.params.") ||
+                    has_prefix("node.") || k.rfind("type:", 0) == 0) {
+                    continue;
+                }
+                warn_keys.push_back(k);
+            }
             std::string err;
             bool ok = app.applyPipeline(spec, &err);
             if (!ok) return errorResponse(err.empty()? "apply failed" : err, 409);
             Json::Value payload = successPayload();
             payload["accepted"] = ok;
+            if (!warn_keys.empty()) { Json::Value ws(Json::arrayValue); for (const auto& w : warn_keys) ws.append(w); payload["warnings"] = ws; }
             // Record DB event/log (best-effort)
             emitEvent("info", "apply_pipeline", spec.name, "control", std::string(), std::string("apply ") + spec.name);
             emitLog("info", spec.name, "control", std::string(), "apply_pipeline accepted");

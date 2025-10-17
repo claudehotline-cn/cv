@@ -1,51 +1,22 @@
 {
   "single_apply": {
-    "pipeline_name": "p1",
-    "revision": "r001",
-    "graph_id": "analyzer_multistage_example",
-    "template_id": "", 
-    "yaml_path": "",
-    "project": "projA",
-    "tags": ["prod", "yolo"],
+    "pipeline_name": "demo_from_examples",
+    "yaml_path": "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/config/graphs/analyzer_multistage_example.yaml",
     "overrides": {
-      "node.nms.conf": "0.50",
-      "node.nms.iou": "0.50",
-      "type:overlay.cuda.thickness": "3",
-      "type:overlay.cuda.alpha": "0.30",
-      "engine.provider": "cuda",
-      "engine.device": "0",
-      "engine.options.use_cuda_nms": "true",
-      "engine.options.use_nvdec": "true",
-      "engine.options.use_nvenc": "true",
-      "engine.options.render_cuda": "true"
+      "params.w": "800",
+      "params.h": "480",
+      "params.uc": "1",
+      "engine.options.render_cuda": "false",
+      "engine.options.use_io_binding": "0",
+      "node.det.params.model_path": "D:/models/yolo.onnx",
+      "type:overlay.cuda.params.alpha": "0.2"
     }
   },
   "batch_apply": {
     "items": [
-      {
-        "pipeline_name": "p1",
-        "revision": "r001",
-        "graph_id": "analyzer_multistage_example",
-        "project": "projA",
-        "tags": ["prod"],
-        "overrides": {
-          "node.nms.conf": "0.55",
-          "engine.options.use_cuda_nms": "true"
-        }
-      },
-      {
-        "pipeline_name": "p2",
-        "revision": "r002",
-        "template_id": "analyzer_multistage_example",
-        "project": "projB",
-        "tags": ["staging"],
-        "overrides": {
-          "type:overlay.cuda.thickness": "4",
-          "engine.provider": "cuda",
-          "engine.device_index": "0",
-          "engine.options.render_cuda": "true"
-        }
-      }
+      { "pipeline_name": "det_720p", "graph_id": "analyzer_multistage_example" },
+      { "pipeline_name": "det_480p", "yaml_path": "D:/path/to/graph.yaml",
+        "overrides": { "params.w": "640", "params.h": "480" } }
     ]
   }
 }

@@ -1,93 +1,51 @@
-# REST 映射：ApplyPipeline / ApplyPipelines 示例
+# REST：Apply Pipeline 与 Overrides 示例
 
-服务启动：`VideoAnalyzer.exe .\config\`（需开启内嵌控制面 USE_GRPC=ON, VA_ENABLE_GRPC_SERVER=ON）。
+## 单个 Apply（带占位替换与引擎覆盖）
 
-路由
-- POST `/api/control/apply_pipeline`
-- POST `/api/control/apply_pipelines`
+- 目标：读取 YAML 并展开占位符 `${key}`。
+- 取值顺序：`overrides.params.key` → `params.key` → `key`
 
-公共字段说明
-- `pipeline_name`：必填
-- `graph_id | yaml_path | template_id`：三选一，至少提供一个
-- `overrides`：节点/类型/引擎覆写（见键名约定）
-- `project`/`tags[]`：可选元信息
+示例（Windows PowerShell）：
 
-键名约定
-- 节点参数覆写：`node.<节点名>.<参数>=值`
-- 类型批量覆写：`type:<节点类型>.<参数>=值`
-- 引擎覆写（全局）：
-  - `engine.provider` / `engine.name` / `engine.device|engine.device_index`
-  - `engine.options.<k>=<v>`（对应 `app.yaml/engine.options`）
-
-示例：单条下发
 ```
-POST http://127.0.0.1:8082/api/control/apply_pipeline
-Content-Type: application/json
-
-{
-  "pipeline_name": "p1",
-  "revision": "r001",
-  "graph_id": "analyzer_multistage_example",
-  "project": "projA",
-  "tags": ["prod", "yolo"],
-  "overrides": {
-    "node.nms.conf": "0.50",
-    "node.nms.iou": "0.50",
-    "type:overlay.cuda.thickness": "3",
-    "engine.provider": "cuda",
-    "engine.device": "0",
-    "engine.options.use_cuda_nms": "true",
-    "engine.options.use_nvdec": "true",
-    "engine.options.use_nvenc": "true"
+$base = 'http://127.0.0.1:8082'
+$yaml = 'D:/Projects/ai/cv/video-analyzer/build-ninja/bin/config/graphs/analyzer_multistage_example.yaml'
+$body = @{
+  pipeline_name = 'rest_demo_1'
+  yaml_path = $yaml
+  overrides = @{
+    'params.w' = '800'
+    'params.h' = '480'
+    'engine.options.render_cuda' = 'false'
+    'engine.options.use_io_binding' = '0'
   }
-}
+} | ConvertTo-Json -Depth 4
+
+Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -Body $body "$base/api/control/apply_pipeline"
 ```
 
-示例：批量下发
-```
-POST http://127.0.0.1:8082/api/control/apply_pipelines
-Content-Type: application/json
+返回：`{ code:"OK", success:true, accepted:true, warnings?:[] }`
 
-{
-  "items": [
-    {
-      "pipeline_name": "p1",
-      "revision": "r001",
-      "graph_id": "analyzer_multistage_example",
-      "project": "projA",
-      "tags": ["prod"],
-      "overrides": {
-        "node.nms.conf": "0.55",
-        "engine.options.use_cuda_nms": "true"
-      }
-    },
-    {
-      "pipeline_name": "p2",
-      "revision": "r002",
-      "template_id": "analyzer_multistage_example",
-      "project": "projB",
-      "tags": ["staging"],
-      "overrides": {
-        "type:overlay.cuda.thickness": "4",
-        "engine.provider": "cuda",
-        "engine.device_index": "0",
-        "engine.options.render_cuda": "true"
-      }
-    }
-  ]
-}
+## 批量 Apply
+
+```
+$base = 'http://127.0.0.1:8082'
+$items = @{
+  items = @(
+    @{ pipeline_name='p1'; graph_id='analyzer_multistage_example' },
+    @{ pipeline_name='p2'; yaml_path='D:/path/to/graph.yaml'; overrides=@{ 'params.w'='640'; 'params.h'='480' } }
+  )
+} | ConvertTo-Json -Depth 5
+Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -Body $items "$base/api/control/apply_pipelines"
 ```
 
-curl 示例
-```
-curl -sS -X POST http://127.0.0.1:8082/api/control/apply_pipeline \
-  -H "Content-Type: application/json" \
-  -d @docs/examples/overrides_examples.json \
-  | jq .
+## 未识别 overrides 提示
 
-curl -sS -X POST http://127.0.0.1:8082/api/control/apply_pipelines \
-  -H "Content-Type: application/json" \
-  -d @docs/examples/overrides_examples.json \
-  | jq .
-```
+- 规则（静态检查，尽力而为）：
+  - 已识别前缀：`engine.*`、`engine.options.*`、`params.*`、`overrides.params.*`、`node.*`、`type:*`
+  - 其他键将出现在 `warnings` 数组中（不阻断 Apply）。
+
+## 更多示例文件
+
+- `docs/examples/overrides_examples.json`
 
