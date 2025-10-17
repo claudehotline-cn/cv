@@ -219,6 +219,7 @@ deps_avcodec.txt
 tools/
 !video-analyzer/tools/
 !video-analyzer/tools/nvcc_wrap.py
+!tools/build_vsm.bat
 
 # Python / scripts
 __pycache__/

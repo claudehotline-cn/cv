@@ -1,0 +1,6 @@
+{
+  "url": "http://127.0.0.1:4173/#/observability/logs",
+  "mode": "DB",
+  "rowsCount": 2,
+  "firstRow": {"ts":1760622070000, "level":"info", "pipeline":"det_720p", "node":"rest", "msg":"unsubscribe accepted", "stream_id":"sessions_1760622065"}
+}

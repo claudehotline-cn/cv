@@ -1,0 +1,7 @@
+[run] python "D:\Projects\ai\cv\video-analyzer\test\scripts\check_watch_longpoll.py" --base http://127.0.0.1:8082 --url rtsp://127.0.0.1:8554/camera_01
+[sources] initial rev=14695981039346656037 items=0
+[subscribe] stream=watch_1760621543_fafd3f profile=det_720p
+[sources] changed rev=13868875693192288873 items=1
+[logs] rev0=13249109182412417967 -> rev1=13249109182412417967 items=0
+[events] rev0=6149176986004120184 -> rev1=6149176986004120184 items=0
+[cleanup] unsubscribed

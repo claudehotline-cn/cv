@@ -70,8 +70,11 @@ add_executable(va_vsm_cli
     main.cpp)
 
 target_include_directories(va_vsm_cli PRIVATE ${_GEN_DIR})
+# Prefer vcpkg protobuf headers to avoid mismatch with other environments
+if (EXISTS "D:/Projects/vcpkg/installed/x64-windows/include")
+    target_include_directories(va_vsm_cli PRIVATE "D:/Projects/vcpkg/installed/x64-windows/include")
+endif()
 target_link_libraries(va_vsm_cli PRIVATE gRPC::grpc++ protobuf::libprotobuf)
 
 set_target_properties(va_vsm_cli PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-

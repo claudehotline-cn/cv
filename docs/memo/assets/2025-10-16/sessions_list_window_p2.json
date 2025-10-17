@@ -1,0 +1,57 @@
+{
+	"code" : "OK",
+	"data" : 
+	{
+		"items" : 
+		[
+			{
+				"id" : 7,
+				"pipeline" : "det_720p",
+				"started_at" : 1760621787000,
+				"status" : "Stopped",
+				"stopped_at" : 1760621789000,
+				"stream_id" : "evidence_1760621784"
+			},
+			{
+				"id" : 6,
+				"pipeline" : "det_720p",
+				"started_at" : 1760621545000,
+				"status" : "Stopped",
+				"stopped_at" : 1760621553000,
+				"stream_id" : "watch_1760621543_fafd3f"
+			},
+			{
+				"id" : 5,
+				"pipeline" : "det_720p",
+				"started_at" : 1760543041000,
+				"status" : "Stopped",
+				"stopped_at" : 1760543043000,
+				"stream_id" : "p1_bulk_1760543037"
+			},
+			{
+				"id" : 4,
+				"pipeline" : "det_720p",
+				"started_at" : 1760537204000,
+				"status" : "Stopped",
+				"stopped_at" : 1760537206000,
+				"stream_id" : "va_verify_1760537201"
+			},
+			{
+				"id" : 3,
+				"pipeline" : "det_720p",
+				"started_at" : 1760536856000,
+				"status" : "Running",
+				"stream_id" : "cam_fail"
+			},
+			{
+				"id" : 2,
+				"pipeline" : "det_720p",
+				"started_at" : 1760536546000,
+				"status" : "Stopped",
+				"stopped_at" : 1760536576000,
+				"stream_id" : "cam_03"
+			}
+		]
+	},
+	"success" : true
+}

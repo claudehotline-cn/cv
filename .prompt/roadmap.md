@@ -1,4 +1,4 @@
-请基于 CONTEXT.md，输出一份 ≤800 词的 ROADMAP.md，覆盖当季 6–10 周。严格 Markdown，包含：
+请基于 `docs/context/CONTEXT.md`，在`docs/context/`目录下输出一份 ≤800 词的 ROADMAP.md。严格 Markdown，包含：
 
 # 路线图总览
 - 里程碑 M0/M1/M2（名称 + 目标 + 验收标准）

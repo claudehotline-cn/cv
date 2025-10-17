@@ -1,0 +1,122 @@
+{
+	"code" : "OK",
+	"data" : 
+	{
+		"items" : 
+		[
+			{
+				"level" : "info",
+				"msg" : "unsubscribe accepted",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "watch_1760621543_fafd3f",
+				"ts" : 1760621554000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: watch_1760621543_fafd3f:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "watch_1760621543_fafd3f",
+				"ts" : 1760621545000
+			},
+			{
+				"level" : "info",
+				"msg" : "unsubscribe accepted",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "p1_bulk_1760543037",
+				"ts" : 1760543043000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: p1_bulk_1760543037:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "p1_bulk_1760543037",
+				"ts" : 1760543041000
+			},
+			{
+				"level" : "info",
+				"msg" : "unsubscribe accepted",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "va_verify_1760537201",
+				"ts" : 1760537206000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: va_verify_1760537201:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "va_verify_1760537201",
+				"ts" : 1760537205000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: cam_fail:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "cam_fail",
+				"ts" : 1760536857000
+			},
+			{
+				"level" : "info",
+				"msg" : "unsubscribe accepted",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "cam_03",
+				"ts" : 1760536576000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: cam_03:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "cam_03",
+				"ts" : 1760536547000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: cam_02:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "cam_02",
+				"ts" : 1760536348000
+			},
+			{
+				"level" : "info",
+				"msg" : "unsubscribe accepted",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "watch_1760535586_998738",
+				"ts" : 1760535596000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: watch_1760535586_998738:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "watch_1760535586_998738",
+				"ts" : 1760535589000
+			},
+			{
+				"level" : "info",
+				"msg" : "unsubscribe accepted",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "cam_01",
+				"ts" : 1760535476000
+			},
+			{
+				"level" : "info",
+				"msg" : "subscribe accepted: cam_01:det_720p",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "cam_01",
+				"ts" : 1760535411000
+			}
+		]
+	},
+	"success" : true
+}

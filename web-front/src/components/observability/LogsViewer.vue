@@ -21,12 +21,13 @@
         <el-button text size="small" @click="exportLogs">导出</el-button>
         <div style="margin-left:auto"><el-button text size="small" @click="clear">清空</el-button></div>
       </div>
-    </template>
+  </template>
 
-    <div class="logs-wrap">
-      <VirtualList class="vlist" :data-key="'id'" :data-sources="filtered" :data-component="Row" :keeps="300" :estimate-size="22" :extra-props="{ highlight: kw }" ref="vlistRef" />
-    </div>
-  </el-card>
+  <div class="logs-wrap">
+    <el-alert v-if="errorMsg" :title="errorMsg" type="error" show-icon style="margin:8px" />
+    <VirtualList class="vlist" :data-key="'id'" :data-sources="filtered" :data-component="Row" :keeps="300" :estimate-size="22" :extra-props="{ highlight: kw }" ref="vlistRef" />
+  </div>
+</el-card>
   </template>
 
 <script setup lang="ts">
@@ -48,6 +49,7 @@ const Row = {
 
 const pipelines = ref<string[]>([])
 const list = ref<any[]>([])
+const errorMsg = ref('')
 const kw = ref(''); const pipeline = ref(''); const level = ref('')
 const tailing = ref(true); const esConnected = ref(false)
 const vlistRef = ref()
@@ -60,7 +62,7 @@ function filteredFn(item:any){
 }
 const filtered = computed(()=> list.value.filter(filteredFn).map((it,idx)=>({ ...it, id: it.id || `${it.ts}-${idx}` })))
 
-async function refresh(){ const data = await dataProvider.logsRecent({ pipeline: pipeline.value, level: level.value, limit: 500 }); list.value = (data as any).items || []; requestAnimationFrame(()=> vlistRef.value?.scrollToBottom && vlistRef.value.scrollToBottom()) }
+async function refresh(){ try { const data = await dataProvider.logsRecent({ pipeline: pipeline.value, level: level.value, limit: 500 }); list.value = (data as any).items || []; errorMsg.value=''; requestAnimationFrame(()=> vlistRef.value?.scrollToBottom && vlistRef.value.scrollToBottom()) } catch (e:any) { list.value = []; errorMsg.value = e?.message || '加载日志失败' } }
 let unsubscribe: null | (()=>void) = null
 function startSSE(){ stopSSE(); esConnected.value = true; unsubscribe = dataProvider.logsSubscribe((obj)=>{ list.value.push(obj); if (tailing.value) vlistRef.value?.scrollToBottom && vlistRef.value.scrollToBottom(); if (list.value.length > 5000) list.value.splice(0, list.value.length - 5000) }, { pipeline: pipeline.value || undefined, level: level.value || undefined }) }
 function stopSSE(){ if (unsubscribe) unsubscribe(); unsubscribe=null; esConnected.value=false }

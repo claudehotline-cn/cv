@@ -1,0 +1,46 @@
+{
+	"code" : "OK",
+	"data" : 
+	{
+		"items" : 
+		[
+			{
+				"level" : "info",
+				"msg" : "ok",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "evidence_1760621784",
+				"ts" : 1760621789000,
+				"type" : "unsubscribe"
+			},
+			{
+				"level" : "info",
+				"msg" : "uri=rtsp://127.0.0.1:8554/camera_01",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "evidence_1760621784",
+				"ts" : 1760621788000,
+				"type" : "subscribe"
+			},
+			{
+				"level" : "info",
+				"msg" : "ok",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "watch_1760621543_fafd3f",
+				"ts" : 1760621554000,
+				"type" : "unsubscribe"
+			},
+			{
+				"level" : "info",
+				"msg" : "uri=rtsp://127.0.0.1:8554/camera_01",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "watch_1760621543_fafd3f",
+				"ts" : 1760621545000,
+				"type" : "subscribe"
+			}
+		]
+	},
+	"success" : true
+}

@@ -19,6 +19,15 @@ public:
     virtual bool valid() const = 0;
     virtual bool ping(std::string* err = nullptr) = 0;
 
+    struct Stats {
+        int max{0};
+        int min{0};
+        std::size_t idle{0};
+        std::size_t created{0};
+    };
+    // 返回连接池统计信息；若不支持或不可用，返回 false。
+    virtual bool getStats(Stats* /*out*/) const { return false; }
+
 #if defined(VA_WITH_MYSQL) && defined(HAVE_MYSQL_JDBC)
     // Acquire a JDBC connection with RAII deleter that returns it to the pool.
     // When pool is unavailable, returned unique_ptr will be null.

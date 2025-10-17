@@ -1,9 +1,6 @@
 {
   "results": [
     {
-      "ms": 61,
-      "url": "http://127.0.0.1:8082/api/system/info",
-      "status": 200,
       "sample": {
         "code": "OK",
         "data": {
@@ -51,60 +48,65 @@
         },
         "success": true
       },
-      "ok": true
+      "ms": 74,
+      "ok": true,
+      "url": "http://127.0.0.1:8082/api/system/info",
+      "status": 200
     },
     {
-      "ms": 18,
+      "sample": {
+        "code": "OK",
+        "data": {
+          "items": [
+            "@{level=warn; msg=bench log #0; node=rest; pipeline=det_720p; stream_id=bench_sid_1; ts=1760712946000}",
+            "@{level=info; msg=bench log #1; node=model; pipeline=det_720p; stream_id=bench_sid_2; ts=1760712945000}",
+            "@{level=info; msg=bench log #2; node=rest; pipeline=det_720p; stream_id=bench_sid_3; ts=1760712944000}",
+            "@{level=info; msg=bench log #3; node=model; pipeline=det_720p; stream_id=bench_sid_4; ts=1760712943000}",
+            "@{level=info; msg=bench log #4; node=rest; pipeline=det_720p; stream_id=bench_sid_5; ts=1760712942000}"
+          ],
+          "page": 1,
+          "page_size": 5,
+          "total": 1002
+        },
+        "success": true
+      },
+      "ms": 17,
+      "ok": true,
       "url": "http://127.0.0.1:8082/api/logs?page=1&page_size=5",
-      "status": 200,
+      "status": 200
+    },
+    {
       "sample": {
         "code": "OK",
         "data": {
           "items": [
-            "@{level=info; msg=unsubscribe accepted; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622070000}",
-            "@{level=info; msg=subscribe accepted: sessions_1760622065:det_720p; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622068000}"
+            "@{level=info; msg=bench event #0; node=rest; pipeline=det_720p; stream_id=bench_sid_1; ts=1760712947000; type=info}",
+            "@{level=warn; msg=bench event #1; node=pipeline; pipeline=det_720p; stream_id=bench_sid_2; ts=1760712946000; type=warn}",
+            "@{level=warn; msg=bench event #2; node=rest; pipeline=det_720p; stream_id=bench_sid_3; ts=1760712945000; type=warn}",
+            "@{level=info; msg=bench event #3; node=pipeline; pipeline=det_720p; stream_id=bench_sid_4; ts=1760712944000; type=info}",
+            "@{level=warn; msg=bench event #4; node=rest; pipeline=det_720p; stream_id=bench_sid_5; ts=1760712943000; type=warn}"
           ],
           "page": 1,
           "page_size": 5,
-          "total": 2
+          "total": 1003
         },
         "success": true
       },
-      "ok": true
-    },
-    {
-      "ms": 2,
+      "ms": 4,
+      "ok": true,
       "url": "http://127.0.0.1:8082/api/events/recent?page=1&page_size=5",
-      "status": 200,
-      "sample": {
-        "code": "OK",
-        "data": {
-          "items": [
-            "@{level=info; msg=ok; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622070000; type=unsubscribe}",
-            "@{level=info; msg=uri=rtsp://127.0.0.1:8554/camera_01; node=rest; pipeline=det_720p; stream_id=sessions_1760622065; ts=1760622068000; type=subscribe}",
-            "@{level=info; msg=ok; node=rest; pipeline=det_720p; stream_id=evidence_1760621784; ts=1760621789000; type=unsubscribe}"
-          ],
-          "page": 1,
-          "page_size": 5,
-          "total": 3
-        },
-        "success": true
-      },
-      "ok": true
+      "status": 200
     },
     {
-      "ms": 0,
-      "url": "http://127.0.0.1:8082/api/db/ping",
-      "status": 200,
       "sample": {
         "ok": true
       },
-      "ok": true
+      "ms": 1,
+      "ok": true,
+      "url": "http://127.0.0.1:8082/api/db/ping",
+      "status": 200
     },
     {
-      "ms": 0,
-      "url": "http://127.0.0.1:8082/api/db/retention/status",
-      "status": 200,
       "sample": {
         "code": "OK",
         "data": {
@@ -123,16 +125,19 @@
         },
         "success": true
       },
-      "ok": true
+      "ms": 0,
+      "ok": true,
+      "url": "http://127.0.0.1:8082/api/db/retention/status",
+      "status": 200
     },
     {
-      "ms": 1,
-      "url": "http://127.0.0.1:8082/metrics",
-      "status": 200,
       "sample": null,
-      "ok": true
+      "ms": 1,
+      "ok": true,
+      "url": "http://127.0.0.1:8082/metrics",
+      "status": 200
     }
   ],
-  "ts": "2025-10-17T20:24:36",
+  "ts": "2025-10-17T23:08:01",
   "base": "http://127.0.0.1:8082"
 }

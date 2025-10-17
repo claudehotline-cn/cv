@@ -1,0 +1,5 @@
+{
+  \"url\": \"http://127.0.0.1:4173/#/observability/sessions\",
+  \"rowsCount\": 7,
+  \"firstRow\": {\"id\":\"8\",\"stream_id\":\"sessions_1760622065\",\"pipeline\":\"det_720p\",\"status\":\"Stopped\"}
+}

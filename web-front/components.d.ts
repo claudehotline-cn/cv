@@ -8,6 +8,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     ChartBase: typeof import('./src/components/analytics/ChartBase.vue')['default']
+    DBLogsList: typeof import('./src/components/observability/DBLogsList.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElBacktop: typeof import('element-plus/es')['ElBacktop']
@@ -46,6 +47,7 @@ declare module 'vue' {
     ElSelect: typeof import('element-plus/es')['ElSelect']
     ElSkeleton: typeof import('element-plus/es')['ElSkeleton']
     ElSpace: typeof import('element-plus/es')['ElSpace']
+    ElStatistic: typeof import('element-plus/es')['ElStatistic']
     ElSubMenu: typeof import('element-plus/es')['ElSubMenu']
     ElSwitch: typeof import('element-plus/es')['ElSwitch']
     ElTable: typeof import('element-plus/es')['ElTable']
@@ -57,7 +59,9 @@ declare module 'vue' {
     FooterBar: typeof import('./src/components/chrome/FooterBar.vue')['default']
     HotPipelines: typeof import('./src/components/analytics/HotPipelines.vue')['default']
     LogsViewer: typeof import('./src/components/observability/LogsViewer.vue')['default']
+    MetricsDbPanel: typeof import('./src/components/observability/MetricsDbPanel.vue')['default']
     MetricsQueryPanel: typeof import('./src/components/analytics/MetricsQueryPanel.vue')['default']
+    MetricsSummary: typeof import('./src/components/observability/MetricsSummary.vue')['default']
     MetricsTimeseries: typeof import('./src/components/analytics/MetricsTimeseries.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

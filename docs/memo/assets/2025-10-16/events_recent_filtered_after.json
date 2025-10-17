@@ -1,0 +1,19 @@
+{
+	"code" : "OK",
+	"data" : 
+	{
+		"items" : 
+		[
+			{
+				"level" : "info",
+				"msg" : "ok",
+				"node" : "rest",
+				"pipeline" : "det_720p",
+				"stream_id" : "evidence_1760621784",
+				"ts" : 1760621789000,
+				"type" : "unsubscribe"
+			}
+		]
+	},
+	"success" : true
+}

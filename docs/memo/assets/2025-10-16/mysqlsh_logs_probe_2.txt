@@ -1,0 +1,6 @@
+WARNING: Using a password on the command line interface can be insecure.
+cnt	min_ts	max_ts
+2	2025-10-16 13:41:08	2025-10-16 13:41:10
+id	ts	level	pipeline	node	msg
+18	2025-10-16 13:41:10	info	det_720p	rest	unsubscribe accepted
+17	2025-10-16 13:41:08	info	det_720p	rest	subscribe accepted: sessions_1760622065:det_720p

@@ -1,0 +1,7 @@
+[metrics] HTTP server started on :[rest] HTTP server started on :9101
+7071
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1760735417.154198   22380 chttp2_server.cc:1682] UNKNOWN:No address added out of total 1 resolved for '0.0.0.0:7070' {created_time:"2025-10-17T21:10:17.1541935+00:00", children:[UNKNOWN:Failed to prepare server socket {fd:1052, created_time:"2025-10-17T21:10:17.1541383+00:00", children:[UNAVAILABLE:bind: WSA Error (Only one usage of each socket address (protocol/network address/port) is normally permitted.
+
+ -- 10048) {created_time:"2025-10-17T21:10:17.1540968+00:00", grpc_status:14}]}]}
+Failed to start gRPC server at 0.0.0.0:7070

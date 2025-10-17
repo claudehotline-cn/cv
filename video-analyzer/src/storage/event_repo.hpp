@@ -37,6 +37,19 @@ public:
                             std::vector<EventRow>* out,
                             std::string* err = nullptr);
 
+    // Paged listing with total count
+    bool listRecentFilteredPaged(const std::string& pipeline,
+                                 const std::string& level,
+                                 const std::string& stream_id,
+                                 const std::string& node,
+                                 std::uint64_t from_ts_ms,
+                                 std::uint64_t to_ts_ms,
+                                 int page,
+                                 int page_size,
+                                 std::vector<EventRow>* out,
+                                 std::int64_t* total,
+                                 std::string* err = nullptr);
+
     // Maintenance: delete rows older than given seconds
     bool purgeOlderThanSeconds(std::uint64_t seconds, std::string* err = nullptr);
 

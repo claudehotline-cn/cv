@@ -1,0 +1,11 @@
+{
+	"code" : "OK",
+	"data" : 
+	{
+		"pipeline_key" : "sessions_1760622065:det_720p",
+		"profile" : "det_720p",
+		"stream_id" : "sessions_1760622065",
+		"subscription_id" : "sessions_1760622065:det_720p"
+	},
+	"success" : true
+}
