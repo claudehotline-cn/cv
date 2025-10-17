@@ -1076,6 +1076,9 @@ struct RestServer::Impl {
         // Control-plane (embedded): ApplyPipeline / ApplyPipelines via REST
         auto cpApplyHandler = [this](const HttpRequest& req) { return handleCpApply(req); };
         auto cpApplyBatchHandler = [this](const HttpRequest& req) { return handleCpApplyBatch(req); };
+        auto cpRemoveHandler = [this](const HttpRequest& req) { return handleCpRemove(req); };
+        auto cpStatusHandler = [this](const HttpRequest& req) { return handleCpStatus(req); };
+        auto cpDrainHandler  = [this](const HttpRequest& req) { return handleCpDrain(req); };
 
         server.addRoute("POST", "/subscribe", subscribeHandler);
         server.addRoute("POST", "/api/subscribe", subscribeHandler);
@@ -1107,6 +1110,9 @@ struct RestServer::Impl {
         // Control-plane mapping
         server.addRoute("POST", "/api/control/apply_pipeline", cpApplyHandler);
         server.addRoute("POST", "/api/control/apply_pipelines", cpApplyBatchHandler);
+        server.addRoute("DELETE", "/api/control/pipeline", cpRemoveHandler);
+        server.addRoute("GET", "/api/control/status", cpStatusHandler);
+        server.addRoute("POST", "/api/control/drain", cpDrainHandler);
 
         // Logging config: runtime set
         auto loggingSetHandler = [this](const HttpRequest& req) { return handleLoggingSet(req); };
@@ -1272,6 +1278,74 @@ struct RestServer::Impl {
         } catch (const std::exception& ex) {
             return errorResponse(std::string("exception: ") + ex.what(), 500);
         }
+#else
+        return errorResponse("control-plane disabled", 503);
+#endif
+    }
+
+    HttpResponse handleCpRemove(const HttpRequest& req) {
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+        try {
+            // 支持 query: ?name=xxx 或 ?pipeline_name=xxx
+            auto kv = parseQueryKV(req.query);
+            std::string name;
+            if (auto it = kv.find("name"); it != kv.end()) name = it->second;
+            if (auto it = kv.find("pipeline_name"); it != kv.end()) name = it->second;
+            if (name.empty()) return errorResponse("Missing pipeline name", 400);
+            std::string err;
+            if (!app.removePipeline(name, &err)) {
+                // 404 for not found, otherwise 409
+                int code = (err.find("not found") != std::string::npos) ? 404 : 409;
+                return errorResponse(err.empty()? "remove failed" : err, code);
+            }
+            Json::Value ok = successPayload(); ok["removed"] = true; ok["name"] = name; return jsonResponse(ok, 200);
+        } catch (const std::exception& ex) { return errorResponse(std::string("exception: ") + ex.what(), 500); }
+#else
+        return errorResponse("control-plane disabled", 503);
+#endif
+    }
+
+    HttpResponse handleCpStatus(const HttpRequest& req) {
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+        try {
+            auto kv = parseQueryKV(req.query);
+            std::string name;
+            if (auto it = kv.find("name"); it != kv.end()) name = it->second;
+            if (auto it = kv.find("pipeline_name"); it != kv.end()) name = it->second;
+            if (name.empty()) return errorResponse("Missing pipeline name", 400);
+            std::string js = app.getPipelineStatus(name);
+            // 尝试将内部 JSON 合并到 data 字段
+            Json::Value payload = successPayload();
+            Json::Value data(Json::objectValue);
+            try {
+                Json::CharReaderBuilder b; std::string errs; std::istringstream is(js); Json::Value inner;
+                if (Json::parseFromStream(b, is, &inner, &errs)) { data = inner; }
+                else { data["raw"] = js; data["parse_error"] = errs; }
+            } catch (...) { data["raw"] = js; }
+            payload["data"] = data; payload["name"] = name; return jsonResponse(payload, 200);
+        } catch (const std::exception& ex) { return errorResponse(std::string("exception: ") + ex.what(), 500); }
+#else
+        return errorResponse("control-plane disabled", 503);
+#endif
+    }
+
+    HttpResponse handleCpDrain(const HttpRequest& req) {
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+        try {
+            Json::Value body = parseJson(req.body);
+            if (!body.isMember("pipeline_name") || !body["pipeline_name"].isString()) {
+                return errorResponse("Missing required field: pipeline_name", 400);
+            }
+            std::string name = body["pipeline_name"].asString();
+            int timeout_sec = 10;
+            if (body.isMember("timeout_sec") && body["timeout_sec"].isInt()) timeout_sec = body["timeout_sec"].asInt();
+            std::string err;
+            if (!app.drainPipeline(name, timeout_sec, &err)) {
+                int code = (err.find("not found") != std::string::npos) ? 404 : 409;
+                return errorResponse(err.empty()? "drain failed" : err, code);
+            }
+            Json::Value ok = successPayload(); ok["drained"] = true; ok["name"] = name; ok["timeout_sec"] = timeout_sec; return jsonResponse(ok, 200);
+        } catch (const std::exception& ex) { return errorResponse(std::string("exception: ") + ex.what(), 500); }
 #else
         return errorResponse("control-plane disabled", 503);
 #endif

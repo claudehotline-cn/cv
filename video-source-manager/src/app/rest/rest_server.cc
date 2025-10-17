@@ -122,6 +122,24 @@ void RestServer::Loop() {
       auto qpos = path.find('?'); if (qpos != std::string::npos) path = path.substr(0, qpos);
 
       int status = 200; std::string ctype = "application/json; charset=utf-8";
+      // CORS preflight: reply immediately
+      if (!method.empty() && method == "OPTIONS") {
+        std::ostringstream pre;
+        pre << "HTTP/1.1 204 No Content\r\n";
+        pre << "Access-Control-Allow-Origin: *\r\n";
+        pre << "Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS\r\n";
+        pre << "Access-Control-Allow-Headers: Content-Type,Authorization\r\n";
+        pre << "Content-Length: 0\r\n\r\n";
+        auto s = pre.str();
+#ifdef _WIN32
+        ::send(cfd, s.c_str(), (int)s.size(), 0);
+        closesock(cfd);
+#else
+        ::send(cfd, s.c_str(), s.size(), 0);
+        closesock(cfd);
+#endif
+        return;
+      }
       std::string resp;
       // SSE fast-path: delegate full response (including headers) to handler
       if (method == "GET" && path == "/api/source/watch_sse" && streaming_handler_) {
@@ -141,6 +159,10 @@ void RestServer::Loop() {
       else if (status == 405) oss << "HTTP/1.1 405 Method Not Allowed\r\n";
       else oss << "HTTP/1.1 500 Internal Server Error\r\n";
       oss << "Content-Type: " << ctype << "\r\n";
+      // CORS headers
+      oss << "Access-Control-Allow-Origin: *\r\n";
+      oss << "Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS\r\n";
+      oss << "Access-Control-Allow-Headers: Content-Type,Authorization\r\n";
       oss << "Connection: close\r\n";
       oss << "Content-Length: " << resp.size() << "\r\n\r\n";
       oss << resp;

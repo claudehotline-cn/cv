@@ -1,0 +1,28 @@
+{
+  "host": "127.0.0.1",
+  "port": 13306,
+  "db": "cv_cp",
+  "seeded": true,
+  "logs_seed": 1000,
+  "events_seed": 1000,
+  "pre_logs": "c\n2\nWARNING: Using a password on the command line interface can be insecure.\n",
+  "pre_events": "c\n3\nWARNING: Using a password on the command line interface can be insecure.\n",
+  "queries": [
+    {
+      "name": "logs_stream_in",
+      "ms": 459
+    },
+    {
+      "name": "logs_node_in",
+      "ms": 475
+    },
+    {
+      "name": "events_stream_in",
+      "ms": 471
+    },
+    {
+      "name": "events_node_in",
+      "ms": 479
+    }
+  ]
+}

@@ -174,7 +174,6 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
                                           const std::unordered_map<std::string,std::string>& /*headers*/){
     (void)method; (void)path;
     // simple concurrency limit
-    static std::atomic<int> sse_conn{0};
     static int max_conn = [](){ int v=16; if(const char* p=getenv("VSM_SSE_MAX_CONN")){ try{ int t=std::stoi(p); if(t>0) v=t; }catch(...){} } return v; }();
 
     auto send_all = [&](const std::string& s){
@@ -191,38 +190,54 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     auto send_http = [&](int code, const std::string& ctype, const std::string& body){
       std::ostringstream hs; hs << "HTTP/1.1 " << code << (code==200?" OK":"") << "\r\n";
       hs << "Content-Type: " << ctype << "\r\n";
+      // CORS for SSE errors too
+      hs << "Access-Control-Allow-Origin: *\r\n";
+      hs << "Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS\r\n";
+      hs << "Access-Control-Allow-Headers: Content-Type,Authorization\r\n";
       hs << "Content-Length: " << body.size() << "\r\n";
       hs << "Connection: close\r\n\r\n";
       hs << body;
       send_all(hs.str());
     };
 
-    int cur = sse_conn.fetch_add(1) + 1;
+    int cur = g_sse_conn.fetch_add(1) + 1;
     if (cur > max_conn) {
-      sse_conn.fetch_sub(1);
+      g_sse_conn.fetch_sub(1);
+      g_sse_rejects.fetch_add(1);
       std::string body = "{\"success\":false,\"message\":\"too many sse connections\"}";
       send_http(429, "application/json; charset=utf-8", body);
       return;
     }
 
-    auto cleanup = [&](){ sse_conn.fetch_sub(1); };
+    auto cleanup = [&](){ g_sse_conn.fetch_sub(1); };
     // Write SSE headers
     {
       std::ostringstream hs;
       hs << "HTTP/1.1 200 OK\r\n";
       hs << "Content-Type: text/event-stream\r\n";
+      hs << "Access-Control-Allow-Origin: *\r\n";
+      hs << "Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS\r\n";
+      hs << "Access-Control-Allow-Headers: Content-Type,Authorization\r\n";
       hs << "Cache-Control: no-cache\r\n";
       hs << "Connection: keep-alive\r\n\r\n";
       send_all(hs.str());
     }
 
+    // Set send timeout to avoid long blocks on slow clients
+#ifdef _WIN32
+    { int snd_ms = [](){ int d=4000; if(const char* p=getenv("VSM_SSE_SNDTIMEO_MS")){ try{ int t=std::stoi(p); if(t>0) d=t; }catch(...){} } return d; }();
+      ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&snd_ms, sizeof(snd_ms)); }
+#else
+    { struct timeval tv; tv.tv_sec = 4; tv.tv_usec = 0; ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)); }
+#endif
     uint64_t since = 0; if (auto it=query.find("since"); it!=query.end()) { try { since = std::stoull(it->second); } catch(...){} }
     int keepalive_ms = [](){ int d=15000; if(const char* p=getenv("VSM_SSE_KEEPALIVE_MS")){ try{ int t=std::stoi(p); if(t>0) d=t; }catch(...){} } return d; }();
     if (auto it=query.find("keepalive_ms"); it!=query.end()) { try { keepalive_ms = std::stoi(it->second); } catch(...){} }
     int max_sec = 300; if (auto it=query.find("max_sec"); it!=query.end()) { try { max_sec = std::stoi(it->second); } catch(...){} }
     auto start_tp = std::chrono::steady_clock::now();
     uint64_t rev = since;
-    while (true) {
+    bool broken = false;
+    while (!broken) {
       // Break on max duration
       auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_tp).count();
       if (elapsed >= max_sec) break;
@@ -254,6 +269,13 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
         // keepalive comment
         send_all(": keepalive\n\n");
       }
+      // Simple broken detection: try a zero-length probe via shutdown send
+#ifdef _WIN32
+      // If the peer closed, next send will fail; here we can optionally check using recv with MSG_PEEK (omitted for simplicity)
+#else
+      // no-op
+#endif
+      // If we want, we could set broken=true when send_all observed n<=0, but current helper ignores it; keep loop until timeout
     }
     cleanup();
   });

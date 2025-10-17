@@ -85,6 +85,10 @@ public:
     bool applyPipeline(const va::control::PlainPipelineSpec& spec, std::string* err);
     int  applyPipelines(const std::vector<va::control::PlainPipelineSpec>& items,
                         std::vector<std::string>* errors);
+    // 控制面包装：删除/排空/获取状态
+    bool removePipeline(const std::string& name, std::string* err);
+    bool drainPipeline(const std::string& name, int timeout_sec, std::string* err);
+    std::string getPipelineStatus(const std::string& name);
 #endif
 
 private:

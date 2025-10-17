@@ -229,15 +229,16 @@ public:
             if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
             bool ok = app_->unsubscribeStream(req->stream_id(), req->profile());
             resp->set_ok(ok); resp->set_msg(ok? std::string("") : app_->lastError());
+            if (!ok) { return mapStatus(resp->msg()); }
             return ::grpc::Status::OK;
         } catch (const std::exception& ex) {
             VA_LOG_C(::va::core::LogLevel::Error, "control") << "[gRPC] UnsubscribePipeline exception: " << ex.what();
             resp->set_ok(false); resp->set_msg(std::string("exception: ") + ex.what());
-            return ::grpc::Status::OK;
+            return mapStatus(resp->msg());
         } catch (...) {
             VA_LOG_C(::va::core::LogLevel::Error, "control") << "[gRPC] UnsubscribePipeline unknown exception";
             resp->set_ok(false); resp->set_msg("unknown exception");
-            return ::grpc::Status::OK;
+            return mapStatus(resp->msg());
         }
     }
 

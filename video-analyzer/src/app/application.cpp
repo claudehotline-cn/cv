@@ -576,6 +576,27 @@ int Application::applyPipelines(const std::vector<va::control::PlainPipelineSpec
     }
     return accepted;
 }
+
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+bool Application::removePipeline(const std::string& name, std::string* err) {
+    if (!pipeline_controller_) { if (err) *err = "control-plane disabled"; return false; }
+    auto st = pipeline_controller_->Remove(name);
+    if (!st.ok()) { if (err) *err = st.message(); return false; }
+    return true;
+}
+
+bool Application::drainPipeline(const std::string& name, int timeout_sec, std::string* err) {
+    if (!pipeline_controller_) { if (err) *err = "control-plane disabled"; return false; }
+    auto st = pipeline_controller_->Drain(name, timeout_sec);
+    if (!st.ok()) { if (err) *err = st.message(); return false; }
+    return true;
+}
+
+std::string Application::getPipelineStatus(const std::string& name) {
+    if (!pipeline_controller_) { return std::string("{\"phase\":\"Disabled\"}"); }
+    return pipeline_controller_->GetStatus(name);
+}
+#endif
 #endif
 
 Application::SystemStats Application::systemStats() const {
