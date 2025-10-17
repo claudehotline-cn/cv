@@ -89,6 +89,7 @@ public:
     bool removePipeline(const std::string& name, std::string* err);
     bool drainPipeline(const std::string& name, int timeout_sec, std::string* err);
     std::string getPipelineStatus(const std::string& name);
+    va::control::PipelineController* pipelineController() { return pipeline_controller_.get(); }
 #endif
 
 private:

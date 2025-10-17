@@ -26,6 +26,15 @@ private:
         std::string                project;
         std::vector<std::string>   tags;
         std::atomic<bool>          ready{false};
+        // Status extras
+        uint64_t                   last_apply_ms {0};
+        std::string                last_apply_error;
+        // Drain extras
+        uint64_t                   last_drain_ms {0};
+        int                        last_drain_timeout_sec {0};
+        bool                       last_drain_ok {false};
+        std::vector<std::string>   last_drain_blocked_nodes; // best-effort
+        std::string                last_drain_reason;
         Runtime() = default;
         Runtime(const Runtime&) = delete;
         Runtime& operator=(const Runtime&) = delete;

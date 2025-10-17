@@ -7,6 +7,7 @@
 #include <sstream>
 #include <algorithm>
 #include <string>
+#include <regex>
 #ifdef _WIN32
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
@@ -25,6 +26,20 @@ static int g_sse_max_conn = [](){ int v=16; if(const char* p=getenv("VSM_SSE_MAX
 
 SourceAgent::SourceAgent() = default;
 SourceAgent::~SourceAgent() { Stop(); }
+
+void SourceAgent::RecordRestMetric(const std::string& path, const std::string& code, double seconds) {
+  std::lock_guard<std::mutex> lk(rest_mu_);
+  rest_totals_by_code_[path][code] += 1ULL;
+  auto& buckets = rest_hist_buckets_[path];
+  if (buckets.size() != rest_bounds_.size()) buckets.assign(rest_bounds_.size(), 0ULL);
+  bool placed=false;
+  for (size_t i=0;i<rest_bounds_.size();++i) {
+    if (seconds <= rest_bounds_[i]) { buckets[i] += 1ULL; placed=true; break; }
+  }
+  if (!placed && !buckets.empty()) buckets.back() += 1ULL; // +Inf as last bucket in exposition
+  rest_hist_sum_[path] += seconds;
+  rest_hist_count_[path] += 1ULL;
+}
 
 bool SourceAgent::Start(const std::string& grpc_addr) {
   controller_ = std::make_unique<SourceController>();
@@ -61,6 +76,32 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     out << "vsm_sse_connections " << g_sse_conn.load() << "\n";
     out << "vsm_sse_rejects_total " << (unsigned long long)g_sse_rejects.load() << "\n";
     out << "vsm_sse_max_connections " << g_sse_max_conn << "\n";
+    // REST request metrics
+    {
+      std::lock_guard<std::mutex> lk(rest_mu_);
+      out << "# HELP vsm_rest_requests_total REST requests total by path/code\n# TYPE vsm_rest_requests_total counter\n";
+      for (const auto& kv : rest_totals_by_code_) {
+        const std::string& path = kv.first;
+        for (const auto& kv2 : kv.second) {
+          out << "vsm_rest_requests_total{path=\"" << path << "\",code=\"" << kv2.first << "\"} "
+              << (unsigned long long)kv2.second << "\n";
+        }
+      }
+      out << "# HELP vsm_rest_request_duration_seconds REST request duration (s)\n# TYPE vsm_rest_request_duration_seconds histogram\n";
+      for (const auto& kvh : rest_hist_buckets_) {
+        const std::string& path = kvh.first;
+        double sum = rest_hist_sum_.count(path)? rest_hist_sum_.at(path) : 0.0;
+        unsigned long long cnt = rest_hist_count_.count(path)? rest_hist_count_.at(path) : 0ULL;
+        unsigned long long acc = 0ULL;
+        for (size_t i=0;i<rest_bounds_.size();++i) {
+          acc += kvh.second[i];
+          out << "vsm_rest_request_duration_seconds_bucket{path=\"" << path << "\",le=\"" << rest_bounds_[i] << "\"} " << acc << "\n";
+        }
+        out << "vsm_rest_request_duration_seconds_bucket{path=\"" << path << "\",le=\"+Inf\"} " << cnt << "\n";
+        out << "vsm_rest_request_duration_seconds_sum{path=\"" << path << "\"} " << sum << "\n";
+        out << "vsm_rest_request_duration_seconds_count{path=\"" << path << "\"} " << cnt << "\n";
+      }
+    }
     return out.str();
   });
   metrics_->Start();
@@ -117,6 +158,9 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     if (method=="POST" && path=="/api/source/add") {
       auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
       std::string id = get("id"), uri = get("uri"); if (id.empty()||uri.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id/uri");
+      // Validate id and uri
+      if (!std::regex_match(id, std::regex("^[A-Za-z0-9_\-]{1,64}$"))) return err(vsm::errors::ErrorCode::INVALID_ARG, "invalid id");
+      auto lower = uri; std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower); if (lower.rfind("rtsp://", 0) != 0) return err(vsm::errors::ErrorCode::INVALID_ARG, "invalid uri (expect rtsp://)");
       std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
       std::string e; if (!controller_->Attach(id, uri, "", opt, &e)) return err(vsm::errors::map_message(e), e);
       return ok("{}");
@@ -124,6 +168,7 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     if (method=="POST" && path=="/api/source/update") {
       auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
       std::string id = get("id"); if (id.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id");
+      if (!std::regex_match(id, std::regex("^[A-Za-z0-9_\-]{1,64}$"))) return err(vsm::errors::ErrorCode::INVALID_ARG, "invalid id");
       std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
       std::string e; if (!controller_->Update(id, opt, &e)) return err(vsm::errors::map_message(e), e);
       return ok("{}");
@@ -166,7 +211,18 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
     *status = 404; return "{}";
   };
   static std::unique_ptr<vsm::rest::RestServer> rest_server;
-  rest_server = std::make_unique<vsm::rest::RestServer>(rest_port, handler);
+  rest_server = std::make_unique<vsm::rest::RestServer>(rest_port, [this, handler](auto&& method, auto&& path,
+                        auto&& query, auto&& headers, auto&& body, int* status, std::string* ctype){
+    auto t0 = std::chrono::steady_clock::now();
+    std::string resp = handler(method, path, query, headers, body, status, ctype);
+    auto t1 = std::chrono::steady_clock::now();
+    double sec = std::chrono::duration<double>(t1 - t0).count();
+    auto code_from_status = [](int st){
+      switch (st) { case 200: return "OK"; case 400: return "INVALID_ARG"; case 404: return "NOT_FOUND"; case 409: return "ALREADY_EXISTS"; case 503: return "UNAVAILABLE"; default: return "INTERNAL"; }
+    };
+    RecordRestMetric(path, code_from_status(*status), sec);
+    return resp;
+  });
   rest_server->SetStreamingHandler([this](int cfd,
                                           const std::string& method,
                                           const std::string& path,

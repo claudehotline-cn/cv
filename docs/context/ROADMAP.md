@@ -1,85 +1,38 @@
-# 后续工作路线图（基于 CONTEXT 与数据库设计）
+# 路线图总览
 
-本路线图基于 docs/context/CONTEXT.md 与 docs/design/数据库设计.md，聚焦数据库接入、观测能力与可运维性，分阶段推进并给出明确验收标准。
+- M0「DB 落地与稳定」
+  - 目标：后端改为 DB-only，无回退；日志/事件/会话支持分页、时间窗与过滤；/metrics 与保留任务可观测；前端提供 DB 视图基础能力。
+  - 验收标准：/api 日志/事件/会话接口在 DB 正常时 200、异常时 503 且前端可见错误；/metrics 暴露连接池、Writer 队列、Retention 指标；Logs/Events/Sessions DB 视图可分页与导出。
+- M1「可观测性完善」
+  - 目标：前端 Metrics 页提供关键指标卡片与趋势；DB 视图支持服务端分页与多值过滤；稳定性脚本与取证完善。
+  - 验收标准：指标卡片有阈值高亮；趋势可导出 CSV；多值过滤（node/stream_id CSV）与分页取证通过；脚本一键启停/探测可复用。
+- M2「控制平面与性能治理」
+  - 目标：控制平面（Apply/Status/HotSwap）完善；索引与队列压测达标；/metrics 覆盖率提升并用于告警阈值验证。
+  - 验收标准：HotSwap 与 Apply 回路 E2E 成功；批量插入 + 查询耗时证据齐全；关键指标波动在设定阈值内。
 
-## 范围与目标
+# 分阶段计划（表格）
+| 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
+|---|---|---|---|---|
+| M0 | DB-only REST、分页/过滤、基础指标 | CSV→SQL IN；分页 total；非阻塞 /metrics 快照；WinSock 超时 | DB 不可用时误阻塞 → 明确 503 与前端告警 | 查询 P95 < 200ms（1k 行） |
+| M0 | 前端 DB 视图与导出 | 服务端分页；日期变更重置页码；CSV 导出 | Vite 预览陈旧切片 → 提供重启脚本 | 首屏 < 2s、翻页 < 500ms |
+| M1 | Metrics 卡片与趋势 | 轮询 /metrics；阈值高亮；CSV | 指标漂移 → 固定采样与单位 | 采样丢失率 < 1% |
+| M1 | 取证与脚本化 | probe_api、前端取证、mysqlsh 脚本 | 环境差异 → 配置集中化 | 证据完整、可复现 |
+| M2 | 控制平面与压测 | HotSwap/Apply 路由；索引压测 | 链接占用/LNK1104 → 构建前停止进程 | 压测提升≥30% |
 
-- 数据持久化：sessions/events/logs 首要，其次 sources/pipelines/graphs/models 的元数据补齐。
-- 读写路径：写入异步小批、读取支持分页/过滤，watch 长轮询保持不变。
-- 连接管理：提供最小 `DbPool`，逐步替换零散连接；后续增强池内健康与指标。
-- REST 接口：/api/db/ping、/api/sessions、/api/events、/api/logs、/api/*/watch、/api/db/retention/purge。
-- 前端：Sessions 观测页与自动刷新，增强筛选/分页/导出。
-- 运维：保留策略（定时清理）、故障节流、基础指标（写入失败/批量大小/QPS）。
+# 依赖矩阵
+- 内部依赖：
+  - `video-analyzer`（REST、/metrics、控制平面、DB Pool/Repos）
+  - `web-frontend`（DB 视图、Metrics、Settings）
+  - `video-source-manager`（SSE/LIVE 链路，独立可选）
+- 外部依赖（库/服务/硬件）：
+  - MySQL 8.0（端口 13306）、MySQL Shell 8.4
+  - Prometheus 指标规范 0.0.4
+  - Element Plus、Vite、Playwright MCP
+  - GPU/解码器（NVDEC）可选，需 CPU 回退
 
-## 里程碑
-
-### M1（1–2 周）
-
-- 构建与依赖
-  - CMake 开关 `VA_WITH_MYSQL=ON`；自动检测 `third_party/mysql-connector-c++-*` 并链接。
-  - `video-analyzer/config/app.yaml: database` 可用（host/port/user/password/db/pool）。
-- 连接池与仓储
-  - 提供最小 `DbPool`（`acquire()` RAII、min/max 配置、`valid()/ping()`）。
-  - `EventRepo/LogRepo`：PreparedStatement 写入；批量（128/批）+ 事务；失败 5s 节流。
-  - 异步写入器：500ms 聚合刷新；溢出丢弃并计数。
-- REST 读写
-  - `GET /api/db/ping` 返回驱动与连通性。
-  - 读取：`GET /api/logs`、`GET /api/events/recent` 支持 `pipeline/level/stream_id/node/from_ts/to_ts/limit`。
-  - watch 接口维持现状（内存 rev 指纹）。
-- 测试与验证
-  - `mysqlsh`：`SELECT COUNT(*) FROM events, logs` 与最近 N 条抽样。
-  - Python 脚本（`video-analyzer/test/scripts`）：写入后回读 >0 行；FPS/检测数可选断言。
-  - 前端（Playwright MCP）：Sessions 列表可打开且自动刷新正常（基础验证）。
-
-验收：Windows 与 Linux 至少一种环境打包运行；写库/读库路径稳定，错误有节流日志；基础 E2E 通过。
-
-### M2（2–4 周）
-
-- Sessions 全量：`SessionRepo start()/completeLatest()/listRecent()`；订阅成功 Running，结束 Stopped，失败 Failed（含 `error_msg`）。
-- Sessions REST：`GET /api/sessions` 与 `GET /api/sessions/watch`（长轮询返回 `{ rev, items }`）。
-- 前端增强：Sessions 支持分页、时间窗过滤、状态高亮、导出 CSV。
-- 保留策略：`POST /api/db/retention/purge` 已有；新增基于配置的定时清理（默认关闭）。
-- 连接池增强：阻塞式借还、健康检查、统计指标（Prometheus 预留）。
-
-验收：会话生命周期贯通、页面可用性提升；保留任务可配置；连接池指标可导出或日志化。
-
-## 实施顺序（建议）
-
-1) 打通 `DbPool` 与 `EventRepo/LogRepo` 的写入与分页读取（M1）
-2) 增加 `GET /api/db/ping` 与日志/事件读端点（M1）
-3) 异步写入器与错误节流（M1）
-4) Sessions 生命周期与读端点（M2）
-5) 前端 Sessions 增强 + 导出（M2）
-6) 保留策略定时任务（M2）
-7) 连接池增强与指标（M2+）
-
-## 首批工程待办（Sprint-0）
-
-- 后端
-  - `video-analyzer`: `DbPool` 最小实现与单测（可选 mock）。
-  - `EventRepo/LogRepo`：批量插入与 `listRecentFiltered()`。
-  - `REST`: `/api/db/ping`、`/api/logs`、`/api/events/recent`。
-  - 异步写入器：500ms 批量、128/批、5s 失败节流。
-- 脚本与测试
-  - `tools/db/import_schema.ps1` 使用说明补全与示例参数。
-  - `video-analyzer/test/scripts/check_db_rw.py`：写入→读取断言、无 RTSP/HTTP 错误。
-  - `mysqlsh` 校验脚本模板与 README 摘要。
-- 前端
-  - 接入 `/api/sessions`（若后端已就绪）；基础表格与自动刷新校验用例。
-
-## 依赖与配置
-
-- MySQL 8.0（InnoDB/utf8mb4），`db/schema.sql` 已提供。
-- 连接器：`third_party/mysql-connector-c++`（含 `mysqlcppconn*.dll`/`libssl/libcrypto`）。
-- 配置：`video-analyzer/config/app.yaml: database`（`pool.min/max` 建议 1/8 起步）。
-
-## 风险与缓解
-
-- 批量写入延迟：以 500ms 为起点，按实际吞吐调参；溢出队列丢弃并记录计数。
-- 跨平台依赖：优先封装 CMake 探测与 `find_package` 回退；提供 Windows 预编译包路径。
-- 查询放大：读取端加上 `limit`，索引 `(pipeline, ts)` 与 `(ts)` 覆盖。
-
----
-
-以上内容每次迭代完成后同步到 `docs/context/CONTEXT.md` 的“后续计划”章节，并在本路线图更新阶段状态。
-
+# 风险清单（Top-5）
+- DB 连接池耗尽 → 高并发/慢查询 → 请求堆积、P95 飙升 → 增大池、限流与查询超时、优化索引。
+- SSE 长连影响其他路由 → 发送阻塞/锁粒度过大 → 其他 REST 超时 → 发送超时与去锁化，SSE 独立队列。
+- 配置/环境漂移 → 端口/配置目录不一致 → 503 或数据缺失 → 统一配置源并在 /system/info 回显。
+- 指标不一致/缺失 → 采样与单位差异 → 趋势异常或告警失效 → 统一采样窗口与单位，导出校验样本。
+- 构建期占用（LNK1104） → 进程未关闭 → 构建失败 → 构建前停止进程，脚本自动重启。

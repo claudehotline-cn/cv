@@ -1,0 +1,32 @@
+# HELP vsm_rest_requests_total REST requests total by path/code
+# TYPE vsm_rest_requests_total counter
+vsm_rest_requests_total{path="/api/source/list",code="OK"} 1
+vsm_rest_requests_total{path="/api/source/add",code="OK"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="0.005"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="0.01"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="0.025"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="0.05"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="0.1"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="0.25"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="0.5"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="1"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="2.5"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="5"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="10"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/list",le="+Inf"} 1
+vsm_rest_request_duration_seconds_sum{path="/api/source/list"} 2.69e-05
+vsm_rest_request_duration_seconds_count{path="/api/source/list"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="0.005"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="0.01"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="0.025"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="0.05"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="0.1"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="0.25"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="0.5"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="1"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="2.5"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="5"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="10"} 1
+vsm_rest_request_duration_seconds_bucket{path="/api/source/add",le="+Inf"} 1
+vsm_rest_request_duration_seconds_sum{path="/api/source/add"} 0.000283
+vsm_rest_request_duration_seconds_count{path="/api/source/add"} 1

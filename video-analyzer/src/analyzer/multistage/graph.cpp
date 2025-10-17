@@ -186,4 +186,19 @@ void Graph::clear() {
     nodes_.clear(); edges_.clear(); topo_.clear(); name2id_.clear();
 }
 
+bool Graph::with_node(const std::string& name,
+                      const std::function<bool(NodePtr& node, std::string& type, std::unordered_map<std::string,std::string>& cfg)>& fn) {
+    auto it = name2id_.find(name);
+    if (it == name2id_.end()) return false;
+    auto& ne = nodes_[it->second];
+    return fn(ne.node, ne.type, ne.cfg);
+}
+
+void Graph::for_each_node(const std::function<void(const std::string& name, const std::string& type,
+                                    const std::unordered_map<std::string,std::string>& cfg)>& fn) const {
+    for (const auto& ne : nodes_) {
+        fn(ne.name, ne.type, ne.cfg);
+    }
+}
+
 } } } // namespace

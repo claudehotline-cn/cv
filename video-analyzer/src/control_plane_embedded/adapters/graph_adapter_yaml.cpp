@@ -190,18 +190,66 @@ public:
         opened_ = false;
     }
     Status Drain(int /*timeout_sec*/) override { return Status::OK(); }
-    Status HotSwapModel(const std::string& /*node*/, const std::string& /*uri*/) override {
-        return Status::Internal("HotSwapModel not implemented in SimpleExecutor");
+    Status HotSwapModel(const std::string& node, const std::string& uri) override {
+        // Resolve node by name and replace underlying model session if node is NodeModel
+        try {
+            if (!g_) return Status::Internal("no graph");
+            if (node.empty() || uri.empty()) return Status::InvalidArgument("missing node/model_uri");
+            va::analyzer::multistage::NodeContext ctx{}; ctx.engine_registry = reinterpret_cast<void*>(em_);
+            bool ok = g_->with_node(node, [&](va::analyzer::multistage::NodePtr& n, std::string& type, std::unordered_map<std::string,std::string>& cfg){
+                (void)type;
+                auto* raw = n.get();
+                auto* nm = dynamic_cast<va::analyzer::multistage::NodeModel*>(raw);
+                if (!nm) return false;
+                bool swapped = nm->hotSwapModel(uri, ctx);
+                if (swapped) cfg["model_path"] = uri; // persist in cfg
+                return swapped;
+            });
+            return ok ? Status::OK() : Status::NotFound("pipeline node not found or not model");
+        } catch (const std::exception& ex) {
+            return Status::Internal(std::string("hotswap exception: ")+ex.what());
+        } catch (...) {
+            return Status::Internal("hotswap unknown exception");
+        }
     }
     std::string CollectStatusJson() override {
-        // Report minimal runtime plus applied override keys for diagnosis
+        // Report runtime summary: phase + overrides breakdown + model targets
         try {
             std::ostringstream o;
             o << "{\"phase\":\"Ready\"";
+            // overrides_keys
+            if (!overrides_.empty()) { o << ",\"overrides_keys\":["; bool first=true; for (const auto& kv : overrides_) { if(!first) o<<","; first=false; o<<"\""<<kv.first<<"\""; } o << "]"; }
+            // classify consumed/ignored (best-effort)
             if (!overrides_.empty()) {
-                o << ",\"overrides_keys\":[";
-                bool first=true;
-                for (const auto& kv : overrides_) { if(!first) o<<","; first=false; o<<"\""<<kv.first<<"\""; }
+                auto has_prefix = [](const std::string& k, const char* p){ return k.rfind(p, 0) == 0; };
+                std::vector<std::string> consumed;
+                std::vector<std::string> ignored;
+                for (const auto& kv : overrides_) {
+                    const auto& k = kv.first;
+                    if (has_prefix(k, "engine.") || has_prefix(k, "engine.options.") ||
+                        has_prefix(k, "params.") || has_prefix(k, "overrides.params.") ||
+                        has_prefix(k, "node.") || k.rfind("type:", 0) == 0) {
+                        consumed.push_back(k);
+                    } else {
+                        ignored.push_back(k);
+                    }
+                }
+                if (!consumed.empty()) { o << ",\"overrides_consumed\":["; for (size_t i=0;i<consumed.size();++i){ if(i) o<<","; o<<"\""<<consumed[i]<<"\"";} o << "]"; }
+                if (!ignored.empty())  { o << ",\"overrides_ignored\":[";  for (size_t i=0;i<ignored.size();++i){  if(i) o<<","; o<<"\""<<ignored[i]<<"\"";}  o << "]"; }
+            }
+            // Model targets snapshot
+            if (g_) {
+                bool appended=false;
+                o << ",\"model_targets\":[";
+                g_->for_each_node([&](const std::string& name, const std::string& type, const std::unordered_map<std::string,std::string>& cfg){
+                    if (type == "model.ort") {
+                        auto it = cfg.find("model_path");
+                        std::string mp = (it == cfg.end()? std::string() : it->second);
+                        if (appended) o << ",";
+                        o << "{\"node\":\"" << name << "\",\"type\":\"" << type << "\",\"model_path\":\"" << mp << "\"}";
+                        appended = true;
+                    }
+                });
                 o << "]";
             }
             o << "}";

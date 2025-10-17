@@ -1,0 +1,28 @@
+# HELP vsm_stream_up 1 if stream session is running
+# TYPE vsm_stream_up gauge
+# HELP vsm_stream_fps Frames per second
+# TYPE vsm_stream_fps gauge
+# HELP vsm_stream_jitter_ms Jitter estimate of inter-frame intervals
+# TYPE vsm_stream_jitter_ms gauge
+# HELP vsm_stream_rtt_ms Approximate round-trip time (placeholder)
+# TYPE vsm_stream_rtt_ms gauge
+# HELP vsm_stream_loss_ratio Loss ratio estimate (0..1)
+# TYPE vsm_stream_loss_ratio gauge
+# HELP vsm_stream_last_ok_unixts Last OK unix timestamp
+# TYPE vsm_stream_last_ok_unixts gauge
+vsm_stream_up{attach_id="@bad id"} 1
+vsm_stream_fps{attach_id="@bad id"} 0
+vsm_stream_jitter_ms{attach_id="@bad id"} 0
+vsm_stream_rtt_ms{attach_id="@bad id"} 0
+vsm_stream_loss_ratio{attach_id="@bad id"} 0
+vsm_stream_last_ok_unixts{attach_id="@bad id"} 0
+vsm_stream_up{attach_id="cam1"} 1
+vsm_stream_fps{attach_id="cam1"} 0
+vsm_stream_jitter_ms{attach_id="cam1"} 0
+vsm_stream_rtt_ms{attach_id="cam1"} 0
+vsm_stream_loss_ratio{attach_id="cam1"} 0
+vsm_stream_last_ok_unixts{attach_id="cam1"} 0
+vsm_sse_connections 0
+vsm_sse_rejects_total 0
+vsm_sse_max_connections 16
+

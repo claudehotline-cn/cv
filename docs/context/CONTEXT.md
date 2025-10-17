@@ -1,78 +1,43 @@
-# 项目上下文（最新）
+# 项目对话上下文（2025-10-18）
 
-本文件汇总当前对话期间已落地的关键改动、验证结果与后续计划，便于团队对齐与持续推进。
+本文件汇总近期对话的关键结论、系统现状、已知问题与下一步优先事项，便于研发、测试与前端协同。
 
-## 概览
-- 分支：`IOBinding`
-- 主要方向：数据库落地与观测能力、会话管理（Sessions）、前端观测页、性能与可运维性（批量写入、连接复用/池化）。
+## 后端现状
+- REST 接口全部 DB-only，无回退：失败直接 503 并返回错误文本（前端显式告警）。
+  - `/api/logs`、`/api/events/recent`、`/api/sessions`：支持分页 `page/page_size/total`、时间窗 `from_ts/to_ts`、过滤 `pipeline/level/node/stream_id`；`node/stream_id` 支持 CSV → SQL IN。
+  - `/api/db/retention/status` 暴露保留策略配置与运行统计。
+- /metrics 稳定（Prometheus 0.0.4）：
+  - 连接池：`va_db_pool_*`
+  - Writer 队列：`va_db_writer_queue_{events,logs}`
+  - 保留任务：`va_db_retention_*`
+  - 服务端采用非阻塞快照，套接字收发超时已配置。
+- 稳定性修复：HTTP 头解析空行与 Expect: 100-continue、WinSock 超时、SSE 去锁化与 CORS 头。
+- 数据库索引：events/logs 增加 `(stream_id, ts desc)`、`(node, ts desc)` 复合索引；统一 MySQL 端口 13306。
 
-## 后端改动
-- 数据库访问
-  - 接入 Oracle MySQL Connector/C++（JDBC），优先使用 `third_party/mysql-connector-c++-9.4.0-winx64`，自动检测 `include/mysql/jdbc.h` 与 `lib64/vs14/mysqlcppconn.lib`。
-  - CMake 开关：`VA_WITH_MYSQL=ON`；自动定义 `HAVE_MYSQL_JDBC` 时启用 JDBC 路径。
-- DbPool
-  - 保留 `valid()/ping()` 接口；新增最小连接池（JDBC，后向兼容）：`acquire()` 返回带 RAII 的连接句柄；内部空闲池（min/max 来自 `app.yaml: database.pool`）。
-  - 现阶段 Repo 仍可沿用“每线程复用 + 局部创建”，后续逐步切换统一调用 `DbPool::acquire()`。
-- 存储层与写入
-  - `EventRepo/LogRepo`：`append()` 支持批量插入（每批 128 条，多 VALUES）；新增 `listRecentFiltered()` 支持 `stream_id/node/from_ts/to_ts` 过滤。
-  - `SessionRepo`：`start()/completeLatest()/listRecent()`；订阅成功写入 Running，会话结束写入 Stopped；订阅失败写入 Failed（携带 `error_msg`）。
-  - 异步写入器（500ms 批量，溢出丢弃）：写入失败以 5s 节流报错日志；DB 读取失败在 REST 层以 5s 节流告警。
-- REST 端点
-  - 健康：`GET /api/db/ping`
-  - 会话：`GET /api/sessions`，`GET /api/sessions/watch`（长轮询 `{ rev, items }`）
-  - 日志/事件（读）：
-    - `GET /api/logs?pipeline=&level=&stream_id=&node=&from_ts=&to_ts=&limit=`
-    - `GET /api/events/recent?pipeline=&level=&stream_id=&node=&from_ts=&to_ts=&limit=`
-    - 长轮询保持不变：`/api/logs/watch`、`/api/events/watch`
-  - 数据保留（手动）：`POST /api/db/retention/purge { events_seconds, logs_seconds }`
+## 前端现状
+- Logs（DB）：服务端分页，摘要 `X–Y/共N`，CSV 导出；日期变更自动重置到第 1 页。
+- Events（DB）：服务端分页与导出已接入；LIVE 仍走 SSE。
+- Sessions：默认 30 天时间窗，“清空筛选”，DB 失败显式提示。
+- Metrics：
+  - MetricsSummary 卡片：DB Pool/Writer/Retention，阈值由 `VITE_WRITER_WARN/DANGER` 配置。
+  - MetricsDbPanel 趋势：定时轮询 /metrics，支持 CSV 导出。
+  - MetricsQueryPanel：单点快照查询（后续可扩展窗口采样）。
+- 构建与运行：`.env.development/.env.production` 配置 `VITE_API_BASE`；提供预览重启脚本避免 Vite 预览陈旧切片 404。
 
-## 前端改动（web-front）
-- 新增 Sessions 页面：`/observability/sessions`
-  - 列表字段：`id/stream_id/pipeline/status/started_at/stopped_at/error_msg`
-  - 过滤：`stream_id/pipeline`
-  - 实时刷新：对接 `GET /api/sessions/watch` 长轮询
-- API 封装（dataProvider）：`listSessions()`、`watchSessions()`
-- 导航入口：Observability → Sessions
+## 测试与取证
+- MySQL Shell：`C:\\Program Files\\MySQL\\MySQL Shell 8.4\\bin\\mysqlsh.exe`。
+- Windows 脚本：`tools/win/restart_backend.ps1`、`restart_frontend_preview.ps1`、`probe_api.ps1`（含 /metrics、/retention/status 探测）。
+- Playwright MCP：完成 DB 模式取证（Logs/Events/Sessions）；证据与 API 探测 JSON 存于 `docs/memo/assets/2025-10-16/`、`2025-10-17/`。
 
-## 构建与运行
-- 后端（Windows 示例）
-  - 构建：`tools/build_with_vcvars.cmd`
-  - 运行：`video-analyzer/build-ninja/bin/VideoAnalyzer.exe D:\Projects\ai\cv\video-analyzer\config`
-  - 依赖 DLL：`mysqlcppconn-10-vs14.dll`、`libcrypto-3-x64.dll`、`libssl-3-x64.dll`（已复制到 `bin/`）
-- 前端
-  - 运行：`cd web-front && npm ci && npm run dev`（默认代理 `/api` 到 `http://127.0.0.1:8082`）
+## 已知问题/注意事项
+- 偶发 Vite 预览陈旧切片 404 → 使用前端预览重启脚本并强刷。
+- Windows 链接期占用（LNK1104）→ 重启/停止 EXE 再构建。
+- SSE 未启用时控制台报错属预期；DB 视图不受影响。
+- 配置目录需与运行二进制一致（`build-ninja/bin/config`）。
 
-## 种子数据（已写入）
-- graphs：`analyzer_multistage_example|_kpt|_roi_cls`（file_path 指向仓库相对路径）
-- models：`det:yolo:v12l/v12x/v8n`，`seg:yolo:v12s_seg/v8s_seg`
-- sources：`cam_01`（rtsp://127.0.0.1:8554/camera_01）及历史测试源（如 `cam_03/cam_fail/...`）
-- 验证脚本：`mysqlsh` 已用于连通性与数据回读校验
-
-## API 使用示例
-- Sessions
-  - `GET /api/sessions?stream_id=cam_01&pipeline=det_720p&limit=50`
-  - `GET /api/sessions/watch?stream_id=cam_01&pipeline=det_720p&timeout_ms=12000&interval_ms=300`
-- Logs/Events（过滤+时间窗口）
-  - `GET /api/logs?pipeline=det_720p&stream_id=cam_01&from_ts=<ms>&to_ts=<ms>&limit=100`
-  - `GET /api/events/recent?pipeline=det_720p&level=info&from_ts=<ms>&limit=50`
-- 保留策略（手动清理）
-  - `POST /api/db/retention/purge { "events_seconds": 86400, "logs_seconds": 86400 }`
-
-## 验证记录
-- mysqlsh：连通与数据查询（`SELECT COUNT(*) FROM events/logs/sessions;`、最近 N 条抽样）
-- REST 自测：订阅/取消触发 DB 落库；`/api/sessions`/`/api/events`/`/api/logs` 回读正常
-- 前端（Playwright MCP）：
-  - 打开 `#/observability/sessions`，会话列表显示与自动刷新正常
-
-## 后续计划
-- P1 继续：
-  - 将 `EventRepo/LogRepo` 统一切换为通过 `DbPool::acquire()` 获取连接；完成后做一次全量回归
-  - Sessions 页增强：分页、时间窗过滤、高亮 Running/Failed；表格导出
-  - 保留策略：支持配置化的定时清理（定期触发 purge；默认关闭）
-- P2 展望：
-  - 更完善的连接池（借助队列/条件变量，实现阻塞式等待、池内健康检查、统计指标）
-  - 端到端观测指标：写库 QPS、失败计数、队列长度、purge 用时（Prometheus）
-
----
-以上内容覆盖至本文件，后续迭代完成后将持续在此同步最新上下文。
+## 近期优先事项
+1) 修复并运行 `tools/win/db_bench_index.ps1`（变量插值 `$User@${Host}:$Port` 与引号），产出“批量插入 + 查询耗时” JSON 证据。
+2) 生成并维护 `docs/context/ROADMAP.md`（≤800 词），与 CONTEXT 事实保持一致。
+3) Playwright 追加多值过滤（node/stream_id CSV）与分页取证，保存证据。
+4) Metrics 页完善阈值高亮与异常导出核验；必要时扩展短窗口采样方案。
 

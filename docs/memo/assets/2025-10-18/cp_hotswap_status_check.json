@@ -1,0 +1,37 @@
+{
+  "hotswap_missing_all": {
+    "status": 400,
+    "body": {
+      "code": "INVALID_ARG",
+      "message": "Missing pipeline_name",
+      "success": false
+    }
+  },
+  "hotswap_missing_node": {
+    "status": 400,
+    "body": {
+      "code": "INVALID_ARG",
+      "message": "Missing node",
+      "success": false
+    }
+  },
+  "hotswap_missing_model_uri": {
+    "status": 400,
+    "body": {
+      "code": "INVALID_ARG",
+      "message": "Missing model_uri",
+      "success": false
+    }
+  },
+  "status_not_found": {
+    "status": 200,
+    "body": {
+      "code": "OK",
+      "data": {
+        "phase": "NotFound"
+      },
+      "name": "__not_exists__",
+      "success": true
+    }
+  }
+}

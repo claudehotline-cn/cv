@@ -15,6 +15,8 @@
 #include "storage/event_repo.hpp"
 #include "storage/session_repo.hpp"
 
+#include "control_plane_embedded/controllers/pipeline_controller.hpp"
+
 #include <json/json.h>
 #include "core/error_codes.hpp"
 #include <yaml-cpp/yaml.h>
@@ -898,6 +900,32 @@ struct RestServer::Impl {
     std::atomic<std::uint64_t> retention_failures_total{0};
     std::atomic<std::uint64_t> retention_last_ms{0};
 
+    // Control-plane request metrics (op: apply/apply_batch/hotswap/drain/remove)
+    std::mutex cp_mu;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>> cp_totals_by_code; // op -> code -> total
+    std::unordered_map<std::string, std::vector<std::uint64_t>> cp_hist_buckets; // op -> buckets
+    std::unordered_map<std::string, double> cp_hist_sum; // seconds sum per op
+    std::unordered_map<std::string, std::uint64_t> cp_hist_count;
+    const std::vector<double> cp_bounds {0.005,0.01,0.025,0.05,0.1,0.25,0.5,1.0,2.5,5.0,10.0};
+
+    void recordCpMetric(const std::string& op, int http_status, const std::chrono::steady_clock::time_point& t0) {
+        auto t1 = std::chrono::steady_clock::now();
+        double sec = std::chrono::duration<double>(t1 - t0).count();
+        const char* code = va::core::errors::to_string(va::core::errors::from_http_status(http_status));
+        std::lock_guard<std::mutex> lk(cp_mu);
+        // totals
+        cp_totals_by_code[op][code] += 1;
+        // histogram
+        auto& buckets = cp_hist_buckets[op];
+        if (buckets.size() != cp_bounds.size()) buckets.assign(cp_bounds.size(), 0ULL);
+        for (size_t i=0;i<cp_bounds.size();++i) {
+            if (sec <= cp_bounds[i]) { buckets[i] += 1; break; }
+            if (i == cp_bounds.size()-1) { buckets[i] += 1; }
+        }
+        cp_hist_sum[op] += sec;
+        cp_hist_count[op] += 1;
+    }
+
     static std::uint64_t now_ms() {
         using namespace std::chrono;
         return static_cast<std::uint64_t>(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
@@ -1076,6 +1104,7 @@ struct RestServer::Impl {
         // Control-plane (embedded): ApplyPipeline / ApplyPipelines via REST
         auto cpApplyHandler = [this](const HttpRequest& req) { return handleCpApply(req); };
         auto cpApplyBatchHandler = [this](const HttpRequest& req) { return handleCpApplyBatch(req); };
+        auto cpHotSwapHandler = [this](const HttpRequest& req) { return handleCpHotSwap(req); };
         auto cpRemoveHandler = [this](const HttpRequest& req) { return handleCpRemove(req); };
         auto cpStatusHandler = [this](const HttpRequest& req) { return handleCpStatus(req); };
         auto cpDrainHandler  = [this](const HttpRequest& req) { return handleCpDrain(req); };
@@ -1108,11 +1137,38 @@ struct RestServer::Impl {
         server.addRoute("POST", "/api/preflight", preflightHandler);
         server.addRoute("POST", "/api/graph/set", graphSwitchHandler);
         // Control-plane mapping
-        server.addRoute("POST", "/api/control/apply_pipeline", cpApplyHandler);
-        server.addRoute("POST", "/api/control/apply_pipelines", cpApplyBatchHandler);
-        server.addRoute("DELETE", "/api/control/pipeline", cpRemoveHandler);
+        // CP routes with metrics wrapping
+        server.addRoute("POST", "/api/control/apply_pipeline", [this, cpApplyHandler](const HttpRequest& req){
+            auto t0 = std::chrono::steady_clock::now();
+            auto resp = cpApplyHandler(req);
+            recordCpMetric("apply", resp.status_code, t0);
+            return resp;
+        });
+        server.addRoute("POST", "/api/control/apply_pipelines", [this, cpApplyBatchHandler](const HttpRequest& req){
+            auto t0 = std::chrono::steady_clock::now();
+            auto resp = cpApplyBatchHandler(req);
+            recordCpMetric("apply_batch", resp.status_code, t0);
+            return resp;
+        });
+        server.addRoute("POST", "/api/control/hotswap", [this, cpHotSwapHandler](const HttpRequest& req){
+            auto t0 = std::chrono::steady_clock::now();
+            auto resp = cpHotSwapHandler(req);
+            recordCpMetric("hotswap", resp.status_code, t0);
+            return resp;
+        });
+        server.addRoute("DELETE", "/api/control/pipeline", [this, cpRemoveHandler](const HttpRequest& req){
+            auto t0 = std::chrono::steady_clock::now();
+            auto resp = cpRemoveHandler(req);
+            recordCpMetric("remove", resp.status_code, t0);
+            return resp;
+        });
         server.addRoute("GET", "/api/control/status", cpStatusHandler);
-        server.addRoute("POST", "/api/control/drain", cpDrainHandler);
+        server.addRoute("POST", "/api/control/drain", [this, cpDrainHandler](const HttpRequest& req){
+            auto t0 = std::chrono::steady_clock::now();
+            auto resp = cpDrainHandler(req);
+            recordCpMetric("drain", resp.status_code, t0);
+            return resp;
+        });
 
         // Logging config: runtime set
         auto loggingSetHandler = [this](const HttpRequest& req) { return handleLoggingSet(req); };
@@ -1200,32 +1256,30 @@ struct RestServer::Impl {
 
     HttpResponse handleCpApply(const HttpRequest& req) {
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+        // parse
+        Json::Value body(Json::objectValue);
+        try { body = parseJson(req.body); }
+        catch (const std::exception& ex) { return errorResponse(std::string("parse: ") + ex.what(), 400); }
+        // build spec (avoid isMember; prefer operator[] checks)
+        va::control::PlainPipelineSpec spec;
         try {
-            Json::Value body = parseJson(req.body);
-            if (!body.isMember("pipeline_name") || !body["pipeline_name"].isString()) {
-                return errorResponse("Missing required field: pipeline_name", 400);
-            }
-            va::control::PlainPipelineSpec spec;
-            spec.name = body["pipeline_name"].asString();
-            if (body.isMember("revision") && body["revision"].isString()) spec.revision = body["revision"].asString();
-            if (body.isMember("graph_id") && body["graph_id"].isString()) spec.graph_id = body["graph_id"].asString();
-            if (body.isMember("yaml_path") && body["yaml_path"].isString()) spec.yaml_path = body["yaml_path"].asString();
-            if (body.isMember("template_id") && body["template_id"].isString()) spec.template_id = body["template_id"].asString();
-            if (body.isMember("project") && body["project"].isString()) spec.project = body["project"].asString();
-            if (body.isMember("tags") && body["tags"].isArray()) {
-                for (const auto& t : body["tags"]) if (t.isString()) spec.tags.push_back(t.asString());
-            }
-            if (body.isMember("overrides") && body["overrides"].isObject()) {
-                for (const auto& k : body["overrides"].getMemberNames()) {
-                    spec.overrides[k] = body["overrides"][k].asString();
-                }
-            }
-            // Require at least one of graph_id/yaml_path/template_id
-            if (spec.graph_id.empty() && spec.yaml_path.empty() && spec.template_id.empty()) {
-                return errorResponse("Missing graph_id/yaml_path/template_id", 400);
-            }
-            // Build warnings for unknown override keys (best-effort static check)
-            std::vector<std::string> warn_keys;
+            if (!body.isObject()) return errorResponse("Invalid JSON: object required", 400);
+            const auto& jn = body["pipeline_name"]; if (!jn.isString()) return errorResponse("Missing required field: pipeline_name", 400); spec.name = jn.asString();
+            const auto& jrev = body["revision"];    if (jrev.isString())      spec.revision  = jrev.asString();
+            const auto& jgid = body["graph_id"];    if (jgid.isString())      spec.graph_id  = jgid.asString();
+            const auto& jyml = body["yaml_path"];   if (jyml.isString())      spec.yaml_path = jyml.asString();
+            const auto& jtpl = body["template_id"]; if (jtpl.isString())      spec.template_id = jtpl.asString();
+            const auto& jprj = body["project"];     if (jprj.isString())      spec.project   = jprj.asString();
+            const auto& jtags= body["tags"];        if (jtags.isArray())      { for (const auto& t : jtags) if (t.isString()) spec.tags.push_back(t.asString()); }
+            const auto& jov  = body["overrides"];   if (jov.isObject())       { for (const auto& k : jov.getMemberNames()) spec.overrides[k] = jov[k].asString(); }
+        } catch (const std::exception& ex) { return errorResponse(std::string("validate: ") + ex.what(), 400); }
+        // Require at least one of graph_id/yaml_path/template_id
+        if (spec.graph_id.empty() && spec.yaml_path.empty() && spec.template_id.empty()) {
+            return errorResponse("Missing graph_id/yaml_path/template_id", 400);
+        }
+        // Build warnings for unknown override keys (best-effort)
+        std::vector<std::string> warn_keys;
+        try {
             for (const auto& kv : spec.overrides) {
                 const std::string& k = kv.first;
                 auto has_prefix = [&](const char* p){ return k.rfind(p, 0) == 0; };
@@ -1236,6 +1290,9 @@ struct RestServer::Impl {
                 }
                 warn_keys.push_back(k);
             }
+        } catch (...) { /* ignore warnings build errors */ }
+        // controller
+        try {
             std::string err;
             bool ok = app.applyPipeline(spec, &err);
             if (!ok) return errorResponse(err.empty()? "apply failed" : err, 409);
@@ -1246,9 +1303,7 @@ struct RestServer::Impl {
             emitEvent("info", "apply_pipeline", spec.name, "control", std::string(), std::string("apply ") + spec.name);
             emitLog("info", spec.name, "control", std::string(), "apply_pipeline accepted");
             return jsonResponse(payload, 200);
-        } catch (const std::exception& ex) {
-            return errorResponse(std::string("exception: ") + ex.what(), 500);
-        }
+        } catch (const std::exception& ex) { return errorResponse(std::string("apply: ") + ex.what(), 500); }
 #else
         return errorResponse("control-plane disabled", 503);
 #endif
@@ -1291,6 +1346,42 @@ struct RestServer::Impl {
         } catch (const std::exception& ex) {
             return errorResponse(std::string("exception: ") + ex.what(), 500);
         }
+#else
+        return errorResponse("control-plane disabled", 503);
+#endif
+    }
+
+    HttpResponse handleCpHotSwap(const HttpRequest& req) {
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+        // parse
+        Json::Value body(Json::objectValue);
+        try { body = parseJson(req.body); }
+        catch (const std::exception& ex) { return errorResponse(std::string("parse: ") + ex.what(), 400); }
+        // validate (avoid isMember; use operator[] nullValue semantics)
+        std::string name, node, uri;
+        try {
+            if (!body.isObject()) return errorResponse("Invalid JSON: object required", 400);
+            const auto& jn = body["pipeline_name"]; if (!jn.isString()) return errorResponse("Missing pipeline_name", 400); name = jn.asString();
+            const auto& jnode = body["node"]; if (!jnode.isString()) return errorResponse("Missing node", 400); node = jnode.asString();
+            const auto& juri = body["model_uri"]; if (!juri.isString()) return errorResponse("Missing model_uri", 400); uri = juri.asString();
+        } catch (const std::exception& ex) { return errorResponse(std::string("validate: ") + ex.what(), 400); }
+        // controller
+        try {
+            auto ctl = app.pipelineController();
+            if (!ctl) return errorResponse("control-plane disabled", 503);
+            auto st = ctl->HotSwapModel(name, node, uri);
+            if (!st.ok()) {
+                int code = 409;
+                if (st.message().rfind("invalid:", 0) == 0) code = 400;
+                else if (st.message().rfind("not_found:", 0) == 0) code = 404;
+                else if (st.message().rfind("internal:", 0) == 0) code = 500;
+                return errorResponse(st.message(), code);
+            }
+        } catch (const std::exception& ex) { return errorResponse(std::string("hotswap: ") + ex.what(), 500); }
+        // serialize
+        try {
+            Json::Value ok = successPayload(); ok["hotswapped"] = true; ok["name"] = name; ok["node"] = node; return jsonResponse(ok, 200);
+        } catch (const std::exception& ex) { return errorResponse(std::string("serialize: ") + ex.what(), 500); }
 #else
         return errorResponse("control-plane disabled", 503);
 #endif
@@ -1861,6 +1952,39 @@ struct RestServer::Impl {
                 mb.sample("va_nvdec_await_idr_total", ls.str(), row.await_idr);
             }
 
+            // Control-plane request metrics (from registry)
+            mb.header("va_cp_requests_total", "counter", "Control-plane requests total by op/code");
+            {
+                std::lock_guard<std::mutex> lk(cp_mu);
+                for (const auto& kv : cp_totals_by_code) {
+                    const std::string& op = kv.first;
+                    for (const auto& kv2 : kv.second) {
+                        std::ostringstream ls; ls << "{op=\"" << op << "\",code=\"" << kv2.first << "\"}";
+                        mb.sample("va_cp_requests_total", ls.str(), static_cast<unsigned long long>(kv2.second));
+                    }
+                }
+                // Histogram: duration seconds per op
+                mb.header("va_cp_request_duration_seconds", "histogram", "Control-plane request duration (s)");
+                for (const auto& kvh : cp_hist_buckets) {
+                    const std::string& op = kvh.first;
+                    double sum = cp_hist_sum.count(op)? cp_hist_sum.at(op) : 0.0;
+                    unsigned long long cnt = cp_hist_count.count(op)? cp_hist_count.at(op) : 0ULL;
+                    // cumulative buckets
+                    unsigned long long acc = 0ULL;
+                    for (size_t i=0;i<cp_bounds.size();++i) {
+                        acc += kvh.second[i];
+                        std::ostringstream ls; ls << "{op=\""<<op<<"\",le=\""<<cp_bounds[i]<<"\"}";
+                        mb.sample("va_cp_request_duration_seconds_bucket", ls.str(), acc);
+                    }
+                    // +Inf bucket
+                    std::ostringstream lsi; lsi << "{op=\""<<op<<"\",le=\"+Inf\"}"; mb.sample("va_cp_request_duration_seconds_bucket", lsi.str(), cnt);
+                    // _sum and _count
+                    std::ostringstream lsn; lsn << "{op=\""<<op<<"\"}";
+                    mb.sample("va_cp_request_duration_seconds_sum", lsn.str(), sum);
+                    mb.sample("va_cp_request_duration_seconds_count", lsn.str(), cnt);
+                }
+            }
+
             HttpResponse resp;
             resp.status_code = 200;
             resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8";
@@ -2160,6 +2284,35 @@ struct RestServer::Impl {
                 unsigned long long in_use = 0ULL;
                 if (st.created >= st.idle) in_use = static_cast<unsigned long long>(st.created - st.idle);
                 out << "va_db_pool_in_use " << in_use << "\n";
+            }
+        }
+
+        // Control-plane request metrics (plain text)
+        {
+            std::lock_guard<std::mutex> lk(cp_mu);
+            out << "# HELP va_cp_requests_total Control-plane requests total by op/code\n";
+            out << "# TYPE va_cp_requests_total counter\n";
+            for (const auto& kv : cp_totals_by_code) {
+                const std::string& op = kv.first;
+                for (const auto& kv2 : kv.second) {
+                    out << "va_cp_requests_total{op=\"" << op << "\",code=\"" << kv2.first << "\"} "
+                        << static_cast<unsigned long long>(kv2.second) << "\n";
+                }
+            }
+            out << "# HELP va_cp_request_duration_seconds Control-plane request duration (s)\n";
+            out << "# TYPE va_cp_request_duration_seconds histogram\n";
+            for (const auto& kvh : cp_hist_buckets) {
+                const std::string& op = kvh.first;
+                double sum = cp_hist_sum.count(op)? cp_hist_sum.at(op) : 0.0;
+                unsigned long long cnt = cp_hist_count.count(op)? cp_hist_count.at(op) : 0ULL;
+                unsigned long long acc = 0ULL;
+                for (size_t i=0;i<cp_bounds.size();++i) {
+                    acc += kvh.second[i];
+                    out << "va_cp_request_duration_seconds_bucket{op=\""<<op<<"\",le=\""<<cp_bounds[i]<<"\"} "<< acc << "\n";
+                }
+                out << "va_cp_request_duration_seconds_bucket{op=\""<<op<<"\",le=\"+Inf\"} "<< cnt << "\n";
+                out << "va_cp_request_duration_seconds_sum{op=\""<<op<<"\"} "<< sum << "\n";
+                out << "va_cp_request_duration_seconds_count{op=\""<<op<<"\"} "<< cnt << "\n";
             }
         }
 

@@ -161,4 +161,16 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
     return true;
 }
 
+bool NodeModel::hotSwapModel(const std::string& new_model_path, NodeContext& ctx) {
+    if (new_model_path.empty()) return false;
+    if (new_model_path == model_path_ && session_) {
+        // No-op if same path and session exists
+        return true;
+    }
+    // Close existing by resetting session_
+    session_.reset();
+    model_path_ = new_model_path;
+    return open(ctx);
+}
+
 } } } // namespace
