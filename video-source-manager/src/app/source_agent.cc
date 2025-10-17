@@ -7,6 +7,7 @@
 #include <sstream>
 #include <algorithm>
 #include <string>
+#include <chrono>
 #include <regex>
 #ifdef _WIN32
 #  include <winsock2.h>
@@ -107,7 +108,67 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
   metrics_->Start();
   // REST server
   int rest_port = 7071; if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v=std::stoi(p); if (v>0 && v<65536) rest_port = v; } catch(...){} }
-  auto handler = [this](const std::string& method, const std::string& path,
+  // Minimal HTTP client helpers to talk to VA REST
+  auto http_call = [](const std::string& host, int port, const std::string& method,
+                      const std::string& path, const std::string& body,
+                      int timeout_ms, int* out_status, std::string* out_body) -> bool {
+#ifdef _WIN32
+    SOCKET s = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) return false;
+    int tv = timeout_ms; ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#else
+    int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return false;
+    struct timeval tv; tv.tv_sec = timeout_ms/1000; tv.tv_usec = (timeout_ms%1000)*1000; ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+    sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_port = htons((uint16_t)port);
+    addr.sin_addr.s_addr = inet_addr(host.c_str());
+    if (addr.sin_addr.s_addr == INADDR_NONE) { /* no DNS here */ }
+    if (::connect(s, (sockaddr*)&addr, sizeof(addr)) < 0) {
+#ifdef _WIN32
+      ::closesocket(s);
+#else
+      ::close(s);
+#endif
+      return false;
+    }
+    std::ostringstream req;
+    std::string h = host;
+    req << method << " " << path << " HTTP/1.1\r\n";
+    req << "Host: " << h << "\r\n";
+    if (!body.empty()) req << "Content-Type: application/json; charset=utf-8\r\n";
+    req << "Connection: close\r\n";
+    if (!body.empty()) req << "Content-Length: " << body.size() << "\r\n";
+    req << "\r\n";
+    if (!body.empty()) req << body;
+    std::string data = req.str();
+#ifdef _WIN32
+    ::send(s, data.c_str(), (int)data.size(), 0);
+#else
+    ::send(s, data.c_str(), data.size(), 0);
+#endif
+    std::string resp; char buf[4096];
+    for(;;){
+#ifdef _WIN32
+      int n = ::recv(s, buf, sizeof(buf), 0);
+      if (n<=0) break; resp.append(buf, buf+n);
+#else
+      ssize_t n = ::recv(s, buf, sizeof(buf), 0);
+      if (n<=0) break; resp.append(buf, buf+n);
+#endif
+    }
+    
+#ifdef _WIN32
+    ::closesocket(s);
+#else
+    ::close(s);
+#endif
+    // parse status
+    int st = 0; size_t sp1 = resp.find(' '); if (sp1 != std::string::npos) { size_t sp2 = resp.find(' ', sp1+1); if (sp2!=std::string::npos) { try { st = std::stoi(resp.substr(sp1+1, sp2-sp1-1)); } catch(...){} } }
+    size_t psep = resp.find("\r\n\r\n"); std::string body_out; if (psep!=std::string::npos) body_out = resp.substr(psep+4);
+    if (out_status) *out_status = st; if (out_body) *out_body = body_out; return st>0;
+  };
+  auto handler = [this, http_call](const std::string& method, const std::string& path,
                         const std::unordered_map<std::string,std::string>& query,
                         const std::unordered_map<std::string,std::string>& headers,
                         const std::string& body, int* status, std::string* ctype) -> std::string {
@@ -154,6 +215,39 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
         <<",\"pix_fmt\":\""<<vsm::rest::jsonEscape(st.pix_fmt)
         <<"\",\"color_space\":\""<<vsm::rest::jsonEscape(st.color_space)<<"\"}}"; 
       return ok(o.str());
+    }
+    // Orchestration: Attach + VA Apply
+    if (method=="POST" && path=="/api/orch/attach_apply") {
+      auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
+      std::string id = get("id"), uri = get("uri");
+      std::string pipeline = get("pipeline_name"), yaml = get("yaml_path"), gid = get("graph_id"), tpl = get("template_id");
+      if (id.empty()||uri.empty()||pipeline.empty()|| (yaml.empty() && gid.empty() && tpl.empty())) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id/uri/pipeline_name or graph/yaml/template");
+      // Attach locally
+      std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
+      std::string e; if (!controller_->Attach(id, uri, "", opt, &e)) return err(vsm::errors::map_message(e), std::string("attach failed: ")+e);
+      // Apply on VA
+      std::string host = (std::getenv("VA_REST_HOST")? std::getenv("VA_REST_HOST") : "127.0.0.1");
+      int va_port = 8082; if (const char* p = std::getenv("VA_REST_PORT")) { try { int v=std::stoi(p); if (v>0&&v<65536) va_port=v; } catch(...){} }
+      std::ostringstream pay; pay << "{\"pipeline_name\":\""<< vsm::rest::jsonEscape(pipeline) <<"\"";
+      if (!yaml.empty()) pay << ",\"yaml_path\":\""<< vsm::rest::jsonEscape(yaml) <<"\"";
+      if (!gid.empty()) pay << ",\"graph_id\":\""<< vsm::rest::jsonEscape(gid) <<"\"";
+      if (!tpl.empty()) pay << ",\"template_id\":\""<< vsm::rest::jsonEscape(tpl) <<"\"";
+      pay << "}";
+      int st=0; std::string resp; bool okc = http_call(host, va_port, "POST", "/api/control/apply_pipeline", pay.str(), 5000, &st, &resp);
+      if (!okc || st != 200) return err(vsm::errors::map_message("apply failed"), std::string("va apply failed status=")+std::to_string(st));
+      return ok("{}");
+    }
+    // Orchestration: Detach + VA Remove
+    if (method=="POST" && path=="/api/orch/detach_remove") {
+      auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
+      std::string id = get("id"), pipeline = get("pipeline_name"); if (id.empty()||pipeline.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id/pipeline_name");
+      std::string e; if (!controller_->Detach(id, &e)) return err(vsm::errors::map_message(e), std::string("detach failed: ")+e);
+      std::string host = (std::getenv("VA_REST_HOST")? std::getenv("VA_REST_HOST") : "127.0.0.1");
+      int va_port = 8082; if (const char* p = std::getenv("VA_REST_PORT")) { try { int v=std::stoi(p); if (v>0&&v<65536) va_port=v; } catch(...){} }
+      std::ostringstream pathq; pathq << "/api/control/pipeline?name=" << pipeline;
+      int st=0; std::string resp; bool okc = http_call(host, va_port, "DELETE", pathq.str(), std::string(), 5000, &st, &resp);
+      if (!okc || st != 200) return err(vsm::errors::map_message("remove failed"), std::string("va remove failed status=")+std::to_string(st));
+      return ok("{}");
     }
     if (method=="POST" && path=="/api/source/add") {
       auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
