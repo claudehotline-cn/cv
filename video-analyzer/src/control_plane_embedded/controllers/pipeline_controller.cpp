@@ -93,6 +93,20 @@ Status PipelineController::Drain(const std::string& name, int timeout_sec) {
     it->second.last_drain_blocked_nodes.clear();
     // best-effort parse of reason
     it->second.last_drain_reason = st.ok() ? std::string() : st.message();
+    // Pull drain_probe from executor status if present
+    try {
+        std::string inner = it->second.executor->CollectStatusJson();
+        Json::CharReaderBuilder b; std::string errs; std::istringstream is(inner); Json::Value tmp;
+        if (Json::parseFromStream(b, is, &tmp, &errs)) {
+            if (tmp.isObject() && tmp.isMember("drain_probe") && tmp["drain_probe"].isObject()) {
+                const auto& dp = tmp["drain_probe"];
+                if (dp.isMember("blocked_nodes") && dp["blocked_nodes"].isArray()) {
+                    for (const auto& n : dp["blocked_nodes"]) if (n.isString()) it->second.last_drain_blocked_nodes.push_back(n.asString());
+                }
+                if (dp.isMember("reason") && dp["reason"].isString() && it->second.last_drain_reason.empty()) it->second.last_drain_reason = dp["reason"].asString();
+            }
+        }
+    } catch (...) { /* ignore */ }
     return st;
 }
 

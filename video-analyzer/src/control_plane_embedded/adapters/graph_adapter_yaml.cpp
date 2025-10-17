@@ -15,6 +15,7 @@
 #include "core/logger.hpp"
 #include "core/engine_manager.hpp"
 #include <filesystem>
+#include "core/global_metrics.hpp"
 
 namespace va { namespace control {
 
@@ -189,7 +190,20 @@ public:
         g_->close_all(ctx);
         opened_ = false;
     }
-    Status Drain(int /*timeout_sec*/) override { return Status::OK(); }
+    Status Drain(int /*timeout_sec*/) override {
+        try {
+            auto gm_before = va::core::GlobalMetrics::snapshot();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            auto gm_after = va::core::GlobalMetrics::snapshot();
+            last_blocked_nodes_.clear();
+            last_drain_reason_.clear();
+            if (gm_after.eagain_retry_count > gm_before.eagain_retry_count) {
+                last_blocked_nodes_.push_back("encoder");
+                last_drain_reason_ = "encoder_backpressure";
+            }
+        } catch (...) { /* ignore */ }
+        return Status::OK();
+    }
     Status HotSwapModel(const std::string& node, const std::string& uri) override {
         // Resolve node by name and replace underlying model session if node is NodeModel
         try {
@@ -252,6 +266,14 @@ public:
                 });
                 o << "]";
             }
+            // Drain probe (if any)
+            if (!last_blocked_nodes_.empty() || !last_drain_reason_.empty()) {
+                o << ",\"drain_probe\":{\"blocked_nodes\":[";
+                for (size_t i=0;i<last_blocked_nodes_.size();++i) { if(i) o<<","; o<<"\""<< last_blocked_nodes_[i] <<"\""; }
+                o << "]";
+                if (!last_drain_reason_.empty()) o << ",\"reason\":\"" << last_drain_reason_ << "\"";
+                o << "}";
+            }
             o << "}";
             return o.str();
         } catch (...) { return "{\"phase\":\"Ready\"}"; }
@@ -261,6 +283,8 @@ private:
     va::core::EngineManager* em_ {nullptr};
     bool opened_ {false};
     std::unordered_map<std::string,std::string> overrides_;
+    std::vector<std::string> last_blocked_nodes_;
+    std::string last_drain_reason_;
 };
 
 std::unique_ptr<IExecutor> GraphAdapterYaml::CreateExecutor(void* graph, std::string* /*err*/) {
