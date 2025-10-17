@@ -193,7 +193,21 @@ public:
     Status HotSwapModel(const std::string& /*node*/, const std::string& /*uri*/) override {
         return Status::Internal("HotSwapModel not implemented in SimpleExecutor");
     }
-    std::string CollectStatusJson() override { return "{\"phase\":\"Ready\"}"; }
+    std::string CollectStatusJson() override {
+        // Report minimal runtime plus applied override keys for diagnosis
+        try {
+            std::ostringstream o;
+            o << "{\"phase\":\"Ready\"";
+            if (!overrides_.empty()) {
+                o << ",\"overrides_keys\":[";
+                bool first=true;
+                for (const auto& kv : overrides_) { if(!first) o<<","; first=false; o<<"\""<<kv.first<<"\""; }
+                o << "]";
+            }
+            o << "}";
+            return o.str();
+        } catch (...) { return "{\"phase\":\"Ready\"}"; }
+    }
 private:
     Graph* g_ {nullptr};
     va::core::EngineManager* em_ {nullptr};

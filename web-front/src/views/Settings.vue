@@ -43,9 +43,13 @@
           <div class="card-header">
             <div>
               <div class="title">Apply Pipeline</div>
-              <div class="subtitle">POST /pipelines:apply</div>
+              <div class="subtitle">POST /api/control/apply_pipeline</div>
             </div>
             <el-space>
+              <el-select v-model="exampleKey" placeholder="选择示例" size="small" style="width: 180px" @change="onPickExample">
+                <el-option label="single_apply" value="single_apply" />
+                <el-option label="batch_apply" value="batch_apply" />
+              </el-select>
               <el-button text size="small" @click="loadExample">示例</el-button>
               <el-button type="primary" size="small" @click="applyPipeline" :loading="loading">单个 Apply</el-button>
               <el-button size="small" @click="applyPipelines" :loading="loading">批量 Apply</el-button>
@@ -61,13 +65,20 @@
         <div class="helper">
           <el-link type="primary" href="/docs/examples/rest_apply_overrides.md" target="_blank">查看后端示例文档</el-link>
         </div>
+        <el-alert v-if="warnings.length"
+          type="warning"
+          :closable="true"
+          show-icon
+          title="后端返回的未识别 overrides 键"
+          :description="warnings.join(', ')"
+          style="margin-top:8px"/>
       </el-card>
     </el-col>
   </el-row>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { setEngine, applyPipeline as cpApply, applyPipelines as cpApplyBatch } from '@/api/cp'
 
@@ -86,7 +97,7 @@ async function apply(){
   loading.value = true
   try {
     await setEngine(engine.value as any)
-    ElMessage.success('引擎参数已更新')
+    ElMessage.success('配置已更新')
   } catch (e:any) {
     ElMessage.error(e?.message || '更新失败')
   } finally {
@@ -95,12 +106,31 @@ async function apply(){
 }
 
 const applyJson = ref('')
+const exampleKey = ref('')
+const warnings = ref<string[]>([])
+let examples: Record<string, any> | null = null
+
+async function loadExamples(){
+  try {
+    const r = await fetch('/examples/overrides_examples.json')
+    if (r.ok) examples = await r.json()
+  } catch { /* ignore */ }
+}
+
+function onPickExample(){
+  if (!examples || !exampleKey.value) return
+  const obj = (examples as any)[exampleKey.value]
+  if (obj) applyJson.value = JSON.stringify(obj, null, 2)
+}
 
 async function applyPipeline(){
-  if(!applyJson.value) { ElMessage.info('请先粘贴 Pipeline JSON'); return }
+  if(!applyJson.value) { ElMessage.info('请粘贴 Pipeline JSON'); return }
   loading.value = true
   try {
-    await cpApply(JSON.parse(applyJson.value))
+    warnings.value = []
+    const resp: any = await cpApply(JSON.parse(applyJson.value))
+    const ws = resp?.warnings || resp?.data?.warnings || []
+    if (Array.isArray(ws) && ws.length) warnings.value = ws
     ElMessage.success('已提交单个 Pipeline Apply')
   } catch (e:any) {
     ElMessage.error(e?.message || 'Apply 失败')
@@ -110,12 +140,12 @@ async function applyPipeline(){
 }
 
 async function applyPipelines(){
-  if(!applyJson.value) { ElMessage.info('请先粘贴 Pipeline JSON'); return }
+  if(!applyJson.value) { ElMessage.info('请粘贴 Pipeline JSON'); return }
   loading.value = true
   try {
     const obj = JSON.parse(applyJson.value)
     const items = obj.items ? obj.items : [obj.single_apply || obj]
-    await cpApplyBatch(items)
+    const resp: any = await cpApplyBatch(items)
     ElMessage.success(`已提交 ${items.length} 个 Pipeline Apply`)
   } catch (e:any) {
     ElMessage.error(e?.message || '批量 Apply 失败')
@@ -137,6 +167,8 @@ function loadExample(){
   ]
 }`
 }
+
+onMounted(() => { loadExamples() })
 </script>
 
 <style scoped>
