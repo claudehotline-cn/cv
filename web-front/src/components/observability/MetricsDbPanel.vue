@@ -39,11 +39,11 @@
         <div class="v">{{ last('retention_failures_total') }}</div>
       </div>
       <div class="card">
-        <div class="k">Writer Queue (logs)</div>
+        <div class="k">Writer Queue (logs) <span class="hint">warn≥{{ warnThreshold }} / danger≥{{ dangerThreshold }}</span></div>
         <div class="v">{{ last('log_writer_queue') }}</div>
       </div>
       <div class="card">
-        <div class="k">Writer Queue (events)</div>
+        <div class="k">Writer Queue (events) <span class="hint">warn≥{{ warnThreshold }} / danger≥{{ dangerThreshold }}</span></div>
         <div class="v">{{ last('event_writer_queue') }}</div>
       </div>
     </div>
@@ -63,6 +63,8 @@ function apiBase(){ const b = ((import.meta as any).env?.VITE_API_BASE) || '/'; 
 const pollMs = ref(5000)
 const win = ref<number>(120000)
 const errorMsg = ref('')
+const warnThreshold = Number((import.meta as any).env?.VITE_WRITER_WARN) || 100
+const dangerThreshold = Number((import.meta as any).env?.VITE_WRITER_DANGER) || 1000
 
 type SeriesMap = Record<string, { t: number, v: number }[]>
 const series = ref<SeriesMap>({})
@@ -202,6 +204,7 @@ const option = computed(()=>{
 .cards{ display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom: 8px }
 .card{ background: rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:8px; padding:10px }
 .k{ font-size:12px; color: var(--va-text-2) }
+.k .hint{ margin-left:6px; color: var(--va-text-3, #9aa4af); font-weight: normal; font-size: 11px }
 .v{ font-size:20px; font-weight:700 }
 .chart{ height: 280px }
 .w360{ width:360px } .w120{ width:120px }

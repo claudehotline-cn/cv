@@ -20,11 +20,11 @@
         <div class="v">last_ms: {{ valLike('retention_last_ms') }}</div>
       </div>
       <div class="item">
-        <div class="k">Writer Queue (logs)</div>
+        <div class="k">Writer Queue (logs) <span class="hint">warn≥{{ warnThreshold }} / danger≥{{ dangerThreshold }}</span></div>
         <div class="v" :class="levelClass(num('log_writer_queue'))">{{ safe(num('log_writer_queue')) }}</div>
       </div>
       <div class="item">
-        <div class="k">Writer Queue (events)</div>
+        <div class="k">Writer Queue (events) <span class="hint">warn≥{{ warnThreshold }} / danger≥{{ dangerThreshold }}</span></div>
         <div class="v" :class="levelClass(num('event_writer_queue'))">{{ safe(num('event_writer_queue')) }}</div>
       </div>
     </div>
@@ -38,8 +38,8 @@ import { ref, onMounted } from 'vue'
 function apiBase(){ const b = ((import.meta as any).env?.VITE_API_BASE) || '/'; return String(b).replace(/\/$/, '') }
 
 const metrics = ref<Record<string, number>>({})
-const warnThreshold = 100
-const dangerThreshold = 1000
+const warnThreshold = Number((import.meta as any).env?.VITE_WRITER_WARN) || 100
+const dangerThreshold = Number((import.meta as any).env?.VITE_WRITER_DANGER) || 1000
 const errorMsg = ref('')
 
 function parseProm(text: string){
