@@ -16,6 +16,8 @@
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
 #include <grpcpp/grpcpp.h>
 #include "analyzer_control.grpc.pb.h"
+#include "whep_control.grpc.pb.h"
+#include "media/whep_session.hpp"
 #include "pipeline.pb.h"
 #include "core/error_codes.hpp"
 
@@ -320,6 +322,34 @@ private:
     va::app::Application* app_ {nullptr};
 };
 
+class WhepControlServiceImpl final : public va::whep::WhepControl::Service {
+public:
+    ::grpc::Status AddWhepSession(::grpc::ServerContext*, const va::whep::AddWhepSessionRequest* req,
+                                  va::whep::AddWhepSessionReply* resp) override {
+        try {
+            std::string answer, sid; int st = va::media::WhepSessionManager::instance().createSession(req->stream_id(), req->offer_sdp(), answer, sid);
+            if (st == 201) { resp->set_ok(true); resp->set_msg(""); resp->set_session_id(sid); resp->set_answer_sdp(answer); return ::grpc::Status::OK; }
+            resp->set_ok(false); resp->set_msg("create failed"); return ::grpc::Status(::grpc::StatusCode::INTERNAL, resp->msg());
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(ex.what()); return ::grpc::Status(::grpc::StatusCode::INTERNAL, ex.what()); }
+    }
+    ::grpc::Status PatchWhepCandidate(::grpc::ServerContext*, const va::whep::PatchWhepCandidateRequest* req,
+                                      va::whep::PatchWhepCandidateReply* resp) override {
+        try {
+            int st = va::media::WhepSessionManager::instance().patchSession(req->session_id(), req->sdp_frag());
+            resp->set_ok(st==204); if (st!=204) resp->set_msg("patch failed");
+            return st==204? ::grpc::Status::OK : ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, resp->msg());
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(ex.what()); return ::grpc::Status(::grpc::StatusCode::INTERNAL, ex.what()); }
+    }
+    ::grpc::Status DeleteWhepSession(::grpc::ServerContext*, const va::whep::DeleteWhepSessionRequest* req,
+                                     va::whep::DeleteWhepSessionReply* resp) override {
+        try {
+            int st = va::media::WhepSessionManager::instance().deleteSession(req->session_id());
+            resp->set_ok(st==204); if (st!=204) resp->set_msg("not found");
+            return st==204? ::grpc::Status::OK : ::grpc::Status(::grpc::StatusCode::NOT_FOUND, resp->msg());
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(ex.what()); return ::grpc::Status(::grpc::StatusCode::INTERNAL, ex.what()); }
+    }
+};
+
 struct GrpcServerBundle { AnalyzerControlServiceImpl* svc {nullptr}; std::unique_ptr<grpc::Server> server; };
 
 OpaquePtr StartGrpcServer(const std::string& addr, AnalyzerControlService*) {
@@ -328,24 +358,28 @@ OpaquePtr StartGrpcServer(const std::string& addr, AnalyzerControlService*) {
 
 OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl) {
     auto* svc = new AnalyzerControlServiceImpl(ctl, nullptr);
+    auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
     b.AddListeningPort(addr, grpc::InsecureServerCredentials());
     b.RegisterService(svc);
+    b.RegisterService(whep);
     std::unique_ptr<grpc::Server> server = b.BuildAndStart();
-    if (!server) { delete svc; return {}; }
+    if (!server) { delete svc; delete whep; return {}; }
     auto* bundle = new GrpcServerBundle{svc, std::move(server)};
-    return OpaquePtr{bundle, [](void* p){ auto* w = reinterpret_cast<GrpcServerBundle*>(p); if (w){ if (w->server) w->server->Shutdown(); delete w->svc; delete w; } }};
+    return OpaquePtr{bundle, [](void* p){ auto* w = reinterpret_cast<GrpcServerBundle*>(p); if (w){ if (w->server) w->server->Shutdown(); delete w->svc; /*whep owned by server*/ delete w; } }};
 }
 
 OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl, va::app::Application* app) {
     auto* svc = new AnalyzerControlServiceImpl(ctl, app);
+    auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
     b.AddListeningPort(addr, grpc::InsecureServerCredentials());
     b.RegisterService(svc);
+    b.RegisterService(whep);
     std::unique_ptr<grpc::Server> server = b.BuildAndStart();
-    if (!server) { delete svc; return {}; }
+    if (!server) { delete svc; delete whep; return {}; }
     auto* bundle = new GrpcServerBundle{svc, std::move(server)};
-    return OpaquePtr{bundle, [](void* p){ auto* w = reinterpret_cast<GrpcServerBundle*>(p); if (w){ if (w->server) w->server->Shutdown(); delete w->svc; delete w; } }};
+    return OpaquePtr{bundle, [](void* p){ auto* w = reinterpret_cast<GrpcServerBundle*>(p); if (w){ if (w->server) w->server->Shutdown(); delete w->svc; /*whep owned by server*/ delete w; } }};
 }
 
 #else

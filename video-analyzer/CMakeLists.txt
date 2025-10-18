@@ -269,6 +269,29 @@ if (USE_GRPC)
         target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
         target_link_libraries(${PROJECT_NAME} PRIVATE va_analyzer_control_proto)
 
+        # WHEP control stubs
+        if (EXISTS ${_PROTO_DIR}/whep_control.proto)
+            add_custom_command(
+                OUTPUT ${_GEN_DIR}/whep_control.pb.cc ${_GEN_DIR}/whep_control.pb.h
+                COMMAND protobuf::protoc
+                    ARGS --cpp_out ${_GEN_DIR}
+                         -I ${_PROTO_DIR}
+                         ${_PROTO_DIR}/whep_control.proto
+                DEPENDS ${_PROTO_DIR}/whep_control.proto)
+            add_custom_command(
+                OUTPUT ${_GEN_DIR}/whep_control.grpc.pb.cc ${_GEN_DIR}/whep_control.grpc.pb.h
+                COMMAND protobuf::protoc
+                    ARGS --grpc_out ${_GEN_DIR}
+                         --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+                         -I ${_PROTO_DIR}
+                         ${_PROTO_DIR}/whep_control.proto
+                DEPENDS ${_PROTO_DIR}/whep_control.proto)
+            add_library(va_whep_proto ${_GEN_DIR}/whep_control.pb.cc ${_GEN_DIR}/whep_control.grpc.pb.cc)
+            target_include_directories(va_whep_proto PUBLIC ${_GEN_DIR})
+            target_link_libraries(va_whep_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+            target_link_libraries(${PROJECT_NAME} PRIVATE va_whep_proto)
+        endif()
+
         # Also generate VSM SourceControl stubs for client usage (Plan B streaming)
         if (EXISTS ${_VSM_PROTO_DIR}/source_control.proto)
             add_custom_command(
