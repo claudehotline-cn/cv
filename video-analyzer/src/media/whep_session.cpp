@@ -195,11 +195,13 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
                 lines.insert(lines.begin() + rtpmapIdx + 1, wanted);
                 if (mVideoEnd >= rtpmapIdx + 1) ++mVideoEnd;
             }
-            // Ensure SSRC-based msid binding
+            // Ensure SSRC-based msid binding and plain msid line
             if (!msidPresent && mVideoStart >= 0) {
-                std::string ssrcMsid = std::string("a=ssrc:") + std::to_string(sess->ssrc) + std::string(" msid: stream1 v0");
+                std::string ssrcMsid = std::string("a=ssrc:") + std::to_string(sess->ssrc) + std::string(" msid: stream1 video1");
+                std::string plainMsid = std::string("a=msid: ") + std::string("stream1 video1");
                 int insertAt = (mVideoStart + 1 < mVideoEnd) ? (mVideoStart + 1) : mVideoEnd;
                 lines.insert(lines.begin() + insertAt, ssrcMsid);
+                lines.insert(lines.begin() + insertAt + 1, plainMsid);
                 if (mVideoEnd >= insertAt) ++mVideoEnd;
             }
             // Rebuild SDP with CRLF
@@ -239,18 +241,7 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
                     if (line.find("sprop-parameter-sets=")!=std::string::npos) has_sprop = true;
                 }
             }
-            VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
-                << "[WHEP] sdp_check mid=" << (video_mid.empty()?"?":video_mid)
-                << " dir=" << (dir.empty()?"?":dir)
-                << " h264_pt=" << (h264_pt.empty()?"?":h264_pt)
-                << " fmtp=" << (has_fmtp?"1":"0")
-                << " pmode1=" << (has_pmode?"1":"0")
-                << " plid=" << (has_plid?"1":"0")
-                << " sprop=" << (has_sprop?"1":"0")
-                << " msid=" << (has_msid?"1":"0")
-                << " used_pt=" << int(sess->payloadType);
-
-            // Align RTP payload type to Answer's negotiated PT
+            // Align RTP payload type to Answer's negotiated PT (before logging used_pt)
             if (!h264_pt.empty()) {
                 try {
                     int ptv = std::stoi(h264_pt);
@@ -261,6 +252,16 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
                     }
                 } catch (...) {}
             }
+            VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc")
+                << "[WHEP] sdp_check mid=" << (video_mid.empty()?"?":video_mid)
+                << " dir=" << (dir.empty()?"?":dir)
+                << " h264_pt=" << (h264_pt.empty()?"?":h264_pt)
+                << " fmtp=" << (has_fmtp?"1":"0")
+                << " pmode1=" << (has_pmode?"1":"0")
+                << " plid=" << (has_plid?"1":"0")
+                << " sprop=" << (has_sprop?"1":"0")
+                << " msid=" << (has_msid?"1":"0")
+                << " used_pt=" << int(sess->payloadType);
         }
         // Register session for this streamKey so frames can be delivered
         {
