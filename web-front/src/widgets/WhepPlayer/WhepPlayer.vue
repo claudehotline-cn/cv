@@ -224,7 +224,8 @@ async function startSession(url: string) {
       }, 0)
     } catch {}
 
-    const sdp = (pc.localDescription && pc.localDescription.sdp) ? pc.localDescription.sdp : (offer.sdp || '')
+    // 标准做法：POST 初始 Offer（m-line 端口应为 9），后续候选用 PATCH trickle
+    const sdp = offer && offer.sdp ? offer.sdp : ((pc.localDescription && pc.localDescription.sdp) ? pc.localDescription.sdp : '')
     try {
       const offerHead = sdp.substring(0, 200).replace(/\r|\n/g, ' ')
       console.log('[WHEP] offer_sdp_head', offerHead)
