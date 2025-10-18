@@ -88,7 +88,15 @@ int WhepSessionManager::createSession(const std::string& streamKey,
         // 建立发送视频轨（H264/PT=96）
         
 
-        std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string localSdp;
+                // 方案A：先添加发送端（H264，PT=Offer），再 setRemote，再 setLocal
+        rtc::Description::Video vdesc_pre("video");
+        vdesc_pre.setDirection(rtc::Description::Direction::SendOnly);
+        vdesc_pre.addH264Codec(sess->payloadType, rtc::DEFAULT_H264_VIDEO_PROFILE);
+        vdesc_pre.addSSRC(sess->ssrc, std::string("va"), std::string("stream1"), std::string("video1"));
+        sess->videoTrack = pc->addTrack(vdesc_pre);
+        attachMediaHandlers(*sess);
+        try { if (sess->videoTrack) sess->videoTrack->onOpen([sid]{ VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] track open sid=" << sid; }); } catch(...) {}
+std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string localSdp;
         pc->onLocalDescription([&](rtc::Description desc){
             if (desc.type() == rtc::Description::Type::Answer) {
                 std::unique_lock<std::mutex> lk(lmu); localSdp = std::string(desc);
@@ -108,15 +116,6 @@ int WhepSessionManager::createSession(const std::string& streamKey,
         // 设置远端与生成本地 Answer
         rtc::Description remote(offerSdp, rtc::Description::Type::Offer);
         pc->setRemoteDescription(remote);
-        // Add sender (sendonly, H264/PT from Offer) after setting remote, before creating Answer
-        rtc::Description::Video vdesc("video");
-        vdesc.setDirection(rtc::Description::Direction::SendOnly);
-        vdesc.addH264Codec(sess->payloadType, rtc::DEFAULT_H264_VIDEO_PROFILE);
-        vdesc.addSSRC(sess->ssrc, std::string("va"), std::string("stream1"), std::string("video1"));
-        sess->videoTrack = pc->addTrack(vdesc);
-        attachMediaHandlers(*sess);
-        try { if (sess->videoTrack) sess->videoTrack->onOpen([sid]{ VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] track open sid=" << sid; }); } catch(...) {}
-        // Now create Answer
         pc->setLocalDescription(rtc::Description::Type::Answer);
 
         // 等待 ICE 完成或超时，尽量返回完整 Answer（非 trickle）
