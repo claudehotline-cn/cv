@@ -132,12 +132,13 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
         if (localSdp.empty()) {
             VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc")
                 << "[WHEP] createSession no local SDP generated sid=" << sid;
-            return 500;
+            // 按参考文档，协商状态不一致或回调未到达时返回 409（冲突），而非一概 500
+            return 409;
         }
 
         // 注册会话
-        // Inject common H.264 fmtp parameters into Answer to improve browser decoder compatibility
-        auto inject_h264_fmtp = [](const std::string& sdp) -> std::string {
+        // Inject H.264 fmtp and ensure MSID binding (via SSRC) exists in Answer
+        auto inject_h264_and_msid = [&](const std::string& sdp) -> std::string {
             std::istringstream iss(sdp);
             std::vector<std::string> lines;
             lines.reserve(128);
@@ -151,6 +152,7 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
             int rtpmapIdx = -1;
             int mVideoStart = -1;
             int mVideoEnd = static_cast<int>(lines.size());
+            bool msidPresent = false;
             for (size_t i = 0; i < lines.size(); ++i) {
                 const std::string& L = lines[i];
                 if (mVideoStart < 0 && L.rfind("m=video", 0) == 0) {
@@ -159,6 +161,10 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
                     for (size_t k = i + 1; k < lines.size(); ++k) {
                         if (lines[k].rfind("m=", 0) == 0) { mVideoEnd = static_cast<int>(k); break; }
                     }
+                }
+                if (!msidPresent) {
+                    if (L.rfind("a=msid:", 0) == 0) msidPresent = true;
+                    if (L.rfind("a=ssrc:", 0) == 0 && L.find(" msid:") != std::string::npos) msidPresent = true;
                 }
                 if (L.rfind("a=rtpmap:", 0) == 0 && L.find("H264/90000") != std::string::npos) {
                     size_t c = L.find(':');
@@ -189,6 +195,13 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
                 lines.insert(lines.begin() + rtpmapIdx + 1, wanted);
                 if (mVideoEnd >= rtpmapIdx + 1) ++mVideoEnd;
             }
+            // Ensure SSRC-based msid binding
+            if (!msidPresent && mVideoStart >= 0) {
+                std::string ssrcMsid = std::string("a=ssrc:") + std::to_string(sess->ssrc) + std::string(" msid: stream1 v0");
+                int insertAt = (mVideoStart + 1 < mVideoEnd) ? (mVideoStart + 1) : mVideoEnd;
+                lines.insert(lines.begin() + insertAt, ssrcMsid);
+                if (mVideoEnd >= insertAt) ++mVideoEnd;
+            }
             // Rebuild SDP with CRLF
             std::ostringstream oss;
             for (const auto& s : lines) oss << s << "\r\n";
@@ -196,7 +209,7 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
         };
 
         outSid = sid;
-        outAnswerSdp = inject_h264_fmtp(localSdp);
+        outAnswerSdp = inject_h264_and_msid(localSdp);
         {
             std::string snipA = outAnswerSdp.substr(0, 200);
             for (auto& ch : snipA) { if (ch=='\r' || ch=='\n') ch=' '; }
@@ -237,6 +250,17 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
                 << " msid=" << (has_msid?"1":"0")
                 << " used_pt=" << int(sess->payloadType);
 
+            // Align RTP payload type to Answer's negotiated PT
+            if (!h264_pt.empty()) {
+                try {
+                    int ptv = std::stoi(h264_pt);
+                    if (ptv >= 0 && ptv <= 127 && sess->payloadType != uint8_t(ptv)) {
+                        sess->payloadType = static_cast<uint8_t>(ptv);
+                        attachMediaHandlers(*sess);
+                        VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] selected_pt=" << ptv << " reconfigured media handler";
+                    }
+                } catch (...) {}
+            }
         }
         // Register session for this streamKey so frames can be delivered
         {

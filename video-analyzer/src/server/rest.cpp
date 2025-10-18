@@ -3516,17 +3516,18 @@ struct RestServer::Impl {
                   VA_LOG_C(::va::core::LogLevel::Debug, "rest.whep") << "offer_sdp_head=" << snip;
               }
               std::string answer, va_sid, cp_sid;
-              bool ok = false;
+              int st_code = 0; bool ok = false;
               if (!addr.empty()) {
                   ok = grpcWhepAdd(addr, streamKey, offer, &va_sid, &answer);
+                  st_code = ok ? 201 : 502;
               }
               if (!ok) {
                   int st = va::media::WhepSessionManager::instance().createSession(streamKey, offer, answer, va_sid);
-                  ok = (st == 201);
+                  st_code = st; ok = (st == 201);
               }
               if (!ok) {
-                  VA_LOG_C(::va::core::LogLevel::Error, "rest.whep") << "POST /whep failed streamKey='" << streamKey << "'";
-                  return errorResponse("whep create failed", 500);
+                  VA_LOG_C(::va::core::LogLevel::Error, "rest.whep") << "POST /whep failed streamKey='" << streamKey << "' status=" << st_code;
+                  return errorResponse("whep create failed", st_code > 0 ? st_code : 500);
               }
               cp_sid = genCpSid();
               {
