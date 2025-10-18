@@ -116,7 +116,6 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
         // 设置远端与生成本地 Answer
         rtc::Description remote(offerSdp, rtc::Description::Type::Offer);
         pc->setRemoteDescription(remote);
-        pc->setLocalDescription(rtc::Description::Type::Answer);
 
         // 等待 ICE 完成或超时，尽量返回完整 Answer（非 trickle）
         {
