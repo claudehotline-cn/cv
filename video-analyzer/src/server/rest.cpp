@@ -21,6 +21,10 @@
 #include <json/json.h>
 #include "core/error_codes.hpp"
 #include <yaml-cpp/yaml.h>
+#if defined(USE_GRPC)
+#include "source_control.grpc.pb.h"
+#include <grpcpp/grpcpp.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -825,7 +829,7 @@ static std::optional<Json::Value> vsm_sources_snapshot(int timeout_ms) {
     return std::nullopt;
 }
 
-static std::optional<Json::Value> vsm_source_describe(const std::string& id, int timeout_ms) {
+  static std::optional<Json::Value> vsm_source_describe(const std::string& id, int timeout_ms) {
     std::string host = "127.0.0.1";
     int port = 7071;
     if (const char* p = std::getenv("VSM_REST_HOST")) host = p;
@@ -839,7 +843,36 @@ static std::optional<Json::Value> vsm_source_describe(const std::string& id, int
         if (root.isObject()) return root;
     } catch (...) {}
     return std::nullopt;
-}
+  }
+
+#if defined(USE_GRPC)
+  // --- VSM gRPC helpers ---
+  static std::unique_ptr<vsm::v1::SourceControl::Stub> makeVsmStub(const std::string& addr) {
+      grpc::ChannelArguments args; args.SetInt("grpc.keepalive_time_ms", 30000); args.SetInt("grpc.keepalive_timeout_ms", 10000);
+      auto ch = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args);
+      return vsm::v1::SourceControl::NewStub(ch);
+  }
+  static bool vsmGrpcAttach(const std::string& addr, const std::string& id, const std::string& uri,
+                            const std::string& profile, const std::string& model, std::string* err) {
+      try {
+          auto stub = makeVsmStub(addr);
+          grpc::ClientContext ctx; auto ddl = std::chrono::system_clock::now() + std::chrono::milliseconds(8000); ctx.set_deadline(ddl);
+          vsm::v1::AttachRequest req; req.set_attach_id(id); req.set_source_uri(uri); if (!profile.empty()) (*req.mutable_options())["profile"] = profile; if (!model.empty()) (*req.mutable_options())["model_id"] = model;
+          vsm::v1::AttachReply rep; auto st = stub->Attach(&ctx, req, &rep);
+          if (!st.ok()) { if (err) *err = st.error_message(); return false; }
+          return true;
+      } catch (const std::exception& ex) { if (err) *err = ex.what(); return false; }
+  }
+  static bool vsmGrpcDetach(const std::string& addr, const std::string& id, std::string* err) {
+      try {
+          auto stub = makeVsmStub(addr);
+          grpc::ClientContext ctx; auto ddl = std::chrono::system_clock::now() + std::chrono::milliseconds(8000); ctx.set_deadline(ddl);
+          vsm::v1::DetachRequest req; req.set_attach_id(id); vsm::v1::DetachReply rep; auto st = stub->Detach(&ctx, req, &rep);
+          if (!st.ok()) { if (err) *err = st.error_message(); return false; }
+          return true;
+      } catch (const std::exception& ex) { if (err) *err = ex.what(); return false; }
+  }
+#endif
 
 // --- YAML helpers to extract 'requires' and map to JSON ---
 namespace {
@@ -1490,15 +1523,16 @@ struct RestServer::Impl {
             if (id.empty() || uri.empty() || pipeline.empty() || (yaml.empty() && gid.empty() && tpl.empty())) {
                 return errorResponse("missing id/uri/pipeline_name or graph/yaml/template", 400);
             }
-            // call VSM attach (REST)
-            std::string host = std::getenv("VSM_REST_HOST") ? std::getenv("VSM_REST_HOST") : std::string("127.0.0.1");
-            int vsm_port = 7071; if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v=std::stoi(p); if(v>0&&v<65536) vsm_port=v; } catch(...){} }
-            Json::Value add(Json::objectValue); add["id"] = id; add["uri"] = uri; if(body.isMember("profile")) add["profile"] = body["profile"]; if(body.isMember("model_id")) add["model_id"] = body["model_id"];
-            Json::StreamWriterBuilder wb; std::string addJson = Json::writeString(wb, add);
-            auto resp = http_post_json(host, vsm_port, "/api/source/add", addJson, 6000);
-            if (!resp || resp->first != 200) {
-                return errorResponse("attach failed via VSM", 409);
+            // call VSM attach via gRPC (internal)
+#if defined(USE_GRPC)
+            std::string vsm_addr = std::getenv("VA_VSM_ADDR") ? std::getenv("VA_VSM_ADDR") : std::string("127.0.0.1:7070");
+            std::string attach_err;
+            if (!vsmGrpcAttach(vsm_addr, id, uri, getStr("profile"), getStr("model_id"), &attach_err)) {
+                return errorResponse(std::string("attach failed via VSM: ") + (attach_err.empty()?"unknown":attach_err), 409);
             }
+#else
+            return errorResponse("control-plane disabled", 503);
+#endif
             // Apply pipeline locally (reusing CP logic)
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
             try {
@@ -1521,14 +1555,13 @@ struct RestServer::Impl {
             auto getStr = [&](const char* k){ return (body.isMember(k) && body[k].isString()) ? body[k].asString() : std::string(); };
             std::string id = getStr("id"); std::string pipeline = getStr("pipeline_name");
             if (id.empty() || pipeline.empty()) return errorResponse("missing id/pipeline_name", 400);
-            // call VSM delete
-            std::string host = std::getenv("VSM_REST_HOST") ? std::getenv("VSM_REST_HOST") : std::string("127.0.0.1");
-            int vsm_port = 7071; if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v=std::stoi(p); if(v>0&&v<65536) vsm_port=v; } catch(...){} }
-            Json::Value del(Json::objectValue); del["id"] = id; Json::StreamWriterBuilder wb; std::string delJson = Json::writeString(wb, del);
-            auto resp = http_post_json(host, vsm_port, "/api/source/delete", delJson, 6000);
-            if (!resp || resp->first != 200) {
-                // proceed anyway to remove pipeline; report partial failure via code 200 but message
-            }
+            // call VSM delete via gRPC (best-effort)
+#if defined(USE_GRPC)
+            std::string vsm_addr = std::getenv("VA_VSM_ADDR") ? std::getenv("VA_VSM_ADDR") : std::string("127.0.0.1:7070");
+            std::string del_err; (void)vsmGrpcDetach(vsm_addr, id, &del_err);
+#else
+            return errorResponse("control-plane disabled", 503);
+#endif
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
             try {
                 std::string err; if (!app.removePipeline(pipeline, &err)) return errorResponse(err.empty()? "remove failed" : err, 409);
