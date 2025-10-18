@@ -55,6 +55,12 @@ private:
         uint32_t ts90{0};
         std::chrono::steady_clock::time_point lastActive{};
         bool closed{false};
+        bool started{false}; // set true after first IDR is observed to ensure decoders have a clean starting point
+        bool pcConnected{false}; // set true on PeerConnection::State::Connected
+        uint8_t payloadType{96}; // negotiated H264 PT (default 96)
+        bool trackOpen{false}; // Track open callback observed
+        std::vector<uint8_t> last_sps; // cached SPS (AnnexB unit with start code)
+        std::vector<uint8_t> last_pps; // cached PPS (AnnexB unit with start code)
     };
 
     void attachMediaHandlers(Session& s);
@@ -67,4 +73,3 @@ private:
 };
 
 } // namespace va::media
-
