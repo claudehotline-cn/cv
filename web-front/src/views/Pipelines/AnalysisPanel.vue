@@ -8,7 +8,7 @@
             <el-option v-for="p in pipelines" :key="p.name" :label="pipelineLabel(p)" :value="p.name" />
           </el-select>
           <el-select v-model="selectedSource" filterable placeholder="选择视频源" style="width:240px" :loading="store.loading">
-            <el-option v-for="s in sources" :key="s.id" :label="sourceLabel(s)" :value="s.id" />
+            <el-option v-for="opt in sourceOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
           <el-select v-model="selectedGraph" filterable placeholder="选择分析图" style="width:240px" :loading="store.loading">
             <el-option v-for="g in graphs" :key="g.graph_id" :label="graphLabel(g)" :value="g.graph_id" />
@@ -42,6 +42,15 @@
           <li v-for="(reason, idx) in preflight.reasons" :key="idx">{{ reason }}</li>
         </ul>
       </el-alert>
+
+      <el-alert
+        v-if="store.errMsg"
+        type="error"
+        show-icon
+        :closable="false"
+        class="preflight"
+        :title="store.errMsg"
+      />
 
       <div class="player-wrapper">
         <WhepPlayer ref="playerRef" :whep-url="store.whepUrl" :autoplay="autoPlay" />
@@ -102,6 +111,10 @@ const store = useAnalysisStore()
 const playerRef = ref<InstanceType<typeof WhepPlayer> | null>(null)
 
 const sources = computed(() => store.sources)
+const sourceOptions = computed(() => (sources.value || []).map((s:any) => ({
+  value: s?.id || '',
+  label: sourceLabel(s)
+})).filter((o:any) => !!o.value))
 const models = computed(() => store.models)
 const pipelines = computed(() => store.pipelines)
 const graphs = computed(() => store.graphs)
@@ -152,7 +165,12 @@ const analyzing = computed({
 })
 
 function pipelineLabel(p: any) { return `${p.name} · ${p.status || '未知'}` }
-function sourceLabel(s: any) { return `${s.name || s.id} · ${s.status || '未知'}` }
+function sourceLabel(s: any) {
+  const o = (typeof s === 'string') ? { id: s, name: s, status: '' } : (s || {})
+  const name = o.name || o.id || '未知源'
+  const st = o.status || '未知'
+  return `${name} · ${st}`
+}
 function graphLabel(g: any) { return g.name || g.graph_id }
 function modelLabel(m: any) { const parts = [m.id]; if (m.task) parts.push(m.task); if (m.variant) parts.push(m.variant); return parts.join(' · ') }
 

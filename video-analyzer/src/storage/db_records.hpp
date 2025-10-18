@@ -39,4 +39,13 @@ struct SessionRow {
     std::int64_t stopped_ms {0}; // 0 if NULL
 };
 
+struct SourceRow {
+    std::string id;
+    std::string uri;
+    std::string status;    // Unknown/Running/Stopped
+    std::string caps_json; // optional JSON string
+    double fps {0.0};
+    std::int64_t updated_ms {0};
+};
+
 } // namespace va::storage

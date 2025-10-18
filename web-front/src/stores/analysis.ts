@@ -25,7 +25,8 @@ export const useAnalysisStore = defineStore('analysis', {
     analyzing: false,
     whepUrl: '' as string,
     whepBase: '' as string,
-    stats: { fps: '0.0', p95: '0', alerts: 0 } as { fps: string; p95: string; alerts: number }
+    stats: { fps: '0.0', p95: '0', alerts: 0 } as { fps: string; p95: string; alerts: number },
+    errMsg: '' as string
   }),
   getters: {
     currentSource(state) {
@@ -45,26 +46,54 @@ export const useAnalysisStore = defineStore('analysis', {
       try {
         const [sysResp, sourcesResp, modelsResp, pipelinesResp, graphsResp] = await Promise.all([
           getSystemInfo().catch(() => ({ data: {} } as any)),
-          dataProvider.listSources(),
-          dataProvider.listModels?.() ?? Promise.resolve({ items: [] }),
-          dataProvider.listPipelines?.() ?? Promise.resolve({ items: [] }),
-          (dataProvider as any).listGraphs?.() ?? Promise.resolve({ items: [] })
+          dataProvider.listSources().catch((e:any) => { this.errMsg = `sources 加载失败: ${e?.message||e}`; return { items: [] } }),
+          (dataProvider.listModels?.() ?? Promise.resolve({ items: [] })).catch((e:any) => { /* ignore */ return { items: [] } }),
+          (dataProvider.listPipelines?.() ?? Promise.resolve({ items: [] })).catch((e:any) => { /* ignore */ return { items: [] } }),
+          ((dataProvider as any).listGraphs?.() ?? Promise.resolve({ items: [] })).catch((e:any) => { this.errMsg = this.errMsg || `graphs 加载失败: ${e?.message||e}`; return { items: [] } })
         ])
         const sysData = (sysResp as any).data || {}
         this.whepBase = (sysData.sfu?.whep_base || '').toString()
-        this.sources = (sourcesResp as any).data ?? (sourcesResp as any).items ?? (sourcesResp as any) ?? []
+        {
+          const sAny: any = (sourcesResp as any)
+          const raw = ((sAny?.data && (sAny.data.items || sAny.data)) || sAny?.items || sAny) || []
+          const arr = Array.isArray(raw) ? raw : []
+          this.sources = arr
+            .map((s: any) => ({
+              id: s?.id || s?.stream_id || s?.attach_id || s?.name || '',
+              name: s?.name || s?.id || s?.stream_id || s?.attach_id || '',
+              uri: s?.uri || s?.source_uri || '',
+              status: s?.status || s?.phase || '',
+              caps: s?.caps || s?.capabilities
+            }))
+            .filter((x: any) => !!x.id)
+        }
         this.models = ((modelsResp as any).data ?? (modelsResp as any).items ?? []) as ModelItem[]
         this.pipelines = ((pipelinesResp as any).data ?? (pipelinesResp as any).items ?? []) as PipelineItem[]
-        this.graphs = ((graphsResp as any).data ?? (graphsResp as any).items ?? []) as GraphItem[]
+        {
+          const raw = (((graphsResp as any)?.data?.items) ?? (graphsResp as any).data ?? (graphsResp as any).items ?? []) as any[]
+          this.graphs = Array.isArray(raw)
+            ? raw.map((g: any) => ({
+                graph_id: g?.graph_id || g?.id || g?.name || '',
+                name: g?.name || g?.id || g?.graph_id || '',
+                requires: g?.requires
+              })) as GraphItem[]
+            : ([] as GraphItem[])
+        }
+        if (!this.errMsg && !this.sources.length) this.errMsg = 'sources 为空'
+        if (!this.errMsg && !this.graphs.length) this.errMsg = 'graphs 为空'
         if (this.sources.length) {
           const run = this.sources.find(s => (s as any).status === 'Running')
           this.setSource((run?.id) || this.sources[0].id)
         }
         if (this.pipelines.length) {
           this.currentPipeline = this.pipelines[0].name
+        } else {
+          this.currentPipeline = 'det_720p'
         }
         if (this.graphs.length) {
           this.currentGraphId = this.graphs[0].graph_id
+        } else {
+          this.currentGraphId = 'analyzer_multistage_example'
         }
         if (this.models.length) {
           this.currentModelUri = this.models[0].id
@@ -79,7 +108,7 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     setSource(id: string) {
       this.currentSourceId = id
-      this.updateWhepUrl()
+      // 延后到订阅成功后再更新 whepUrl
       this.refreshStats()
     },
     setModel(id: string) {
@@ -102,7 +131,7 @@ export const useAnalysisStore = defineStore('analysis', {
       if (base && this.currentSourceId && this.currentPipeline) {
         this.whepUrl = `${base}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}`
       } else {
-        this.whepUrl = this.currentSourceId ? `mock://whep/${this.currentSourceId}` : ''
+        this.whepUrl = ''
       }
     },
     setAutoPlay(v: boolean){ this.autoPlay = v; localStorage.setItem('va_autoplay', v ? 'on' : 'off') },
@@ -116,6 +145,28 @@ export const useAnalysisStore = defineStore('analysis', {
         this.setAnalyzing(false)
         return pf
       }
+      // ensure defaults to avoid 400 Bad Request
+      if (!this.currentPipeline) this.currentPipeline = 'det_720p'
+      if (!this.currentGraphId) this.currentGraphId = 'analyzer_multistage_example'
+      if (!this.currentSourceId) {
+        try {
+          if (!this.sources.length) {
+            const res: any = await (dataProvider as any).listSources?.()
+            const raw = (res?.data?.items ?? res?.items ?? (Array.isArray(res) ? res : [])) || []
+            const arr = Array.isArray(raw) ? raw : []
+            if (arr.length) {
+              this.sources = arr.map((s: any) => ({
+                id: s?.id || s?.stream_id || s?.attach_id || s?.name || '',
+                name: s?.name || s?.id || s?.stream_id || s?.attach_id || '',
+                uri: s?.uri || s?.source_uri || '',
+                status: s?.status || s?.phase || '',
+                caps: s?.caps || s?.capabilities
+              })).filter((x: any) => !!x.id)
+            }
+          }
+          if (this.sources.length) this.currentSourceId = this.sources[0].id
+        } catch {}
+      }
       try {
         const src = this.sources.find(s => s.id === this.currentSourceId)
         const profile = this.currentPipeline
@@ -124,11 +175,33 @@ export const useAnalysisStore = defineStore('analysis', {
         // 调用 CP 创建会话
         // @ts-ignore
         if (typeof window !== 'undefined') { const mod = await import('@/api/cp'); await mod.subscribePipeline(this.currentSourceId, profile, uri, model) }
+        // 订阅成功后再更新 WHEP URL，触发播放器握手
+        this.updateWhepUrl()
         this.setAnalyzing(true)
         return { ok: true } as const
       } catch (e:any) {
+        // fallback 一次：修正常见的 profile/source_uri 缺失
+        const firstMsg = (e?.message || '').toString()
+        try {
+          if (!this.currentPipeline) this.currentPipeline = 'det_720p'
+          if (!this.currentGraphId) this.currentGraphId = 'analyzer_multistage_example'
+          if (!this.currentSourceId && this.sources.length) this.currentSourceId = this.sources[0].id
+          const src2 = this.sources.find(s => s.id === this.currentSourceId)
+          const uri2 = src2?.uri || ''
+          // @ts-ignore
+          if (typeof window !== 'undefined' && this.currentSourceId && this.currentPipeline && uri2) {
+            const mod = await import('@/api/cp')
+            await mod.subscribePipeline(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined)
+            this.updateWhepUrl()
+            this.setAnalyzing(true)
+            return { ok: true } as const
+          }
+        } catch (e2:any) {
+          this.setAnalyzing(false)
+          return { ok:false, reasons:[ firstMsg || e2?.message || 'subscribe failed' ] } as any
+        }
         this.setAnalyzing(false)
-        return { ok:false, reasons:[ e?.message || 'subscribe failed' ] } as any
+        return { ok:false, reasons:[ firstMsg || 'subscribe failed' ] } as any
       }
     },
     async stopAnalysis() {

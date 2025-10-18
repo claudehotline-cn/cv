@@ -14,7 +14,10 @@
 #include "storage/log_repo.hpp"
 #include "storage/event_repo.hpp"
 #include "storage/session_repo.hpp"
+#include "storage/graph_repo.hpp"
+#include "storage/source_repo.hpp"
 #include "media/whep_session.hpp"
+#include "whep_control.grpc.pb.h"
 
 #include "control_plane_embedded/controllers/pipeline_controller.hpp"
 
@@ -965,6 +968,8 @@ struct RestServer::Impl {
     std::unique_ptr<va::storage::LogRepo> logs_repo;
     std::unique_ptr<va::storage::EventRepo> events_repo;
     std::unique_ptr<va::storage::SessionRepo> sessions_repo;
+    std::unique_ptr<va::storage::GraphRepo> graphs_repo;
+    std::unique_ptr<va::storage::SourceRepo> sources_repo;
 
     // Async DB writer (best-effort)
     std::mutex dbq_mutex;
@@ -1160,6 +1165,8 @@ struct RestServer::Impl {
                     logs_repo = std::make_unique<va::storage::LogRepo>(db_pool, dbc);
                     events_repo = std::make_unique<va::storage::EventRepo>(db_pool, dbc);
                     sessions_repo = std::make_unique<va::storage::SessionRepo>(db_pool, dbc);
+                    graphs_repo = std::make_unique<va::storage::GraphRepo>(db_pool, dbc);
+                    sources_repo = std::make_unique<va::storage::SourceRepo>(db_pool, dbc);
                     startDbWorker();
                     startRetentionWorker();
                 }
@@ -1175,6 +1182,14 @@ struct RestServer::Impl {
     void registerRoutes() {
         auto subscribeHandler = [this](const HttpRequest& req) { return handleSubscribe(req); };
         auto unsubscribeHandler = [this](const HttpRequest& req) { return handleUnsubscribe(req); };
+        auto corsHandler = [](const HttpRequest& /*req*/) {
+            HttpResponse resp; resp.status_code = 204;
+            resp.headers["Access-Control-Allow-Origin"] = "*";
+            resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS,PATCH";
+            resp.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization";
+            resp.body.clear();
+            return resp;
+        };
         auto sourceSwitchHandler = [this](const HttpRequest& req) { return handleSourceSwitch(req); };
         auto modelSwitchHandler = [this](const HttpRequest& req) { return handleModelSwitch(req); };
         auto taskSwitchHandler = [this](const HttpRequest& req) { return handleTaskSwitch(req); };
@@ -1192,9 +1207,11 @@ struct RestServer::Impl {
 
         server.addRoute("POST", "/subscribe", subscribeHandler);
         server.addRoute("POST", "/api/subscribe", subscribeHandler);
+        server.addRoute("OPTIONS", "/api/subscribe", corsHandler);
 
         server.addRoute("POST", "/unsubscribe", unsubscribeHandler);
         server.addRoute("POST", "/api/unsubscribe", unsubscribeHandler);
+        server.addRoute("OPTIONS", "/api/unsubscribe", corsHandler);
 
         server.addRoute("POST", "/source/switch", sourceSwitchHandler);
         server.addRoute("POST", "/api/source/switch", sourceSwitchHandler);
@@ -1265,6 +1282,7 @@ struct RestServer::Impl {
 
         server.addRoute("GET", "/system/info", systemInfoHandler);
         server.addRoute("GET", "/api/system/info", systemInfoHandler);
+        server.addRoute("OPTIONS", "/api/system/info", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
 
         server.addRoute("GET", "/system/stats", systemStatsHandler);
         server.addRoute("GET", "/api/system/stats", systemStatsHandler);
@@ -1283,6 +1301,7 @@ struct RestServer::Impl {
         auto sourcesWatchHandler = [this](const HttpRequest& req) { return handleSourcesWatch(req); };
         server.addRoute("GET", "/sources", sourcesHandler);
         server.addRoute("GET", "/api/sources", sourcesHandler);
+        server.addRoute("OPTIONS", "/api/sources", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
         server.addRoute("GET", "/sources/watch", sourcesWatchHandler);
         server.addRoute("GET", "/api/sources/watch", sourcesWatchHandler);
         // SSE variants (experimental): watch via EventSource
@@ -1291,6 +1310,7 @@ struct RestServer::Impl {
         // Prometheus metrics endpoint
         auto metricsHandler = [this](const HttpRequest& req) { return handleMetrics(req); };
         server.addRoute("GET", "/metrics", metricsHandler);
+        server.addRoute("OPTIONS", "/metrics", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
         auto metricsCfgGet = [this](const HttpRequest& req) { return handleMetricsConfigGet(req); };
         auto metricsCfgSet = [this](const HttpRequest& req) { return handleMetricsConfigSet(req); };
         server.addRoute("GET", "/api/metrics", metricsCfgGet);
@@ -1303,10 +1323,12 @@ struct RestServer::Impl {
         auto eventsWatchHandler  = [this](const HttpRequest& req) { return handleEventsWatch(req); };
         auto sessionsWatchHandler = [this](const HttpRequest& req) { return handleSessionsWatch(req); };
         server.addRoute("GET", "/api/logs", logsRecentHandler);
+        server.addRoute("OPTIONS", "/api/logs", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
         server.addRoute("GET", "/api/logs/watch", logsWatchHandler);
         // SSE: logs
         server.addStreamRoute("GET", "/api/logs/watch_sse", [this](int fd, const HttpRequest& req){ streamLogsSSE(fd, req); });
         server.addRoute("GET", "/api/events/recent", eventsRecentHandler);
+        server.addRoute("OPTIONS", "/api/events/recent", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
         server.addRoute("GET", "/api/events/watch", eventsWatchHandler);
         server.addRoute("GET", "/api/sessions/watch", sessionsWatchHandler);
         // SSE: events
@@ -1814,35 +1836,28 @@ struct RestServer::Impl {
       }
 
       HttpResponse handleGraphsList(const HttpRequest& /*req*/) {
+          // DB-only: read from graphs table
+          if (!db_pool || !db_pool->valid() || !graphs_repo) {
+              return errorResponse("database disabled", 503);
+          }
+          std::vector<va::storage::GraphRow> rows;
+          std::string err;
+          if (!graphs_repo->listAll(&rows, &err)) {
+              return errorResponse(err.empty()? std::string("failed to list graphs") : err, 500);
+          }
           Json::Value payload = successPayload();
           Json::Value arr(Json::arrayValue);
-          std::error_code ec;
-          auto dirs = graphDirCandidates();
-          std::unordered_set<std::string> files_seen;
-          for (const auto& dir : dirs) {
-              if (!std::filesystem::exists(dir, ec) || !std::filesystem::is_directory(dir, ec)) continue;
-              for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-                  if (entry.is_regular_file(ec)) {
-                      auto p = entry.path();
-                      auto ext = p.extension().string();
-                      if (ext == ".yaml" || ext == ".yml") {
-                          auto can = std::filesystem::weakly_canonical(p, ec);
-                          const std::string fkey = (ec ? p : can).string();
-                          if (files_seen.count(fkey)) continue;
-                          files_seen.insert(fkey);
-                          Json::Value node(Json::objectValue);
-                          node["id"] = p.stem().string();
-                          node["path"] = fkey;
-                          // Best-effort parse of optional 'requires'
-                          try {
-                              if (auto req = loadRequiresFromYaml(fkey)) {
-                                  node["requires"] = *req;
-                              }
-                          } catch (...) { /* ignore */ }
-                          arr.append(node);
-                      }
-                  }
+          for (const auto& r : rows) {
+              Json::Value node(Json::objectValue);
+              node["id"] = r.id;
+              node["name"] = r.name;
+              if (!r.requires_json.empty()) {
+                  try {
+                      Json::CharReaderBuilder b; std::string errs; std::istringstream iss(r.requires_json); Json::Value req;
+                      if (Json::parseFromStream(b, iss, &req, &errs)) node["requires"] = req;
+                  } catch (...) { /* ignore bad requires */ }
               }
+              arr.append(node);
           }
           payload["data"] = arr;
           return jsonResponse(payload, 200);
@@ -3110,92 +3125,49 @@ struct RestServer::Impl {
           }
       }
 
-      HttpResponse handleSources(const HttpRequest& /*req*/) {
+      HttpResponse handleSources(const HttpRequest& req) {
+          // DB-only listing of sources; on failure, return error for frontend to显示
+          if (!sources_repo) {
+              return errorResponse("database disabled", 503);
+          }
+          // Parse pagination
+          auto q = parseQueryKV(req.query);
+          auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try{ return std::stoi(it->second); }catch(...){ return def; } };
+          auto page = get_int("page", 1);
+          auto page_size = get_int("page_size", 100);
+          auto limit = get_int("limit", 0);
+
+          std::vector<va::storage::SourceRow> rows; std::string err; std::int64_t total = 0;
+          bool ok = false;
+          if (limit > 0) {
+              ok = sources_repo->listTopN(limit, &rows, &err);
+              total = static_cast<std::int64_t>(rows.size());
+          } else {
+              ok = sources_repo->listPaged(page, page_size, &rows, &total, &err);
+          }
+          if (!ok) {
+              return errorResponse(err.empty()? std::string("db query failed") : err, 503);
+          }
           Json::Value payload = successPayload();
-          Json::Value data(Json::arrayValue);
-          // Aggregate by stream_id
-          struct Agg { std::string id; std::string uri; bool running{false}; double fps{0.0}; };
-          std::unordered_map<std::string, Agg> by_id;
-          for (const auto& info : app.pipelines()) {
-              auto it = by_id.find(info.stream_id);
-              if (it == by_id.end()) {
-                  Agg a; a.id = info.stream_id; a.uri = info.source_uri; a.running = info.running; a.fps = info.metrics.fps; by_id.emplace(info.stream_id, a);
-              } else {
-                  it->second.running = it->second.running || info.running;
-                  if (info.metrics.fps > it->second.fps) it->second.fps = info.metrics.fps;
-                  if (it->second.uri.empty()) it->second.uri = info.source_uri;
-              }
-          }
-          // Enrich from VSM if available (list and per-source describe)
-          std::unordered_map<std::string, Json::Value> vsm_list_map;
-          // Fallback map by normalized URI to tolerate id mismatches between CP pipeline id and VSM attach id
-          std::unordered_map<std::string, Json::Value> vsm_list_by_uri;
-          auto normalize_uri = [](std::string u){
-              // very lightweight normalization: trim spaces and lower-case
-              u.erase(u.begin(), std::find_if(u.begin(), u.end(), [](unsigned char ch){ return !std::isspace(ch); }));
-              u.erase(std::find_if(u.rbegin(), u.rend(), [](unsigned char ch){ return !std::isspace(ch); }).base(), u.end());
-              std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-              return u;
-          };
-          if (auto snap = vsm_sources_snapshot(600); snap && snap->isArray()) {
-              for (const auto& s : *snap) {
-                  std::string id = s.isMember("id")? s["id"].asString() : (s.isMember("attach_id")? s["attach_id"].asString() : "");
-                  if (id.empty()) continue; vsm_list_map[id] = s;
-                  auto& a = by_id[id]; if (a.id.empty()) a.id = id;
-                  if (a.uri.empty() && s.isMember("uri")) a.uri = s["uri"].asString();
-                  if (s.isMember("uri") && s["uri"].isString()) {
-                      vsm_list_by_uri[normalize_uri(s["uri"].asString())] = s;
-                  }
-                  std::string phase = s.isMember("phase")? s["phase"].asString() : std::string();
-                  if (!phase.empty()) {
-                      std::string p = toLower(phase);
-                      if (p.find("ready")!=std::string::npos || p.find("run")!=std::string::npos) a.running = true;
-                      if (p.find("stop")!=std::string::npos) a.running = false;
-                  }
-                  if (s.isMember("fps") && s["fps"].isNumeric()) {
-                      double vf = s["fps"].asDouble(); if (vf > a.fps) a.fps = vf;
-                  }
-              }
-          }
-          for (auto& kv : by_id) {
-              const auto& a = kv.second;
+          Json::Value data(Json::objectValue);
+          Json::Value arr(Json::arrayValue);
+          for (const auto& r : rows) {
               Json::Value node(Json::objectValue);
-              node["id"] = a.id;
-              node["name"] = a.id;
-              node["uri"] = a.uri;
-              node["status"] = a.running ? "Running" : "Stopped";
-              node["fps"] = a.fps;
-              // Optional: merge VSM per-source metrics (jitter/rtt/loss) and phase/profile
-              if (auto it = vsm_list_map.find(a.id); it != vsm_list_map.end()) {
-                  const auto& s = it->second;
-                  if (s.isMember("profile")) node["profile"] = s["profile"];
-                  if (s.isMember("phase"))   node["phase"] = s["phase"];
-                  // Prefer lightweight caps from VSM list to avoid per-source describe when possible
-                  if (s.isMember("caps"))    node["caps"] = s["caps"];
-              } else if (!a.uri.empty()) {
-                  // Fallback by URI when ids differ (e.g., CP uses stream_id while VSM uses attach_id)
-                  auto it2 = vsm_list_by_uri.find(normalize_uri(a.uri));
-                  if (it2 != vsm_list_by_uri.end()) {
-                      const auto& s = it2->second;
-                      if (s.isMember("profile")) node["profile"] = s["profile"];
-                      if (s.isMember("phase"))   node["phase"] = s["phase"];
-                      if (s.isMember("caps"))    node["caps"] = s["caps"];
-                  }
+              node["id"] = r.id;
+              node["name"] = r.id;
+              node["uri"] = r.uri;
+              node["status"] = r.status;
+              node["fps"] = r.fps;
+              if (!r.caps_json.empty()) {
+                  try {
+                      Json::CharReaderBuilder b; std::string errs; std::istringstream iss(r.caps_json); Json::Value caps; if (Json::parseFromStream(b, iss, &caps, &errs)) node["caps"] = caps; else node["caps_raw"] = r.caps_json;
+                  } catch (...) { node["caps_raw"] = r.caps_json; }
               }
-              // Enrich with detailed metrics from VSM describe (only if needed or available)
-              if (auto desc = vsm_source_describe(a.id, 400); desc && desc->isObject()) {
-                  const auto& d = *desc;
-                  if (d.isMember("jitter_ms")) node["jitter_ms"] = d["jitter_ms"];
-                  if (d.isMember("rtt_ms"))    node["rtt_ms"] = d["rtt_ms"];
-                  if (d.isMember("loss_ratio"))node["loss_ratio"] = d["loss_ratio"];
-                  if (d.isMember("phase"))     node["phase"] = d["phase"];
-                  if (!node.isMember("caps") && d.isMember("caps")) node["caps"] = d["caps"];
-              }
-              // caps: not provided by VSM currently; leave absent to be determined by future extension
-              data.append(node);
+              arr.append(node);
           }
-          payload["data"] = data;
-          return jsonResponse(payload, 200);
+          data["items"] = arr;
+          if (limit <= 0) { data["total"] = static_cast<Json::UInt64>(total); data["page"] = page; data["page_size"] = page_size; }
+          payload["data"] = data; return jsonResponse(payload, 200);
       }
 
       HttpResponse handleSourcesWatch(const HttpRequest& req) {
@@ -3512,6 +3484,19 @@ struct RestServer::Impl {
           return resp;
       }
 
+      // --- WHEP routing helpers (gRPC to VA or local fallback) ---
+      static std::vector<std::string> parseHosts(const char* envName){
+          std::vector<std::string> out; const char* p = std::getenv(envName); if(!p) return out; std::string s(p); size_t pos=0; while(pos < s.size()){ auto c=s.find(',',pos); auto t=(c==std::string::npos)? s.substr(pos): s.substr(pos,c-pos); pos=(c==std::string::npos)? s.size(): c+1; if(!t.empty()) out.push_back(t); } return out; }
+      static std::string pickHost(const std::vector<std::string>& hosts, const std::string& key){ if(hosts.empty()) return std::string(); auto h = std::hash<std::string>{}(key); return hosts[h % hosts.size()]; }
+      static std::unique_ptr<va::whep::WhepControl::Stub> makeWhepStub(const std::string& addr){ grpc::ChannelArguments args; args.SetInt("grpc.keepalive_time_ms", 30000); args.SetInt("grpc.keepalive_timeout_ms", 10000); auto ch = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args); return va::whep::WhepControl::NewStub(ch); }
+      static bool grpcWhepAdd(const std::string& addr, const std::string& stream, const std::string& offer, std::string* sid, std::string* answer){ try{ auto stub = makeWhepStub(addr); grpc::ClientContext ctx; ctx.set_deadline(std::chrono::system_clock::now()+std::chrono::milliseconds(8000)); va::whep::AddWhepSessionRequest req; req.set_stream_id(stream); req.set_offer_sdp(offer); va::whep::AddWhepSessionReply rep; auto st = stub->AddWhepSession(&ctx, req, &rep); if(!st.ok()||!rep.ok()) return false; if(sid) *sid = rep.session_id(); if(answer) *answer = rep.answer_sdp(); return true; }catch(...){ return false; } }
+      static bool grpcWhepPatch(const std::string& addr, const std::string& sid, const std::string& frag){ try{ auto stub = makeWhepStub(addr); grpc::ClientContext ctx; ctx.set_deadline(std::chrono::system_clock::now()+std::chrono::milliseconds(4000)); va::whep::PatchWhepCandidateRequest req; req.set_session_id(sid); req.set_sdp_frag(frag); va::whep::PatchWhepCandidateReply rep; auto st=stub->PatchWhepCandidate(&ctx, req, &rep); return st.ok() && rep.ok(); }catch(...){ return false; } }
+      static bool grpcWhepDel(const std::string& addr, const std::string& sid){ try{ auto stub = makeWhepStub(addr); grpc::ClientContext ctx; ctx.set_deadline(std::chrono::system_clock::now()+std::chrono::milliseconds(4000)); va::whep::DeleteWhepSessionRequest req; req.set_session_id(sid); va::whep::DeleteWhepSessionReply rep; auto st=stub->DeleteWhepSession(&ctx, req, &rep); return st.ok() && rep.ok(); }catch(...){ return false; } }
+
+      std::mutex whep_mu_;
+      std::unordered_map<std::string, std::pair<std::string,std::string>> whep_map_; // cp_sid -> {addr, va_sid}
+      static std::string genCpSid(){ static std::atomic<uint64_t> ctr{1}; std::ostringstream oss; oss<<std::hex<< (uint64_t)std::time(nullptr) << ctr.fetch_add(1); return oss.str(); }
+
       HttpResponse handleWhepCreate(const HttpRequest& req) {
           try {
               std::string offer = req.body;
@@ -3519,29 +3504,76 @@ struct RestServer::Impl {
               std::string stream = q.count("stream")? q["stream"] : (q.count("stream_id")? q["stream_id"] : std::string());
               if (stream.empty() || offer.empty()) return errorResponse("missing stream/sdp", 400);
               std::string streamKey = stream; auto p = streamKey.find(':'); if (p != std::string::npos) streamKey = streamKey.substr(0, p);
-              std::string sid, answer; int st = va::media::WhepSessionManager::instance().createSession(streamKey, offer, answer, sid);
-              if (st != 201) return errorResponse("whep create failed", st==0?500:st);
-              HttpResponse resp; resp.status_code = 201;
-              resp.headers["Content-Type"] = "application/sdp";
-              resp.headers["Access-Control-Allow-Origin"] = "*";
-              resp.headers["Access-Control-Expose-Headers"] = "Location";
-              resp.headers["Location"] = std::string("/whep/sessions/") + sid;
-              resp.body = answer; return resp;
+              // choose VA instance by hashing
+              std::vector<std::string> hosts = parseHosts("VA_GRPC_HOSTS");
+              std::string addr = hosts.empty()? (std::getenv("VA_GRPC_ADDR")? std::getenv("VA_GRPC_ADDR") : std::string()) : pickHost(hosts, streamKey);
+              VA_LOG_C(::va::core::LogLevel::Info, "rest.whep") << "POST /whep streamKey='" << streamKey
+                  << "' offer_len=" << offer.size() << " hosts=" << hosts.size() << (addr.empty()? " addr=<local>" : (" addr="+addr));
+              // Debug: log a short preview of Offer SDP
+              {
+                  std::string snip = offer.substr(0, 240);
+                  for (auto& ch : snip) { if (ch=='\r' || ch=='\n') ch=' '; }
+                  VA_LOG_C(::va::core::LogLevel::Debug, "rest.whep") << "offer_sdp_head=" << snip;
+              }
+              std::string answer, va_sid, cp_sid;
+              bool ok = false;
+              if (!addr.empty()) {
+                  ok = grpcWhepAdd(addr, streamKey, offer, &va_sid, &answer);
+              }
+              if (!ok) {
+                  int st = va::media::WhepSessionManager::instance().createSession(streamKey, offer, answer, va_sid);
+                  ok = (st == 201);
+              }
+              if (!ok) {
+                  VA_LOG_C(::va::core::LogLevel::Error, "rest.whep") << "POST /whep failed streamKey='" << streamKey << "'";
+                  return errorResponse("whep create failed", 500);
+              }
+              cp_sid = genCpSid();
+              {
+                  std::lock_guard<std::mutex> lk(whep_mu_); whep_map_[cp_sid] = std::make_pair(addr, va_sid);
+              }
+              VA_LOG_C(::va::core::LogLevel::Info, "rest.whep") << "POST /whep created cp_sid=" << cp_sid << " va_sid=" << va_sid
+                  << " answer_len=" << answer.size();
+              // Debug: log a short preview of Answer SDP
+              {
+                  std::string snip = answer.substr(0, 240);
+                  for (auto& ch : snip) { if (ch=='\r' || ch=='\n') ch=' '; }
+                  VA_LOG_C(::va::core::LogLevel::Debug, "rest.whep") << "answer_sdp_head=" << snip;
+              }
+              HttpResponse resp; resp.status_code = 201; resp.headers["Content-Type"] = "application/sdp"; resp.headers["Access-Control-Allow-Origin"] = "*"; resp.headers["Access-Control-Expose-Headers"] = "Location"; resp.headers["Location"] = std::string("/whep/sessions/") + cp_sid; resp.body = answer; return resp;
           } catch (const std::exception& ex) { return errorResponse(std::string("whep: ") + ex.what(), 400); }
       }
 
       HttpResponse handleWhepPatch(const HttpRequest& req) {
           auto it = req.params.find("sid"); if (it == req.params.end()) return errorResponse("missing sid", 400);
-          int st = va::media::WhepSessionManager::instance().patchSession(it->second, req.body);
-          HttpResponse resp; resp.status_code = (st==204?204:(st==404?404:400));
-          resp.headers["Access-Control-Allow-Origin"] = "*"; resp.body.clear(); return resp;
+          std::string sid = it->second; std::string addr, va_sid;
+          {
+              std::lock_guard<std::mutex> lk(whep_mu_); auto f = whep_map_.find(sid); if (f != whep_map_.end()) { addr = f->second.first; va_sid = f->second.second; }
+          }
+          VA_LOG_C(::va::core::LogLevel::Debug, "rest.whep") << "PATCH /whep/sessions sid=" << sid
+              << " body_len=" << req.body.size() << (addr.empty()? " route=local" : (" route=grpc:"+addr));
+          // Debug: log short preview of ICE fragment
+          {
+              std::string snip = req.body.substr(0, 200);
+              for (auto& ch : snip) { if (ch=='\r' || ch=='\n') ch=' '; }
+              VA_LOG_C(::va::core::LogLevel::Debug, "rest.whep") << "patch_frag_head=" << snip;
+          }
+          bool ok = false; if (!addr.empty()) ok = grpcWhepPatch(addr, va_sid, req.body); if (!ok) { int st = va::media::WhepSessionManager::instance().patchSession(va_sid.empty()? sid : va_sid, req.body); ok = (st==204); }
+          VA_LOG_C(::va::core::LogLevel::Info, "rest.whep") << "PATCH /whep/sessions sid=" << sid << " -> status=" << (ok?204:404);
+          HttpResponse resp; resp.status_code = ok? 204 : 404; resp.headers["Access-Control-Allow-Origin"] = "*"; resp.body.clear(); return resp;
       }
 
       HttpResponse handleWhepDelete(const HttpRequest& req) {
           auto it = req.params.find("sid"); if (it == req.params.end()) return errorResponse("missing sid", 400);
-          int st = va::media::WhepSessionManager::instance().deleteSession(it->second);
-          HttpResponse resp; resp.status_code = (st==204?204:404);
-          resp.headers["Access-Control-Allow-Origin"] = "*"; resp.body.clear(); return resp;
+          std::string sid = it->second; std::string addr, va_sid;
+          {
+              std::lock_guard<std::mutex> lk(whep_mu_); auto f = whep_map_.find(sid); if (f != whep_map_.end()) { addr = f->second.first; va_sid = f->second.second; whep_map_.erase(f); }
+          }
+          VA_LOG_C(::va::core::LogLevel::Debug, "rest.whep") << "DELETE /whep/sessions sid=" << sid
+              << (addr.empty()? " route=local" : (" route=grpc:"+addr));
+          bool ok = false; if (!addr.empty()) ok = grpcWhepDel(addr, va_sid); if (!ok) { int st = va::media::WhepSessionManager::instance().deleteSession(va_sid.empty()? sid : va_sid); ok = (st==204); }
+          VA_LOG_C(::va::core::LogLevel::Info, "rest.whep") << "DELETE /whep/sessions sid=" << sid << " -> status=" << (ok?204:404);
+          HttpResponse resp; resp.status_code = ok? 204 : 404; resp.headers["Access-Control-Allow-Origin"] = "*"; resp.body.clear(); return resp;
       }
 };
 

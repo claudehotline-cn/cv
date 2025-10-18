@@ -1,0 +1,76 @@
+{
+	"code" : "OK",
+	"data" : 
+	{
+		"items" : 
+		[
+			{
+				"fps" : 0.0,
+				"id" : "camera_01",
+				"name" : "camera_01",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "sessions_1760622065",
+				"name" : "sessions_1760622065",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "evidence_1760621784",
+				"name" : "evidence_1760621784",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "watch_1760621543_fafd3f",
+				"name" : "watch_1760621543_fafd3f",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "p1_bulk_1760543037",
+				"name" : "p1_bulk_1760543037",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "cam_01",
+				"name" : "cam_01",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "va_verify_1760537201",
+				"name" : "va_verify_1760537201",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "cam_fail",
+				"name" : "cam_fail",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/not_exist"
+			},
+			{
+				"fps" : 0.0,
+				"id" : "cam_03",
+				"name" : "cam_03",
+				"status" : "Unknown",
+				"uri" : "rtsp://127.0.0.1:8554/camera_01"
+			}
+		],
+		"page" : 1,
+		"page_size" : 100,
+		"total" : 9
+	},
+	"success" : true
+}

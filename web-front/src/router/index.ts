@@ -6,7 +6,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/pipelines', component: () => import('@/views/Pipelines/List.vue'), meta: { title: 'Pipelines' } },
   { path: '/pipelines/editor', component: () => import('@/views/Pipelines/Editor.vue'), meta: { title: 'Pipeline Editor' } },
   { path: '/pipelines/detail/:name', component: () => import('@/views/Pipelines/Detail.vue'), meta: { title: 'Pipeline Detail' } },
-  { path: '/pipelines/analysis', component: () => import('@/views/Pipelines/AnalysisPanel.vue'), meta: { title: 'Pipeline Analysis' } },
+  { path: '/analysis', component: () => import('@/views/Pipelines/AnalysisPanel.vue'), meta: { title: 'Pipeline Analysis' } },
   { path: '/pipelines/list', redirect: '/pipelines' },
   { path: '/pipelines/new', redirect: '/pipelines' },
   { path: '/sources', component: () => import('@/views/Sources/List.vue'), meta: { title: 'Sources' } },

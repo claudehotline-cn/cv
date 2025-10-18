@@ -444,6 +444,11 @@ void Application::startVsmWatchIfConfigured() {
                         cur[it.attach_id()] = item;
                     }
                     // create/update
+                    // runtime flag: disable auto-subscribe via env VA_CP_AUTO_SUBSCRIBE=0/false/off
+                    auto env_bool = [](const char* k, bool defv){ if(const char* v=getenv(k)){ std::string s=v; std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){return (char)std::tolower(c);}); if(s=="0"||s=="false"||s=="off"||s=="no") return false; if(s=="1"||s=="true"||s=="on"||s=="yes") return true; } return defv; };
+                    // 默认不自动订阅；仅当 VA_CP_AUTO_SUBSCRIBE=1/true/on 时启用
+                    const bool auto_subscribe_enabled = env_bool("VA_CP_AUTO_SUBSCRIBE", false);
+
                     for (const auto& kv : cur) {
                         const std::string& sid = kv.first; const Item& item = kv.second;
                         const std::string prof = item.profile.empty()? default_profile : item.profile;
@@ -459,6 +464,10 @@ void Application::startVsmWatchIfConfigured() {
                         auto mark = [&](const std::string& key){ last_change_ms[key]=nowts; };
 
                         if (!exists) {
+                            if (!auto_subscribe_enabled) {
+                                // skip auto-create on startup; honor only explicit REST subscribe
+                                continue;
+                            }
                             if (!too_soon(sid+":"+prof)) {
                                 auto key = subscribeStream(sid, prof, item.uri);
                                 if (key) {

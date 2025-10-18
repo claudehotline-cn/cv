@@ -34,7 +34,7 @@ let unwatch: any = null
 async function fetchList() {
   try {
     const resp = await dataProvider.listSources()
-    const items = (resp as any)?.data ?? (resp as any)?.items ?? (resp as any[])
+    const items = (resp as any)?.data?.items ?? (resp as any)?.items ?? (Array.isArray(resp) ? (resp as any) : [])
     rows.value = (items || []).map((it: any) => ({
       ...it,
       group: it.group || (it.id?.split('_')[0] ?? 'default')
@@ -63,7 +63,7 @@ async function detach(row: SourceItem) {
 }
 
 function preview(row: SourceItem) {
-  router.push({ path: '/pipelines/analysis', query: { source: row.id } })
+  router.push({ path: '/analysis', query: { source: row.id } })
 }
 
 async function start(row: SourceItem) {

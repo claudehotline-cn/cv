@@ -1,0 +1,71 @@
+# Ensure newly added core metric/event sources are included even if glob caching misses them
+list(APPEND SOURCES
+    # Multistage analyzer core
+    src/analyzer/multistage/graph.cpp
+    src/analyzer/multistage/registry.cpp
+    src/analyzer/multistage/node_preproc_letterbox.cpp
+    src/analyzer/multistage/node_model.cpp
+    src/analyzer/multistage/node_nms.cpp
+    src/analyzer/multistage/node_overlay.cpp
+    src/analyzer/multistage/node_roi_batch.cpp
+    src/analyzer/multistage/builder_yaml.cpp
+    src/analyzer/multistage/node_roi_batch_cuda.cpp
+    src/analyzer/multistage/node_kpt_decode.cpp
+    src/analyzer/multistage/runner.cpp
+    src/analyzer/multistage/node_overlay_kpt.cpp
+    src/core/drop_metrics.cpp
+    src/analyzer/multistage/node_join.cpp
+    src/analyzer/multistage/node_reid_smooth.cpp
+    src/core/source_reconnects.cpp
+    src/core/nvdec_events.cpp
+    # Storage: DB repositories
+    src/storage/session_repo.cpp)
+
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
+if (HAVE_CUDA_KERNELS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAS_CUDA_KERNELS)
+endif()
+if (CUDAToolkit_FOUND)
+    # Ensure host code sees cuda_runtime.h so GPU postproc runtime paths are enabled
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+endif()
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
+
+target_include_directories(${PROJECT_NAME}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE ${OpenCV_LIBS}
+    PRIVATE Threads::Threads
+    PRIVATE ${YAML_CPP_TARGET})
+
+# Control plane (embedded) sources — 无外部依赖占位，默认总是编译
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        src/control_plane_embedded/interfaces.hpp
+        src/control_plane_embedded/controllers/pipeline_controller.cpp
+        src/control_plane_embedded/controllers/pipeline_controller.hpp
+        src/control_plane_embedded/adapters/graph_adapter_yaml.cpp
+        src/control_plane_embedded/adapters/graph_adapter_yaml.hpp
+        src/control_plane_embedded/exporters/prometheus_exporter.cpp
+        src/control_plane_embedded/exporters/prometheus_exporter.hpp
+        src/control_plane_embedded/io/from_vsm_link.hpp)
+
+# Optional: gRPC/Protobuf integration for control plane
+if (USE_GRPC)
+    # Prefer config packages from vcpkg to avoid mixing with system/anaconda modules
+    find_package(protobuf CONFIG QUIET)
+    find_package(gRPC CONFIG QUIET)
+    if (Protobuf_FOUND AND gRPC_FOUND)
+        message(STATUS "gRPC/Protobuf found: enabling AnalyzerControl service")
+        add_definitions(-DUSE_GRPC)
+
+        set(_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
+        set(_VSM_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../video-source-manager/proto)
+        set(_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
+        file(MAKE_DIRECTORY ${_GEN_DIR})
+        set(PROTO_FILES ${_PROTO_DIR}/analyzer_control.proto ${_PROTO_DIR}/pipeline.proto)
+
+        # Generators
+        get_target_property(_PROTOC_LOCATION protobuf::protoc LOCATION)

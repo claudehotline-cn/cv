@@ -1,143 +1,48 @@
 {
+  "base": "http://127.0.0.1:8082",
   "results": [
     {
-      "sample": {
-        "code": "OK",
-        "data": {
-          "database": {
-            "db": "cv_cp",
-            "driver": "mysql",
-            "host": "127.0.0.1",
-            "port": 13306,
-            "user": "***"
-          },
-          "engine": {
-            "device": 0,
-            "options": "@{allow_cpu_fallback=True; device_output_views=True; enable_profiling=False; graph_id=analyzer_multistage_example; io_binding_input_bytes=0; io_binding_output_bytes=0; overlay_alpha=0.25; overlay_draw_labels=True; overlay_thickness=3; prefer_pinned_memory=True; render_cuda=True; render_passthrough=False; stage_device_outputs=False; tensorrt_fp16=True; tensorrt_int8=False; tensorrt_workspace_mb=2048; use_cuda_nms=True; use_cuda_preproc=True; use_ffmpeg_source=False; use_io_binding=True; use_multistage=True; use_nvdec=True; use_nvenc=True; warmup_runs=auto}",
-            "type": "ort-cuda"
-          },
-          "engine_config": {
-            "device": 0,
-            "options": "@{allow_cpu_fallback=True; enable_profiling=False; io_binding_input_bytes=0; io_binding_output_bytes=0; prefer_pinned_memory=True; tensorrt_fp16=True; tensorrt_int8=False; tensorrt_workspace_mb=2048; use_io_binding=True}",
-            "type": "ort-cuda"
-          },
-          "engine_runtime": {
-            "cpu_fallback": false,
-            "device_binding": false,
-            "gpu_active": false,
-            "io_binding": false,
-            "provider": "cuda"
-          },
-          "ffmpeg_enabled": true,
-          "model_count": 5,
-          "observability": {
-            "console": true,
-            "file_max_files": 5,
-            "file_max_size_kb": 10240,
-            "file_path": "D:\\Projects\\ai\\cv\\logs\\video-analyzer-release.log",
-            "log_level": "debug",
-            "metrics": "@{extended_labels=True; registry_enabled=True}",
-            "pipeline_metrics_enabled": true,
-            "pipeline_metrics_interval_ms": 5000
-          },
-          "profile_count": 2,
-          "sfu": {
-            "whep_base": "",
-            "whip_base": ""
-          }
-        },
-        "success": true
-      },
-      "ms": 74,
-      "ok": true,
-      "url": "http://127.0.0.1:8082/api/system/info",
-      "status": 200
+      "ms": 5053,
+      "err": "The request was canceled due to the configured HttpClient.Timeout of 5 seconds elapsing.",
+      "ok": false,
+      "status": 0,
+      "url": "http://127.0.0.1:8082/api/system/info"
     },
     {
-      "sample": {
-        "code": "OK",
-        "data": {
-          "items": [
-            "@{level=warn; msg=bench log #0; node=rest; pipeline=det_720p; stream_id=bench_sid_1; ts=1760712946000}",
-            "@{level=info; msg=bench log #1; node=model; pipeline=det_720p; stream_id=bench_sid_2; ts=1760712945000}",
-            "@{level=info; msg=bench log #2; node=rest; pipeline=det_720p; stream_id=bench_sid_3; ts=1760712944000}",
-            "@{level=info; msg=bench log #3; node=model; pipeline=det_720p; stream_id=bench_sid_4; ts=1760712943000}",
-            "@{level=info; msg=bench log #4; node=rest; pipeline=det_720p; stream_id=bench_sid_5; ts=1760712942000}"
-          ],
-          "page": 1,
-          "page_size": 5,
-          "total": 1002
-        },
-        "success": true
-      },
-      "ms": 17,
-      "ok": true,
-      "url": "http://127.0.0.1:8082/api/logs?page=1&page_size=5",
-      "status": 200
+      "ms": 5001,
+      "err": "The request was canceled due to the configured HttpClient.Timeout of 5 seconds elapsing.",
+      "ok": false,
+      "status": 0,
+      "url": "http://127.0.0.1:8082/api/logs?page=1&page_size=5"
     },
     {
-      "sample": {
-        "code": "OK",
-        "data": {
-          "items": [
-            "@{level=info; msg=bench event #0; node=rest; pipeline=det_720p; stream_id=bench_sid_1; ts=1760712947000; type=info}",
-            "@{level=warn; msg=bench event #1; node=pipeline; pipeline=det_720p; stream_id=bench_sid_2; ts=1760712946000; type=warn}",
-            "@{level=warn; msg=bench event #2; node=rest; pipeline=det_720p; stream_id=bench_sid_3; ts=1760712945000; type=warn}",
-            "@{level=info; msg=bench event #3; node=pipeline; pipeline=det_720p; stream_id=bench_sid_4; ts=1760712944000; type=info}",
-            "@{level=warn; msg=bench event #4; node=rest; pipeline=det_720p; stream_id=bench_sid_5; ts=1760712943000; type=warn}"
-          ],
-          "page": 1,
-          "page_size": 5,
-          "total": 1003
-        },
-        "success": true
-      },
-      "ms": 4,
-      "ok": true,
-      "url": "http://127.0.0.1:8082/api/events/recent?page=1&page_size=5",
-      "status": 200
+      "ms": 5001,
+      "err": "The request was canceled due to the configured HttpClient.Timeout of 5 seconds elapsing.",
+      "ok": false,
+      "status": 0,
+      "url": "http://127.0.0.1:8082/api/events/recent?page=1&page_size=5"
     },
     {
-      "sample": {
-        "ok": true
-      },
-      "ms": 1,
-      "ok": true,
-      "url": "http://127.0.0.1:8082/api/db/ping",
-      "status": 200
+      "ms": 5002,
+      "err": "The request was canceled due to the configured HttpClient.Timeout of 5 seconds elapsing.",
+      "ok": false,
+      "status": 0,
+      "url": "http://127.0.0.1:8082/api/db/ping"
     },
     {
-      "sample": {
-        "code": "OK",
-        "data": {
-          "config": {
-            "enabled": false,
-            "events_seconds": 86400,
-            "interval_seconds": 600,
-            "jitter_percent": 10,
-            "logs_seconds": 86400
-          },
-          "metrics": {
-            "failures_total": 0,
-            "last_ms": 0,
-            "runs_total": 0
-          }
-        },
-        "success": true
-      },
-      "ms": 0,
-      "ok": true,
-      "url": "http://127.0.0.1:8082/api/db/retention/status",
-      "status": 200
+      "ms": 5001,
+      "err": "The request was canceled due to the configured HttpClient.Timeout of 5 seconds elapsing.",
+      "ok": false,
+      "status": 0,
+      "url": "http://127.0.0.1:8082/api/db/retention/status"
     },
     {
-      "sample": null,
-      "ms": 1,
-      "ok": true,
-      "url": "http://127.0.0.1:8082/metrics",
-      "status": 200
+      "ms": 5001,
+      "err": "The request was canceled due to the configured HttpClient.Timeout of 5 seconds elapsing.",
+      "ok": false,
+      "status": 0,
+      "url": "http://127.0.0.1:8082/metrics"
     }
   ],
-  "ts": "2025-10-17T23:08:01",
-  "base": "http://127.0.0.1:8082"
+  "ts": "2025-10-18T21:44:59"
 }

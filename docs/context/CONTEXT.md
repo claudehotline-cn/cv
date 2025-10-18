@@ -1,47 +1,46 @@
-# 项目对话上下文（2025-10-18）
+# 当前对话关键上下文（VA/VSM、WHEP、DB 与前端分析页）
 
-本文件汇总本轮对话与实现的关键事实，用于研发/联调/取证同步。
+- 运行与端口
+  - VA(REST): 127.0.0.1:8082；VSM(REST): 127.0.0.1:7071；VSM(gRPC): 127.0.0.1:7070。
+  - MySQL: 127.0.0.1:13306，数据库 cv_cp。
+- 协议与路由
+  - WHEP（浏览器下行）：POST /whep?stream=stream:profile → 201 + Location；PATCH/DELETE /whep/sessions/:sid。
+  - 控制面（CP）内嵌于 VA；VSM↔VA 编排走 gRPC，WHEP 可经 CP→VA gRPC 路由（VA_GRPC_HOSTS）。
+  - 已清理 VA_GRPC_HOSTS 干扰，WHEP 201/Location/Answer 取证通过（answer≈6100 字节）。
+- DB-only 读取
+  - 日志/事件/会话：/api/logs、/api/events/recent、/api/sessions 已切为 DB-only，失败 503。
+  - 分析图：/api/graphs 已从“枚举 YAML 目录”改为“DB-only（graphs 表）”。
+- 前端改动
+  - 路由：仅保留 /analysis（移除 /pipelines/analysis）。
+  - 侧栏：新增“分析”顶层入口；Observability 下补 Sessions。
+  - 分析页（/analysis）：
+    - 下拉：Sources/Graphs 由接口填充（sources 来自 VSM 聚合 + VA，graphs 来自 DB）。
+    - 播放：WhepPlayer 非 trickle，一次性 SDP，失败重试指数回退。
+    - 订阅：startAnalysis 失败（400）时兜底一次（profile=det_720p、graph=analyzer_multistage_example、从 sources 补 uri），并避免 mock://whep 占位。
+- 常见问题与修复
+  - 订阅 400：多为 profile 为空/不合法或缺少 source_uri；已在前端兜底并指导使用 det_720p。
+  - 分析图数量不一致：此前来自磁盘 YAML 扫描；现改为 DB-only 与数据库一致。
+  - 扩展脚本报错（chrome-extension://invalid/）：来自浏览器扩展，非系统问题。
+- 取证与健康
+  - WHEP：201/Location/Answer 取证（docs/memo/assets/2025-10-18/whep_rtsp_cam01.json）。
+  - VA/VSM 健康：/api/system/info、/api/source/list 分别 200。
 
-## 后端（VA：VideoAnalyzer）
-- 控制面路由：POST /api/control/apply_pipeline、POST /api/control/apply_pipelines、POST /api/control/hotswap、POST /api/control/drain、DELETE /api/control/pipeline、GET /api/control/status（已联调）。
-- Drain 可观测：
-  - 执行器层探针：编码器回压（encoder_backpressure，基于 eagain_retry_count 10ms 窗口），节点自省：roi.batch（CPU/CUDA）截断（blocked_nodes=roi_batch.*，reason=roi_truncated）、model 近期推理失败（blocked_nodes=model，reason=infer_failed_recent）。
-  - 控制面状态聚合：status.data.drain 输出 timeout_sec/elapsed_ms/ok/reason/blocked_nodes。
-- /metrics 增强（Prometheus 0.0.4）：
-  - 新增控制面指标：va_cp_requests_total{op,code}、va_cp_request_duration_seconds_{bucket,sum,count}（op 覆盖 apply/apply_batch/hotswap/drain/remove）。
-  - 既有 DB 指标：va_db_pool_*、va_db_writer_queue_{events,logs}、va_db_retention_* 持续输出。
-- 数据面与稳定性（存量）：REST DB-only（sessions/events/logs）、分页/时间窗/过滤、连接/收发超时、SSE 去锁化、CORS；/api/db/retention/status；/metrics 文本/registry 分支。
+## 使用与验证清单
+- 启动：
+  - VA：tools/win/restart_backend.ps1（8082 就绪）；VSM：VideoSourceManager.exe（7070/7071）。
+- 订阅（后端直测）：
+  - POST /api/subscribe { stream_id:"camera_01", profile:"det_720p", source_uri:"rtsp://127.0.0.1:8554/camera_01" } → 201。
+- 前端 /analysis：
+  - Pipeline 选 det_720p；视频源选 camera_01；分析图选 analyzer_multistage_example；自动播放开启。
+  - 无画面时：点击“刷新”或切换一次“暂停/实时分析”。
 
-## 源管理（VSM）
-- REST 路由：/api/source/list/update/add/delete、/api/source/watch（长轮询）、/api/source/watch_sse（SSE）。
-- 编排路由（新增）：
-  - POST /api/orch/attach_apply（Attach 源 + 调 VA ApplyPipeline）。
-  - POST /api/orch/detach_remove（Detach 源 + 调 VA RemovePipeline）。
-  - GET /api/orch/health（VSM 源汇总 + 透传 VA /api/system/info）。
-- HTTP 客户端（内置 socket）：补 Host:port、SO_SNDTIMEO/RCVTIMEO，DELETE 超时 8s + 重试 2 次；POST 8s + 重试 1 次。
-- JSON 校验：id（^[A-Za-z0-9_-]{1,64}$）与 RTSP 前缀校验（/api/source/add&update）。
-- /metrics：vsm_rest_requests_total{path,code} 与 vsm_rest_request_duration_seconds*；SSE 指标 vsm_sse_connections/vsm_sse_rejects_total/vsm_sse_max_connections。
+## 待办与优先级
+- 前端：
+  - 在 UI 上显式展示订阅错误信息（含后端返回文案）。
+  - /analysis 初次加载时，确保 sources/graphs 拉取失败可重试与提示。
+- 后端：
+  - /api/subscribe 返回更结构化的错误（缺失字段/非法 profile 的 code）。
+  - /metrics 补 WHEP 会话、CP gRPC 计数/时延。
+- 自动化取证：
+  - Playwright 在 /analysis 切 det_720p + camera_01，等待首帧，保存 JSON 证据。
 
-## 前端（web-front）
-- 新增编排页面：/orchestration
-  - 表单：Source ID、RTSP URI、Pipeline 名称、YAML 路径；操作：Attach+Apply、Detach+Remove。
-  - 健康卡片：聚合 VSM total/running 与 VA system/info 摘要（Engine/DB/Models/Pipelines 等）。
-  - 入口：侧边栏 Orchestration；路由已接入（部分预览环境需全量重启预览或强刷缓存）。
-- 既有可观测：Metrics/Logs/Events/Sessions DB 模式；Sessions 默认 30 天窗口；错误显式展示。
-
-## 构建/运行
-- VA：tools/build_with_vcvars.cmd（必要时先停 EXE 以避免 LNK1104），运行：build-ninja/bin/VideoAnalyzer.exe bin/config。
-- VSM：cmake -S . -B build -DUSE_GRPC=OFF && cmake --build build，运行：build/bin/Debug/VideoSourceManager.exe（REST 7071、/metrics 9101）。
-- 前端：npm run build；预览：tools/win/restart_frontend_preview.ps1（默认 4173）；开发：npm run dev（默认 5173）。
-
-## 取证与脚本
-- VA 控制面：docs/memo/assets/2025-10-18/cp_hotswap_status_check.json、cp_status_hs_demo_2_after_apply.json、metrics_cp_excerpt.txt。
-- VSM 健康：docs/memo/assets/2025-10-18/vsm_orch_health.json、vsm_metrics_full.txt、vsm_metrics_excerpt.txt。
-- 前端编排取证（简要）：docs/memo/assets/2025-10-18/front_orch_eval.json（health=OK，路由需强刷）。
-- 辅助脚本：tools/win/restart_backend.ps1、restart_frontend_preview.ps1、probe_api.ps1。
-
-## 已知事项与下一步
-- 预览路由偶发 404：已build+重启，需浏览器强刷；或改用 dev 模式。
-- 编码器回压为全局启发式：后续改为 pipeline 级（TrackManager 导出 zc.eagain_retry_count）。
-- 节点自省覆盖面：可扩展 overlay/preproc/join 等常见节点的队列/截断/丢帧信号。
-- 前端自动化：待 Orchestration 路由稳定后，补完整 Playwright 流程（填表→Attach+Apply→Health→Detach+Remove）并固化 JSON 取证。

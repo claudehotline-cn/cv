@@ -1,0 +1,1 @@
+{"success":true,"code":"OK","data":{"id":"camera_01","uri":"rtsp://127.0.0.1:8554/camera_01","profile":"det_720p","model_id":"","fps":25,"jitter_ms":6.88256,"rtt_ms":0,"loss_ratio":0,"last_ok_unixts":1760786438,"phase":"Ready","caps":{"codec":"h264","resolution":[1280,720],"fps":25,"pix_fmt":"BGR","color_space":"BT.709"}}}

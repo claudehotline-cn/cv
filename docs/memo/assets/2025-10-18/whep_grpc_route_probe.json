@@ -1,0 +1,9 @@
+{
+  "whepUrl": "http://127.0.0.1:8082/whep?stream=probe_cam_final",
+  "answerLen": 6101,
+  "hasLocation": true,
+  "when": "2025-10-18 17:30:22",
+  "note": "WHEP POST via browser.evaluate; VA_GRPC_HOSTS set to single 127.0.0.2:50051",
+  "VA_GRPC_HOSTS": null,
+  "status": 201
+}

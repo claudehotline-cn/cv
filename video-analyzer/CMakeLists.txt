@@ -179,7 +179,9 @@ list(APPEND SOURCES
     src/core/source_reconnects.cpp
     src/core/nvdec_events.cpp
     # Storage: DB repositories
-    src/storage/session_repo.cpp)
+    src/storage/session_repo.cpp
+    src/storage/graph_repo.cpp
+    src/storage/source_repo.cpp)
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
 if (HAVE_CUDA_KERNELS)
