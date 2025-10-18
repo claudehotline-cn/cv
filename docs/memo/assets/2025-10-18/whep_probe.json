@@ -1,0 +1,6 @@
+{
+  "whepUrl": "http://127.0.0.1:8082/whep?stream=whep_cam_01",
+  "status": 201,
+  "hasLocation": true,
+  "answerLen": 6101
+}
