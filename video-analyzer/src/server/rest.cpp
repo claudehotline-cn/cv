@@ -14,6 +14,7 @@
 #include "storage/log_repo.hpp"
 #include "storage/event_repo.hpp"
 #include "storage/session_repo.hpp"
+#include "media/whep_session.hpp"
 
 #include "control_plane_embedded/controllers/pipeline_controller.hpp"
 
@@ -702,7 +703,7 @@ Json::Value successPayload() {
     return root;
 }
 
-std::unordered_map<std::string,std::string> parseQueryKV(const std::string& q) {
+  std::unordered_map<std::string,std::string> parseQueryKV(const std::string& q) {
     std::unordered_map<std::string,std::string> kv;
     if (q.empty()) return kv;
     size_t pos = 0;
@@ -719,8 +720,8 @@ std::unordered_map<std::string,std::string> parseQueryKV(const std::string& q) {
         kv[key] = decode(val);
         if (amp == std::string::npos) break;
         pos = amp + 1;
-    }
-    return kv;
+  }
+  return kv;
 }
 
 // --- Minimal HTTP client (best-effort) for Control Plane to query VSM REST ---
@@ -762,6 +763,53 @@ static std::optional<std::string> http_get_body(const std::string& host, int por
 #endif
 }
 
+static std::optional<std::pair<int,std::string>> http_post_json(const std::string& host, int port, const std::string& path, const std::string& json, int timeout_ms) {
+#ifdef _WIN32
+    SOCKET sock = INVALID_SOCKET;
+    addrinfo hints{}; hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM; hints.ai_protocol = IPPROTO_TCP;
+    addrinfo* result = nullptr;
+    std::string port_str = std::to_string(port);
+    if (getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result) != 0 || !result) return std::nullopt;
+    sock = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (sock == INVALID_SOCKET) { freeaddrinfo(result); return std::nullopt; }
+    int to = timeout_ms; setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
+    if (connect(sock, result->ai_addr, static_cast<int>(result->ai_addrlen)) == SOCKET_ERROR) { closesocket(sock); freeaddrinfo(result); return std::nullopt; }
+    freeaddrinfo(result);
+    std::ostringstream req;
+    req << "POST " << path << " HTTP/1.1\r\n";
+    req << "Host: " << host << "\r\n";
+    req << "Content-Type: application/json\r\n";
+    req << "Connection: close\r\n";
+    req << "Content-Length: " << json.size() << "\r\n\r\n";
+    req << json;
+    std::string reqs = req.str();
+    int sent = 0; while (sent < static_cast<int>(reqs.size())) {
+        int n = send(sock, reqs.c_str() + sent, static_cast<int>(reqs.size()) - sent, 0);
+        if (n <= 0) { closesocket(sock); return std::nullopt; }
+        sent += n;
+    }
+    std::string resp; resp.reserve(4096); char buf[4096];
+    for(;;){ int n = recv(sock, buf, sizeof(buf), 0); if (n <= 0) break; resp.append(buf, buf + n); }
+    closesocket(sock);
+    // parse status line
+    int status = 0; {
+        auto crlf = resp.find("\r\n"); if (crlf != std::string::npos) {
+            std::string statusLine = resp.substr(0, crlf);
+            auto sp = statusLine.find(' '); if (sp != std::string::npos) {
+                auto sp2 = statusLine.find(' ', sp+1); if (sp2 != std::string::npos) {
+                    try { status = std::stoi(statusLine.substr(sp+1, sp2-sp-1)); } catch(...) { status = 0; }
+                }
+            }
+        }
+    }
+    auto pos = resp.find("\r\n\r\n"); std::string body = (pos==std::string::npos? std::string() : resp.substr(pos+4));
+    return std::make_pair(status, body);
+#else
+    (void)host; (void)port; (void)path; (void)json; (void)timeout_ms; return std::nullopt;
+#endif
+}
+
 static std::optional<Json::Value> vsm_sources_snapshot(int timeout_ms) {
     std::string host = "127.0.0.1";
     int port = 7071;
@@ -795,7 +843,7 @@ static std::optional<Json::Value> vsm_source_describe(const std::string& id, int
 
 // --- YAML helpers to extract 'requires' and map to JSON ---
 namespace {
-static Json::Value yamlToJsonObject(const YAML::Node& n) {
+  static Json::Value yamlToJsonObject(const YAML::Node& n) {
     Json::Value obj(Json::objectValue);
     if (!n || !n.IsMap()) return obj;
     for (auto it : n) {
@@ -1244,6 +1292,25 @@ struct RestServer::Impl {
         // Sessions: list recent
         auto sessionsListHandler = [this](const HttpRequest& req) { return handleSessionsList(req); };
         server.addRoute("GET", "/api/sessions", sessionsListHandler);
+
+        // Orchestration endpoints moved into embedded Control Plane (from VSM)
+        auto orchAttachApplyHandler = [this](const HttpRequest& req) { return handleOrchAttachApply(req); };
+        auto orchDetachRemoveHandler = [this](const HttpRequest& req) { return handleOrchDetachRemove(req); };
+        auto orchHealthHandler = [this](const HttpRequest& req) { return handleOrchHealth(req); };
+        server.addRoute("POST", "/api/orch/attach_apply", orchAttachApplyHandler);
+        server.addRoute("POST", "/api/orch/detach_remove", orchDetachRemoveHandler);
+        server.addRoute("GET",  "/api/orch/health", orchHealthHandler);
+
+        // WHEP negotiation (Control Plane hosted)
+        auto whepCreateHandler = [this](const HttpRequest& req) { return handleWhepCreate(req); };
+        auto whepPatchHandler  = [this](const HttpRequest& req) { return handleWhepPatch(req); };
+        auto whepDeleteHandler = [this](const HttpRequest& req) { return handleWhepDelete(req); };
+        auto whepCorsHandler   = [this](const HttpRequest& req) { return handleWhepCors(req); };
+        server.addRoute("POST",   "/whep", whepCreateHandler);
+        server.addRoute("PATCH",  "/whep/sessions/:sid", whepPatchHandler);
+        server.addRoute("DELETE", "/whep/sessions/:sid", whepDeleteHandler);
+        server.addRoute("OPTIONS", "/whep", whepCorsHandler);
+        server.addRoute("OPTIONS", "/whep/sessions/:sid", whepCorsHandler);
     }
 
     bool start() {
@@ -1407,6 +1474,93 @@ struct RestServer::Impl {
 #else
         return errorResponse("control-plane disabled", 503);
 #endif
+    }
+
+    HttpResponse handleOrchAttachApply(const HttpRequest& req) {
+        // Body: { id, uri, pipeline_name, [yaml_path|graph_id|template_id], [profile], [model_id] }
+        try {
+            Json::Value body = parseJson(req.body);
+            auto getStr = [&](const char* k){ return (body.isMember(k) && body[k].isString()) ? body[k].asString() : std::string(); };
+            std::string id = getStr("id");
+            std::string uri = getStr("uri");
+            std::string pipeline = getStr("pipeline_name");
+            std::string yaml = getStr("yaml_path");
+            std::string gid = getStr("graph_id");
+            std::string tpl = getStr("template_id");
+            if (id.empty() || uri.empty() || pipeline.empty() || (yaml.empty() && gid.empty() && tpl.empty())) {
+                return errorResponse("missing id/uri/pipeline_name or graph/yaml/template", 400);
+            }
+            // call VSM attach (REST)
+            std::string host = std::getenv("VSM_REST_HOST") ? std::getenv("VSM_REST_HOST") : std::string("127.0.0.1");
+            int vsm_port = 7071; if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v=std::stoi(p); if(v>0&&v<65536) vsm_port=v; } catch(...){} }
+            Json::Value add(Json::objectValue); add["id"] = id; add["uri"] = uri; if(body.isMember("profile")) add["profile"] = body["profile"]; if(body.isMember("model_id")) add["model_id"] = body["model_id"];
+            Json::StreamWriterBuilder wb; std::string addJson = Json::writeString(wb, add);
+            auto resp = http_post_json(host, vsm_port, "/api/source/add", addJson, 6000);
+            if (!resp || resp->first != 200) {
+                return errorResponse("attach failed via VSM", 409);
+            }
+            // Apply pipeline locally (reusing CP logic)
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+            try {
+                va::control::PlainPipelineSpec spec; spec.name = pipeline; spec.yaml_path = yaml; spec.graph_id = gid; spec.template_id = tpl;
+                std::string err; bool ok = app.applyPipeline(spec, &err);
+                if (!ok) return errorResponse(err.empty()? "apply failed" : err, 409);
+                Json::Value payload = successPayload(); return jsonResponse(payload, 200);
+            } catch (const std::exception& ex) { return errorResponse(std::string("apply: ") + ex.what(), 500); }
+#else
+            return errorResponse("control-plane disabled", 503);
+#endif
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("parse: ") + ex.what(), 400);
+        }
+    }
+
+    HttpResponse handleOrchDetachRemove(const HttpRequest& req) {
+        try {
+            Json::Value body = parseJson(req.body);
+            auto getStr = [&](const char* k){ return (body.isMember(k) && body[k].isString()) ? body[k].asString() : std::string(); };
+            std::string id = getStr("id"); std::string pipeline = getStr("pipeline_name");
+            if (id.empty() || pipeline.empty()) return errorResponse("missing id/pipeline_name", 400);
+            // call VSM delete
+            std::string host = std::getenv("VSM_REST_HOST") ? std::getenv("VSM_REST_HOST") : std::string("127.0.0.1");
+            int vsm_port = 7071; if (const char* p = std::getenv("VSM_REST_PORT")) { try { int v=std::stoi(p); if(v>0&&v<65536) vsm_port=v; } catch(...){} }
+            Json::Value del(Json::objectValue); del["id"] = id; Json::StreamWriterBuilder wb; std::string delJson = Json::writeString(wb, del);
+            auto resp = http_post_json(host, vsm_port, "/api/source/delete", delJson, 6000);
+            if (!resp || resp->first != 200) {
+                // proceed anyway to remove pipeline; report partial failure via code 200 but message
+            }
+#if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
+            try {
+                std::string err; if (!app.removePipeline(pipeline, &err)) return errorResponse(err.empty()? "remove failed" : err, 409);
+                Json::Value ok = successPayload(); return jsonResponse(ok, 200);
+            } catch (const std::exception& ex) { return errorResponse(std::string("remove: ") + ex.what(), 500); }
+#else
+            return errorResponse("control-plane disabled", 503);
+#endif
+        } catch (const std::exception& ex) { return errorResponse(std::string("parse: ") + ex.what(), 400); }
+    }
+
+    HttpResponse handleOrchHealth(const HttpRequest&) {
+        // Aggregate VSM source snapshot + VA system info
+        Json::Value vsm(Json::objectValue); int total=0, running=0;
+        if (auto snap = vsm_sources_snapshot(2000)) {
+            if (snap->isArray()) {
+                total = static_cast<int>(snap->size());
+                for (const auto& it : *snap) {
+                    std::string phase = it.isObject() && it.isMember("phase") ? it["phase"].asString() : std::string();
+                    if (phase == "Ready" || phase == "Running") running++;
+                }
+            }
+        }
+        vsm["total"] = total; vsm["running"] = running;
+        // Call local system info handler
+        HttpRequest r; r.method = "GET"; r.path = "/api/system/info"; r.query = ""; r.headers = {}; r.body = ""; r.params = {};
+        auto sys = handleSystemInfo(r);
+        Json::Value va(Json::objectValue);
+        try {
+            Json::CharReaderBuilder b; std::string errs; std::istringstream iss(sys.body); Json::Value root; if (Json::parseFromStream(b, iss, &root, &errs)) va = root;
+        } catch (...) {}
+        Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["vsm"] = vsm; data["va"] = va; payload["data"] = data; return jsonResponse(payload, 200);
     }
 
     HttpResponse handleCpStatus(const HttpRequest& req) {
@@ -3298,18 +3452,12 @@ struct RestServer::Impl {
           auto get_int = [&](const char* k, int def){ auto it=q.find(k); if(it==q.end()) return def; try { return std::stoi(it->second); } catch(...) { return def; } };
           auto fingerprint = [&](){ std::string key; key.reserve(64); for (const auto& p : app.pipelines()) { if (!p.running) continue; if (!pipeline.empty() && p.profile_id != pipeline) continue; key += p.stream_id; key += ';'; } if(!level.empty()){ key+="#"; key+=level; } return std::hash<std::string>{}(key); };
           const uint64_t since = get_uint64("since", 0);
-          int tmp_to = get_int("timeout_ms", 12000); if (tmp_to < 100) tmp_to = 100; const int timeout_ms = tmp_to;
-          int tmp_iv = get_int("interval_ms", 300);  if (tmp_iv < 80)  tmp_iv = 80;  const int interval_ms = tmp_iv;
+          int timeout_ms = get_int("timeout_ms", 12000); if (timeout_ms < 100) timeout_ms = 100;
+          int interval_ms = get_int("interval_ms", 300); if (interval_ms < 80) interval_ms = 80;
           auto rev_now = fingerprint();
           if (!since || since != rev_now) {
               Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(rev_now);
-              Json::Value items(Json::arrayValue); auto now_ms = static_cast<Json::UInt64>(static_cast<uint64_t>(std::time(nullptr)) * 1000ULL);
-              for (const auto& info : app.pipelines()) {
-                  if (!info.running) continue; if (!pipeline.empty() && info.profile_id != pipeline) continue;
-                  Json::Value e(Json::objectValue); e["ts"] = now_ms; e["pipeline"] = info.profile_id; e["level"] = level.empty()? "info" : level; e["type"] = e["level"]; e["msg"] = std::string("running bytes=") + std::to_string(info.transport_stats.bytes);
-                  items.append(e);
-              }
-              data["items"] = items; payload["data"] = data; return jsonResponse(payload, 200);
+              data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200);
           }
           auto start = std::chrono::steady_clock::now();
           while (true) {
@@ -3318,6 +3466,49 @@ struct RestServer::Impl {
               auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
               if (elapsed >= timeout_ms) { Json::Value payload = successPayload(); Json::Value data(Json::objectValue); data["rev"] = static_cast<Json::UInt64>(since); data["items"] = Json::arrayValue; payload["data"] = data; return jsonResponse(payload, 200); }
           }
+      }
+
+      // --- WHEP handlers ---
+      HttpResponse handleWhepCors(const HttpRequest&) {
+          HttpResponse resp; resp.status_code = 204;
+          resp.headers["Access-Control-Allow-Origin"] = "*";
+          resp.headers["Access-Control-Allow-Methods"] = "POST, PATCH, DELETE, OPTIONS";
+          resp.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization";
+          resp.headers["Access-Control-Expose-Headers"] = "Location";
+          resp.body.clear();
+          return resp;
+      }
+
+      HttpResponse handleWhepCreate(const HttpRequest& req) {
+          try {
+              std::string offer = req.body;
+              auto q = parseQueryKV(req.query);
+              std::string stream = q.count("stream")? q["stream"] : (q.count("stream_id")? q["stream_id"] : std::string());
+              if (stream.empty() || offer.empty()) return errorResponse("missing stream/sdp", 400);
+              std::string streamKey = stream; auto p = streamKey.find(':'); if (p != std::string::npos) streamKey = streamKey.substr(0, p);
+              std::string sid, answer; int st = va::media::WhepSessionManager::instance().createSession(streamKey, offer, answer, sid);
+              if (st != 201) return errorResponse("whep create failed", st==0?500:st);
+              HttpResponse resp; resp.status_code = 201;
+              resp.headers["Content-Type"] = "application/sdp";
+              resp.headers["Access-Control-Allow-Origin"] = "*";
+              resp.headers["Access-Control-Expose-Headers"] = "Location";
+              resp.headers["Location"] = std::string("/whep/sessions/") + sid;
+              resp.body = answer; return resp;
+          } catch (const std::exception& ex) { return errorResponse(std::string("whep: ") + ex.what(), 400); }
+      }
+
+      HttpResponse handleWhepPatch(const HttpRequest& req) {
+          auto it = req.params.find("sid"); if (it == req.params.end()) return errorResponse("missing sid", 400);
+          int st = va::media::WhepSessionManager::instance().patchSession(it->second, req.body);
+          HttpResponse resp; resp.status_code = (st==204?204:(st==404?404:400));
+          resp.headers["Access-Control-Allow-Origin"] = "*"; resp.body.clear(); return resp;
+      }
+
+      HttpResponse handleWhepDelete(const HttpRequest& req) {
+          auto it = req.params.find("sid"); if (it == req.params.end()) return errorResponse("missing sid", 400);
+          int st = va::media::WhepSessionManager::instance().deleteSession(it->second);
+          HttpResponse resp; resp.status_code = (st==204?204:404);
+          resp.headers["Access-Control-Allow-Origin"] = "*"; resp.body.clear(); return resp;
       }
 };
 
@@ -3339,3 +3530,4 @@ void RestServer::stop() {
 }
 
 } // namespace va::server
+
