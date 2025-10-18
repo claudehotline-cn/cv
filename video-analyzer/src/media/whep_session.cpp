@@ -197,8 +197,9 @@ std::mutex lmu; std::condition_variable lcv; bool haveLocal=false; std::string l
             }
             // Ensure SSRC-based msid binding and plain msid line
             if (!msidPresent && mVideoStart >= 0) {
-                std::string ssrcMsid = std::string("a=ssrc:") + std::to_string(sess->ssrc) + std::string(" msid: stream1 video1");
-                std::string plainMsid = std::string("a=msid: ") + std::string("stream1 video1");
+                // RFC syntax: no space after ':' in msid: msid:<identifier> [<appdata>]
+                std::string ssrcMsid = std::string("a=ssrc:") + std::to_string(sess->ssrc) + std::string(" msid:stream1 video1");
+                std::string plainMsid = std::string("a=msid:stream1 video1");
                 int insertAt = (mVideoStart + 1 < mVideoEnd) ? (mVideoStart + 1) : mVideoEnd;
                 lines.insert(lines.begin() + insertAt, ssrcMsid);
                 lines.insert(lines.begin() + insertAt + 1, plainMsid);
