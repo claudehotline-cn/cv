@@ -96,7 +96,9 @@ export const useAnalysisStore = defineStore('analysis', {
       this.refreshStats()
     },
     updateWhepUrl() {
-      const base = (this.whepBase || '').replace(/\/+$/, '')
+      // 优先使用后端回传的 whep_base；为空时退回到 API 基址
+      const apiBase = ((import.meta as any).env?.VITE_API_BASE || '').toString()
+      const base = (this.whepBase || apiBase || '').replace(/\/+$/, '')
       if (base && this.currentSourceId && this.currentPipeline) {
         this.whepUrl = `${base}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}`
       } else {
