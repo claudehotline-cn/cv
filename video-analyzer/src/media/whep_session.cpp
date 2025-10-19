@@ -317,18 +317,19 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
       }
     }
 
-    // Adaptive 90kHz timestamp step based on wall clock to smooth playback
+    // Smooth 90kHz timestamp using EMA of inter-arrival time
     auto now = std::chrono::steady_clock::now();
-    if (sess->lastSentAt.time_since_epoch().count() == 0) {
-      sess->ts90 += (90000u/30u);
-    } else {
-      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - sess->lastSentAt).count();
-      if (ms < 1) ms = 1; // avoid 0 step
-      // clamp to avoid large jumps on stalls (e.g., <= 200 ms)
-      if (ms > 200) ms = 200;
-      uint32_t step = static_cast<uint32_t>(ms * 90); // 90kHz
-      sess->ts90 += step;
+    double ms = 33.33;
+    if (sess->lastSentAt.time_since_epoch().count() != 0) {
+      ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - sess->lastSentAt).count();
+      if (ms < 1.0) ms = 1.0;
+      if (ms > 100.0) ms = 100.0; // bound to ~10fps
     }
+    // EMA: keep 80% history, 20% new
+    sess->avgMs = 0.8 * sess->avgMs + 0.2 * ms;
+    uint32_t step = static_cast<uint32_t>(sess->avgMs * 90.0);
+    if (step < 1u) step = 1u;
+    sess->ts90 += step;
     sess->lastSentAt = now;
     rtc::binary frame; frame.resize(h264.size()); std::memcpy(frame.data(), h264.data(), h264.size());
     rtc::FrameInfo finfo(sess->ts90);
