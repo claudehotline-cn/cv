@@ -46,11 +46,10 @@ void WhepSessionManager::attachMediaHandlers(Session& s) {
   s.rtpCfg = std::make_shared<rtc::RtpPacketizationConfig>(s.ssrc, std::string("va"), pt, rtc::H264RtpPacketizer::ClockRate);
   s.h264pack = std::make_shared<rtc::H264RtpPacketizer>(rtc::NalUnit::Separator::StartSequence, s.rtpCfg, maxFrag);
   VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] media handler set pt=" << int(pt) << " maxFrag=" << maxFrag;
-  // Optional pacing controlled via VA_WHEP_PACE_BPS (bps)
-  // 默认开启 pacing：6 Mbps；若设置 VA_WHEP_PACE_BPS 则覆盖；<=0 则关闭
-  double pace_bps = 6000000.0;
+  // 可选发送端节流（pacing），默认关闭；仅当 VA_WHEP_PACE_BPS>0 时启用
+  double pace_bps = 0.0;
   if (const char* pv = std::getenv("VA_WHEP_PACE_BPS"); pv && *pv) {
-    try { pace_bps = std::stod(pv); } catch (...) { /* keep default */ }
+    try { pace_bps = std::stod(pv); } catch (...) { pace_bps = 0.0; }
   }
   if (s.videoTrack) {
     s.videoTrack->setMediaHandler(s.h264pack);
@@ -58,6 +57,8 @@ void WhepSessionManager::attachMediaHandlers(Session& s) {
       s.pacing = std::make_shared<rtc::PacingHandler>(pace_bps, std::chrono::milliseconds(8));
       s.videoTrack->chainMediaHandler(s.pacing);
       VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] pacing enabled bps=" << pace_bps;
+    } else {
+      VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] pacing disabled";
     }
   }
 }
