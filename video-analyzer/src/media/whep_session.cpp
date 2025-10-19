@@ -300,7 +300,7 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
     std::vector<uint8_t> h264 = data; ensure_annexb(h264); cache_sps_pps(h264, sess->last_sps, sess->last_pps);
     // 丢弃 B-like 帧，避免解码重排带来的播放抖动
 // drop moved after started
-    if (is_b_like(h264)) continue;
+    // keep all VCL frames (no B-drop)
 
     if (!sess->started.load()) {
       bool idr = has_idr(h264);
