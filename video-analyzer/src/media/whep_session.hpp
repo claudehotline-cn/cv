@@ -55,6 +55,7 @@ private:
         std::shared_ptr<rtc::PacingHandler> pacing;
         uint32_t ts90{0};
         std::chrono::steady_clock::time_point lastActive{};
+        std::chrono::steady_clock::time_point lastSentAt{};
         std::chrono::steady_clock::time_point createdAt{};
         std::atomic<bool> closed{false};
         std::atomic<bool> started{false}; // set true after first IDR is observed to ensure decoders have a clean starting point

@@ -310,6 +310,19 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
       }
     }
 
+    // Adaptive 90kHz timestamp step based on wall clock to smooth playback
+    auto now = std::chrono::steady_clock::now();
+    if (sess->lastSentAt.time_since_epoch().count() == 0) {
+      sess->ts90 += (90000u/30u);
+    } else {
+      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - sess->lastSentAt).count();
+      if (ms < 1) ms = 1; // avoid 0 step
+      // clamp to avoid large jumps on stalls (e.g., <= 200 ms)
+      if (ms > 200) ms = 200;
+      uint32_t step = static_cast<uint32_t>(ms * 90); // 90kHz
+      sess->ts90 += step;
+    }
+    sess->lastSentAt = now;
     rtc::binary frame; frame.resize(h264.size()); std::memcpy(frame.data(), h264.data(), h264.size());
     rtc::FrameInfo finfo(sess->ts90);
     try { sess->videoTrack->sendFrame(std::move(frame), finfo); }
@@ -333,4 +346,3 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 }
 
 } // namespace va::media
-
