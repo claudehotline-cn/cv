@@ -108,6 +108,7 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     setSource(id: string) {
       this.currentSourceId = id
+      this.updateWhepUrl()
       // 延后到订阅成功后再更新 whepUrl
       this.refreshStats()
     },
@@ -128,8 +129,10 @@ export const useAnalysisStore = defineStore('analysis', {
       // 优先使用后端回传的 whep_base；为空时退回到 API 基址
       const apiBase = ((import.meta as any).env?.VITE_API_BASE || '').toString()
       const base = (this.whepBase || apiBase || '').replace(/\/+$/, '')
-      if (base && this.currentSourceId && this.currentPipeline) {
-        this.whepUrl = `${base}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}`
+      // 归一化为绝对 URL，兼容相对配置
+      const absBase = ((): string => { try { return new URL(base, window.location.origin).toString().replace(/\/+$/, '') } catch { return base } })()
+      if (absBase && this.currentSourceId && this.currentPipeline) {
+        this.whepUrl = `${absBase}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}`
       } else {
         this.whepUrl = ''
       }

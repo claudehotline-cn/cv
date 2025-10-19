@@ -38,6 +38,14 @@ namespace va::media {
 
 namespace {
 
+// 全局开关：禁用内部 WebRTC DataChannel 通道（仅保留 WHEP 媒体轨）
+static bool kDisableDataChannel = []() {
+    const char* v = std::getenv("VA_DISABLE_DATACHANNEL");
+    if (!v) return true; // 默认禁用，满足“先把这条注释了”的需求
+    std::string s(v); for (auto& c : s) c = (char)std::tolower(c);
+    return (s == "1" || s == "true" || s == "yes" || s == "on");
+}();
+
 constexpr uint16_t kDefaultSignalingPort = 8083;
 constexpr uint16_t kDefaultStreamerPort = 8080;
 constexpr char kDefaultEndpoint[] = "ws://127.0.0.1:8083";
@@ -1076,6 +1084,14 @@ struct WebRTCDataChannelTransport::Impl {
         }
 
         std::scoped_lock lg(globalMutex());
+        if (kDisableDataChannel) {
+            endpoint_ = endpoint;
+            running_ = true;
+            aggregate_ = {};
+            VA_LOG_INFO() << "[WebRTC] DataChannel disabled (VA_DISABLE_DATACHANNEL=1). Only WHEP feed is active.";
+            globalStarted().store(true);
+            return true;
+        }
         endpoint_ = endpoint.empty() ? std::string(kDefaultEndpoint) : endpoint;
         // Env overrides for signaling endpoint/port
         if (const char* ep = std::getenv("VA_SIGNAL_ENDPOINT"); ep && *ep) {
@@ -1146,17 +1162,28 @@ struct WebRTCDataChannelTransport::Impl {
             return false;
         }
 
-        // Normalize key so that it matches requested_source (usually plain stream id without profile suffix)
+        // Compute both full and base keys. Some consumers (e.g., WHEP) index sessions by
+        // full stream key including profile ("cam01:det_720p"), while others use base id.
+        // Feed both to avoid mismatch leading to no inbound video.
+        const std::string fullKey = track_id;
         std::string key = track_id;
         auto pos = key.find(':');
-        if (pos != std::string::npos) key = key.substr(0, pos);
+        const bool hasProfile = (pos != std::string::npos);
+        if (hasProfile) key = key.substr(0, pos);
 
         std::vector<uint8_t> buffer(data, data + size);
         // Feed WHEP sessions first (copy inside manager), then move buffer to DataChannel streamer
         try {
-            va::media::WhepSessionManager::instance().feedFrame(key, buffer);
+            // 1) full key (e.g., "cam01:det_720p")
+            va::media::WhepSessionManager::instance().feedFrame(fullKey, buffer);
+            // 2) base key (e.g., "cam01") for legacy/indexed-by-base consumers
+            if (hasProfile) {
+                va::media::WhepSessionManager::instance().feedFrame(key, buffer);
+            }
         } catch (...) { /* best-effort */ }
-        streamer_.PushEncodedFrame(key, std::move(buffer));
+        if (!kDisableDataChannel) {
+            streamer_.PushEncodedFrame(key, std::move(buffer));
+        }
 
         std::scoped_lock lock(mutex_);
         auto& stat = track_stats_[track_id];

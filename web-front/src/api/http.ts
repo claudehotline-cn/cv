@@ -3,11 +3,18 @@ export interface HttpOptions {
   headers?: Record<string, string>
 }
 
-const defaultBase = (import.meta as any).env?.VITE_API_BASE || '/'
+// Sanitize base URL: trim whitespace and remove trailing slashes
+const defaultBase = (() => {
+  const raw = ((import.meta as any).env?.VITE_API_BASE || '/').toString()
+  return raw.trim().replace(/\/+$/, '') || '/'
+})()
 
 export class HttpClient {
   constructor(private opts: HttpOptions = {}) {}
-  private url(path: string) { return (this.opts.baseURL || defaultBase).replace(/\/$/, '') + path }
+  private url(path: string) {
+    const base = (this.opts.baseURL || defaultBase).toString().trim().replace(/\/+$/, '')
+    return base + path
+  }
   private withTimeout(init: RequestInit & { timeoutMs?: number } = {}): RequestInit {
     const timeoutMs = (init.timeoutMs ?? (Number((import.meta as any).env?.VITE_HTTP_TIMEOUT_MS) || 10000))
     if (!timeoutMs) return init

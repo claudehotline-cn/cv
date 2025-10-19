@@ -46,6 +46,7 @@ private:
     struct Session {
         std::string sid;
         std::string streamKey;
+        std::string mid; // negotiated mid for video m-line
         uint32_t ssrc{0};
         std::shared_ptr<rtc::PeerConnection> pc;
         std::shared_ptr<rtc::Track> videoTrack;
@@ -54,13 +55,17 @@ private:
         std::shared_ptr<rtc::PacingHandler> pacing;
         uint32_t ts90{0};
         std::chrono::steady_clock::time_point lastActive{};
-        bool closed{false};
-        bool started{false}; // set true after first IDR is observed to ensure decoders have a clean starting point
-        bool pcConnected{false}; // set true on PeerConnection::State::Connected
+        std::chrono::steady_clock::time_point createdAt{};
+        std::atomic<bool> closed{false};
+        std::atomic<bool> started{false}; // set true after first IDR is observed to ensure decoders have a clean starting point
+        std::atomic<bool> pcConnected{false}; // set true on PeerConnection::State::Connected
         uint8_t payloadType{96}; // negotiated H264 PT (default 96)
-        bool trackOpen{false}; // Track open callback observed
+        std::atomic<bool> trackOpen{false}; // Track open callback observed
         std::vector<uint8_t> last_sps; // cached SPS (AnnexB unit with start code)
         std::vector<uint8_t> last_pps; // cached PPS (AnnexB unit with start code)
+        // debug counters
+        uint64_t dbg_frames{0};
+        uint64_t dbg_bytes{0};
     };
 
     void attachMediaHandlers(Session& s);

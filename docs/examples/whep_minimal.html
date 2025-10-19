@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>WHEP Minimal Player</title>
+  <style>
+    body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+    video { width: 720px; height: 405px; background:#000; display:block; margin-bottom:12px; }
+    input, button { font: inherit; }
+    .row { margin: 6px 0; }
+    textarea { width: 720px; height: 140px; }
+    code { background:#f6f8fa; padding:2px 6px; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <h2>WHEP Minimal Player</h2>
+  <video id="v" playsinline autoplay muted></video>
+
+  <div class="row">
+    WHEP URL：
+    <input id="url" size="60" value="http://127.0.0.1:8090/whep" />
+    <button id="start">Start</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+
+  <details open>
+    <summary>Logs</summary>
+    <textarea id="log" readonly></textarea>
+  </details>
+
+<script>
+const $ = sel => document.querySelector(sel);
+const log = (...args)=>{ const s=args.map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' '); $('#log').value += s + '\n'; $('#log').scrollTop = 1e9; };
+
+let pc = null;
+let sessionLocation = null;   // WHEP 会话 Location
+let aborter = null;
+
+function resolveSessionLocation(rawLocation, requestUrl) {
+  if (!rawLocation) return null;
+  const trimmed = rawLocation.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed, requestUrl).toString();
+  } catch (_) {
+    try {
+      return new URL(trimmed, window.location.href).toString();
+    } catch (_) {
+      return trimmed;
+    }
+  }
+}
+
+function addVideoTransceiver() {
+  const t = pc.addTransceiver('video', { direction: 'recvonly' });
+  log('transceiverAdded', JSON.stringify({
+    kind: t.receiver.track.kind,
+    direction: t.direction,
+  }));
+}
+
+async function start() {
+  try {
+    $('#start').disabled = true;
+    $('#stop').disabled = false;
+
+    aborter = new AbortController();
+
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      bundlePolicy: 'balanced',
+      rtcpMuxPolicy: 'require',
+      iceCandidatePoolSize: 0
+    });
+
+    pc.ontrack = e => {
+      log('ontrack:', e.track.kind, 'streams=', e.streams.length);
+      $('#v').srcObject = e.streams[0] || new MediaStream([e.track]);
+    };
+    pc.oniceconnectionstatechange = () => log('ICE:', pc.iceConnectionState);
+    pc.onconnectionstatechange = () => log('PC:', pc.connectionState);
+    pc.onsignalingstatechange = () => log('Signaling:', pc.signalingState);
+
+    addVideoTransceiver();
+
+    // 关键：在 setLocalDescription 前挂上 onicecandidate，把 trickle 候选 PATCH 给 server
+    let trickleQueue = [];
+    pc.onicecandidate = async ev => {
+      if (!sessionLocation) { // 先缓存，等 POST 完拿到 Location 再 PATCH
+        if (ev.candidate) trickleQueue.push(ev.candidate);
+        return;
+      }
+      if (ev.candidate) {
+        await fetch(sessionLocation, {
+          method: 'PATCH',
+          headers: {'Content-Type':'application/trickle-ice-sdpfrag'},
+          body: `a=candidate:${ev.candidate.candidate}\r\na=mid:${ev.candidate.sdpMid}\r\n`,
+          signal: aborter.signal
+        });
+        log('PATCH candidate');
+      } else {
+        await fetch(sessionLocation, {
+          method: 'PATCH',
+          headers: {'Content-Type':'application/trickle-ice-sdpfrag'},
+          body: `a=end-of-candidates\r\na=mid:0\r\n`,
+          signal: aborter.signal
+        });
+        log('PATCH end-of-candidates');
+      }
+    };
+
+    const offer = await pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false });
+    window.lastOfferSdp = offer.sdp;
+    await pc.setLocalDescription(offer);
+    log('createOffer OK');
+
+    // WHEP POST
+    const res = await fetch($('#url').value, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/sdp'},
+      body: offer.sdp,
+      signal: aborter.signal
+    });
+
+    if (!(res.status===201 || res.status===200)) throw new Error('WHEP POST failed: ' + res.status);
+    const answerSdp = await res.text();
+    window.lastAnswerSdp = answerSdp;
+    sessionLocation = resolveSessionLocation(res.headers.get('Location'), res.url || $('#url').value);
+    if (!sessionLocation) {
+      throw new Error('WHEP POST missing Location header');
+    }
+    log('POST /whep ok. Location=', sessionLocation);
+
+    // 把之前缓存的候选补 PATCH 一下
+    for (const c of trickleQueue) {
+      await fetch(sessionLocation, {
+        method: 'PATCH',
+        headers: {'Content-Type':'application/trickle-ice-sdpfrag'},
+        body: `a=candidate:${c.candidate}\r\na=mid:${c.sdpMid}\r\n`,
+        signal: aborter.signal
+      });
+    }
+    trickleQueue = [];
+
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    log('setRemoteDescription OK');
+  } catch (e) {
+    log('ERROR:', e.message || e);
+    $('#start').disabled = false;
+    $('#stop').disabled = true;
+  }
+}
+
+async function stop() {
+  try {
+    $('#stop').disabled = true;
+    if (aborter) aborter.abort();
+    if (sessionLocation) {
+      await fetch(sessionLocation, { method:'DELETE' }).catch(()=>{});
+      sessionLocation = null;
+    }
+    if (pc) { pc.close(); pc = null; }
+    $('#v').srcObject = null;
+  } finally {
+    $('#start').disabled = false;
+  }
+}
+
+$('#start').onclick = start;
+$('#stop').onclick = stop;
+
+// 建议用本地服务器打开：python3 -m http.server 4173
+</script>
+</body>
+</html>

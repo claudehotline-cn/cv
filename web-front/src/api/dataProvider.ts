@@ -12,7 +12,10 @@ export const isMock = !!(import.meta as any).env?.VITE_USE_MOCK
 
 function delay<T>(data: T, ms = 300): Promise<T> { return new Promise(res => setTimeout(() => res(data), ms)) }
 
-function apiBase() { return (((import.meta as any).env?.VITE_API_BASE) || '/').replace(/\/$/, '') }
+function apiBase() {
+  const raw = (((import.meta as any).env?.VITE_API_BASE) || '/').toString()
+  return raw.trim().replace(/\/+$/, '')
+}
 
 export const dataProvider = {
   // Metrics

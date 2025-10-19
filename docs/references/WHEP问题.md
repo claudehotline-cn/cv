@@ -1,187 +1,161 @@
-稳了，这份**前端日志**把症状说得很清楚：
+1. 好的，我已经把你给的项目包解开通读了关键代码（后端 `video-analyzer/src/media/*`，以及前端 `web-front/src/widgets/WhepPlayer/WhepPlayer.vue`）。结论很明确：**前端拿不到视频，不是因为 ICE/DTLS 或前端逻辑，而是后端 Answer SDP 的“轨道/编解码协商细节”有瑕疵，导致发送轨一直没有 open，后端不停打印 `waiting track open`，前端自然就一直 `no inbound-rtp`**。下面把“为什么”和“怎么改”一次讲透。
 
-- WHEP 会话已创建（201）、ICE/PC 都 **connected**、`setRemoteDescription ok`；
-- 但持续输出 **`stats: no inbound-rtp/track yet`**，说明**浏览器端没有收到任何入向 RTP**。
-- 所以前端“卡住”等视频是**后端没真正开始发包**或**协商细节不匹配**导致的——和你前一份后端日志里的“track 未 open / sessions=0 或 waiting track open”完全对得上。
+   ------
 
-下面我把**从这份前端日志能定位到的问题**、**必修修复**、以及**前端侧增强自检**一次性给全。
+   ## 你现在代码里发生了什么（定位到文件/逻辑）
 
-------
+   ### 1) 后端的 WHEP 会话创建（`whep_session.cpp`）
 
-## 这份前端日志暴露的关键信号
+   - 你**正确**地在生成 Answer 之前就：
+     - 从浏览器 Offer 里解析了 H264 的 **动态 PT**（`offer_h264_pt`）；
+     - 创建发送视频轨：`rtc::Description::Video vdesc("video"); vdesc.setDirection(SendOnly); vdesc.addH264Codec(sess->payloadType, …);`
+     - 绑定 SSRC/流：`vdesc.addSSRC(ssrc, "va", "stream1", "video1");`
+     - `pc->setRemoteDescription(offer)` → `pc->setLocalDescription(Answer)`。
 
-1. 会话/ICE 正常，但**没有入向 RTP**
+   > 这部分顺序是对的：**先 addTrack，再 setLocalDescription**。
 
-```
-[WHEP] POST /whep status=201
-[WHEP] ice.state= connected
-[WHEP] pc.state= connected
-[WHEP] setRemoteDescription ok
-[WHEP] stats: no inbound-rtp/track yet   （持续打印）
-```
+   - 你把发送端打包器 `H264RtpPacketizer` 的 **payloadType** 也设成了 `sess->payloadType`（就是 Offer 里的那个 PT）。这也对。
+   - 生成 Answer 后，你会做一个 `sdp_check` 日志，检查：
+     - `dir=sendonly`（方向对）
+     - `h264_pt=…`（从 Answer 文本里扫到的第一个 H264 的 pt）
+     - `msid` 是否出现（`a=msid:` 或 `a=ssrc:… msid:`）
+     - 并打印 `used_pt=<sess->payloadType>`（你打算用的 PT）
 
-=> 不是网络/权限问题，是**媒体没发过来**（或协商后无法接收）。
+   **关键问题出在这两项：**
 
-1. 你的 **Offer m 行端口被写成了 7607**（非常不寻常）
+   ### 2) Answer 里“第一个 H264 的 PT”不一定是 Offer 的 PT
 
-```
-offer_sdp_head ... m=video 7607 UDP/TLS/RTP/SAVPF ...
-```
+   - 你的日志里我们看到过：**`used_pt=103`**（从 Offer 解析），但是 `sdp_check` 扫到的 **`h264_pt=121`**。
+   - 这意味着 **Answer 里其实出现了两个 H264 条目**（例如 121 和 103），而**排在前面的那个不是 103**。
+   - WebRTC 的真正“已协商 PT”由底层栈决定；一旦底层选用的 PT 与你发送端包头里的 PT 不一致（你按 103 发，但底层谈成 121），**发送轨不会 open**，于是你这里每一帧都会 hit 到 `videoTrack->isOpen()==false` → 继续打印 `waiting track open`。
 
-- 浏览器生成的 m 行端口**应该是 9**（占位）。
-- 出现具体端口，多数是你在某处**改写了 SDP**。虽然一般不直接致命，但这是高危信号：说明你可能对 SDP 做了非必要的修改（和后端实现的“PT/方向/msid”等联动容易踩坑）。
-   **建议：**不要改写 m 行端口；只通过 WHEP PATCH 上报 `a=candidate` 行即可。
+   > 你当前的 `inject_h264_fmtp` 只是在 Answer 文本里给“**第一个** H264 rtpmap”补了 `fmtp`，这反而会**加重“第一个不是 103”的影响**。
 
-1. 你的 PATCH 片段仍然把两条属性写在**同一行**
+   ### 3) Answer 里缺“轨道绑定”（`msid=0`）
 
-```
-a=candidate:...  a=mid:0
-```
+   - 多次日志显示 `msid=0`。
+   - 你虽然调用了 `vdesc.addSSRC(ssrc, "va", "stream1", "video1")`，按理应生成 `a=ssrc:... msid: stream1 video1`，但从实际 Answer 看**没出现**（lib 的行为/版本差异，或被后续处理覆盖）。
+   - **没有 `a=msid`（或 `a=ssrc … msid …`）** 时，浏览器端经常不会创建可接收轨（也不会发 RTCP RR），而 libdatachannel 侧的 sender 也**不会进入 open**，就形成了你看到的“死等待”。
 
-- 正确应为**两行**：
+   ------
 
-  ```
-  a=candidate:...
-  a=mid:0
-  ```
+   ## 直接可落地的修复（按优先级执行）
 
-- 尽管这次 ICE 已连通，但这种格式对某些实现会造成解析扰动，建议立刻修。
+   ### ✅ 修复 1：确保 Answer 中只保留“一个 H264 条目”，其 **PT 必须等于 Offer 的 PT**
 
-1. 一堆扩展/iframe/i18n 报错是**噪音**
+   **做法 A（首选，纯 API 方式）**
+    在构造 `vdesc` 时只保留你想要的 H264，并确保它排第一；不要让库再塞入别的 H264：
 
-- `chrome-extension://invalid/`、`"[object Object]" is not valid JSON`、`codes.forEach is not a function` 这些和 WebRTC 媒体无关，但推荐顺手修掉，避免淹没真正的信令/媒体日志（下面附快速修法）。
+   ```
+   rtc::Description::Video vdesc("video");
+   vdesc.setDirection(rtc::Description::Direction::SendOnly);
+   
+   // 如果 API 支持，先清空默认 codec；没有就忽略这行
+   // vdesc.clearCodecs();
+   
+   const uint8_t offerPt = sess->payloadType; // 例如 103（你已从 Offer 解析）
+   // 只添加这一条 H264（packetization-mode=1 很关键）
+   vdesc.addH264Codec(offerPt, rtc::DEFAULT_H264_VIDEO_PROFILE);
+   
+   // 强烈建议：显式添加 RTCP FB
+   vdesc.addRtcpFeedback(offerPt, "nack");
+   vdesc.addRtcpFeedback(offerPt, "pli");
+   vdesc.addRtcpFeedback(offerPt, "transport-cc");
+   
+   // 绑定 SSRC & msid（见修复 2）
+   vdesc.addSSRC(sess->ssrc, "va", "stream1", "video1");
+   
+   sess->videoTrack = pc->addTrack(vdesc);
+   ```
 
-------
+   **做法 B（兜底，文本“瘦身”）**
+    如果库仍然在 Answer 里塞了多个 H264，你可以在 `localSdp` 拿到后、返回给前端之前，对 **m=video 段**“瘦身”：
 
-## 必修修复（和后端配合，能一次性解决“无 inbound-rtp”）
+   - 只保留 `a=rtpmap:<offerPt> H264/90000` 与其对应的 `a=fmtp:<offerPt> ...`、`a=rtcp-fb:<offerPt> ...`；
+   - 删除其它 H264 PT 的行；
+   - `m=video` 行的 PT 列表也只留下 `<offerPt>`（以及必要的 rtx 映射，如你启用的话）。
 
-> 结合你上一条后端日志，我强烈建议按这三条执行；这是最可能的一击即中：
+   > 这样能 100% 保证底层协商到的就是 `<offerPt>`，与你的打包器 `payloadType` 一致，发送轨就会 open。
 
-1. **保持 H264 的 Payload Type 与浏览器 Offer 完全一致**
+   ### ✅ 修复 2：保证 Answer 里有 **`a=msid`（或 `a=ssrc … msid …`）**
 
-- 你后端日志出现过：`used_pt=96` 但随后“selected_pt=121 reconfigured”，这会让浏览器**不认这条 m=video**，从而**不产生 inbound-rtp**、服务端 track 也**一直不开**。
+   - 你已经调用了 `addSSRC(ssrc, "va", "stream1", "video1")`，但从实际看没落到 SDP。建议**再保险**地在 Answer 文本阶段做一次检查/注入：
 
-- **规范**：Answer 的 H264 动态 PT **必须沿用** Offer 中那条的 PT（通常是 `96`）。同时 Answer 里要有：
+     - 若没有 `a=msid:` 行，则在该 m=video 段内插入：
 
-  ```
-  a=rtpmap:96 H264/90000
-  a=fmtp:96 packetization-mode=1;profile-level-id=42e01f;level-asymmetry-allowed=1
-  ```
+       ```
+       a=msid: stream1 v0
+       ```
 
-  以及 `a=sendonly`。
+     - 或者确保出现 `a=ssrc:<ssrc> msid: stream1 v0`（保持你生成时的 `streamId/trackId` 一致即可）。
 
-1. **先建 Sender/Transceiver（sendonly + H264/PT=96），再 CreateAnswer**
+   > 这一步能“强迫”浏览器创建接收轨，配合修复 1，**服务端 sender 会立刻 open**，你的 `waiting track open` 会消失。
 
-- 正确顺序：
-   `setRemoteDescription(offer)` → **AddTransceiver/Track（direction=sendonly，锁定 H264/PT=96，设置 msid）** → `createAnswer` → `setLocalDescription(answer)`
-- 反过来（先 createAnswer 再改配置）会导致 Answer 里**没有你的发送轨信息**，从而**track 永远不开**。
+   ### ✅ 修复 3：**不要改写 Offer 的 `m=video` 端口**
 
-1. **Answer 的 m=video 段必须含 `a=sendonly` + `a=msid`（或 ssrc+msid）**
+   - 你前端日志里多次出现 `m=video 7174/7607` 这样的端口；标准做法是 **9**（占位），真正连通靠 ICE。
+   - 不要手改端口；按你现在的前端代码（`WhepPlayer.vue`）来看，已经是原生 `createOffer`，应该不会去改。
 
-- 推荐 Unified Plan：
+   ### ✅ 修复 4：Trickle PATCH 的格式要严格（你前端已改对）
 
-  ```
-  a=msid: stream1 v0
-  a=sendonly
-  ```
+   - 之前你把 `a=candidate …  a=mid:0` 放一行，后端解析不到 `a=mid`。
 
-- 缺少 msid 很多浏览器不会创建可见的接收轨，也不发 RTCP RR，仍旧“无 inbound-rtp”。
+   - 你现在前端已经按 **CRLF 分两行**发：
 
-> 做完以上三点，**后端的 “waiting track open / Track is not open” 会消失**，前端立刻会看到 inbound-rtp。
+     ```
+     a=candidate:...
+     a=mid:0
+     ```
 
-------
+     后端 `patchSession` 用 `std::getline` 解析就 OK 了。额外建议把解析出来的 `mid` 做个 `trim()`，防止出现 `mid='0\n'` 这种日志。
 
-## 前端侧：加 3 个“自证/限流”点（帮助你在前端快速判定是后端没发）
+   ------
 
-### 1) 限制编解码为 H264 优先（避免协商到非预期）
+   ## 我在代码里看到的可改进处（方便你直改）
 
-```
-// 在 createOffer 之前：
-const tr = pc.addTransceiver('video', { direction: 'recvonly' });
-const caps = RTCRtpReceiver.getCapabilities('video')!;
-const h264 = caps.codecs.filter(c => c.mimeType.toLowerCase() === 'video/h264');
-tr.setCodecPreferences([...h264, ...caps.codecs.filter(c => c.mimeType.toLowerCase() !== 'video/h264')]);
-```
+   - **`whep_session.cpp` → `attachMediaHandlers(Session&)`**
+      这里把 `RtpPacketizationConfig` 的 `payloadType` 设成了 `sess->payloadType`（来自 Offer），这点保持不变。但“协商侧”要保证 Answer 只保留该 PT 的 H264（见修复 1）。
 
-### 2) 打印协商方向与 ontrack
+   - **`whep_session.cpp` → 生成 Answer 后的 `inject_h264_fmtp(...)`**
+      你是“找到**第一个** H264 rtpmap，然后替换/插入 fmtp”。
 
-```
-pc.ontrack = (ev) => {
-  console.log('[WHEP] ontrack kind=', ev.track.kind, ev.streams.map(s=>s.id));
-  ev.track.onunmute = () => console.log('[WHEP] track unmuted');
-};
+     - 如果 Answer 里头一个 H264 不是 Offer 的 PT，这段处理会错位。
+     - **建议**：改成**先精确定位 `<offerPt>` 的 rtpmap**，对它对应的 fmtp 做处理。若找不到 `<offerPt>`，就说明 Answer 被库改坏了，直接“瘦身”到只留 `<offerPt>`。
 
-setTimeout(() => {
-  pc.getTransceivers().forEach((t,i)=>{
-    console.log('[WHEP] tr', i, 'dir=', t.direction, 'current=', t.currentDirection);
-  });
-}, 0);
-```
+   - **`sdp_check`**
+      你已经把 `dir/h264_pt/msid` 打印出来，这非常有用。修完后，期望日志应该是：
 
-- 期望 `currentDirection`（前端视角）为 `recvonly`。如始终拿不到 `ontrack/onunmute`，十有八九是**后端 Answer 缺 msid 或 track 未 open**。
+     ```
+     dir=sendonly h264_pt=<和 offer 相同> msid=1
+     ```
 
-### 3) `getStats()` 验证是否真的“无 inbound-rtp”
+     一旦这样，后面的 `track open sid=...` 会出现，前端的 `inbound-rtp` 会马上有数据。
 
-```
-const stats = await pc.getStats();
-const inbound = [...stats.values()].filter(r => r.type === 'inbound-rtp' && r.kind === 'video');
-const pairs = [...stats.values()].filter(r => r.type === 'candidate-pair' && r.nominated);
-console.log('[WHEP] inbound', inbound, 'pair', pairs);
-```
+   ------
 
-- 有 nominated 的 pair，但 **inbound 为空/bytesReceived 不变** ⇒ **后端没发**（就别纠结前端了）。
+   ## 前端当前实现（`WhepPlayer.vue`）是OK的
 
-------
+   - 你已经把 **H264 优先** 做了（`setCodecPreferences`），
+   - `ontrack` 里正确把 `srcObject` 绑定到 `<video>`，
+   - Trickle PATCH 分行，
+   - 统计里打印 `inbound-rtp`。
+      **所以真正的阻断点还是后端“轨没 open”。**
 
-## 你这份日志里还能顺手修的“小毛病”
+   ------
 
-- **PATCH 片段换行**
-   现在是：`a=candidate:...  a=mid:0`（同一行）
-   改成：
+   ## 预期现象（修复后）
 
-  ```
-  a=candidate:...
-  a=mid:0
-  ```
+   - 后端日志新增：`[WHEP] track open sid=...`，`first IDR observed` 之后不再打印 `waiting track open`；
+   - 前端 1～2 秒内出：
+     - `ontrack`、`track onunmute`、`video playing`，
+     - `getStats` 看到 `inbound-rtp(kind=video)`，`bytesReceived` 持续增长；
+     - 不再刷屏 `no inbound-rtp/track yet`。
 
-  以及在 gathering 完成时发送：
+   ------
 
-  ```
-  a=end-of-candidates
-  ```
+   ## 若你想最快验证
 
-- **video autoplay 避免被策略拦**（虽然现在根因不是这个，但建议写上）
-   `<video playsinline muted autoplay>`，并在 `onunmute` 后再 `video.play()`。
-
-- **i18n 报错（codes.forEach）**
-   `codes` 可能是 string/object 而不是数组，封装一下：
-
-  ```
-  const toArray = (x:any)=> Array.isArray(x) ? x : (typeof x==='string' ? [x] : Object.values(x ?? {}));
-  const codesArr = toArray(codes);
-  codesArr.forEach(...);
-  ```
-
-- **iframe JSON.parse 报错**
-   只在是字符串时再 `JSON.parse`：
-
-  ```
-  window.addEventListener('message', (e) => {
-    const d = e.data;
-    if (typeof d === 'string') {
-      try { const obj = JSON.parse(d); /* ... */ } catch {}
-    } else {
-      // 已是对象，按对象处理
-    }
-  });
-  ```
-
-------
-
-## 快速复盘检查清单（把问题一锤定音）
-
-1. **Answer m=video**：包含 `a=sendonly`、H264 的 `rtpmap/fmtp`，**PT 等于 Offer 的 96**，并有 `a=msid`（或 ssrc+msid）。
-2. **后端添加 sender 的时机**：在 `createAnswer/setLocalDescription` 之前就完成，并与上面 PT 一致。
-3. **Track open 之后再发**：移除/减少 `waiting track open`，或清晰地在 `onOpen/connected` 时开始送帧。
-4. **前端**：限制 H264、打 `ontrack/onunmute`、`getStats` 看 inbound。
-5. **不改写 m 行端口**，PATCH 只发 `a=candidate`（换行正确）以及 `a=end-of-candidates`。
+   1. 在返回给前端之前，把 **完整 Answer 的 m=video 段**打印出来（只需这一段）。
+      - 检查：是否只有一个 H264；其 PT 是否等于 Offer 的；是否有 `a=msid` 或 `a=ssrc … msid …`。
+   2. 如果不是，先“文本瘦身 + 注入 msid”试一版；你会立刻看到轨 open/视频起来。
+   3. 再回头把“只添加一个 H264（Offer PT）”固化到 `vdesc` 的构造逻辑里，去掉瘦身的兜底。

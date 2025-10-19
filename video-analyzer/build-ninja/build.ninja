@@ -807,6 +807,86 @@ build va_vsm_proto.lib: CXX_STATIC_LIBRARY_LINKER__va_vsm_proto_Release CMakeFil
   TARGET_PDB = va_vsm_proto.pdb
 
 # =============================================================================
+# Object build statements for EXECUTABLE target WhepClientProbe
+
+
+#############################################
+# Order-only phony target for WhepClientProbe
+
+build cmake_object_order_depends_target_WhepClientProbe: phony || .
+
+build CMakeFiles\WhepClientProbe.dir\src\tools\whep_client_probe.cpp.obj: CXX_COMPILER__WhepClientProbe_unscanned_Release D$:\Projects\ai\cv\video-analyzer\src\tools\whep_client_probe.cpp || cmake_object_order_depends_target_WhepClientProbe
+  CONFIG = Release
+  DEFINES = -DUSE_CUDA -DUSE_GRPC -DUSE_ONNXRUNTIME -DVA_ENABLE_GRPC_SERVER
+  FLAGS = /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MD /W4 /utf-8
+  INCLUDES = -ID:\Projects\vcpkg\installed\x64-windows\include\opencv4 -ID:\Projects\ai\cv\video-analyzer\include -ID:\Projects\vcpkg\installed\x64-windows\include -ID:\Projects\ai\cv\third_party\onnxruntime-win-x64-gpu-1.23.0\include -ID:\Projects\ai\cv\video-analyzer\src
+  OBJECT_DIR = CMakeFiles\WhepClientProbe.dir
+  OBJECT_FILE_DIR = CMakeFiles\WhepClientProbe.dir\src\tools
+  TARGET_COMPILE_PDB = CMakeFiles\WhepClientProbe.dir\
+  TARGET_PDB = bin\WhepClientProbe.pdb
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target WhepClientProbe
+
+
+#############################################
+# Link the executable bin\WhepClientProbe.exe
+
+build bin\WhepClientProbe.exe: CXX_EXECUTABLE_LINKER__WhepClientProbe_Release CMakeFiles\WhepClientProbe.dir\src\tools\whep_client_probe.cpp.obj | D$:\Projects\vcpkg\installed\x64-windows\lib\datachannel.lib D$:\Projects\vcpkg\installed\x64-windows\lib\juice.lib D$:\Projects\vcpkg\installed\x64-windows\lib\mbedtls.lib
+  CONFIG = Release
+  FLAGS = /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -MD
+  LINK_FLAGS = /machine:x64 /INCREMENTAL:NO /subsystem:console
+  LINK_LIBRARIES = D:\Projects\vcpkg\installed\x64-windows\lib\datachannel.lib  D:\Projects\vcpkg\installed\x64-windows\lib\juice.lib  D:\Projects\vcpkg\installed\x64-windows\lib\mbedtls.lib  ws2_32.lib  iphlpapi.lib  winhttp.lib  crypt32.lib  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib
+  OBJECT_DIR = CMakeFiles\WhepClientProbe.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_COMPILE_PDB = CMakeFiles\WhepClientProbe.dir\
+  TARGET_FILE = bin\WhepClientProbe.exe
+  TARGET_IMPLIB = WhepClientProbe.lib
+  TARGET_PDB = bin\WhepClientProbe.pdb
+
+# =============================================================================
+# Object build statements for EXECUTABLE target WhepStandaloneServer
+
+
+#############################################
+# Order-only phony target for WhepStandaloneServer
+
+build cmake_object_order_depends_target_WhepStandaloneServer: phony || .
+
+build CMakeFiles\WhepStandaloneServer.dir\src\tools\whep_standalone_server.cpp.obj: CXX_COMPILER__WhepStandaloneServer_unscanned_Release D$:\Projects\ai\cv\video-analyzer\src\tools\whep_standalone_server.cpp || cmake_object_order_depends_target_WhepStandaloneServer
+  CONFIG = Release
+  DEFINES = -DUSE_CUDA -DUSE_GRPC -DUSE_ONNXRUNTIME -DVA_ENABLE_GRPC_SERVER
+  FLAGS = /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MD /W4 /utf-8
+  INCLUDES = -ID:\Projects\vcpkg\installed\x64-windows\include\opencv4 -ID:\Projects\ai\cv\video-analyzer\include -ID:\Projects\vcpkg\installed\x64-windows\include -ID:\Projects\ai\cv\third_party\onnxruntime-win-x64-gpu-1.23.0\include -ID:\Projects\ai\cv\video-analyzer\src -ID:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\include
+  OBJECT_DIR = CMakeFiles\WhepStandaloneServer.dir
+  OBJECT_FILE_DIR = CMakeFiles\WhepStandaloneServer.dir\src\tools
+  TARGET_COMPILE_PDB = CMakeFiles\WhepStandaloneServer.dir\
+  TARGET_PDB = bin\WhepStandaloneServer.pdb
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target WhepStandaloneServer
+
+
+#############################################
+# Link the executable bin\WhepStandaloneServer.exe
+
+build bin\WhepStandaloneServer.exe: CXX_EXECUTABLE_LINKER__WhepStandaloneServer_Release CMakeFiles\WhepStandaloneServer.dir\src\tools\whep_standalone_server.cpp.obj | D$:\Projects\vcpkg\installed\x64-windows\lib\datachannel.lib D$:\Projects\vcpkg\installed\x64-windows\lib\juice.lib D$:\Projects\vcpkg\installed\x64-windows\lib\mbedtls.lib D$:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\avcodec.lib D$:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\avformat.lib D$:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\avutil.lib D$:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\swscale.lib D$:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\swresample.lib
+  CONFIG = Release
+  FLAGS = /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -MD
+  LINK_FLAGS = /machine:x64 /INCREMENTAL:NO /subsystem:console
+  LINK_LIBRARIES = D:\Projects\vcpkg\installed\x64-windows\lib\datachannel.lib  D:\Projects\vcpkg\installed\x64-windows\lib\juice.lib  D:\Projects\vcpkg\installed\x64-windows\lib\mbedtls.lib  D:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\avcodec.lib  D:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\avformat.lib  D:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\avutil.lib  D:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\swscale.lib  D:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\lib\swresample.lib  ws2_32.lib  iphlpapi.lib  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib
+  OBJECT_DIR = CMakeFiles\WhepStandaloneServer.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_COMPILE_PDB = CMakeFiles\WhepStandaloneServer.dir\
+  TARGET_FILE = bin\WhepStandaloneServer.exe
+  TARGET_IMPLIB = WhepStandaloneServer.lib
+  TARGET_PDB = bin\WhepStandaloneServer.pdb
+
+# =============================================================================
 # Object build statements for STATIC_LIBRARY target va_cuda_kernels
 
 
@@ -1960,6 +2040,14 @@ build VideoAnalyzer: phony bin\VideoAnalyzer.exe
 
 build VideoAnalyzer.exe: phony bin\VideoAnalyzer.exe
 
+build WhepClientProbe: phony bin\WhepClientProbe.exe
+
+build WhepClientProbe.exe: phony bin\WhepClientProbe.exe
+
+build WhepStandaloneServer: phony bin\WhepStandaloneServer.exe
+
+build WhepStandaloneServer.exe: phony bin\WhepStandaloneServer.exe
+
 build parse.exe: phony yaml-cpp\util\parse.exe
 
 build read.exe: phony yaml-cpp\util\read.exe
@@ -1994,7 +2082,7 @@ build yaml-cpp.lib: phony yaml-cpp\yaml-cpp.lib
 #############################################
 # Folder: D:/Projects/ai/cv/video-analyzer/build-ninja
 
-build all: phony bin\VideoAnalyzer.exe va_analyzer_control_proto.lib va_whep_proto.lib va_vsm_proto.lib va_cuda_kernels.lib
+build all: phony bin\VideoAnalyzer.exe va_analyzer_control_proto.lib va_whep_proto.lib va_vsm_proto.lib bin\WhepClientProbe.exe bin\WhepStandaloneServer.exe va_cuda_kernels.lib
 
 # =============================================================================
 

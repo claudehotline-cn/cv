@@ -1,34 +1,36 @@
 # 路线图总览
-- M0｜基础贯通
-  - 目标：VA/VSM 启停稳定；/analysis 可获取 Sources/Graphs；WHEP 握手 201/Location；订阅 400 有兜底。
-  - 验收：/api/system/info 与 /api/source/list 200；/api/graphs 来自 DB；前端选择 det_720p+camera_01 能出画（首帧 ≤3s）。
-- M1｜可观测与取证
-  - 目标：/metrics 暴露 WHEP/CP 指标；前端 UI 自动化取证；错误提示友好。
-  - 验收：保存一次 /analysis 播放取证 JSON；WHEP/CP 指标出现在 Metrics 页卡；订阅失败提示含具体原因。
-- M2｜稳定与扩展
-  - 目标：多实例路由稳定（VA_GRPC_HOSTS）；Graphs/Models/Pipelines 均可 DB 管理；回滚与灰度策略。
-  - 验收：8 路并发 30min 无异常；DB 与 UI 一致；发生异常可一键回滚。
+
+- M0「打通链路与首屏」
+  - 目标：分析页能稳定完成 WHEP 握手并亮屏。
+  - 验收：/whep POST 201（含 Location）；setRemoteDescription 成功；receiver inbound-rtp bytes/pkts 连续增长，视频进入 playing。
+- M1「兼容与稳态」
+  - 目标：覆盖主流浏览器与常见编码配置，15 分钟稳定播放无抖动。
+  - 验收：丢包<1%、重连<2 次/15min、无“Track is not open”告警；fmtp 对齐（pmode=1、lasym=1）且 Profile 与 NVENC 输出一致。
+- M2「可观测与自动化」
+  - 目标：端到端可观测、回归自动化与文档完善。
+  - 验收：/api/system/info 暴露 whep_base；E2E 自动脚本通过；文档与排障手册齐备。
 
 # 分阶段计划（表格）
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| P0 | /api/graphs 改 DB-only | GraphRepo + REST 切换；前端映射 id/name/requires | 结构差异→前端适配 | 下拉=DB 实际数 |
-| P1 | 订阅兜底与错误提示 | startAnalysis 默认值+重试；ElMessage 细化 | 误判→只重试一次 | 首帧≤3s 成功率≥95% |
-| P2 | WHEP/CP 指标 | /metrics 增 WHEP 会话与 CP 直方 | 性能开销→聚合/抽样 | 指标可见且稳定 |
-| P3 | UI 取证 | Playwright E2E（首帧/摘要） | 首屏慢→延长等待/重试 | 证据文件完整 |
-| P4 | 多实例路由稳态 | gRPC 路由、TTL/GC、错误回退 | 连接抖动→本地回退 | 并发 8 路 30min |
+| 后端握手修复 | createSession 正确返回 Answer | setRemote→addTrack(sendonly, mid)→createAnswer；localSdp 立即返回+回调兜底 | 状态竞态 → 原子化标志位；延时兜底 | POST /whep 201，answer_len>500 |
+| 前端播放器健壮 | 可播放、断线重连、trickle 正确 | ontrack MediaStream 兜底；'a='+cand；mid='0'；end-of-candidates | 浏览器差异 → H.264 优先与日志细化 | setRemote ok；inbound-rtp 连续增长 |
+| 编码/SDP 对齐 | 浏览器接受解码 | fmtp 仅 pmode=1/lasym=1；按 Answer PT 发送；清理多余 H264 PT | profile 不匹配 → 必要时对齐 profile-level-id | fps≥24、无周期抖动 |
+| 线程/发送稳定 | 首帧快速稳定亮屏 | 等首个 IDR；SPS/PPS 预送；B-like 丢弃；RTP TS 单调 | IDR 稀疏 → 缩短 GOP/IDR 周期 | 首帧<2s；无“Track not open”异常 |
+| 端到端验证 | 实机 E2E 与失败证据 | DevTools 抓 /whep 与 stats；最小页回归 | 端口不一致 → 校验 VITE_API_BASE/VA_REST_PORT | 15min 稳定播放 |
+| 文档与自动化 | CONTEXT/ROADMAP/排障 | SOP、日志点位、E2E 脚本 | 依赖波动 → 固化版本与脚本 | 脚本 100% 通过 |
 
 # 依赖矩阵
 - 内部依赖：
-  - VA 控制面与媒体（WHEP、订阅）、存储层（DbPool/Repos）、REST 路由。
-  - VSM 源聚合（REST）、gRPC 编排（Attach/Detach）。
+  - 后端：`media/whep_session.*`、`transport_webrtc_datachannel.*`、`server/rest.cpp`。
+  - 前端：`src/widgets/WhepPlayer/*`、`src/stores/analysis.ts`、`src/api/*`。
 - 外部依赖（库/服务/硬件）：
-  - MySQL 8.x（cv_cp，端口 13306）；mysql-connector-c++。
-  - libdatachannel（WHEP）；NVIDIA CUDA/NVDEC/NVENC（可选）。
+  - `libdatachannel`、FFmpeg/NVENC/NVDEC、Vite/浏览器（Chrome）、RTSP 源（`rtsp://127.0.0.1:8554/camera_01`）、GPU（NVIDIA）。
 
 # 风险清单（Top-5）
-- 订阅 400 → profile/uri 缺失 → 前端兜底/校验 + 后端返回结构化错误 → 前端只重试一次
-- WHEP 失败 → 端口/路由/ICE 异常 → 201/Location 取证与 /metrics 指标 → 自动重试 + 降级路径
-- Graphs 不一致 → FS/DB 源混用 → 统一 DB-only + 配置开关 → 前后端统一映射
-- 进程不稳定 → VA 被占用/退出 → 启停脚本与健康探测 → 出错自动重启
-- 性能瓶颈 → 并发/大表查询 → 分页与索引、聚合指标 → 首帧/成功率监控
+- 端口/环境不一致 → VA 未在 8082 启动 → 前端 /api 全红 → 启动 VA 并对齐 `VITE_API_BASE` 与 `VA_REST_PORT`。
+- fmtp/profile 不匹配 → inbound-rtp 增长但黑屏 → 控制台打印 codecs 与 answer_head → 必要时按 NVENC SPS 写入 `profile-level-id`。
+- ICE 候选异常 → NAT/网卡路径失败 → PATCH 无效、ICE failed → 先用 host-only、本机同网测试；必要时配置 STUN/TURN。
+- IDR 稀疏/首屏慢 → 首个 IDR 迟到 → 等 IDR 与预送 SPS/PPS；缩短 GOP/IDR 周期。
+- 线程竞态 → 回调与送帧线程可见性 → 原子化标志位与节流日志 → 若仍抖动，增加状态机与锁粒度。
+
