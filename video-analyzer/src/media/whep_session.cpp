@@ -305,8 +305,9 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
     if (!sess->started.load()) {
       bool idr = has_idr(h264);
       auto now = std::chrono::steady_clock::now();
-      static int fallback_ms = [](){ int v=0; if (const char* pv = std::getenv("VA_WHEP_FALLBACK_MS")) { try { v = std::stoi(pv); } catch(...) {} } if (v < 0) v = 0; return v; }();
-      bool guardElapsed = (sess->createdAt.time_since_epoch().count() != 0) && ((now - sess->createdAt) > std::chrono::milliseconds(fallback_ms));
+      static int fallback_ms = [](){ int v=0; if (const char* pv = std::getenv("VA_WHEP_FALLBACK_MS")) { try { v = std::stoi(pv); } catch(...) {} } return v; }();
+      // 禁用兜底：当 fallback_ms<=0 时仅等待 IDR，不触发超时起播
+      bool guardElapsed = (fallback_ms > 0) && (sess->createdAt.time_since_epoch().count() != 0) && ((now - sess->createdAt) > std::chrono::milliseconds(fallback_ms));
       if (idr || guardElapsed) {
         sess->started.store(true);
         if (!sess->last_sps.empty()) { rtc::binary s; s.resize(sess->last_sps.size()); std::memcpy(s.data(), sess->last_sps.data(), sess->last_sps.size()); rtc::FrameInfo fi(sess->ts90); try { sess->videoTrack->sendFrame(std::move(s), fi); } catch (...) {} sess->ts90 += (90000u/30u); }
@@ -317,19 +318,16 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
       }
     }
 
-    // Smooth 90kHz timestamp using EMA of inter-arrival time
+    // 平滑 90kHz 时间戳：EMA（不做限幅）
     auto now = std::chrono::steady_clock::now();
     double ms = 33.33;
     if (sess->lastSentAt.time_since_epoch().count() != 0) {
-      ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - sess->lastSentAt).count();
-      if (ms < 1.0) ms = 1.0;
-      if (ms > 100.0) ms = 100.0; // bound to ~10fps
+      ms = std::chrono::duration_cast<std::chrono::microseconds>(now - sess->lastSentAt).count() / 1000.0;
     }
-    // EMA: keep 80% history, 20% new
+    // EMA: 80% 历史 + 20% 新值
     sess->avgMs = 0.8 * sess->avgMs + 0.2 * ms;
-    uint32_t step = static_cast<uint32_t>(sess->avgMs * 90.0);
-    if (step < 1u) step = 1u;
-    sess->ts90 += step;
+    uint32_t step = static_cast<uint32_t>(sess->avgMs * 90.0 + 0.5); // 四舍五入
+    sess->ts90 += (step ? step : 1u);
     sess->lastSentAt = now;
     rtc::binary frame; frame.resize(h264.size()); std::memcpy(frame.data(), h264.data(), h264.size());
     rtc::FrameInfo finfo(sess->ts90);
