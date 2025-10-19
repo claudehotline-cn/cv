@@ -31,6 +31,7 @@ const stopping = ref(false)
 let reconnectAttempts = 0
 let reconnectTimer: number | null = null
 let statsTimer: number | null = null
+const diagEnabled = (() => { try { return String(((import.meta as any).env?.VITE_WHEP_DEBUG ?? '')).trim() === '1' } catch { return false } })()
 let lastRvfcLog = 0
 let flowGuardTimer: number | null = null
 
@@ -315,22 +316,24 @@ async function startSession(url: string) {
     // 若较长时间仍无 inbound-rtp，自动重建连接（延长守护窗口，避免误判）
     try {
       if (flowGuardTimer) { window.clearTimeout(flowGuardTimer); flowGuardTimer = null }
-      flowGuardTimer = window.setTimeout(async () => {
-        try {
-          const pcNow: any = pcRef.value
-          if (!pcNow) return
-          const rx = (pcNow.getReceivers?.() || []).find((r: any) => r.track?.kind === 'video')
-          if (!rx || !rx.getStats) return
-          const rep = await rx.getStats()
-          let ok = false
-          rep.forEach((s: any) => { if (s.type === 'inbound-rtp' && (((s.bytesReceived||0) > 0) || ((s.framesDecoded||0) > 0))) ok = true })
-          if (!ok) {
-            console.warn('[WHEP] no inbound after guard window, restarting')
-            try { (window as any).__whepDiag = { reason: 'no_inbound_guard', ts: Date.now(), url } } catch {}
-            await stopSession(); await ensureStart()
-          }
-        } catch {}
-      }, 15000)
+      if (diagEnabled) {
+        flowGuardTimer = window.setTimeout(async () => {
+          try {
+            const pcNow: any = pcRef.value
+            if (!pcNow) return
+            const rx = (pcNow.getReceivers?.() || []).find((r: any) => r.track?.kind === 'video')
+            if (!rx || !rx.getStats) return
+            const rep = await rx.getStats()
+            let ok = false
+            rep.forEach((s: any) => { if (s.type === 'inbound-rtp' && (((s.bytesReceived||0) > 0) || ((s.framesDecoded||0) > 0))) ok = true })
+            if (!ok) {
+              console.warn('[WHEP] no inbound after guard window, restarting')
+              try { (window as any).__whepDiag = { reason: 'no_inbound_guard', ts: Date.now(), url } } catch {}
+              await stopSession(); await ensureStart()
+            }
+          } catch {}
+        }, 20000)
+      }
     } catch {}
   } catch (e: any) {
     errorMsg.value = (e && e.message) ? e.message : 'WHEP failed'

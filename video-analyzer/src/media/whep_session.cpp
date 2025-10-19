@@ -14,12 +14,21 @@ namespace va::media {
 // Convert AVCC to AnnexB if needed
 static inline void ensure_annexb(std::vector<uint8_t>& buf) {
   if (buf.size() < 4) return;
-  if (buf[0]==0x00 && buf[1]==0x00 && buf[2]==0x00 && buf[3]==0x01) return;
+  auto has_start_code = [&](size_t from)->bool{
+    for (size_t i = from; i + 3 < buf.size(); ++i) {
+      if (buf[i]==0x00 && buf[i+1]==0x00 && (buf[i+2]==0x01 || (i+3<buf.size() && buf[i+2]==0x00 && buf[i+3]==0x01))) return true;
+    }
+    return false;
+  };
+  // If buffer already contains AnnexB start code (00 00 01 or 00 00 00 01), do nothing
+  if (has_start_code(0)) return;
+  // Try AVCC length-prefixed conversion
   std::vector<uint8_t> out; out.reserve(buf.size()+16);
   size_t pos = 0; const uint8_t sc[4] = {0,0,0,1};
   while (pos + 4 <= buf.size()) {
     uint32_t len = (uint32_t(buf[pos])<<24) | (uint32_t(buf[pos+1])<<16) | (uint32_t(buf[pos+2])<<8) | (uint32_t(buf[pos+3]));
-    pos += 4; if (len == 0 || pos + len > buf.size()) return; // malformed; keep as-is
+    pos += 4;
+    if (len == 0 || pos + len > buf.size()) { out.clear(); break; }
     out.insert(out.end(), sc, sc+4);
     out.insert(out.end(), buf.begin()+pos, buf.begin()+pos+len);
     pos += len;
@@ -132,6 +141,46 @@ int WhepSessionManager::createSession(const std::string& streamKey,
     catch (...) { VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] createAnswer unknown"; return 500; }
     if (outAnswerSdp.empty()) return 409;
 
+    // Patch Answer SDP: ensure H264 fmtp has packetization-mode=1 (non-interleaved)
+    // Some receivers treat pmode=0 rigidly and may mishandle FU-A; aligning to pmode=1 improves P-frame continuity.
+    {
+      std::istringstream iss(outAnswerSdp);
+      std::vector<std::string> lines; lines.reserve(128);
+      std::string line; std::string h264_pt; int rtpmapIdx=-1; int mVideoStart=-1; int mVideoEnd=-1;
+      while (std::getline(iss, line)) { if (!line.empty() && line.back()=='\r') line.pop_back(); lines.push_back(line); }
+      for (size_t i=0;i<lines.size();++i) {
+        const std::string& L = lines[i];
+        if (mVideoStart<0 && L.rfind("m=video",0)==0) { mVideoStart=(int)i; for (size_t k=i+1;k<lines.size();++k){ if (lines[k].rfind("m=",0)==0){ mVideoEnd=(int)k; break; } } if (mVideoEnd<0) mVideoEnd=(int)lines.size(); }
+        if (L.rfind("a=rtpmap:",0)==0 && L.find("H264/90000")!=std::string::npos) {
+          size_t c=L.find(':'), sp=L.find(' ', (c==std::string::npos?0:c+1)); if (c!=std::string::npos && sp!=std::string::npos && sp>c+1) { h264_pt=L.substr(c+1, sp-(c+1)); rtpmapIdx=(int)i; }
+        }
+      }
+      if (!h264_pt.empty() && mVideoStart>=0) {
+        int fmtpIdx=-1;
+        for (int i=mVideoStart; i<mVideoEnd && i<(int)lines.size(); ++i) {
+          if (lines[i].rfind(std::string("a=fmtp:")+h264_pt,0)==0) { fmtpIdx=i; break; }
+        }
+        auto ensure_pmode1 = [&](const std::string& src)->std::string{
+          // a=fmtp:<pt> <params...>
+          size_t sp = src.find(' ');
+          std::string prefix = (sp==std::string::npos)? src : src.substr(0, sp);
+          std::string params = (sp==std::string::npos)? std::string() : src.substr(sp+1);
+          // split by ';'
+          std::vector<std::string> kvs; std::string cur; for (char ch : params){ if (ch==';'){ if(!cur.empty()) kvs.push_back(cur); cur.clear(); } else { cur.push_back(ch);} } if(!cur.empty()) kvs.push_back(cur);
+          auto trim = [](std::string& s){ while(!s.empty() && (s.front()==' '||s.front()=='\t')) s.erase(s.begin()); while(!s.empty() && (s.back()==' '||s.back()=='\t')) s.pop_back(); };
+          bool has_pmode=false, has_lasym=false;
+          for (auto& k : kvs){ std::string t=k; trim(t); auto p=t.find('='); std::string key=(p==std::string::npos)? t : t.substr(0,p); for (auto& c:key) c=char(std::tolower(c)); if (key=="packetization-mode") has_pmode=true; if (key=="level-asymmetry-allowed") has_lasym=true; }
+          if (!has_pmode) kvs.push_back("packetization-mode=1");
+          if (!has_lasym) kvs.push_back("level-asymmetry-allowed=1");
+          std::ostringstream os; os<<prefix; if(!kvs.empty()){ os<<' '; for(size_t i=0;i<kvs.size();++i){ if(i) os<<';'; os<<kvs[i]; } }
+          return os.str();
+        };
+        if (fmtpIdx>=0) { lines[fmtpIdx] = ensure_pmode1(lines[fmtpIdx]); }
+        else if (rtpmapIdx>=0) { lines.insert(lines.begin()+rtpmapIdx+1, std::string("a=fmtp:")+h264_pt+" packetization-mode=1;level-asymmetry-allowed=1"); if (mVideoEnd>rtpmapIdx+1) ++mVideoEnd; }
+        std::ostringstream os; for (size_t i=0;i<lines.size();++i){ os<<lines[i]<<"\r\n"; } outAnswerSdp=os.str();
+      }
+    }
+
     {
       std::lock_guard<std::mutex> g(mu_);
       bySid_[sid] = sess;
@@ -218,6 +267,24 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
     }
   };
 
+  // Detect if current AnnexB buffer contains an IDR slice
+  auto has_idr = [](const std::vector<uint8_t>& buf)->bool{
+    size_t i = 0, n = buf.size();
+    while (i + 4 < n) {
+      // find 0x000001 or 0x00000001
+      if (buf[i]==0x00 && buf[i+1]==0x00 && ((buf[i+2]==0x01) || (buf[i+2]==0x00 && buf[i+3]==0x01))) {
+        size_t j = (buf[i+2]==0x01)? (i+3) : (i+4);
+        if (j < n) {
+          uint8_t nal = buf[j] & 0x1F;
+          if (nal == 5) return true; // IDR
+        }
+        i = j + 1; continue;
+      }
+      ++i;
+    }
+    return false;
+  };
+
   for (auto& kv : targets) {
     auto sess = kv.second; if (!sess || !sess->videoTrack) continue;
     if (!sess->pcConnected.load()) continue;
@@ -228,32 +295,38 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 
     // Normalize + update SPS/PPS cache
     std::vector<uint8_t> h264 = data; ensure_annexb(h264); cache_sps_pps(h264, sess->last_sps, sess->last_pps);
+    const bool idr = has_idr(h264);
 
-    // Immediate start: inject SPS/PPS if cached, then proceed
-    if (!sess->started.load()) {
-      sess->started.store(true);
+    // Decide timestamp for this output frame (fixed 30fps)
+    const uint32_t next_ts = sess->ts90 + (90000u/30u);
+
+    // If first frame and we still lack SPS/PPS and it's not IDR, wait for IDR/SPS/PPS to avoid undecodable P 帧
+    if (!sess->started.load() && (sess->last_sps.empty() || sess->last_pps.empty()) && !idr) {
+      continue;
+    }
+
+    // If IDR, prepend SPS/PPS (same timestamp as IDR)
+    if (idr) {
       if (!sess->last_sps.empty()) {
         rtc::binary s; s.resize(sess->last_sps.size()); std::memcpy(s.data(), sess->last_sps.data(), sess->last_sps.size());
-        rtc::FrameInfo fi(sess->ts90);
+        rtc::FrameInfo fi(next_ts);
         try { sess->videoTrack->sendFrame(std::move(s), fi); } catch (...) {}
-        sess->ts90 += (90000u/30u);
       }
       if (!sess->last_pps.empty()) {
         rtc::binary p; p.resize(sess->last_pps.size()); std::memcpy(p.data(), sess->last_pps.data(), sess->last_pps.size());
-        rtc::FrameInfo fi2(sess->ts90);
+        rtc::FrameInfo fi2(next_ts);
         try { sess->videoTrack->sendFrame(std::move(p), fi2); } catch (...) {}
-        sess->ts90 += (90000u/30u);
       }
+      sess->started.store(true);
     }
 
-    // Fixed 30fps RTP timestamp stepping
-    sess->ts90 += (90000u/30u);
-
+    // Send current frame with next_ts
     rtc::binary frame; frame.resize(h264.size()); std::memcpy(frame.data(), h264.data(), h264.size());
-    rtc::FrameInfo finfo(sess->ts90);
+    rtc::FrameInfo finfo(next_ts);
     try { sess->videoTrack->sendFrame(std::move(frame), finfo); }
     catch (const std::exception& ex) { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "transport.webrtc", 2000) << "[WHEP] sendFrame ex sid=" << kv.first << " err=" << ex.what(); continue; }
     catch (...) { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "transport.webrtc", 2000) << "[WHEP] sendFrame ex sid=" << kv.first; continue; }
+    sess->ts90 = next_ts;
     sess->dbg_frames++; sess->dbg_bytes += h264.size(); sess->lastActive = std::chrono::steady_clock::now();
   }
 
@@ -271,4 +344,3 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 }
 
 } // namespace va::media
-

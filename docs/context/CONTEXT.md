@@ -1,47 +1,47 @@
-# 项目上下文（WHEP 播放修复与联调）
+# 当前对话关键信息（WHEP 连贯性排障）
 
-本次对话聚焦“前端分析页无法通过 WHEP 正常播放视频”，完成后端与前端多项修复，并用 DevTools 复测定位环境阻塞点。
+## 背景
+- 现象：前端播放“很卡/几秒动一下/像只播关键帧”。将 GOP 调小后体感略好。
+- 架构：VA(8082) 提供 WHEP；另有最小后端(8090) + 最小页可流畅播放。
+- 推流样例：ffmpeg 从 mp4 以 CFR 基线、zerolatency、bf=0、keyint=60 推 RTSP。
 
-## 仓库与目标
-- 结构：`video-analyzer`（后端，含 WHEP）、`web-front`（前端）、`video-source-manager`、`docs/*` 等。
-- 目标：让分析页通过 WHEP 稳定拉取 NVENC H.264 视频，支持 trickle ICE、断线重连与可观测日志。
+## 取证结论
+- DevTools 对 8082 的 analysis 页与最小页：
+  - inbound-rtp 每 2 秒增加约 120 帧（fps≈60），video.currentTime 等速递增，渲染连续；非“只关键帧”统计特征。
+- VA 日志：发送侧每秒 packets≈+30，持续输出；无节流；pc connected/track open 正常。
 
-## 关键问题与修复
-1) WHEP 握手顺序错误导致 409
-   - 现象：`createSession no local SDP`、`Unexpected local description`。
-   - 修复：setRemote(Offer) → addTrack(sendonly, 用 Offer 的 a=mid) → createAnswer()，并直接 `generateSdp()` 返回；等待 `onLocalDescription`（2.5s），超时兜底读取 localDescription。
+## 主要修复（8082 已生效）
+1) AnnexB 检测与 AVCC 转换更健壮：
+   - 先扫描 00 00 01/00 00 00 01；仅在非 AnnexB 时尝试 AVCC→AnnexB，失败不改原数据。
+2) IDR 前注入 SPS/PPS：
+   - 每逢 IDR，SPS/PPS 与 IDR 同一 timestamp 发送；首帧若缺 SPS/PPS 且为非 IDR，等待 IDR，避免裸 P 帧不可解。
+3) 固定 RTP 时基与分片兼容：
+   - 每帧 ts += 90000/30（等效 30fps）；
+   - Answer SDP 强制 H264 `packetization-mode=1; level-asymmetry-allowed=1`。
+4) 不丢帧与双 key 去重：
+   - 不丢 B-like；fullKey+baseKey 同时路由并按 sid 去重。
+5) 默认无节流：
+   - pacing 关闭（VA_WHEP_PACE_BPS>0 才启用）。
+6) 编码端（libx264）增强：
+   - `repeat-headers=1`（每个 IDR 前带 SPS/PPS）。
 
-2) 前端 trickle 片段拼接错误
-   - 现象：`a=candidate:candidate:...` 被拒。
-   - 修复：改为 `'a=' + cand`；默认 `mid='0'` 对齐服务端；发送 end-of-candidates。
+## 前端配合
+- WhepPlayer：默认关闭 flow guard 与高频 stats（仅 `VITE_WHEP_DEBUG=1` 时启用），避免主线程干扰。
+- 最小页 whep_minimal.html 用于对照验证。
 
-3) 前端绑定流与诊断不足
-   - 修复：`ontrack` 兜底 `new MediaStream([ev.track])`；使用 `receiver.getStats()` 聚焦 inbound-rtp/track；打印选中 codecs；保持 H.264 优先。
+## 仍存在的体感问题
+- 用户在“某具体页面/播放器路径”仍感觉像只播关键帧；analysis/最小页未复现。
+- 高度可疑：该页面的会话/协商差异或渲染/布局阻断。
 
-4) SDP/编解码对齐
-   - 修复：Answer SDP 仅确保 `packetization-mode=1`、`level-asymmetry-allowed=1`，不强制 `profile-level-id`；若多条 H.264 rtpmap/fmtp，仅保留选中 PT；按 Answer PT 重新配置 payloadType。
+## 下一步定位计划
+- 在“问题页面”用 DevTools 采 10–12 秒 inbound-rtp：`framesDecoded/framesPerSecond/framesDropped/jitter/bytes/packets`；与 analysis/最小页对比。
+- 若 inbound 每秒≈30/60 仍体感卡：切换为极简 WhepPlayer（仅 ontrack+play）A/B 以排除页面干扰；若仍卡，导出应答 SDP 首段核对 fmtp/pt 与最小页一致性。
+- 若 inbound 本身间歇：进一步核查 RTP 片段与 Marker（在 VA 侧临时加 seq/ts/M/FU.S/E 日志），或临时 GOP=15 验证 IDR 周期影响。
 
-5) 媒体发送稳定性
-   - 修复：送帧前等待首个 IDR，并在首 IDR 前发送缓存的 SPS/PPS；丢弃 B-like（非参考）帧；RTP TS 单调递增；可选 pacing；AVCC→AnnexB 归一化。
-
-6) 线程可见性
-   - 修复：`pcConnected/trackOpen/started/closed` 改为 `std::atomic<bool>`；回调线程 `.store()`，送帧线程 `.load()`，避免偶发“不显示”。
-
-7) PATCH 解析鲁棒性
-   - 修复：去除 CR 结尾，候选与 mid 按行解析；默认 `mid='0'`。
-
-## DevTools 现网验证结果
-- 前端（5173）可达，但所有 8082 API 请求（system/info、sources、subscribe 等）均 `net::ERR_CONNECTION_REFUSED`。
-- 结论：后端 REST 未在 8082 监听，导致前端无法拉取 sources/订阅 pipeline，自然不会发起 `/whep`，因此“无视频”。
-
-## 构建与运行
-- 构建：`tools/build_with_vcvars.cmd`（Windows, MSVC+ninja）。
-- 运行：后端 `VideoAnalyzer.exe <config>`，确保 `VA_REST_PORT=8082`；前端 `npm run dev`；可用 `public/whep_minimal.html` 做最小自测。
-
-## 待办与验证
-- 启动后端 REST 于 8082，前端再次联调：应出现 `/whep` 201 + Location、`setRemoteDescription ok`，inbound-rtp/track 指标递增，`video playing`。
-- 若 inbound-rtp 增长但黑屏，核对 Answer 的 H.264 fmtp 与 NVENC 实际 SPS（必要时对齐 `profile-level-id`）。
-
-## 风险要点
-- 端口/环境不一致；fmtp/profile 不匹配；候选 NAT/网络限制；首个 IDR 过慢；线程竞态。已给出对应监控与预案。
+## 已提交与证据
+- 关键代码：`video-analyzer/src/media/whep_session.cpp`（最小稳定策略）、AnnexB 修复；SDP fmtp 补丁；x264 repeat-headers。
+- DevTools 截图：
+  - `logs/devtools_analysis_continuity.png`
+  - `logs/devtools_minimal_8082.png`
+- 日志路径：`D:\Projects\ai\cv\logs\video-analyzer-release.log`
 

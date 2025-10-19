@@ -136,6 +136,9 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         if (!settings.profile.empty()) {
             av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
         }
+        // Ensure SPS/PPS repeat before IDR to improve decoder continuity (align with continuity guide)
+        // This maps to x264 parameter repeat-headers=1
+        av_opt_set(codec_ctx_->priv_data, "x264-params", "repeat-headers=1", 0);
     } else if (encoder_name.find("nvenc") != std::string::npos) {
         // NVENC mapping: translate x264-style preset/tune to NVENC-safe options
         auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); }); return v; };

@@ -39,7 +39,7 @@ defaults:
     height: 720
     fps: 30
     bitrate_kbps: 3500
-    gop: 60
+    gop: 30
     bframes: 0
     preset: veryfast
     tune_zerolatency: true
@@ -51,11 +51,11 @@ security:
     source_per_stream_per_sec: 0.2
     model_per_stream_per_sec: 0.5
 observability:
-  log_level: debug # info|debug|trace|warn|error
+  log_level: info # info|debug|trace|warn|error
   log_format: text # text|json
   module_levels: 
-    transport.webrtc: debug                                                                
-    encoder.ffmpeg: debug                                                                        
+    transport.webrtc: info                                                                
+    encoder.ffmpeg: info                                                                        
   console: true
   file:
     path: D:\Projects\ai\cv\logs\video-analyzer-release.log
