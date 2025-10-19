@@ -304,31 +304,7 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 
     if (!sess->started.load()) {
       bool idr = has_idr(h264);
-      auto now = std::chrono::steady_clock::now();
-      static int fallback_ms = [](){ int v=0; if (const char* pv = std::getenv("VA_WHEP_FALLBACK_MS")) { try { v = std::stoi(pv); } catch(...) {} } return v; }();
-      // 禁用兜底：当 fallback_ms<=0 时仅等待 IDR，不触发超时起播
-      bool guardElapsed = (fallback_ms > 0) && (sess->createdAt.time_since_epoch().count() != 0) && ((now - sess->createdAt) > std::chrono::milliseconds(fallback_ms));
-      if (idr || guardElapsed) {
-        sess->started.store(true);
-        if (!sess->last_sps.empty()) { rtc::binary s; s.resize(sess->last_sps.size()); std::memcpy(s.data(), sess->last_sps.data(), sess->last_sps.size()); rtc::FrameInfo fi(sess->ts90); try { sess->videoTrack->sendFrame(std::move(s), fi); } catch (...) {} sess->ts90 += (90000u/30u); }
-        if (!sess->last_pps.empty()) { rtc::binary p; p.resize(sess->last_pps.size()); std::memcpy(p.data(), sess->last_pps.data(), sess->last_pps.size()); rtc::FrameInfo fi2(sess->ts90); try { sess->videoTrack->sendFrame(std::move(p), fi2); } catch (...) {} sess->ts90 += (90000u/30u); }
-      } else {
-        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 2000) << "[WHEP] waiting for IDR stream='" << streamKey << "' sid=" << kv.first;
-        continue;
-      }
-    }
-
-    // 平滑 90kHz 时间戳：EMA（不做限幅）
-    auto now = std::chrono::steady_clock::now();
-    double ms = 33.33;
-    if (sess->lastSentAt.time_since_epoch().count() != 0) {
-      ms = std::chrono::duration_cast<std::chrono::microseconds>(now - sess->lastSentAt).count() / 1000.0;
-    }
-    // EMA: 80% 历史 + 20% 新值
-    sess->avgMs = 0.8 * sess->avgMs + 0.2 * ms;
-    uint32_t step = static_cast<uint32_t>(sess->avgMs * 90.0 + 0.5); // 四舍五入
-    sess->ts90 += (step ? step : 1u);
-    sess->lastSentAt = now;
+      sess->ts90 += (90000u/30u);
     rtc::binary frame; frame.resize(h264.size()); std::memcpy(frame.data(), h264.data(), h264.size());
     rtc::FrameInfo finfo(sess->ts90);
     try { sess->videoTrack->sendFrame(std::move(frame), finfo); }
@@ -352,5 +328,6 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 }
 
 } // namespace va::media
+
 
 
