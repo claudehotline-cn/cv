@@ -47,9 +47,10 @@ void WhepSessionManager::attachMediaHandlers(Session& s) {
   s.h264pack = std::make_shared<rtc::H264RtpPacketizer>(rtc::NalUnit::Separator::StartSequence, s.rtpCfg, maxFrag);
   VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] media handler set pt=" << int(pt) << " maxFrag=" << maxFrag;
   // Optional pacing controlled via VA_WHEP_PACE_BPS (bps)
-  double pace_bps = 0.0;
+  // 默认开启 pacing：6 Mbps；若设置 VA_WHEP_PACE_BPS 则覆盖；<=0 则关闭
+  double pace_bps = 6000000.0;
   if (const char* pv = std::getenv("VA_WHEP_PACE_BPS"); pv && *pv) {
-    try { pace_bps = std::stod(pv); } catch (...) { pace_bps = 0.0; }
+    try { pace_bps = std::stod(pv); } catch (...) { /* keep default */ }
   }
   if (s.videoTrack) {
     s.videoTrack->setMediaHandler(s.h264pack);
@@ -293,12 +294,12 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
     bool open=false; try { open = sess->videoTrack->isOpen(); } catch (...) { open = false; }
     if (!open) { VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 2000) << "[WHEP] waiting track open stream='" << streamKey << "' sid=" << kv.first; continue; }
 
-    std::vector<uint8_t> h264 = data; ensure_annexb(h264); cache_sps_pps(h264, sess->last_sps, sess->last_pps); if (is_b_like(h264)) continue;
+    std::vector<uint8_t> h264 = data; ensure_annexb(h264); cache_sps_pps(h264, sess->last_sps, sess->last_pps);
 
     if (!sess->started.load()) {
       bool idr = has_idr(h264);
       auto now = std::chrono::steady_clock::now();
-      static int fallback_ms = [](){ int v=500; if (const char* pv = std::getenv("VA_WHEP_FALLBACK_MS")) { try { v = std::stoi(pv); } catch(...) {} } if (v < 0) v = 0; return v; }();
+      static int fallback_ms = [](){ int v=200; if (const char* pv = std::getenv("VA_WHEP_FALLBACK_MS")) { try { v = std::stoi(pv); } catch(...) {} } if (v < 0) v = 0; return v; }();
       bool guardElapsed = (sess->createdAt.time_since_epoch().count() != 0) && ((now - sess->createdAt) > std::chrono::milliseconds(fallback_ms));
       if (idr || guardElapsed) {
         sess->started.store(true);
