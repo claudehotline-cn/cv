@@ -1,9 +1,9 @@
-// WHEP session manager implementation
+// WHEP session manager (stable minimal send path aligned with 8090)
 #include "media/whep_session.hpp"
 #include "core/logger.hpp"
 
 #include <algorithm>
-#include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <random>
 #include <sstream>
@@ -11,17 +11,15 @@
 
 namespace va::media {
 
-// Convert AVCC (length-prefixed) to AnnexB if needed
+// Convert AVCC to AnnexB if needed
 static inline void ensure_annexb(std::vector<uint8_t>& buf) {
   if (buf.size() < 4) return;
   if (buf[0]==0x00 && buf[1]==0x00 && buf[2]==0x00 && buf[3]==0x01) return;
   std::vector<uint8_t> out; out.reserve(buf.size()+16);
-  size_t pos = 0;
-  const uint8_t sc[4] = {0,0,0,1};
+  size_t pos = 0; const uint8_t sc[4] = {0,0,0,1};
   while (pos + 4 <= buf.size()) {
     uint32_t len = (uint32_t(buf[pos])<<24) | (uint32_t(buf[pos+1])<<16) | (uint32_t(buf[pos+2])<<8) | (uint32_t(buf[pos+3]));
-    pos += 4;
-    if (len == 0 || pos + len > buf.size()) return; // not AVCC, bail out
+    pos += 4; if (len == 0 || pos + len > buf.size()) return; // malformed; keep as-is
     out.insert(out.end(), sc, sc+4);
     out.insert(out.end(), buf.begin()+pos, buf.begin()+pos+len);
     pos += len;
@@ -46,8 +44,7 @@ void WhepSessionManager::attachMediaHandlers(Session& s) {
   s.rtpCfg = std::make_shared<rtc::RtpPacketizationConfig>(s.ssrc, std::string("va"), pt, rtc::H264RtpPacketizer::ClockRate);
   s.h264pack = std::make_shared<rtc::H264RtpPacketizer>(rtc::NalUnit::Separator::StartSequence, s.rtpCfg, maxFrag);
   VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] media handler set pt=" << int(pt) << " maxFrag=" << maxFrag;
-  // 可选发送端节流（pacing），默认关闭；仅当 VA_WHEP_PACE_BPS>0 时启用
-  double pace_bps = 0.0;
+  double pace_bps = 0.0; // default OFF
   if (const char* pv = std::getenv("VA_WHEP_PACE_BPS"); pv && *pv) {
     try { pace_bps = std::stod(pv); } catch (...) { pace_bps = 0.0; }
   }
@@ -64,14 +61,13 @@ void WhepSessionManager::attachMediaHandlers(Session& s) {
 }
 
 static uint8_t parse_offer_h264_pt(const std::string& sdp) {
-  std::istringstream iss(sdp);
-  std::string line;
+  std::istringstream iss(sdp); std::string line;
   while (std::getline(iss, line)) {
     if (!line.empty() && line.back()=='\r') line.pop_back();
     if (line.rfind("a=rtpmap:", 0)==0 && line.find("H264/90000")!=std::string::npos) {
       size_t c = line.find(':'); size_t sp = line.find(' ', (c==std::string::npos?0:c+1));
       if (c!=std::string::npos && sp!=std::string::npos && sp>c+1) {
-        try { int v = std::stoi(line.substr(c+1, sp-(c+1))); if (v>=0 && v<=127) return uint8_t(v); } catch (...) {}
+        try { int v = std::stoi(line.substr(c+1, sp-(c+1))); if (v>=0 && v<=127) return uint8_t(v); } catch(...) {}
       }
     }
   }
@@ -79,8 +75,7 @@ static uint8_t parse_offer_h264_pt(const std::string& sdp) {
 }
 
 static std::string parse_offer_mid(const std::string& sdp) {
-  std::istringstream iss(sdp);
-  std::string line; bool inVideo=false; std::string mid;
+  std::istringstream iss(sdp); std::string line; bool inVideo=false; std::string mid;
   while (std::getline(iss, line)) {
     if (!line.empty() && line.back()=='\r') line.pop_back();
     if (line.rfind("m=video", 0)==0) { inVideo = true; continue; }
@@ -112,19 +107,12 @@ int WhepSessionManager::createSession(const std::string& streamKey,
     sess->createdAt  = sess->lastActive;
     sess->payloadType = parse_offer_h264_pt(offerSdp);
 
-    // Apply remote Offer
-    try {
-      rtc::Description offer(offerSdp, rtc::Description::Type::Offer);
-      pc->setRemoteDescription(offer);
-    } catch (const std::exception& ex) {
-      VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] setRemoteDescription exception sid=" << sid << " err=" << ex.what();
-      return 400;
-    } catch (...) {
-      VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] setRemoteDescription unknown error sid=" << sid;
-      return 400;
-    }
+    // Apply remote offer
+    try { rtc::Description offer(offerSdp, rtc::Description::Type::Offer); pc->setRemoteDescription(offer); }
+    catch (const std::exception& ex) { VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] setRemoteDescription ex: " << ex.what(); return 400; }
+    catch (...) { VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] setRemoteDescription unknown"; return 400; }
 
-    // Add local sendonly video track using Offer mid
+    // Add local sendonly video track on offer's mid
     sess->mid = parse_offer_mid(offerSdp);
     {
       rtc::Description::Video vdesc(sess->mid);
@@ -133,36 +121,17 @@ int WhepSessionManager::createSession(const std::string& streamKey,
       vdesc.addSSRC(sess->ssrc, std::string("va"), std::string("stream1"), std::string("video1"));
       sess->videoTrack = pc->addTrack(vdesc);
       attachMediaHandlers(*sess);
-      try {
-        if (sess->videoTrack) sess->videoTrack->onOpen([sess, sid]{ sess->trackOpen.store(true); VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] track open sid=" << sid; });
-      } catch (...) {}
+      try { if (sess->videoTrack) sess->videoTrack->onOpen([sess, sid]{ sess->trackOpen.store(true); VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] track open sid=" << sid; }); } catch (...) {}
     }
 
-    pc->onStateChange([sess](rtc::PeerConnection::State st){
-      if (st == rtc::PeerConnection::State::Connected) {
-        sess->pcConnected.store(true);
-        sess->lastActive = std::chrono::steady_clock::now();
-        VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] pc connected sid=" << sess->sid;
-      }
-    });
+    pc->onStateChange([sess](rtc::PeerConnection::State st){ if (st == rtc::PeerConnection::State::Connected) { sess->pcConnected.store(true); sess->lastActive = std::chrono::steady_clock::now(); VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] pc connected sid=" << sess->sid; } });
 
-    // Create Answer
-    try {
-      auto ans = pc->createAnswer();
-      outAnswerSdp = ans.generateSdp();
-    } catch (const std::exception& ex) {
-      VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] createAnswer exception sid=" << sid << " err=" << ex.what();
-      return 500;
-    } catch (...) {
-      VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] createAnswer unknown error sid=" << sid;
-      return 500;
-    }
-    if (outAnswerSdp.empty()) {
-      VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] no local SDP generated sid=" << sid;
-      return 409;
-    }
+    // Create local answer
+    try { auto ans = pc->createAnswer(); outAnswerSdp = ans.generateSdp(); }
+    catch (const std::exception& ex) { VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] createAnswer ex: " << ex.what(); return 500; }
+    catch (...) { VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] createAnswer unknown"; return 500; }
+    if (outAnswerSdp.empty()) return 409;
 
-    // Register session
     {
       std::lock_guard<std::mutex> g(mu_);
       bySid_[sid] = sess;
@@ -173,9 +142,7 @@ int WhepSessionManager::createSession(const std::string& streamKey,
   } catch (const std::exception& ex) {
     VA_LOG_ERROR() << "[WHEP] createSession exception: " << ex.what();
     return 500;
-  } catch (...) {
-    return 500;
-  }
+  } catch (...) { return 500; }
 }
 
 int WhepSessionManager::patchSession(const std::string& sid, const std::string& sdpFrag) {
@@ -196,15 +163,9 @@ int WhepSessionManager::patchSession(const std::string& sid, const std::string& 
       if (line.rfind("a=candidate:", 0) == 0) { cand = line.substr(2); rtrim(cand); }
       if (line.rfind("a=mid:", 0) == 0) { mid = line.substr(6); rtrim(mid); }
     }
-    if (!cand.empty()) {
-      rtc::Candidate cnd(cand, mid);
-      sess->pc->addRemoteCandidate(cnd);
-    }
+    if (!cand.empty()) { rtc::Candidate cnd(cand, mid); sess->pc->addRemoteCandidate(cnd); }
     return 204;
-  } catch (...) {
-    VA_LOG_C(::va::core::LogLevel::Warn, "transport.webrtc") << "[WHEP] patch exception sid=" << sid;
-    return 400;
-  }
+  } catch (...) { VA_LOG_C(::va::core::LogLevel::Warn, "transport.webrtc") << "[WHEP] patch exception sid=" << sid; return 400; }
 }
 
 int WhepSessionManager::deleteSession(const std::string& sid) {
@@ -214,15 +175,14 @@ int WhepSessionManager::deleteSession(const std::string& sid) {
     std::lock_guard<std::mutex> g(mu_);
     auto it = bySid_.find(sid); if (it == bySid_.end()) return 404; sess = it->second;
     bySid_.erase(it);
-    for (auto i = indexByStream_.begin(); i != indexByStream_.end();) {
-      if (i->second == sid) i = indexByStream_.erase(i); else ++i;
-    }
+    for (auto i = indexByStream_.begin(); i != indexByStream_.end();) { if (i->second == sid) i = indexByStream_.erase(i); else ++i; }
   }
   try { if (sess->videoTrack) { try { sess->videoTrack->close(); } catch (...) {} } if (sess->pc) { try { sess->pc->close(); } catch (...) {} } } catch (...) {}
   return 204;
 }
 
 void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vector<uint8_t>& data) {
+  // Build targets
   std::vector<std::pair<std::string, std::shared_ptr<Session>>> targets;
   {
     std::lock_guard<std::mutex> g(mu_);
@@ -234,7 +194,6 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
         if (sit != bySid_.end() && sit->second && !sit->second->closed) targets.emplace_back(sid, sit->second);
       }
     };
-    // Collect both fullKey and baseKey, then de-duplicate
     add_range(streamKey);
     auto pos = streamKey.find(':'); if (pos != std::string::npos) add_range(streamKey.substr(0, pos));
     if (!targets.empty()) {
@@ -243,25 +202,9 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
       targets.swap(uniq);
     }
   }
-
-  VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 2000) << "[WHEP] feedFrame stream='" << streamKey << "' sessions=" << targets.size() << " frame_bytes=" << data.size();
   if (targets.empty()) return;
 
-  auto has_idr = [](const std::vector<uint8_t>& buf)->bool{
-    size_t i=0, n=buf.size();
-    while (i + 4 < n) {
-      if (buf[i]==0x00 && buf[i+1]==0x00 && ((buf[i+2]==0x01) || (buf[i+2]==0x00 && buf[i+3]==0x01))) {
-        size_t j = (buf[i+2]==0x01) ? (i+3) : (i+4);
-        if (j < n) { uint8_t nal = buf[j] & 0x1F; if (nal == 5) return true; }
-        i = j + 1; continue;
-      }
-    // started 之后再丢 B-like 帧，确保首帧不被丢弃
-      ++i;
-      ++i;
-    }
-    return false;
-  };
-
+  // Small helper: cache latest SPS/PPS in AnnexB
   auto cache_sps_pps = [](const std::vector<uint8_t>& buf, std::vector<uint8_t>& out_sps, std::vector<uint8_t>& out_pps){
     size_t i=0, n=buf.size();
     auto next_sc = [&](size_t p){ for (size_t k=p; k+3<n; ++k) { if (buf[k]==0x00 && buf[k+1]==0x00 && ((buf[k+2]==0x01) || (buf[k+2]==0x00 && buf[k+3]==0x01))) return k; } return n; };
@@ -275,42 +218,42 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
     }
   };
 
-  auto is_b_like = [](const std::vector<uint8_t>& buf)->bool{
-    size_t i=0, n=buf.size();
-    auto match_sc = [&](size_t p)->size_t{ if (p+3<=n && buf[p]==0 && buf[p+1]==0 && buf[p+2]==1) return 3; if (p+4<=n && buf[p]==0 && buf[p+1]==0 && buf[p+2]==0 && buf[p+3]==1) return 4; return 0; };
-    while (i + 3 < n) {
-      size_t sc = match_sc(i); if (!sc) { ++i; continue; }
-      size_t nal_pos = i + sc; if (nal_pos >= n) return false;
-      uint8_t h = buf[nal_pos]; uint8_t nal_ref_idc = (h >> 5) & 0x03; uint8_t nal_type = h & 0x1f;
-      if (nal_type == 1) return nal_ref_idc == 0; // non-IDR VCL
-      if (nal_type == 5) return false; // IDR
-      i = nal_pos + 1;
-    }
-    return false;
-  };
-
   for (auto& kv : targets) {
     auto sess = kv.second; if (!sess || !sess->videoTrack) continue;
-    if (!sess->pcConnected.load()) { VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 2000) << "[WHEP] waiting pc connected stream='" << streamKey << "' sid=" << kv.first; continue; }
+    if (!sess->pcConnected.load()) continue;
     bool closed=false; try { closed = sess->videoTrack->isClosed(); } catch (...) { closed = true; }
     if (closed) { sess->closed.store(true); continue; }
     bool open=false; try { open = sess->videoTrack->isOpen(); } catch (...) { open = false; }
-    if (!open) { VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "transport.webrtc", 2000) << "[WHEP] waiting track open stream='" << streamKey << "' sid=" << kv.first; continue; }
+    if (!open) continue;
 
+    // Normalize + update SPS/PPS cache
     std::vector<uint8_t> h264 = data; ensure_annexb(h264); cache_sps_pps(h264, sess->last_sps, sess->last_pps);
-    // 丢弃 B-like 帧，避免解码重排带来的播放抖动
-// drop moved after started
-    // keep all VCL frames (no B-drop)
 
+    // Immediate start: inject SPS/PPS if cached, then proceed
     if (!sess->started.load()) {
-      bool idr = has_idr(h264);
-      sess->ts90 += (90000u/30u);
+      sess->started.store(true);
+      if (!sess->last_sps.empty()) {
+        rtc::binary s; s.resize(sess->last_sps.size()); std::memcpy(s.data(), sess->last_sps.data(), sess->last_sps.size());
+        rtc::FrameInfo fi(sess->ts90);
+        try { sess->videoTrack->sendFrame(std::move(s), fi); } catch (...) {}
+        sess->ts90 += (90000u/30u);
+      }
+      if (!sess->last_pps.empty()) {
+        rtc::binary p; p.resize(sess->last_pps.size()); std::memcpy(p.data(), sess->last_pps.data(), sess->last_pps.size());
+        rtc::FrameInfo fi2(sess->ts90);
+        try { sess->videoTrack->sendFrame(std::move(p), fi2); } catch (...) {}
+        sess->ts90 += (90000u/30u);
+      }
+    }
+
+    // Fixed 30fps RTP timestamp stepping
+    sess->ts90 += (90000u/30u);
+
     rtc::binary frame; frame.resize(h264.size()); std::memcpy(frame.data(), h264.data(), h264.size());
     rtc::FrameInfo finfo(sess->ts90);
     try { sess->videoTrack->sendFrame(std::move(frame), finfo); }
     catch (const std::exception& ex) { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "transport.webrtc", 2000) << "[WHEP] sendFrame ex sid=" << kv.first << " err=" << ex.what(); continue; }
     catch (...) { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "transport.webrtc", 2000) << "[WHEP] sendFrame ex sid=" << kv.first; continue; }
-    // Do not add additional fixed step here; ts90 already advanced by wall-clock delta above
     sess->dbg_frames++; sess->dbg_bytes += h264.size(); sess->lastActive = std::chrono::steady_clock::now();
   }
 
@@ -328,6 +271,4 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 }
 
 } // namespace va::media
-
-
 
