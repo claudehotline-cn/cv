@@ -254,6 +254,8 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
         if (j < n) { uint8_t nal = buf[j] & 0x1F; if (nal == 5) return true; }
         i = j + 1; continue;
       }
+    // started 之后再丢 B-like 帧，确保首帧不被丢弃
+      ++i;
       ++i;
     }
     return false;
@@ -296,12 +298,13 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 
     std::vector<uint8_t> h264 = data; ensure_annexb(h264); cache_sps_pps(h264, sess->last_sps, sess->last_pps);
     // 丢弃 B-like 帧，避免解码重排带来的播放抖动
+// drop moved after started
     if (is_b_like(h264)) continue;
 
     if (!sess->started.load()) {
       bool idr = has_idr(h264);
       auto now = std::chrono::steady_clock::now();
-      static int fallback_ms = [](){ int v=200; if (const char* pv = std::getenv("VA_WHEP_FALLBACK_MS")) { try { v = std::stoi(pv); } catch(...) {} } if (v < 0) v = 0; return v; }();
+      static int fallback_ms = [](){ int v=0; if (const char* pv = std::getenv("VA_WHEP_FALLBACK_MS")) { try { v = std::stoi(pv); } catch(...) {} } if (v < 0) v = 0; return v; }();
       bool guardElapsed = (sess->createdAt.time_since_epoch().count() != 0) && ((now - sess->createdAt) > std::chrono::milliseconds(fallback_ms));
       if (idr || guardElapsed) {
         sess->started.store(true);
@@ -331,7 +334,7 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
     try { sess->videoTrack->sendFrame(std::move(frame), finfo); }
     catch (const std::exception& ex) { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "transport.webrtc", 2000) << "[WHEP] sendFrame ex sid=" << kv.first << " err=" << ex.what(); continue; }
     catch (...) { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "transport.webrtc", 2000) << "[WHEP] sendFrame ex sid=" << kv.first; continue; }
-    sess->ts90 += (90000u/30u);
+    // Do not add additional fixed step here; ts90 already advanced by wall-clock delta above
     sess->dbg_frames++; sess->dbg_bytes += h264.size(); sess->lastActive = std::chrono::steady_clock::now();
   }
 
@@ -349,3 +352,5 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 }
 
 } // namespace va::media
+
+
