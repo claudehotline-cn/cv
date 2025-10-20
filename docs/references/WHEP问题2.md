@@ -1,84 +1,67 @@
-有的，差异还挺关键。我把你给的两个“能播”的测试文件和你项目里的实现做了对照，结论&修复建议放一起：
+看你的日志，WHEP 整条链路其实是通的：SDP 协商正常、ICE connected、服务端持续在送帧（frames=... bytes=... 一直增长），但是前端表现为“只在关键帧刷新，其它时间都卡着”。这类现象99% 是“帧边界/打包”问题——浏览器端 H.264 depacketizer 只有在识别到“这一帧结束”的条件（RTP 同一时间戳的一组包的最后一个包 marker(M)=1）时才会把这帧交给解码器；如果你送的不是完整的一帧（access unit），或是分片/分组方式不对，浏览器就会一直攒包，直到下一次遇到能独立解码的 IDR 关键帧才更新画面，于是看起来就像“只播关键帧”。
 
-关键差异
-前端 ontrack 处理方式不一样
+对比你给的两个测试文件和工程里（零拷贝分支）的实现，有几个关键差异/易错点：
 
-你的最小版 HTML在 pc.ontrack 里会做一个 fallback：
-如果 e.streams[0] 不存在，就直接用 new MediaStream([e.track]) 绑到 <video> 上，这样即便服务端没带 msid/stream，浏览器也能播：
-$('#v').srcObject = e.streams[0] || new MediaStream([e.track]);
+1) 你的测试程序“先把数据整理成完整一帧的 Annex-B”，再交给 libdatachannel 的 H264 打包器
 
-而你Vue 组件（WhepPlayer.vue）写的是：
+在 whep_standalone_server.cpp 里，服务端用的是 libdatachannel 自带的 H264RtpPacketizer，并明确以 StartSequence（起始码 00 00 00 01） 作为 NALU 分隔方式，然后把一整帧（Annex-B 字节流）交给 sendFrame：
 
-if (!v || !ev.streams || !ev.streams[0]) return
-v.srcObject = ev.streams[0]
+先创建打包器并挂到 track 上：H264RtpPacketizer(... NalUnit::Separator::StartSequence, ..., 1200)，vtrack->setMediaHandler(h264pack)。
+
+如果源是 MP4（AVCC/length-prefixed），先用 h264_mp4toannexb 或 avcc_to_annexb 转成 Annex-B。
+
+每次 把整帧 Annex-B 放进一个 rtc::binary frame，同一个 RTP 时间戳（90k 时钟）送出，然后再把 ts += step。
+
+这样做的效果：libdatachannel 会自动把这“一帧里的所有 NALU”做 FU-A/STAP-A 切片与聚合，并且只在这一帧最后一个 RTP 包上置 M=1。浏览器就能准确知道“这一帧结束了”，于是连续解码、连续渲染。
+
+2) 你工程（零拷贝分支）里很可能没有保证“按整帧送入 + 分隔方式与字节流类型匹配”
+
+从你给的运行日志能看到工程侧也在建 H264RtpPacketizer 并打印了 pt=103 maxFrag=1200，说明走的也是相同思路；但前端只在 IDR 更新，强烈暗示下面至少踩中了一个坑：
+
+Annex-B vs AVCC 搭配错误
+H264RtpPacketizer 构造时选择了 NalUnit::Separator::StartSequence（期望字节流带 00 00 00 01 起始码）。如果你零拷贝路径里从编码器/解码器拿到的是 AVCC（length-prefixed） 数据，却原样喂给了这个打包器，它会把“长度字段”当作 NAL 头来切分，结果整帧被错误拆分，M 位也就对不上；浏览器端就会把绝大多数“非关键帧”当成不完整帧丢弃或等待。你的测试程序之所以正常，正是因为它在送入前显式做了 AVCC→Annex-B（或直接就是 Annex-B）。
+
+按 NALU（甚至按切片）而不是按帧送
+如果零拷贝路径里你对每个 NVENC 输出片段（有时是切片）各自调用一次 sendFrame，打包器会把“每个切片”都当成一帧处理并立刻 M=1，浏览器端看到的就是“很多没有组成完整画面的‘帧’”，只在遇到能独立解码的 IDR 才更新。这点在测试程序中是通过“合为一帧再送”避免的（见 sendFrame(..., FrameInfo(ts90)) 的用法）。
+
+RTP 时间戳/marker 与帧边界不一致
+只要不是“同一真实帧的所有 RTP 包共用同一个时间戳，且最后一包 M=1”，浏览器就会把该帧当不完整处理。测试程序里是“固定步长 ts += step，一帧一次”，工程里如果把同一帧拆成多次 sendFrame（每次时间戳都递增），也会复现“只有关键帧动”。
+
+3)（次要但要确认）SDP 的 profile/packetization-mode 要与码流一致
+
+你工程日志里看见用的是 pt=103，对应 packetization-mode=1; profile-level-id=42001f（Baseline）。如果 NVENC 输出的是 Main/High（常见）而你又强行用 Baseline 的 PT，多数浏览器依然能解，但有过“只在关键帧更新、P 帧大量掉”的兼容性坑；最稳妥的做法是从对端 Offer 里挑选一个与实际 SPS 里的 profile-level-id 匹配的 H264 PT，你的测试程序就是直接 addH264Codec(s->pt, DEFAULT_H264_VIDEO_PROFILE) 后由对端选择，但它的码流与 fmtp 是对得上的。
+
+建议你在工程里立刻做的三个定位/修正点
+
+确保送入打包器的是“完整一帧”的 Annex-B
+
+如果当前拿到的是 AVCC（length-prefixed），要么像测试程序那样在送入前做一次 AVCC→Annex-B（同功能的 avcc_to_annexb 就几行），要么把 H264RtpPacketizer 的分隔方式换成 Length（如果你确认全路径都是 AVCC）。
+
+伪代码（送帧处）：
+
+// frameBuf = 一帧的 Annex-B 字节流（包含该帧的所有 NALU）
+rtc::binary frame(frameBuf.size());
+std::memcpy(frame.data(), frameBuf.data(), frameBuf.size());
+rtc::FrameInfo finfo(ts90);
+vtrack->sendFrame(std::move(frame), finfo);
+ts90 += step;  // 只在“整帧”后递增时间戳
 
 
-也就是说——一旦服务端这条 track 没被放进一个 MediaStream（或 msid 处理有偏差），前端直接 return，视频根本不会挂载，自然“connected 但没有画面”。
+这和你的测试程序做法一致（它每次 send 的就是整帧）。
 
-你的“能播”后端做了 H.264 码流兜底处理
+不要把同一帧拆成多次 sendFrame
+如果编码器回调是“分片/切片回调”，请先在你这层按时间戳或帧序号聚合成一帧的所有 NALU，再调用一次 sendFrame。否则 marker 与 RTP 时间戳都会错位，浏览器端就只会在 IDR 时渲染。
 
-你的 whep_standalone_server.cpp 明确把 MP4 里的 H.264 先过 h264_mp4toannexb，确保关键帧前有 SPS/PPS，然后再用 H264RtpPacketizer 送 RTP：
+让 SDP 与真实码流匹配
+从浏览器 Offer 里挑选与你实际码流 profile 一致的 H264 PT（比如 High 就用 profile-level-id=64001f 的那个），或者把 NVENC 编码配置成 Baseline/Constrained Baseline（无 B 帧、CAVLC/或相容）与 103 一致。你的前端打印的 capabilities 里有多个 H264 PT，可选空间足够。你也可以在关键帧处“重复发送 SPS/PPS”（NVENC 有对应开关），提升兼容性。
 
-使用 bitstream filter：av_bsf_get_by_name("h264_mp4toannexb")，保证 Annex-B 起始码 & 关键帧前带 SPS/PPS。
+最快验证法（不用抓包也行）
 
-送包器：rtc::H264RtpPacketizer(...) + track->setMediaHandler(...)。
+服务端打印： 在送帧前做一个 very-light 的 Annex-B 解析，打印这一“整帧”里首个 VCL 的 nal_type（1/5）和本次 FrameInfo.timestamp；确保“非关键帧”也每 33ms（或你的 fps）递增一次 timestamp，且“同一帧只 send 一次”。
 
-为了稳定，还会丢弃疑似 B 帧（is_b_like_frame_annexb），避免时间戳/解码顺序问题。
+浏览器端看 webrtc-internals： 观察 inbound-rtp 的 framesDecoded 是否只在关键帧时蹦一下；如果是，十有八九就是“帧被拆碎 / M 位没落在真正的帧末”。
 
-RTP 时间戳用 90 kHz 严格单调推进（tsSend / FrameInfo(tsSend)）。
+小结（结论）
 
-而项目里的流水线（NVENC 编码 + 叠加）从日志看“喂帧很多”，但浏览器这侧始终 no inbound-rtp/track yet 或 video waiting。这通常是缺少可解码的起始参数集（SPS/PPS）或 B 帧/时间戳处理不当导致浏览器解码器卡住的经典症状。你的独立测试服之所以“总能播”，就是因为它把这几件事都兜住了。
-
-CORS 暴露 Location 头
-
-最小版服务端响应里设置了 Access-Control-Expose-Headers: Location，确保前端能读到 WHEP 会话的 Location 头然后 PATCH 候选：
-你的项目现在也能读到 Location（从日志看拿到了 /whep/sessions/...），这一点基本 OK，但这是最小服务能正常 trickle 的另一处“确保项”。
-
-建议怎么改，立刻能看到效果
-A. 先把前端兜底加上（最快见效）
-
-把 WhepPlayer.vue 的 ontrack 改成“有流用流；没流就自己包一个”：
-
-pc.ontrack = (ev) => {
-  const v = videoEl.value
-  if (!v) return
-  v.srcObject = ev.streams?.[0] || new MediaStream([ev.track])
-  // 其余事件监听保持不变
-}
-
-
-你的最小 HTML 就是这么做的，它能播，很大概率是因为这一步救回了“没有 msid 的 track”。
-
-B. 后端确保浏览器拿到可解码关键帧
-
-任选其一（或都做）：
-
-在码流里注入 SPS/PPS（推荐）
-
-如果你是直接把 NVENC 的 H.264 原始码流丢给 H264RtpPacketizer，请在每个 IDR 前拼上 extradata 里的 SPS/PPS（Annex-B 起始码 + SPS + PPS + IDR）。
-
-这就是你的独立测试服通过 h264_mp4toannexb 实际做到的效果。照着那套做法把 NVENC 的 extradata（AVCodecContext::extradata）转 Annex-B 并在 IDR 前注入即可。
-
-在 SDP 里带 sprop-parameter-sets（可选兜底）
-
-用编码器的 SPS/PPS（Base64）填到 a=fmtp:...;sprop-parameter-sets=...。这样即便第一帧没带，也能解起来。
-
-你的独立服务没有这么做，但它通过“码流内携带 SPS/PPS”已经满足了浏览器需求。两者取其一都行。
-
-禁用 B 帧/保证时间戳单调
-
-NVENC 默认可能会出 B 帧；如果发送侧没有正确处理解码顺序/时间戳重排，浏览器就会一直 waiting。
-
-参照独立服务：丢掉 B 类帧 或直接把编码器设为 bf=0（零 B 帧），并确保用 90kHz 时钟给 RTP 帧打严格单调时间戳。独立服务用的就是 FrameInfo(ts90) 的方式。
-
-C. 其它小点（核对即可）
-
-你前端现在用 iceServers: [] 是 OK 的（本机/同网段），日志里 ICE 已 connected。
-
-记得继续发 a=end-of-candidates（你已经在做）。
-
-让后端始终在 Answer 里带上 SSRC + msid（stream/track label）。你的独立服务用 addSSRC("va","stream1","video1") 明确设置了，浏览器 ontrack 才更容易自带 streams[0]。
-
-一句话总结
-
-你的测试后端之所以“稳播”，关键在于：给 H.264 做了 Annex-B + SPS/PPS 注入、去 B 帧、时间戳单调、并且 track/stream 信息完整；而项目前端又缺了 new MediaStream([e.track]) 的兜底。把这两头各补一步（前端加兜底；后端保证 IDR 前带 SPS/PPS/无 B 帧/时间戳单调），就能和测试文件一样正常出画。
+你的两个测试文件之所以“都能播”，核心在于它们把 H.264 整帧（Annex-B）一次性交给了 H264RtpPacketizer，而零拷贝分支很可能是喂了 AVCC 或者按 NALU/切片在“帧中间”就递增了时间戳/打了 M，导致浏览器只在 IDR 时才能“凑齐一帧”并刷新。
+把输入类型与分隔方式对齐（Annex-B↔StartSequence / AVCC↔Length），并且一帧只调用一次 sendFrame，基本就能把“只播关键帧”的问题一次性解决。

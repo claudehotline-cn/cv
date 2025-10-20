@@ -305,23 +305,17 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
       continue;
     }
 
-    // If IDR, prepend SPS/PPS (same timestamp as IDR)
+    // Build a single access unit per frame and send exactly once with marker at the end.
+    // For IDR, prepend cached SPS/PPS to the same access unit to maximize decoder compatibility.
+    std::vector<uint8_t> au;
     if (idr) {
-      if (!sess->last_sps.empty()) {
-        rtc::binary s; s.resize(sess->last_sps.size()); std::memcpy(s.data(), sess->last_sps.data(), sess->last_sps.size());
-        rtc::FrameInfo fi(next_ts);
-        try { sess->videoTrack->sendFrame(std::move(s), fi); } catch (...) {}
-      }
-      if (!sess->last_pps.empty()) {
-        rtc::binary p; p.resize(sess->last_pps.size()); std::memcpy(p.data(), sess->last_pps.data(), sess->last_pps.size());
-        rtc::FrameInfo fi2(next_ts);
-        try { sess->videoTrack->sendFrame(std::move(p), fi2); } catch (...) {}
-      }
+      if (!sess->last_sps.empty()) { au.insert(au.end(), sess->last_sps.begin(), sess->last_sps.end()); }
+      if (!sess->last_pps.empty()) { au.insert(au.end(), sess->last_pps.begin(), sess->last_pps.end()); }
       sess->started.store(true);
     }
+    au.insert(au.end(), h264.begin(), h264.end());
 
-    // Send current frame with next_ts
-    rtc::binary frame; frame.resize(h264.size()); std::memcpy(frame.data(), h264.data(), h264.size());
+    rtc::binary frame; frame.resize(au.size()); std::memcpy(frame.data(), au.data(), au.size());
     rtc::FrameInfo finfo(next_ts);
     try { sess->videoTrack->sendFrame(std::move(frame), finfo); }
     catch (const std::exception& ex) { VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "transport.webrtc", 2000) << "[WHEP] sendFrame ex sid=" << kv.first << " err=" << ex.what(); continue; }
