@@ -18,6 +18,7 @@
 #include "storage/source_repo.hpp"
 #include "media/whep_session.hpp"
 #include "whep_control.grpc.pb.h"
+#include "server/subscription_manager.hpp"
 
 #include "control_plane_embedded/controllers/pipeline_controller.hpp"
 
@@ -970,6 +971,7 @@ struct RestServer::Impl {
     std::unique_ptr<va::storage::SessionRepo> sessions_repo;
     std::unique_ptr<va::storage::GraphRepo> graphs_repo;
     std::unique_ptr<va::storage::SourceRepo> sources_repo;
+    std::unique_ptr<SubscriptionManager> subscriptions;
 
     // Async DB writer (best-effort)
     std::mutex dbq_mutex;
@@ -1156,6 +1158,8 @@ struct RestServer::Impl {
 
     Impl(RestServerOptions opts, va::app::Application& application)
         : options(std::move(opts)), app(application), server(options) {
+        subscriptions = std::make_unique<SubscriptionManager>(app);
+        subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
         // Initialize DB pool and repositories if configured
         try {
             const auto& dbc = app.appConfig().database;
@@ -1180,6 +1184,20 @@ struct RestServer::Impl {
     ~Impl() { stopDbWorker(); stopRetentionWorker(); }
 
     void registerRoutes() {
+        server.addRoute("POST", "/api/subscriptions", [this](const HttpRequest& req) {
+            return handleSubscriptionCreate(req);
+        });
+        server.addRoute("GET", "/api/subscriptions/:id", [this](const HttpRequest& req) {
+            auto it = req.params.find("id");
+            if (it == req.params.end()) return errorResponse("missing id", 400);
+            return handleSubscriptionGet(req, it->second);
+        });
+        server.addRoute("DELETE", "/api/subscriptions/:id", [this](const HttpRequest& req) {
+            auto it = req.params.find("id");
+            if (it == req.params.end()) return errorResponse("missing id", 400);
+            return handleSubscriptionDelete(req, it->second);
+        });
+
         auto subscribeHandler = [this](const HttpRequest& req) { return handleSubscribe(req); };
         auto unsubscribeHandler = [this](const HttpRequest& req) { return handleUnsubscribe(req); };
         auto corsHandler = [](const HttpRequest& /*req*/) {
@@ -2832,6 +2850,97 @@ struct RestServer::Impl {
         }
         payload["data"] = data;
         return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handleSubscriptionCreate(const HttpRequest& req) {
+        if (!subscriptions) {
+            return errorResponse("subscription manager unavailable", 503);
+        }
+        try {
+            const Json::Value body = parseJson(req.body);
+            if (!body.isObject()) {
+                return errorResponse("Invalid JSON: object required", 400);
+            }
+            auto stream_opt = getStringField(body, {"stream_id", "stream"});
+            if (!stream_opt || stream_opt->empty()) {
+                return errorResponse("Missing required field: stream_id", 400);
+            }
+            auto profile_opt = getStringField(body, {"profile", "profile_id"});
+            if (!profile_opt || profile_opt->empty()) {
+                return errorResponse("Missing required field: profile", 400);
+            }
+            auto uri_opt = getStringField(body, {"source_uri", "uri", "url"});
+            if (!uri_opt || uri_opt->empty()) {
+                return errorResponse("Missing required field: source_uri", 400);
+            }
+            SubscriptionRequest request;
+            request.stream_id = *stream_opt;
+            request.profile_id = *profile_opt;
+            request.source_uri = *uri_opt;
+            if (body.isMember("model_id") && body["model_id"].isString()) {
+                auto v = body["model_id"].asString();
+                if (!v.empty()) request.model_id = v;
+            }
+            subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
+            const std::string id = subscriptions->enqueue(request);
+            Json::Value payload = successPayload();
+            Json::Value data(Json::objectValue);
+            data["id"] = id;
+            data["status"] = "accepted";
+            data["phase"] = toString(SubscriptionPhase::Pending);
+            data["stream_id"] = request.stream_id;
+            data["profile_id"] = request.profile_id;
+            payload["data"] = data;
+            return jsonResponse(payload, 202);
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("subscriptions: ") + ex.what(), 500);
+        }
+    }
+
+    HttpResponse handleSubscriptionGet(const HttpRequest& /*req*/, const std::string& id) {
+        if (!subscriptions) {
+            return errorResponse("subscription manager unavailable", 503);
+        }
+        auto state = subscriptions->get(id);
+        if (!state) {
+            return errorResponse("subscription not found", 404);
+        }
+        Json::Value payload = successPayload();
+        Json::Value data(Json::objectValue);
+        data["id"] = id;
+        data["phase"] = toString(state->phase.load());
+        data["stream_id"] = state->request.stream_id;
+        data["profile_id"] = state->request.profile_id;
+        data["source_uri"] = state->request.source_uri;
+        if (state->request.model_id) {
+            data["model_id"] = *state->request.model_id;
+        }
+        if (!state->pipeline_key.empty()) {
+            data["pipeline_key"] = state->pipeline_key;
+        }
+        if (!state->whep_url.empty()) {
+            data["whep_url"] = state->whep_url;
+        }
+        if (!state->reason.empty()) {
+            data["reason"] = state->reason;
+        }
+        const auto created = std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count();
+        data["created_at_ms"] = static_cast<Json::UInt64>(created);
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handleSubscriptionDelete(const HttpRequest& /*req*/, const std::string& id) {
+        if (!subscriptions) {
+            return errorResponse("subscription manager unavailable", 503);
+        }
+        if (!subscriptions->cancel(id)) {
+            return errorResponse("subscription not found", 404);
+        }
+        Json::Value payload = successPayload();
+        payload["data"]["id"] = id;
+        payload["data"]["status"] = "cancelled";
+        return jsonResponse(payload, 202);
     }
 
     HttpResponse handleSubscribe(const HttpRequest& req) {

@@ -216,6 +216,11 @@ target_sources(${PROJECT_NAME}
         src/control_plane_embedded/exporters/prometheus_exporter.hpp
         src/control_plane_embedded/io/from_vsm_link.hpp)
 
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        src/server/subscription_manager.cpp
+        src/server/subscription_manager.hpp)
+
 # Optional: gRPC/Protobuf integration for control plane
 if (USE_GRPC)
     # Prefer config packages from vcpkg to avoid mixing with system/anaconda modules

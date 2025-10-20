@@ -1,0 +1,263 @@
+#include "server/subscription_manager.hpp"
+
+#include "app/application.hpp"
+
+#include <algorithm>
+#include <iomanip>
+#include <random>
+#include <sstream>
+
+namespace va::server {
+
+namespace {
+bool isTerminalPhase(SubscriptionPhase phase) {
+    switch (phase) {
+    case SubscriptionPhase::Ready:
+    case SubscriptionPhase::Failed:
+    case SubscriptionPhase::Cancelled:
+        return true;
+    default:
+        return false;
+    }
+}
+} // namespace
+
+SubscriptionManager::SubscriptionManager(va::app::Application& app)
+    : app_(app) {
+    const unsigned int worker_count = std::max(1u, std::thread::hardware_concurrency());
+    for (unsigned int i = 0; i < worker_count; ++i) {
+        workers_.emplace_back(&SubscriptionManager::workerLoop, this);
+    }
+}
+
+SubscriptionManager::~SubscriptionManager() {
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        stop_ = true;
+    }
+    tasks_cv_.notify_all();
+    heavy_cv_.notify_all();
+    for (auto& t : workers_) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+}
+
+void SubscriptionManager::setWhepBase(std::string whep_base_url) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    whep_base_ = std::move(whep_base_url);
+}
+
+std::string SubscriptionManager::enqueue(const SubscriptionRequest& request) {
+    auto state = std::make_shared<SubscriptionState>();
+    state->request = request;
+    state->created_at = std::chrono::system_clock::now();
+
+    const std::string key = request.stream_id + ":" + request.profile_id;
+    std::string id = nextId();
+
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        auto it = key_index_.find(key);
+        if (it != key_index_.end()) {
+            auto sit = states_.find(it->second);
+            if (sit != states_.end()) {
+                auto phase = sit->second->phase.load();
+                if (!isTerminalPhase(phase)) {
+                    return it->second;
+                }
+            }
+        }
+        states_[id] = state;
+        key_index_[key] = id;
+        pending_.push(Task{id, state});
+    }
+
+    tasks_cv_.notify_one();
+    return id;
+}
+
+std::shared_ptr<SubscriptionState> SubscriptionManager::get(const std::string& id) const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    auto it = states_.find(id);
+    if (it == states_.end()) {
+        return nullptr;
+    }
+    return it->second;
+}
+
+bool SubscriptionManager::cancel(const std::string& id) {
+    auto state = get(id);
+    if (!state) {
+        return false;
+    }
+    state->cancel.store(true);
+    auto phase = state->phase.load();
+    if (isTerminalPhase(phase)) {
+        if (!state->pipeline_key.empty()) {
+            ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
+        }
+        return true;
+    }
+    state->phase.store(SubscriptionPhase::Cancelled);
+    state->reason = "cancelled";
+    if (!state->pipeline_key.empty()) {
+        ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
+    }
+    return true;
+}
+
+void SubscriptionManager::workerLoop() {
+    for (;;) {
+        Task task;
+        {
+            std::unique_lock<std::mutex> lk(mutex_);
+            tasks_cv_.wait(lk, [this]() { return stop_ || !pending_.empty(); });
+            if (stop_ && pending_.empty()) {
+                return;
+            }
+            task = pending_.front();
+            pending_.pop();
+        }
+
+        if (!task.state) {
+            continue;
+        }
+        runSubscriptionTask(task.id, task.state);
+    }
+}
+
+void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const StatePtr& state) {
+    if (!state) return;
+
+    state->phase.store(SubscriptionPhase::Preparing);
+    if (state->cancel.load()) {
+        state->phase.store(SubscriptionPhase::Cancelled);
+        state->reason = "cancelled";
+        return;
+    }
+
+    state->phase.store(SubscriptionPhase::OpeningRtsp);
+    if (state->cancel.load()) {
+        state->phase.store(SubscriptionPhase::Cancelled);
+        state->reason = "cancelled";
+        return;
+    }
+
+    bool acquired = acquireHeavySlot();
+    HeavySlotGuard guard(this, acquired);
+    if (!acquired) {
+        state->phase.store(SubscriptionPhase::Failed);
+        state->reason = "shutdown";
+        return;
+    }
+
+    state->phase.store(SubscriptionPhase::LoadingModel);
+    if (state->request.model_id) {
+        if (!app_.loadModel(*state->request.model_id)) {
+            state->phase.store(SubscriptionPhase::Failed);
+            state->reason = app_.lastError().empty() ? "load_model_failed" : app_.lastError();
+            return;
+        }
+    }
+
+    if (state->cancel.load()) {
+        state->phase.store(SubscriptionPhase::Cancelled);
+        state->reason = "cancelled";
+        return;
+    }
+
+    state->phase.store(SubscriptionPhase::StartingPipeline);
+    auto pipeline_key = app_.subscribeStream(state->request.stream_id,
+                                             state->request.profile_id,
+                                             state->request.source_uri,
+                                             state->request.model_id);
+    if (!pipeline_key) {
+        state->phase.store(SubscriptionPhase::Failed);
+        state->reason = app_.lastError().empty() ? "subscribe_failed" : app_.lastError();
+        return;
+    }
+
+    state->pipeline_key = *pipeline_key;
+    std::string base;
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        base = whep_base_;
+    }
+    if (!base.empty()) {
+        if (base.back() == '/') base.pop_back();
+        state->whep_url = base + "/whep?stream=" + state->request.stream_id + ":" + state->request.profile_id;
+    }
+
+    if (state->cancel.load()) {
+        ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
+        state->phase.store(SubscriptionPhase::Cancelled);
+        state->reason = "cancelled";
+        return;
+    }
+
+    state->phase.store(SubscriptionPhase::Ready);
+}
+
+std::string SubscriptionManager::nextId() {
+    static std::atomic<uint64_t> counter{1};
+    static thread_local std::mt19937_64 rng{std::random_device{}()};
+    const uint64_t c = counter.fetch_add(1, std::memory_order_relaxed);
+    std::uniform_int_distribution<uint64_t> dist;
+    uint64_t r = dist(rng);
+
+    std::ostringstream oss;
+    oss << std::hex << std::setw(8) << std::setfill('0') << c
+        << std::hex << std::setw(8) << std::setfill('0') << (r & 0xffffffffULL);
+    return oss.str();
+}
+
+bool SubscriptionManager::acquireHeavySlot() {
+    std::unique_lock<std::mutex> lk(heavy_mu_);
+    heavy_cv_.wait(lk, [this]() { return stop_ || heavy_in_use_ < heavy_slots_; });
+    if (stop_) return false;
+    ++heavy_in_use_;
+    return true;
+}
+
+void SubscriptionManager::releaseHeavySlot() {
+    std::lock_guard<std::mutex> lk(heavy_mu_);
+    if (heavy_in_use_ > 0) {
+        --heavy_in_use_;
+    }
+    heavy_cv_.notify_one();
+}
+
+bool SubscriptionManager::ensurePipelineStopped(const std::string& stream_id, const std::string& profile_id) {
+    try {
+        return app_.unsubscribeStream(stream_id, profile_id);
+    } catch (...) {
+        return false;
+    }
+}
+
+const char* toString(SubscriptionPhase phase) {
+    switch (phase) {
+    case SubscriptionPhase::Pending:
+        return "pending";
+    case SubscriptionPhase::Preparing:
+        return "preparing";
+    case SubscriptionPhase::OpeningRtsp:
+        return "opening_rtsp";
+    case SubscriptionPhase::LoadingModel:
+        return "loading_model";
+    case SubscriptionPhase::StartingPipeline:
+        return "starting_pipeline";
+    case SubscriptionPhase::Ready:
+        return "ready";
+    case SubscriptionPhase::Failed:
+        return "failed";
+    case SubscriptionPhase::Cancelled:
+        return "cancelled";
+    default:
+        return "unknown";
+    }
+}
+
+} // namespace va::server
