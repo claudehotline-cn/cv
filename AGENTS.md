@@ -27,7 +27,7 @@
   - 构建前先将后端进程关闭。
   - 确保项目构建成功。
   - 构建脚本位于`D:\Projects\ai\cv\tools`目录下。
-  - Windows：`video-analyzer` 项目在 `D:\Projects\ai\cv\video-analyzer\build-ninja` 目录下使用 `D:\Projects\ai\cv\tools\build_with_vcvars.cmd` 工具进行构建；`video-source-manager` 项目在 `D:\Projects\ai\cv\video-source-manager\build` 目录下构建。
+  - Windows：`video-analyzer` 项目在 `D:\Projects\ai\cv\video-analyzer\build-ninja` 目录下使用 `D:\Projects\ai\cv\tools\build_va_with_vcvars.cmd` 工具进行构建；`video-source-manager` 项目在 `D:\Projects\ai\cv\video-source-manager\build` 目录下构建。
   - Linux/macOS：`cmake -S . -B build && cmake --build build -j`
 
 ### 运行

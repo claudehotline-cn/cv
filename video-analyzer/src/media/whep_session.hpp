@@ -18,6 +18,33 @@
 
 namespace va::media {
 
+struct H264SpsInfo {
+    uint32_t id{0};
+    uint32_t log2_max_frame_num{8};
+    uint32_t pic_order_cnt_type{0};
+    uint32_t log2_max_pic_order_cnt_lsb{8};
+    bool separate_colour_plane_flag{false};
+    bool frame_mbs_only_flag{true};
+    bool delta_pic_order_always_zero_flag{false};
+    bool valid{false};
+};
+
+struct H264PpsInfo {
+    uint32_t id{0};
+    uint32_t sps_id{0};
+    bool pic_order_present_flag{false};
+    bool valid{false};
+};
+
+struct H264FrameState {
+    bool have_prev{false};
+    uint32_t frame_num{0};
+    uint32_t pic_order_cnt_lsb{0};
+    bool has_poc_lsb{false};
+    bool is_idr{false};
+    bool field_pic{false};
+};
+
 // Minimal WHEP session管理：基于 libdatachannel，按 streamKey 发送 H264 RTP 视频轨
 class WhepSessionManager {
 public:
@@ -65,6 +92,18 @@ private:
         std::atomic<bool> trackOpen{false}; // Track open callback observed
         std::vector<uint8_t> last_sps; // cached SPS (AnnexB unit with start code)
         std::vector<uint8_t> last_pps; // cached PPS (AnnexB unit with start code)
+        std::unordered_map<uint32_t, H264SpsInfo> sps_map;
+        std::unordered_map<uint32_t, H264PpsInfo> pps_map;
+        H264FrameState frame_state;
+        std::vector<uint8_t> pending_prefix; // NAL units collected before the next access unit
+        bool prefix_has_sps{false};
+        bool prefix_has_pps{false};
+        std::vector<uint8_t> pending_au; // assembling access unit (AnnexB with start codes)
+        bool pending_has_vcl{false};
+        bool pending_is_idr{false};
+        bool pending_has_sps{false};
+        bool pending_has_pps{false};
+        std::chrono::steady_clock::time_point pending_started_at{};
         // debug counters
         uint64_t dbg_frames{0};
         uint64_t dbg_bytes{0};
@@ -80,3 +119,5 @@ private:
 };
 
 } // namespace va::media
+
+
