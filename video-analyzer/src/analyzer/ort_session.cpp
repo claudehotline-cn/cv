@@ -82,9 +82,23 @@ inline bool ensureCudaCapacity(void*& pointer, size_t& capacity_bytes, size_t re
 #endif
 } // namespace
 
+namespace {
+std::shared_ptr<Ort::Env> acquire_shared_env() {
+    static std::mutex env_mutex;
+    static std::weak_ptr<Ort::Env> weak_env;
+    std::lock_guard<std::mutex> lock(env_mutex);
+    auto env = weak_env.lock();
+    if (!env) {
+        env = std::make_shared<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "VA_ONNX");
+        weak_env = env;
+    }
+    return env;
+}
+} // namespace
+
 struct OrtModelSession::Impl {
     Options options;
-    std::unique_ptr<Ort::Env> env;
+    std::shared_ptr<Ort::Env> env;
     std::unique_ptr<Ort::SessionOptions> session_options;
     std::unique_ptr<Ort::Session> session;
     std::unique_ptr<Ort::IoBinding> io_binding;
@@ -137,7 +151,7 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     std::scoped_lock lock(impl_->mutex);
 
     if (!impl_->env) {
-        impl_->env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "VA_ONNX");
+        impl_->env = acquire_shared_env();
     }
 
     impl_->session_options = std::make_unique<Ort::SessionOptions>();
