@@ -315,6 +315,28 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
     }
     au.insert(au.end(), h264.begin(), h264.end());
 
+    // Insert AUD (Access Unit Delimiter) at the beginning to help some browsers delineate frames
+    // Only if first NAL is not already AUD (type=9)
+    auto first_nal_type = [](const std::vector<uint8_t>& buf)->int{
+      size_t n = buf.size(); size_t i = 0;
+      while (i + 4 < n) {
+        if (buf[i]==0x00 && buf[i+1]==0x00 && (buf[i+2]==0x01 || (buf[i+2]==0x00 && buf[i+3]==0x01))) {
+          size_t hdr = (buf[i+2]==0x01)? (i+3) : (i+4);
+          if (hdr < n) return int(buf[hdr] & 0x1F);
+          break;
+        }
+        ++i;
+      }
+      return -1;
+    };
+    if (first_nal_type(au) != 9) {
+      static const uint8_t aud[] = {0x00,0x00,0x00,0x01, 0x09, 0xF0};
+      std::vector<uint8_t> with_aud; with_aud.reserve(sizeof(aud) + au.size());
+      with_aud.insert(with_aud.end(), aud, aud + sizeof(aud));
+      with_aud.insert(with_aud.end(), au.begin(), au.end());
+      au.swap(with_aud);
+    }
+
     rtc::binary frame; frame.resize(au.size()); std::memcpy(frame.data(), au.data(), au.size());
     rtc::FrameInfo finfo(next_ts);
     try { sess->videoTrack->sendFrame(std::move(frame), finfo); }

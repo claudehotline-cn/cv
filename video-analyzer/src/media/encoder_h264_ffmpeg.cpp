@@ -326,14 +326,8 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         }
     }
 
-    // Light pre-drain: pull at most one pending packet to reduce encoder backpressure
-    {
-        int r = avcodec_receive_packet(codec_ctx_, packet_);
-        if (r == 0) {
-            // discard pre-drained packet here; this is just to keep the pipeline flowing
-            av_packet_unref(packet_);
-        }
-    }
+    // Avoid pre-draining/discarding encoded packets here. Dropping packets before send
+    // may cause呈现不连续（尤其是 P 帧丢失导致看起来只有 IDR 在刷新）。
 
     if (use_jpeg_) {
         if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
