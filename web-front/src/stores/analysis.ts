@@ -29,6 +29,8 @@ export const useAnalysisStore = defineStore('analysis', {
     subPhase: '' as string,
     subProgress: 0 as number,
     _subSSE: null as EventSource | null,
+    _subRetries: 0 as number,
+    muteAutoStartUntil: 0 as number,
     stats: { fps: '0.0', p95: '0', alerts: 0 } as { fps: string; p95: string; alerts: number },
     errMsg: '' as string
   }),
@@ -103,7 +105,7 @@ export const useAnalysisStore = defineStore('analysis', {
           this.currentModelUri = this.models[0].id
         }
         this.refreshStats()
-        if (this.autoPlay && !this.analyzing) {
+        if (this.autoPlay && !this.analyzing && Date.now() >= this.muteAutoStartUntil) {
           await this.startAnalysis()
         }
       } finally {
@@ -197,6 +199,7 @@ export const useAnalysisStore = defineStore('analysis', {
           const esUrl = mod.subscriptionEventsUrl(subId)
           const es = new EventSource(esUrl)
           this._subSSE = es
+          this._subRetries = 0
           const phaseToProgress = (p: string) => {
             switch ((p||'').toLowerCase()) {
               case 'pending': return 5
@@ -229,6 +232,55 @@ export const useAnalysisStore = defineStore('analysis', {
                 this.setAnalyzing(false)
               }
             } catch {}
+          })
+          es.addEventListener('error', async () => {
+            // SSE 断线：轻量回退一次性查询，并尝试指数退避重连（仅在未就绪且未取消时）
+            try {
+              const st: any = await mod.getSubscription(subId).catch(()=>null)
+              const phase = (st?.data?.phase || '').toString()
+              if (phase) { this.subPhase = phase; this.subProgress = phaseToProgress(phase) }
+              if ((phase||'').toLowerCase() === 'ready') {
+                const w = st?.data?.whep_url || ''
+                if (w) this.whepUrl = w; else this.updateWhepUrl()
+                this.setAnalyzing(true)
+                try { this._subSSE?.close() } catch {}
+                this._subSSE = null
+                return
+              }
+            } catch {}
+            try { this._subSSE?.close() } catch {}
+            this._subSSE = null
+            if (!this.analyzing && this.currentSubId === subId) {
+              this._subRetries = (this._subRetries || 0) + 1
+              const delay = Math.min(8000, Math.pow(2, this._subRetries) * 500)
+              setTimeout(() => {
+                if (this.analyzing || this.currentSubId !== subId) return
+                const nes = new EventSource(esUrl)
+                this._subSSE = nes
+                // 复用相同监听器
+                nes.addEventListener('phase', (ev: MessageEvent) => {
+                  try {
+                    const data = JSON.parse((ev as any).data || '{}')
+                    const phase = (data.phase || '').toString()
+                    this.subPhase = phase
+                    this.subProgress = phaseToProgress(phase)
+                    if (phase.toLowerCase() === 'ready') {
+                      const w = (data.whep_url || '') as string
+                      if (w) this.whepUrl = w; else this.updateWhepUrl()
+                      this.setAnalyzing(true)
+                      try { this._subSSE?.close() } catch {}
+                      this._subSSE = null
+                    } else if (phase.toLowerCase() === 'failed' || phase.toLowerCase() === 'cancelled') {
+                      this.errMsg = (data.reason || phase) as string
+                      try { this._subSSE?.close() } catch {}
+                      this._subSSE = null
+                      this.setAnalyzing(false)
+                    }
+                  } catch {}
+                })
+                nes.addEventListener('error', () => { /* 将由外层 onerror 再次处理 */ })
+              }, delay)
+            }
           })
           // 后备超时：若 SSE 未触发，进行一次性轮询兜底
           setTimeout(async () => {
@@ -301,6 +353,8 @@ export const useAnalysisStore = defineStore('analysis', {
       this.subProgress = 0
       this.currentSubId = ''
       this.setAnalyzing(false)
+      // 取消后短期抑制 AutoPlay 触发的自动重启
+      this.muteAutoStartUntil = Date.now() + 3000
     },
     async hotswapModel(id: string) {
       this.setModel(id)
