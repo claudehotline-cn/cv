@@ -37,8 +37,10 @@ async function fetchList() {
   try {
     const resp = await dataProvider.listSources()
     const items = (resp as any)?.data?.items ?? (resp as any)?.items ?? (Array.isArray(resp) ? (resp as any) : [])
+    const mapStatus = (s?: string) => (s === 'Ready' ? 'Unknown' : (s || ''))
     rows.value = (items || []).map((it: any) => ({
       ...it,
+      status: mapStatus(it.status || it.phase),
       group: it.group || (it.id?.split('_')[0] ?? 'default')
     }))
   } catch (e:any) {
@@ -75,7 +77,10 @@ async function start(row: SourceItem) {
     if (!store.currentPipeline) store.setPipeline('det_720p')
     const res = await store.startAnalysis()
     if (!res.ok) ElMessage.error((res as any).reasons?.join('；') || '订阅失败')
-    else ElMessage.success(`已开始分析 ${row.name || row.id}`)
+    else {
+      ElMessage.success(`已开始分析 ${row.name || row.id}`)
+      router.push({ path: '/analysis', query: { source: row.id, pipeline: store.currentPipeline } })
+    }
   } catch (e:any) {
     ElMessage.error(e?.message || '启动失败')
   }

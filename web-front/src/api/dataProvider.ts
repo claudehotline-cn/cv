@@ -180,9 +180,23 @@ export const dataProvider = {
   },
   async listSources() {
     if (isMock) return delay(sourcesList as any)
-    const r = await fetch(apiBase() + '/api/sources')
-    if (!r.ok) throw new Error('listSources failed')
-    return r.json()
+    // 首选 VA 聚合接口，失败或为空时回退到 VSM REST
+    try {
+      const r = await fetch(apiBase() + '/api/sources')
+      if (r.ok) {
+        const j = await r.json()
+        const items = (((j as any)?.data?.items) ?? (j as any)?.items ?? (Array.isArray(j) ? j : [])) as any[]
+        if (Array.isArray(items) && items.length > 0) return { data: { items } }
+      }
+    } catch {}
+    try {
+      const mod = await import('@/api/vsm')
+      const v = await mod.listSources()
+      // 与聚合接口保持结构一致 { data: { items } }
+      return { data: { items: v.items } }
+    } catch (e) {
+      throw new Error('listSources failed')
+    }
   },
   // 长轮询 watch：回调拿到 { rev, items }，返回取消函数
   watchSources(cb: (payload: { rev: number, items: any[] }) => void, opts?: { intervalMs?: number; timeoutMs?: number }) {

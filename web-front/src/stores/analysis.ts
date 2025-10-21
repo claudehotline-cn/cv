@@ -63,12 +63,17 @@ export const useAnalysisStore = defineStore('analysis', {
           const sAny: any = (sourcesResp as any)
           const raw = ((sAny?.data && (sAny.data.items || sAny.data)) || sAny?.items || sAny) || []
           const arr = Array.isArray(raw) ? raw : []
+          const mapStatus = (st: string) => {
+            const s = (st || '').toString()
+            if (s === 'Ready') return 'Unknown'
+            return s
+          }
           this.sources = arr
             .map((s: any) => ({
               id: s?.id || s?.stream_id || s?.attach_id || s?.name || '',
               name: s?.name || s?.id || s?.stream_id || s?.attach_id || '',
               uri: s?.uri || s?.source_uri || '',
-              status: s?.status || s?.phase || '',
+              status: mapStatus(s?.status || s?.phase || ''),
               caps: s?.caps || s?.capabilities
             }))
             .filter((x: any) => !!x.id)
@@ -106,7 +111,43 @@ export const useAnalysisStore = defineStore('analysis', {
         }
         this.refreshStats()
         if (this.autoPlay && !this.analyzing && Date.now() >= this.muteAutoStartUntil) {
-          await this.startAnalysis()
+          if (this.currentSubId) {
+            try {
+              const mod = await import('@/api/cp')
+              const st: any = await mod.getSubscription(this.currentSubId).catch(()=>null)
+              const phase = (st?.data?.phase || '').toString().toLowerCase()
+              if (phase === 'ready') {
+                const w = st?.data?.whep_url || ''
+                if (w) this.whepUrl = w; else this.updateWhepUrl()
+                this.setAnalyzing(true)
+              } else if (phase) {
+                try { this._subSSE?.close() } catch {}
+                const es = new EventSource(mod.subscriptionEventsUrl(this.currentSubId))
+                this._subSSE = es
+                es.addEventListener('phase', (ev: MessageEvent) => {
+                  try {
+                    const data = JSON.parse((ev as any).data || '{}')
+                    const ph = (data.phase || '').toString()
+                    this.subPhase = ph
+                    this.subProgress = ['pending','preparing','opening_rtsp','loading_model','starting_pipeline','ready'].indexOf(ph.toLowerCase()) >= 0
+                      ? [5,15,35,65,85,100][['pending','preparing','opening_rtsp','loading_model','starting_pipeline','ready'].indexOf(ph.toLowerCase())]
+                      : 0
+                    if (ph.toLowerCase() === 'ready') {
+                      const w = (data.whep_url || '') as string
+                      if (w) this.whepUrl = w; else this.updateWhepUrl()
+                      this.setAnalyzing(true)
+                      try { this._subSSE?.close() } catch {}
+                      this._subSSE = null
+                    }
+                  } catch {}
+                })
+              } else {
+                await this.startAnalysis()
+              }
+            } catch { await this.startAnalysis() }
+          } else {
+            await this.startAnalysis()
+          }
         }
       } finally {
         this.loading = false
@@ -157,6 +198,20 @@ export const useAnalysisStore = defineStore('analysis', {
       if (!pf.ok) {
         this.setAnalyzing(false)
         return pf
+      }
+      // 如果已有订阅，尝试复用
+      if (this.currentSubId) {
+        try {
+          const mod = await import('@/api/cp')
+          const st: any = await mod.getSubscription(this.currentSubId).catch(()=>null)
+          const phase = (st?.data?.phase || '').toString().toLowerCase()
+          if (phase === 'ready') {
+            const w = st?.data?.whep_url || ''
+            if (w) this.whepUrl = w; else this.updateWhepUrl()
+            this.setAnalyzing(true)
+            return { ok: true } as const
+          }
+        } catch {}
       }
       // ensure defaults to avoid 400 Bad Request
       if (!this.currentPipeline) this.currentPipeline = 'det_720p'
