@@ -1336,8 +1336,8 @@ struct RestServer::Impl {
         server.addRoute("OPTIONS", "/api/sources", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
         server.addRoute("GET", "/sources/watch", sourcesWatchHandler);
         server.addRoute("GET", "/api/sources/watch", sourcesWatchHandler);
-        // SSE variants (experimental): watch via EventSource
-        // server.addStreamRoute("GET", "/api/sources/watch_sse", [this](int fd, const HttpRequest& req){ streamSourcesSSE(fd, req); });
+        // SSE: sources
+        server.addStreamRoute("GET", "/api/sources/watch_sse", [this](int fd, const HttpRequest& req){ streamSourcesSSE(fd, req); });
 
         // Prometheus metrics endpoint
         auto metricsHandler = [this](const HttpRequest& req) { return handleMetrics(req); };
@@ -2735,6 +2735,8 @@ struct RestServer::Impl {
         auto last = SubscriptionPhase::Pending;
         bool first = true;
         const int interval_ms = 200;
+        const int keepalive_ms = 10000;
+        auto last_keepalive = std::chrono::steady_clock::now();
         while (true) {
             auto st = subscriptions->get(id);
             if (!st) break;
@@ -2747,8 +2749,25 @@ struct RestServer::Impl {
                 if (!st->pipeline_key.empty()) data["pipeline_key"] = st->pipeline_key;
                 if (!st->whep_url.empty()) data["whep_url"] = st->whep_url;
                 sseEvent(fd, "phase", data);
+                // On terminal state, persist a session completion record once (best-effort)
+                if ((ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) && sessions_repo) {
+                    bool expected = false;
+                    if (st->db_recorded.compare_exchange_strong(expected, true)) {
+                        std::string err;
+                        const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                        const char* status = (ph == SubscriptionPhase::Ready) ? "Ready" : (ph == SubscriptionPhase::Failed ? "Failed" : "Cancelled");
+                        const std::string errmsg = st->reason;
+                        (void)sessions_repo->completeLatest(st->request.stream_id, st->request.profile_id, status, errmsg, now_ms, &err);
+                    }
+                }
                 last = ph; first = false;
                 if (ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) break;
+            }
+            // keepalive
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_keepalive).count() >= keepalive_ms) {
+                sseKeepAlive(fd);
+                last_keepalive = now;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
         }
@@ -3011,6 +3030,12 @@ struct RestServer::Impl {
             data["stream_id"] = request.stream_id;
             data["profile_id"] = request.profile_id;
             payload["data"] = data;
+            // Record session start (best-effort)
+            if (sessions_repo) {
+                std::string err; std::int64_t sid = 0;
+                const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                (void)sessions_repo->start(request.stream_id, request.profile_id, request.model_id.value_or(std::string()), request.source_uri, now_ms, &sid, &err);
+            }
             return jsonResponse(payload, 202);
         } catch (const std::exception& ex) {
             const std::string msg = ex.what();
@@ -3050,6 +3075,20 @@ struct RestServer::Impl {
         }
         const auto created = std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count();
         data["created_at_ms"] = static_cast<Json::UInt64>(created);
+        // Persist completion if terminal (best-effort, once)
+        if (sessions_repo) {
+            auto ph = state->phase.load();
+            if (ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) {
+                bool expected = false;
+                if (state->db_recorded.compare_exchange_strong(expected, true)) {
+                    std::string err;
+                    const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                    const char* status = (ph == SubscriptionPhase::Ready) ? "Ready" : (ph == SubscriptionPhase::Failed ? "Failed" : "Cancelled");
+                    const std::string errmsg = state->reason;
+                    (void)sessions_repo->completeLatest(state->request.stream_id, state->request.profile_id, status, errmsg, now_ms, &err);
+                }
+            }
+        }
         payload["data"] = data;
         return jsonResponse(payload, 200);
     }
@@ -3060,6 +3099,18 @@ struct RestServer::Impl {
         }
         if (!subscriptions->cancel(id)) {
             return errorResponse("subscription not found", 404);
+        }
+        // Persist cancellation for session (best-effort)
+        if (sessions_repo) {
+            auto st = subscriptions->get(id);
+            if (st) {
+                bool expected = false;
+                if (st->db_recorded.compare_exchange_strong(expected, true)) {
+                    std::string err;
+                    const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                    (void)sessions_repo->completeLatest(st->request.stream_id, st->request.profile_id, "Cancelled", std::string(), now_ms, &err);
+                }
+            }
         }
         Json::Value payload = successPayload();
         payload["data"]["id"] = id;

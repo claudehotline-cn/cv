@@ -46,6 +46,7 @@ struct SubscriptionState {
     std::atomic<bool> cancel{false};
     std::chrono::system_clock::time_point created_at{};
     std::atomic<bool> metrics_recorded{false};
+    std::atomic<bool> db_recorded{false};
 };
 
 class SubscriptionManager {
