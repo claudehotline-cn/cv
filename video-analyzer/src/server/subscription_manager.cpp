@@ -146,6 +146,8 @@ std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, boo
     auto state = std::make_shared<SubscriptionState>();
     state->request = request;
     state->created_at = std::chrono::system_clock::now();
+    // 记录 pending 时间（ms since epoch）
+    state->ts_pending.store(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count()), std::memory_order_relaxed);
 
     const std::string key = request.stream_id + ":" + request.profile_id;
     std::string id = nextId();
@@ -235,7 +237,9 @@ void SubscriptionManager::workerLoop() {
 void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const StatePtr& state) {
     if (!state) return;
 
+    auto now_ms = [](){ return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()); };
     state->phase.store(SubscriptionPhase::Preparing);
+    if (state->ts_preparing.load(std::memory_order_relaxed) == 0) state->ts_preparing.store(now_ms(), std::memory_order_relaxed);
     if (state->cancel.load()) {
         state->phase.store(SubscriptionPhase::Cancelled);
         state->reason = "cancelled";
@@ -243,6 +247,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     }
 
     state->phase.store(SubscriptionPhase::OpeningRtsp);
+    if (state->ts_opening.load(std::memory_order_relaxed) == 0) state->ts_opening.store(now_ms(), std::memory_order_relaxed);
     if (state->cancel.load()) {
         state->phase.store(SubscriptionPhase::Cancelled);
         state->reason = "cancelled";
@@ -250,6 +255,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     }
 
     state->phase.store(SubscriptionPhase::LoadingModel);
+    if (state->ts_loading.load(std::memory_order_relaxed) == 0) state->ts_loading.store(now_ms(), std::memory_order_relaxed);
     if (state->request.model_id) {
         bool got_model = acquireModelSlot();
         struct ModelGuard { SubscriptionManager* m; bool a; ~ModelGuard(){ if(m&&a) m->releaseModelSlot(); } } mg{this, got_model};
@@ -274,6 +280,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     }
 
     state->phase.store(SubscriptionPhase::StartingPipeline);
+    if (state->ts_starting.load(std::memory_order_relaxed) == 0) state->ts_starting.store(now_ms(), std::memory_order_relaxed);
     bool got_rtsp = acquireRtspSlot();
     struct RtspGuard { SubscriptionManager* m; bool a; ~RtspGuard(){ if(m&&a) m->releaseRtspSlot(); } } rg{this, got_rtsp};
     auto pipeline_key = got_rtsp ? app_.subscribeStream(state->request.stream_id,
@@ -304,11 +311,13 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         state->phase.store(SubscriptionPhase::Cancelled);
         state->reason = "cancelled";
         recordCompletion(state, SubscriptionPhase::Cancelled);
+        if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) state->ts_cancelled.store(now_ms(), std::memory_order_relaxed);
         return;
     }
 
     state->phase.store(SubscriptionPhase::Ready);
     recordCompletion(state, SubscriptionPhase::Ready);
+    if (state->ts_ready.load(std::memory_order_relaxed) == 0) state->ts_ready.store(now_ms(), std::memory_order_relaxed);
 }
 
 std::string SubscriptionManager::nextId() {

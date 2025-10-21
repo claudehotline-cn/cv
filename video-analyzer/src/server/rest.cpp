@@ -2766,12 +2766,27 @@ struct RestServer::Impl {
         ss << "\n\n";
         sseSendAll(fd, ss.str());
     }
+    static void sseEventWithId(int fd, const char* event, const Json::Value& data, std::uint64_t id, int retry_ms) {
+        Json::StreamWriterBuilder b; std::string body = Json::writeString(b, data);
+        std::ostringstream ss;
+        ss << "id: " << id << "\n";
+        if (retry_ms > 0) ss << "retry: " << retry_ms << "\n";
+        if (event && *event) { ss << "event: " << event << "\n"; }
+        std::istringstream is(body);
+        std::string line; ss << "data: "; bool first = true;
+        while (std::getline(is, line)) {
+            if (!first) ss << "\ndata: ";
+            if (!line.empty() && line.back()=='\r') line.pop_back();
+            ss << line; first = false;
+        }
+        ss << "\n\n";
+        sseSendAll(fd, ss.str());
+    }
     static void sseKeepAlive(int fd) {
         sseSendAll(fd, "\n");
     }
 
     void streamSubscriptionSSE(int fd, const HttpRequest& req, const std::string& id) {
-        (void)req;
         if (!subscriptions) return;
         sseWriteHeaders(fd);
         auto state = subscriptions->get(id);
@@ -2781,6 +2796,12 @@ struct RestServer::Impl {
         const int interval_ms = 200;
         const int keepalive_ms = 10000;
         auto last_keepalive = std::chrono::steady_clock::now();
+        // Last-Event-ID 支持：从请求头恢复事件序号
+        std::uint64_t ev_id = 1;
+        auto hit = req.headers.find("Last-Event-ID");
+        if (hit != req.headers.end()) {
+            try { ev_id = static_cast<std::uint64_t>(std::stoull(hit->second) + 1ULL); } catch (...) {}
+        }
         while (true) {
             auto st = subscriptions->get(id);
             if (!st) break;
@@ -2792,7 +2813,7 @@ struct RestServer::Impl {
                 if (!st->reason.empty()) data["reason"] = st->reason;
                 if (!st->pipeline_key.empty()) data["pipeline_key"] = st->pipeline_key;
                 if (!st->whep_url.empty()) data["whep_url"] = st->whep_url;
-                sseEvent(fd, "phase", data);
+                sseEventWithId(fd, "phase", data, ev_id++, 2500);
                 // On terminal state, persist a session completion record once (best-effort)
                 if ((ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) && sessions_repo) {
                     bool expected = false;
@@ -3090,7 +3111,7 @@ struct RestServer::Impl {
         }
     }
 
-    HttpResponse handleSubscriptionGet(const HttpRequest& /*req*/, const std::string& id) {
+      HttpResponse handleSubscriptionGet(const HttpRequest& req, const std::string& id) {
         if (!subscriptions) {
             return errorResponse("subscription manager unavailable", 503);
         }
@@ -3119,6 +3140,25 @@ struct RestServer::Impl {
         }
         const auto created = std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count();
         data["created_at_ms"] = static_cast<Json::UInt64>(created);
+        // include=timeline 支持
+        auto q = parseQueryKV(req.query);
+        auto itInc = q.find("include");
+        if (itInc != q.end()) {
+            std::string inc = toLower(itInc->second);
+            if (inc.find("timeline") != std::string::npos) {
+                Json::Value tl(Json::objectValue);
+                auto put_ts = [&](const char* k, std::uint64_t v){ if (v>0) tl[k] = static_cast<Json::UInt64>(v); };
+                put_ts("pending", state->ts_pending.load());
+                put_ts("preparing", state->ts_preparing.load());
+                put_ts("opening_rtsp", state->ts_opening.load());
+                put_ts("loading_model", state->ts_loading.load());
+                put_ts("starting_pipeline", state->ts_starting.load());
+                put_ts("ready", state->ts_ready.load());
+                put_ts("failed", state->ts_failed.load());
+                put_ts("cancelled", state->ts_cancelled.load());
+                data["timeline"] = tl;
+            }
+        }
         // Persist completion if terminal (best-effort, once)
         if (sessions_repo) {
             auto ph = state->phase.load();

@@ -227,3 +227,8 @@
 5	49	7827693011725351	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
 56	842	7827693012241712	CMakeFiles/VideoAnalyzer.dir/src/server/subscription_manager.cpp.obj	441be90cc8331d37
 842	3044	7827693020100404	bin/VideoAnalyzer.exe	fbdddfbee4732bd
+5	55	7827700517893282	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+67	968	7827700518505652	CMakeFiles/VideoAnalyzer.dir/src/server/subscription_manager.cpp.obj	441be90cc8331d37
+63	4639	7827700518465652	CMakeFiles/VideoAnalyzer.dir/src/server/rest.cpp.obj	39a51942e14bc555
+5	47	7827700914684808	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+55	1798	7827700915179546	bin/VideoAnalyzer.exe	fbdddfbee4732bd

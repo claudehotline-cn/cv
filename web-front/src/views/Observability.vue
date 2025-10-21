@@ -64,6 +64,14 @@
           <div><strong>Subscriptions rtsp_slots:</strong> {{ sys?.subscriptions?.rtsp_slots }}</div>
           <div><strong>Subscriptions max_queue:</strong> {{ sys?.subscriptions?.max_queue }}</div>
           <div><strong>Subscriptions ttl_seconds:</strong> {{ sys?.subscriptions?.ttl_seconds }}</div>
+          <div>
+            <strong>Subscriptions source:</strong>
+            heavy={{ sys?.subscriptions?.source?.heavy_slots || '-' }} ·
+            model={{ sys?.subscriptions?.source?.model_slots || '-' }} ·
+            rtsp={{ sys?.subscriptions?.source?.rtsp_slots || '-' }} ·
+            queue={{ sys?.subscriptions?.source?.max_queue || '-' }} ·
+            ttl={{ sys?.subscriptions?.source?.ttl_seconds || '-' }}
+          </div>
           <div><strong>WHEP Base:</strong> {{ sys?.sfu?.whep_base }}</div>
         </div>
       </el-card>

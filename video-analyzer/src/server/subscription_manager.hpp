@@ -47,6 +47,15 @@ struct SubscriptionState {
     std::chrono::system_clock::time_point created_at{};
     std::atomic<bool> metrics_recorded{false};
     std::atomic<bool> db_recorded{false};
+    // 阶段时间线（ms since epoch），原子写一次读取多次，避免锁
+    std::atomic<std::uint64_t> ts_pending{0};
+    std::atomic<std::uint64_t> ts_preparing{0};
+    std::atomic<std::uint64_t> ts_opening{0};
+    std::atomic<std::uint64_t> ts_loading{0};
+    std::atomic<std::uint64_t> ts_starting{0};
+    std::atomic<std::uint64_t> ts_ready{0};
+    std::atomic<std::uint64_t> ts_failed{0};
+    std::atomic<std::uint64_t> ts_cancelled{0};
 };
 
 class SubscriptionManager {
