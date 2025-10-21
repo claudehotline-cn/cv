@@ -2975,7 +2975,21 @@ struct RestServer::Impl {
                 if (!v.empty()) request.model_id = v;
             }
             subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
-            const std::string id = subscriptions->enqueue(request);
+            bool prefer_reuse_ready = false;
+            // 简易解析：query 中包含 use_existing=1 或头部 X-Subscription-Use-Existing: 1
+            try {
+                if (!req.query.empty()) {
+                    if (req.query.find("use_existing=1") != std::string::npos || req.query.find("use_existing=true") != std::string::npos) {
+                        prefer_reuse_ready = true;
+                    }
+                }
+                auto it = req.headers.find("X-Subscription-Use-Existing");
+                if (it != req.headers.end()) {
+                    std::string v = toLower(it->second);
+                    if (v == "1" || v == "true" || v == "yes") prefer_reuse_ready = true;
+                }
+            } catch (...) { /* ignore */ }
+            const std::string id = subscriptions->enqueue(request, prefer_reuse_ready);
             Json::Value payload = successPayload();
             Json::Value data(Json::objectValue);
             data["id"] = id;

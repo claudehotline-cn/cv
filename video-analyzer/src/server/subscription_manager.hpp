@@ -53,7 +53,7 @@ public:
     explicit SubscriptionManager(va::app::Application& app);
     ~SubscriptionManager();
 
-    std::string enqueue(const SubscriptionRequest& request);
+    std::string enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready = false);
     std::shared_ptr<SubscriptionState> get(const std::string& id) const;
     bool cancel(const std::string& id);
     void setWhepBase(std::string whep_base_url);

@@ -50,7 +50,7 @@ void SubscriptionManager::setWhepBase(std::string whep_base_url) {
     whep_base_ = std::move(whep_base_url);
 }
 
-std::string SubscriptionManager::enqueue(const SubscriptionRequest& request) {
+std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready) {
     auto state = std::make_shared<SubscriptionState>();
     state->request = request;
     state->created_at = std::chrono::system_clock::now();
@@ -65,7 +65,12 @@ std::string SubscriptionManager::enqueue(const SubscriptionRequest& request) {
             auto sit = states_.find(it->second);
             if (sit != states_.end()) {
                 auto phase = sit->second->phase.load();
+                // 如果仍在进行中，直接复用
                 if (!isTerminalPhase(phase)) {
+                    return it->second;
+                }
+                // 若已 Ready 且调用方要求优先复用，则直接返回现有订阅 ID
+                if (prefer_reuse_ready && phase == SubscriptionPhase::Ready) {
                     return it->second;
                 }
             }
