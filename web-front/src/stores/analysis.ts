@@ -187,6 +187,8 @@ export const useAnalysisStore = defineStore('analysis', {
         // @ts-ignore
         if (typeof window !== 'undefined') {
           const mod = await import('@/api/cp')
+          // 防止同 stream:profile 残留管线导致内部切换失败，先尝试一次性退订（忽略错误）
+          try { await mod.unsubscribePipeline(this.currentSourceId, profile) } catch {}
           const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model)
           if (!subId) throw new Error('createSubscription failed')
           this.currentSubId = subId
