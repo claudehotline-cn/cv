@@ -182,16 +182,14 @@ export const useAnalysisStore = defineStore('analysis', {
         const src = this.sources.find(s => s.id === this.currentSourceId)
         const profile = this.currentPipeline
         const uri = src?.uri || ''
-        // 使用临时 stream_id，避免与已有管线/CP 切换冲突
-        const ephemeralId = `${this.currentSourceId}_${Math.random().toString(16).slice(2,6)}`
         const model = this.currentModelUri || undefined
         // 优先使用异步订阅接口（SSE 实时进度）
         // @ts-ignore
         if (typeof window !== 'undefined') {
           const mod = await import('@/api/cp')
           // 防止同 stream:profile 残留管线导致内部切换失败，先尝试一次性退订（忽略错误）
-          try { await mod.unsubscribePipeline(this.currentSourceId, profile) } catch {}
-          const subId = await mod.createSubscription(ephemeralId, profile, uri, model)
+          // 仅使用异步订阅路径，不调用旧的控制平面/同步接口
+          const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model)
           if (!subId) throw new Error('createSubscription failed')
           this.currentSubId = subId
           // 建立 SSE
@@ -293,14 +291,9 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     async stopAnalysis() {
       try {
-        // 优先取消异步订阅
+        // 仅取消异步订阅；不再调用旧的 /api/unsubscribe
         // @ts-ignore
         if (typeof window !== 'undefined' && this.currentSubId) { const mod = await import('@/api/cp'); await mod.cancelSubscription(this.currentSubId).catch(()=>{}) }
-        else {
-          const profile = this.currentPipeline
-          // @ts-ignore
-          if (typeof window !== 'undefined') { const mod = await import('@/api/cp'); await mod.unsubscribePipeline(this.currentSourceId, profile) }
-        }
       } catch (e) {}
       try { this._subSSE?.close() } catch {}
       this._subSSE = null
