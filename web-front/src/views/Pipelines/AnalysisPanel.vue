@@ -18,6 +18,9 @@
           </el-select>
           <el-switch v-model="autoPlay" active-text="自动播放" style="margin-left:8px" />
           <el-switch v-model="analyzing" :disabled="!preflight.ok && !store.analyzing" active-text="实时分析" inactive-text="暂停" style="margin-left:8px" />
+          <el-button type="danger" size="small" :disabled="!store.analyzing && !store.currentSubId" @click="onCancel" style="margin-left:4px">
+            取消
+          </el-button>
           <el-button text size="small" @click="refresh">
             <el-icon><RefreshRight /></el-icon>
             刷新
@@ -221,6 +224,11 @@ function refresh() {
 }
 
 function goBack() { router.back() }
+
+async function onCancel() {
+  await store.stopAnalysis()
+  ElMessage.info('已取消分析')
+}
 
 onMounted(async () => {
   await store.bootstrap()

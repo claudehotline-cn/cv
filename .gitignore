@@ -262,3 +262,7 @@ junit.xml
 # Local configuration
 local.properties
 *.local.json
+
+# Spurious console artifact on Windows
+System.IO.TextWriter+SyncTextWriter
+
