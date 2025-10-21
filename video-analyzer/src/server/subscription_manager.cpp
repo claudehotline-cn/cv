@@ -51,6 +51,64 @@ SubscriptionManager::~SubscriptionManager() {
     if (cleaner_.joinable()) cleaner_.join();
 }
 
+void SubscriptionManager::cleanerLoop() {
+    // 定期清理达到 TTL 的终态任务，避免状态表无限增长
+    using namespace std::chrono;
+    const auto tick = seconds(5);
+    while (!cleaner_stop_.load(std::memory_order_relaxed)) {
+        std::this_thread::sleep_for(tick);
+        int ttl = ttl_seconds_;
+        if (ttl <= 0) continue;
+        const auto now = system_clock::now();
+        std::vector<std::string> to_erase;
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            for (const auto& kv : states_) {
+                const auto& st = kv.second;
+                if (!st) continue;
+                auto ph = st->phase.load();
+                if (!isTerminalPhase(ph)) continue;
+                auto age = duration_cast<seconds>(now - st->created_at).count();
+                if (age >= ttl) {
+                    to_erase.push_back(kv.first);
+                }
+            }
+            for (const auto& id : to_erase) {
+                auto it = states_.find(id);
+                if (it != states_.end()) {
+                    const std::string key = it->second->request.stream_id + ":" + it->second->request.profile_id;
+                    states_.erase(it);
+                    auto ki = key_index_.find(key);
+                    if (ki != key_index_.end() && ki->second == id) {
+                        key_index_.erase(ki);
+                    }
+                }
+            }
+        }
+    }
+}
+
+std::string SubscriptionManager::normalizeReason(const std::string& app_err, const char* fallback) {
+    // 将后端错误消息归一化到有限集合，降低指标标签基数
+    auto lower = [](std::string s){
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    std::string s = lower(app_err);
+    auto contains = [&](const char* k){ return s.find(k) != std::string::npos; };
+
+    if (contains("timeout")) {
+        if (contains("rtsp") || contains("connect") || contains("open")) return "open_rtsp_timeout";
+        if (contains("model") || contains("onnx") || contains("session")) return "load_model_timeout";
+    }
+    if (contains("rtsp") && (contains("open") || contains("connect") || contains("teardown"))) return "open_rtsp_failed";
+    if (contains("model") || contains("onnx") || contains("session")) return "load_model_failed";
+    if (contains("pipeline") || contains("subscribe") || contains("start")) return "subscribe_failed";
+    if (contains("cancel")) return "cancelled";
+
+    return (fallback && *fallback) ? std::string(fallback) : std::string("unknown");
+}
+
 void SubscriptionManager::setWhepBase(std::string whep_base_url) {
     std::lock_guard<std::mutex> lk(mutex_);
     whep_base_ = std::move(whep_base_url);
