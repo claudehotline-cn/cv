@@ -27,3 +27,8 @@ flowchart TD
 - 订阅阶段细分错误码（RTSP 失败、模型加载失败、超时等），便于告警精确定位。
 - 限流策略可按源/租户维度做配额，避免单租户拖垮系统。
 
+
+## TTL 清理与失败原因标准化（新增）
+- 订阅状态 TTL：终态任务保留 `ttl_seconds`（默认 900s），超时由后台清理线程回收；支持 `VA_SUBSCRIPTION_TTL_SEC` 配置。
+- 失败原因标准化：将 `app.lastError()` 归一化为有限集（open_rtsp_failed/open_rtsp_timeout/load_model_failed/load_model_timeout/subscribe_failed/unknown），用于指标 `va_subscriptions_failed_by_reason_total{reason}`。
+- 分阶段限流：`model_slots` 控制模型加载并发、`rtsp_slots` 控制 RTSP 打开/管线启动并发；支持 `VA_SUBSCRIPTION_MODEL_SLOTS`、`VA_SUBSCRIPTION_RTSP_SLOTS` 配置；`/api/system/info` 回显。
