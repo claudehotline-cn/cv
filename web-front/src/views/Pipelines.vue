@@ -33,7 +33,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { listPipelines, unsubscribePipeline, switchModel } from '@/api/cp'
+import { listPipelines, switchModel } from '@/api/cp'
+import { useAnalysisStore } from '@/stores/analysis'
+import { ElMessage } from 'element-plus'
 
 const loading = ref(false)
 const rows = ref<any[]>([])
@@ -44,9 +46,15 @@ async function load() {
     rows.value = (resp as any).items || (resp as any).data || []
   } finally { loading.value = false }
 }
+const store = useAnalysisStore()
 async function unsub(row: any) {
-  await unsubscribePipeline(row.stream_id, row.profile)
-  await load()
+  // 仅对当前订阅生效，统一走异步取消
+  if (store.currentSubId && row.stream_id === store.currentSourceId && row.profile === store.currentPipeline) {
+    await store.stopAnalysis()
+    await load()
+  } else {
+    ElMessage.info('仅支持取消当前页面发起的异步订阅')
+  }
 }
 async function switchM(row: any) {
   if (!row._model) return
@@ -58,4 +66,3 @@ onMounted(load)
 <style scoped>
 .card-header{ display:flex; align-items:center; justify-content:space-between; }
 </style>
-
