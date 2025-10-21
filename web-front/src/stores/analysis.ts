@@ -25,6 +25,7 @@ export const useAnalysisStore = defineStore('analysis', {
     analyzing: false,
     whepUrl: '' as string,
     whepBase: '' as string,
+    currentSubId: '' as string,
     stats: { fps: '0.0', p95: '0', alerts: 0 } as { fps: string; p95: string; alerts: number },
     errMsg: '' as string
   }),
@@ -175,11 +176,27 @@ export const useAnalysisStore = defineStore('analysis', {
         const profile = this.currentPipeline
         const uri = src?.uri || ''
         const model = this.currentModelUri || undefined
-        // 调用 CP 创建会话
+        // 优先使用异步订阅接口
         // @ts-ignore
-        if (typeof window !== 'undefined') { const mod = await import('@/api/cp'); await mod.subscribePipeline(this.currentSourceId, profile, uri, model) }
-        // 订阅成功后再更新 WHEP URL，触发播放器握手
-        this.updateWhepUrl()
+        if (typeof window !== 'undefined') {
+          const mod = await import('@/api/cp')
+          const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model)
+          if (!subId) throw new Error('createSubscription failed')
+          this.currentSubId = subId
+          const deadline = Date.now() + 20000
+          let ready = false
+          let whepUrl = ''
+          while (Date.now() < deadline) {
+            const st: any = await mod.getSubscription(subId).catch(()=>null)
+            const data = st?.data || {}
+            const phase = (data.phase || '').toString().toLowerCase()
+            if (phase === 'ready') { ready = true; whepUrl = data.whep_url || ''; break }
+            if (phase === 'failed' || phase === 'cancelled') { this.errMsg = data.reason || phase; break }
+            await new Promise(r => setTimeout(r, 300))
+          }
+          if (!ready) throw new Error(this.errMsg || 'subscription not ready')
+          if (whepUrl) this.whepUrl = whepUrl; else this.updateWhepUrl()
+        }
         this.setAnalyzing(true)
         return { ok: true } as const
       } catch (e:any) {
@@ -194,8 +211,22 @@ export const useAnalysisStore = defineStore('analysis', {
           // @ts-ignore
           if (typeof window !== 'undefined' && this.currentSourceId && this.currentPipeline && uri2) {
             const mod = await import('@/api/cp')
-            await mod.subscribePipeline(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined)
-            this.updateWhepUrl()
+            // 再次尝试异步订阅
+            const subId = await mod.createSubscription(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined)
+            this.currentSubId = subId
+            const deadline = Date.now() + 20000
+            let ok = false
+            let whepUrl = ''
+            while (Date.now() < deadline) {
+              const st: any = await mod.getSubscription(subId).catch(()=>null)
+              const data = st?.data || {}
+              const phase = (data.phase || '').toString().toLowerCase()
+              if (phase === 'ready') { ok = true; whepUrl = data.whep_url || ''; break }
+              if (phase === 'failed' || phase === 'cancelled') { this.errMsg = data.reason || phase; break }
+              await new Promise(r => setTimeout(r, 300))
+            }
+            if (!ok) throw new Error(this.errMsg || 'subscription not ready')
+            if (whepUrl) this.whepUrl = whepUrl; else this.updateWhepUrl()
             this.setAnalyzing(true)
             return { ok: true } as const
           }
@@ -209,10 +240,16 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     async stopAnalysis() {
       try {
-        const profile = this.currentPipeline
+        // 优先取消异步订阅
         // @ts-ignore
-        if (typeof window !== 'undefined') { const mod = await import('@/api/cp'); await mod.unsubscribePipeline(this.currentSourceId, profile) }
+        if (typeof window !== 'undefined' && this.currentSubId) { const mod = await import('@/api/cp'); await mod.cancelSubscription(this.currentSubId).catch(()=>{}) }
+        else {
+          const profile = this.currentPipeline
+          // @ts-ignore
+          if (typeof window !== 'undefined') { const mod = await import('@/api/cp'); await mod.unsubscribePipeline(this.currentSourceId, profile) }
+        }
       } catch (e) {}
+      this.currentSubId = ''
       this.setAnalyzing(false)
     },
     async hotswapModel(id: string) {
