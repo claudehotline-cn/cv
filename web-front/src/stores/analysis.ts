@@ -147,6 +147,10 @@ export const useAnalysisStore = defineStore('analysis', {
       this.refreshStats()
     },
     async startAnalysis() {
+      // reset error/progress state at the very beginning
+      this.errMsg = ''
+      this.subPhase = 'pending'
+      this.subProgress = 5
       const pf = await this.preflight()
       if (!pf.ok) {
         this.setAnalyzing(false)
@@ -233,7 +237,6 @@ export const useAnalysisStore = defineStore('analysis', {
             }
           }, 2500)
         }
-        this.setAnalyzing(true)
         return { ok: true } as const
       } catch (e:any) {
         // fallback 一次：修正常见的 profile/source_uri 缺失
