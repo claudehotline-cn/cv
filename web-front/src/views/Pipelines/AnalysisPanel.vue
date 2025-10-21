@@ -61,6 +61,10 @@
             告警 {{ store.stats.alerts }}
           </el-tag>
         </div>
+        <div v-if="store.subProgress > 0 && !store.analyzing" class="progress">
+          <div class="phase">订阅构建中：{{ (store.subPhase || 'pending') }}</div>
+          <el-progress :percentage="store.subProgress" :status="store.subPhase==='failed'?'exception':(store.subPhase==='ready'?'success':'')" :stroke-width="10" />
+        </div>
       </div>
     </el-card>
 
@@ -253,5 +257,5 @@ watch(() => route.query.pipeline, (val) => {
 .meta{ margin-top:4px; }
 .meta-item{ display:flex; gap:8px; font-size:13px; line-height:1.8; color: var(--va-text-2); }
 .meta-item strong{ color: var(--va-text-1); font-weight:600; }
-</style>
+  .progress{ position:absolute; left:16px; right:16px; bottom:16px; background:rgba(0,0,0,0.45); border-radius:8px; padding:8px 12px; backdrop-filter: blur(4px); }`r`n  .progress .phase{ color:#fff; font-size:12px; margin-bottom:6px; }`r`n</style>
 
