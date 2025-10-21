@@ -1,33 +1,35 @@
 # 路线图总览
 
-- M0｜异步订阅与 SSE 落地：以 `createSubscription + SSE` 替换旧轮询/旧按钮，统一前端状态机与阶段进度条。验收：SSE 准实时更新（<200ms 事件延迟），Ready 后视频播放（presentedFrames 持续增长），无临时 stream_id，/metrics 暴露订阅指标。
-- M1｜稳定性与测试增强：完善前端 E2E（Start→Ready→Stop/Cancel、异常源），SSE 断线重连与回退轮询，后端异常路径（超时/模型失败/取消竞争）覆盖。验收：关键用例通过率≥95%，24h 持续运行无资源泄漏，失败率<1%。
-- M2｜观测与规模化：Grafana 面板与告警阈值上架；并发订阅与长时压测；GPU 路径在选项保护下启用并保留 CPU 回退。验收：P95 订阅耗时阈值内（可配置），并发 N=50 无错误，告警规则有效。
+- M0｜异步订阅与稳定播放：新建 `/api/subscriptions*` 与 SSE；前端统一 `createSubscription + SSE`，播放刷新不崩溃；基本指标上线。
+  - 验收：Start→Ready 可复现；取消可用；刷新稳定；/metrics 含队列、状态、完成计数与总时长直方图。
+- M1｜可靠性与可运维：配置（ttl/slots/queue）YAML 化并回显来源；Sources SSE 启用；失败原因标准化与面板；E2E 用例与 CI。
+  - 验收：System Info 展示来源与生效值；失败原因图可读；CI 3 条 E2E 稳定通过；旧接口默认 410。
+- M2｜规模化与长稳：分阶段限流调优（rtsp/model）；并发 N=50/100 与 24h 压测；SSE Last-Event-ID 与时间线；Grafana 告警完善。
+  - 验收：P95 订阅耗时达标（阈值可配）；失败率 <1%；SSE 断线重连稳定；面板/告警覆盖完整。
 
 # 分阶段计划（表格）
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| P0 | 订阅 API 与 SSE 事件 | /api/subscriptions* 与 /events；阶段映射 | 事件丢失→加序号与重播窗 | 事件延迟<200ms |
-| P1 | 前端统一与进度条 | store.start/stop；UI 仅终态报错 | 旧路径冲突→封禁旧API | 启动成功率≥99% |
-| P2 | 断线重连与回退 | SSE 重连退避；兜底轮询 | 抖动→幂等与去抖 | 重连成功率≥98% |
-| P3 | 场景化 E2E | Start→Ready→播放、取消、异常 | 选择器脆弱→语义选择器 | 用例通过≥95% |
-| P4 | 后端异常覆盖 | 超时/模型失败/取消竞争 | 资源泄漏→普查与防护 | 无泄漏、失败<1% |
-| P5 | 观测与告警 | Grafana 面板、阈值 | 指标缺口→补采样点 | 面板可用、告警有效 |
-| P6 | 并发与长稳 | N=50 并发、24h 稳定 | 枯竭→限流/隔离 | 无 OOM、无死锁 |
+| P0 | 订阅 API+SSE+播放稳定 | /api/subscriptions*、SSE keepalive、WHEP 刷新清理 | 会话泄漏→双清理 | 刷新0崩溃 |
+| P1 | Sources SSE 与失败原因 | /api/sources/watch_sse、原因标准化与指标 | 代理超时→keepalive | 失败原因可见 |
+| P2 | 配置 YAML 化 | ttl/slots/queue 配置与 env 覆盖、来源回显 | 配置漂移→来源标注 | 配置稳定加载 |
+| P3 | E2E+CI | 三条用例脚本与 Actions | 选择器脆弱→语义选择 | CI 通过 |
+| P4 | 时间线与 Last-Event-ID | GET include=timeline、SSE id/retry | 重连丢事件→对齐 | 无丢/乱序 |
+| P5 | 并发与长稳压测 | N=50/100、24h；slots 调优 | 资源枯竭→限流配额 | 失败<1% |
+| P6 | 告警与面板完善 | P95、失败率、队列、原因面板 | 指标缺口→补采样点 | 告警有效 |
 
 # 依赖矩阵
 
 - 内部依赖：
-  - VA 订阅管理与 SSE；CP gRPC 接口；VSM 源管理（7070/7071）；前端 store 与视图统一。
+  - VA（订阅/SSE/指标/WHEP）；CP（内嵌控制）；VSM（源管理）；前端（store/视图/E2E）。
 - 外部依赖（库/服务/硬件）：
-  - 推流器（ffmpeg/mediamtx）；RTSP 源 `rtsp://127.0.0.1:8554/camera_01`；MySQL Shell 校验；Prometheus/Grafana；GPU 驱动/ONNX/TensorRT（可选，含 CPU 回退）。
+  - Prometheus/Grafana、MySQL；ffmpeg/mediamtx（RTSP）；libdatachannel（WebRTC）；GPU 驱动与 ONNX/TensorRT（可选，CPU 回退）。
 
 # 风险清单（Top-5）
 
-- SSE 断流导致状态不一致 → 网络波动/后端重启 → 事件间隙/心跳缺失 → 重连退避+基于事件序号补齐+兜底轮询。
-- 并发订阅资源枯竭 → N 升高/模型加载密集 → 队列/时延上升、失败率升高 → 限流与配额、阶段化加载、超时与取消。
-- 前端旧路径残留 → 代码未完全替换 → 意外调用旧 `/api/subscribe` → 统一封装 store、删除旧入口、加入守卫日志。
-- 长时运行内存泄漏 → 异常路径未覆盖 → RSS 持续上升 → 定期压测+Leaky bucket 指标+ASAN/诊断工具。
-- 指标与告警缺失 → 无法发现退化 → 线上仅来自用户反馈 → 完整指标面板+阈值告警+演练与复盘流程。
-
+- SSE 断流 → 网络波动/代理超时 → 事件间隙/无心跳 → keepalive+Last-Event-ID+轮询兜底。
+- 并发枯竭 → 模型/RTSP 吞吐不足 → 失败率升高 → 分阶段限流+配额与回退。
+- 会话泄漏 → 刷新/崩溃未清理 → 句柄/内存增长 → 浏览器 keepalive + 后端 Closed/Failed 自清理 + TTL。
+- 配置漂移 → 多来源不一致 → 行为不可预测 → YAML+env 覆盖策略与来源回显。
+- 观测缺口 → 原因/阶段不可见 → 诊断困难 → 失败原因标准化+时间线与阶段直方图。
