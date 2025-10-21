@@ -1164,8 +1164,12 @@ struct RestServer::Impl {
         auto envInt = [](const char* name, int fallback){ const char* v = std::getenv(name); if(!v) return fallback; try { return std::stoi(v); } catch(...) { return fallback; } };
         auto envSize = [](const char* name, size_t fallback){ const char* v = std::getenv(name); if(!v) return fallback; try { return static_cast<size_t>(std::stoll(v)); } catch(...) { return fallback; } };
         int hs = envInt("VA_SUBSCRIPTION_HEAVY_SLOTS", 2);
+        int ms = envInt("VA_SUBSCRIPTION_MODEL_SLOTS", 2);
+        int rs = envInt("VA_SUBSCRIPTION_RTSP_SLOTS", 4);
         size_t mq = envSize("VA_SUBSCRIPTION_MAX_QUEUE", 1024);
         subscriptions->setHeavySlots(hs);
+        subscriptions->setModelSlots(ms);
+        subscriptions->setRtspSlots(rs);
         subscriptions->setMaxQueue(mq);
         // Initialize DB pool and repositories if configured
         try {
@@ -1821,6 +1825,8 @@ struct RestServer::Impl {
         // Subscriptions configuration snapshot
         Json::Value subs(Json::objectValue);
         subs["heavy_slots"] = subscriptions ? subscriptions->heavySlots() : 0;
+        subs["model_slots"] = subscriptions ? subscriptions->modelSlots() : 0;
+        subs["rtsp_slots"] = subscriptions ? subscriptions->rtspSlots() : 0;
         subs["max_queue"] = static_cast<Json::UInt64>(subscriptions ? subscriptions->maxQueue() : 0);
         data["subscriptions"] = subs;
 
@@ -2242,6 +2248,12 @@ struct RestServer::Impl {
                 mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
                 auto c = [&](const char* res, uint64_t v){ std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
                 c("ready", ms.completed_ready_total); c("failed", ms.completed_failed_total); c("cancelled", ms.completed_cancelled_total);
+                if (!ms.failed_by_reason.empty()) {
+                    mb.header("va_subscriptions_failed_by_reason_total", "counter", "Failed subscriptions by reason");
+                    for (const auto& kv : ms.failed_by_reason) {
+                        std::ostringstream ls; ls<<"{reason=\""<<kv.first<<"\"}"; mb.sample("va_subscriptions_failed_by_reason_total", ls.str(), kv.second);
+                    }
+                }
                 // Duration histogram
                 mb.header("va_subscription_duration_seconds", "histogram", "Subscription total duration in seconds");
                 unsigned long long acc = 0ULL;
@@ -2354,11 +2366,18 @@ struct RestServer::Impl {
             gg("pending", ms.pending); gg("preparing", ms.preparing); gg("opening_rtsp", ms.opening);
             gg("loading_model", ms.loading); gg("starting_pipeline", ms.starting); gg("ready", ms.ready);
             gg("failed", ms.failed); gg("cancelled", ms.cancelled);
-            out << "# HELP va_subscriptions_completed_total Completed subscriptions by result\n";
-            out << "# TYPE va_subscriptions_completed_total counter\n";
-            out << "va_subscriptions_completed_total{result=\"ready\"} " << ms.completed_ready_total << "\n";
-            out << "va_subscriptions_completed_total{result=\"failed\"} " << ms.completed_failed_total << "\n";
-            out << "va_subscriptions_completed_total{result=\"cancelled\"} " << ms.completed_cancelled_total << "\n";
+        out << "# HELP va_subscriptions_completed_total Completed subscriptions by result\n";
+        out << "# TYPE va_subscriptions_completed_total counter\n";
+        out << "va_subscriptions_completed_total{result=\"ready\"} " << ms.completed_ready_total << "\n";
+        out << "va_subscriptions_completed_total{result=\"failed\"} " << ms.completed_failed_total << "\n";
+        out << "va_subscriptions_completed_total{result=\"cancelled\"} " << ms.completed_cancelled_total << "\n";
+        if (!ms.failed_by_reason.empty()) {
+            out << "# HELP va_subscriptions_failed_by_reason_total Failed subscriptions by reason\n";
+            out << "# TYPE va_subscriptions_failed_by_reason_total counter\n";
+            for (const auto& kv : ms.failed_by_reason) {
+                out << "va_subscriptions_failed_by_reason_total{reason=\"" << kv.first << "\"} " << kv.second << "\n";
+            }
+        }
             out << "# HELP va_subscription_duration_seconds Subscription total duration in seconds\n";
             out << "# TYPE va_subscription_duration_seconds histogram\n";
             unsigned long long acc = 0ULL;

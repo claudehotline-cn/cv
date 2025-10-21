@@ -173,16 +173,16 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         return;
     }
 
-    bool acquired = acquireHeavySlot();
-    HeavySlotGuard guard(this, acquired);
-    if (!acquired) {
-        state->phase.store(SubscriptionPhase::Failed);
-        state->reason = "shutdown";
-        return;
-    }
-
     state->phase.store(SubscriptionPhase::LoadingModel);
     if (state->request.model_id) {
+        bool got_model = acquireModelSlot();
+        struct ModelGuard { SubscriptionManager* m; bool a; ~ModelGuard(){ if(m&&a) m->releaseModelSlot(); } } mg{this, got_model};
+        if (!got_model) {
+            state->phase.store(SubscriptionPhase::Failed);
+            state->reason = "shutdown";
+            recordCompletion(state, SubscriptionPhase::Failed);
+            return;
+        }
         if (!app_.loadModel(*state->request.model_id)) {
             state->phase.store(SubscriptionPhase::Failed);
             state->reason = app_.lastError().empty() ? "load_model_failed" : app_.lastError();
@@ -198,10 +198,13 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     }
 
     state->phase.store(SubscriptionPhase::StartingPipeline);
-    auto pipeline_key = app_.subscribeStream(state->request.stream_id,
+    bool got_rtsp = acquireRtspSlot();
+    struct RtspGuard { SubscriptionManager* m; bool a; ~RtspGuard(){ if(m&&a) m->releaseRtspSlot(); } } rg{this, got_rtsp};
+    auto pipeline_key = got_rtsp ? app_.subscribeStream(state->request.stream_id,
                                              state->request.profile_id,
                                              state->request.source_uri,
-                                             state->request.model_id);
+                                             state->request.model_id)
+                                 : std::optional<std::string>();
     if (!pipeline_key) {
         state->phase.store(SubscriptionPhase::Failed);
         state->reason = app_.lastError().empty() ? "subscribe_failed" : app_.lastError();
@@ -261,6 +264,31 @@ void SubscriptionManager::releaseHeavySlot() {
     heavy_cv_.notify_one();
 }
 
+bool SubscriptionManager::acquireModelSlot() {
+    std::unique_lock<std::mutex> lk(model_mu_);
+    model_cv_.wait(lk, [this]() { return stop_ || model_in_use_ < model_slots_; });
+    if (stop_) return false;
+    ++model_in_use_;
+    return true;
+}
+void SubscriptionManager::releaseModelSlot() {
+    std::lock_guard<std::mutex> lk(model_mu_);
+    if (model_in_use_ > 0) --model_in_use_;
+    model_cv_.notify_one();
+}
+bool SubscriptionManager::acquireRtspSlot() {
+    std::unique_lock<std::mutex> lk(rtsp_mu_);
+    rtsp_cv_.wait(lk, [this]() { return stop_ || rtsp_in_use_ < rtsp_slots_; });
+    if (stop_) return false;
+    ++rtsp_in_use_;
+    return true;
+}
+void SubscriptionManager::releaseRtspSlot() {
+    std::lock_guard<std::mutex> lk(rtsp_mu_);
+    if (rtsp_in_use_ > 0) --rtsp_in_use_;
+    rtsp_cv_.notify_one();
+}
+
 bool SubscriptionManager::ensurePipelineStopped(const std::string& stream_id, const std::string& profile_id) {
     try {
         return app_.unsubscribeStream(stream_id, profile_id);
@@ -311,9 +339,22 @@ void SubscriptionManager::recordCompletion(const StatePtr& state, SubscriptionPh
     hist_count_.fetch_add(1, std::memory_order_relaxed);
 
     switch (phase) {
-    case SubscriptionPhase::Ready: completed_ready_total_.fetch_add(1, std::memory_order_relaxed); break;
-    case SubscriptionPhase::Failed: completed_failed_total_.fetch_add(1, std::memory_order_relaxed); break;
-    case SubscriptionPhase::Cancelled: completed_cancelled_total_.fetch_add(1, std::memory_order_relaxed); break;
+    case SubscriptionPhase::Ready:
+        completed_ready_total_.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case SubscriptionPhase::Failed: {
+        completed_failed_total_.fetch_add(1, std::memory_order_relaxed);
+        std::string r = state->reason.empty()? std::string("unknown") : state->reason;
+        if (r.size() > 64) r.resize(64);
+        std::lock_guard<std::mutex> lk(reasons_mu_);
+        auto it = failed_reasons_.find(r);
+        if (it == failed_reasons_.end()) it = failed_reasons_.emplace(r, 0).first;
+        it->second.fetch_add(1, std::memory_order_relaxed);
+        break;
+    }
+    case SubscriptionPhase::Cancelled:
+        completed_cancelled_total_.fetch_add(1, std::memory_order_relaxed);
+        break;
     default: break; }
 }
 
@@ -347,6 +388,14 @@ SubscriptionManager::MetricsSnapshot SubscriptionManager::metricsSnapshot() cons
     for (size_t i=0;i<hist_counts_.size();++i) s.bucket_counts[i] = hist_counts_[i].load();
     s.duration_sum = static_cast<double>(hist_sum_us_.load()) / 1e6;
     s.duration_count = hist_count_.load();
+    // failed reasons snapshot
+    {
+        std::lock_guard<std::mutex> lk(reasons_mu_);
+        s.failed_by_reason.reserve(failed_reasons_.size());
+        for (const auto& kv : failed_reasons_) {
+            s.failed_by_reason.emplace_back(kv.first, kv.second.load());
+        }
+    }
     return s;
 }
 
