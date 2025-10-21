@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Link, Grid, List } from '@element-plus/icons-vue'
 import SourcesAttachDrawer from './SourcesAttachDrawer.vue'
 import { dataProvider } from '@/api/dataProvider'
+import { useAnalysisStore } from '@/stores/analysis'
 
 type SourceItem = {
   id: string
@@ -30,6 +31,7 @@ const router = useRouter()
 const route = useRoute()
 let timer: any = null
 let unwatch: any = null
+const store = useAnalysisStore()
 
 async function fetchList() {
   try {
@@ -67,17 +69,29 @@ function preview(row: SourceItem) {
 }
 
 async function start(row: SourceItem) {
-  await (dataProvider as any).startSource?.(row.id)
-  row.status = 'Starting'
-  setTimeout(() => { row.status = 'Running' }, 800)
-  ElMessage.success(`已提交启动 ${row.name || row.id}`)
+  try {
+    // 统一走异步订阅路径：设置当前源与默认 profile，并触发 startAnalysis
+    store.setSource(row.id)
+    if (!store.currentPipeline) store.setPipeline('det_720p')
+    const res = await store.startAnalysis()
+    if (!res.ok) ElMessage.error((res as any).reasons?.join('；') || '订阅失败')
+    else ElMessage.success(`已开始分析 ${row.name || row.id}`)
+  } catch (e:any) {
+    ElMessage.error(e?.message || '启动失败')
+  }
 }
 
 async function stop(row: SourceItem) {
-  await (dataProvider as any).stopSource?.(row.id)
-  row.status = 'Stopping'
-  setTimeout(() => { row.status = 'Stopped' }, 800)
-  ElMessage.info(`已提交停止 ${row.name || row.id}`)
+  try {
+    if (store.currentSubId && row.id === store.currentSourceId) {
+      await store.stopAnalysis()
+      ElMessage.info(`已停止分析 ${row.name || row.id}`)
+    } else {
+      ElMessage.info('仅支持停止当前页面发起的异步订阅')
+    }
+  } catch (e:any) {
+    ElMessage.error(e?.message || '停止失败')
+  }
 }
 
 onMounted(() => {
