@@ -1198,6 +1198,13 @@ struct RestServer::Impl {
             return handleSubscriptionDelete(req, it->second);
         });
 
+        // SSE: subscription phase events
+        server.addStreamRoute("GET", "/api/subscriptions/:id/events", [this](int fd, const HttpRequest& req){
+            auto it = req.params.find("id");
+            if (it == req.params.end()) { return; }
+            streamSubscriptionSSE(fd, req, it->second);
+        });
+
         auto subscribeHandler = [this](const HttpRequest& req) { return handleSubscribe(req); };
         auto unsubscribeHandler = [this](const HttpRequest& req) { return handleUnsubscribe(req); };
         auto corsHandler = [](const HttpRequest& /*req*/) {
@@ -2205,6 +2212,35 @@ struct RestServer::Impl {
                 }
             }
 
+            // Subscription metrics (from SubscriptionManager, registry branch)
+            if (subscriptions) {
+                auto ms = subscriptions->metricsSnapshot();
+                mb.header("va_subscriptions_queue_length", "gauge", "Pending subscription tasks in queue");
+                mb.sample("va_subscriptions_queue_length", "{}", static_cast<unsigned long long>(ms.queue_length));
+                mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
+                mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
+                // States gauges
+                mb.header("va_subscriptions_states", "gauge", "Subscriptions by current phase");
+                auto g = [&](const char* phase, uint64_t v){ std::ostringstream ls; ls<<"{phase=\""<<phase<<"\"}"; mb.sample("va_subscriptions_states", ls.str(), v); };
+                g("pending", ms.pending); g("preparing", ms.preparing); g("opening_rtsp", ms.opening);
+                g("loading_model", ms.loading); g("starting_pipeline", ms.starting); g("ready", ms.ready);
+                g("failed", ms.failed); g("cancelled", ms.cancelled);
+                // Completed totals by result
+                mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
+                auto c = [&](const char* res, uint64_t v){ std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
+                c("ready", ms.completed_ready_total); c("failed", ms.completed_failed_total); c("cancelled", ms.completed_cancelled_total);
+                // Duration histogram
+                mb.header("va_subscription_duration_seconds", "histogram", "Subscription total duration in seconds");
+                unsigned long long acc = 0ULL;
+                for (size_t i=0;i<ms.bounds.size();++i) {
+                    acc += ms.bucket_counts[i];
+                    std::ostringstream ls; ls<<"{le=\""<<ms.bounds[i]<<"\"}"; mb.sample("va_subscription_duration_seconds_bucket", ls.str(), acc);
+                }
+                std::ostringstream lsi; lsi<<"{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi.str(), ms.duration_count);
+                mb.sample("va_subscription_duration_seconds_sum", "{}", ms.duration_sum);
+                mb.sample("va_subscription_duration_seconds_count", "{}", ms.duration_count);
+            }
+
             HttpResponse resp;
             resp.status_code = 200;
             resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8";
@@ -2289,6 +2325,35 @@ struct RestServer::Impl {
         out << "# HELP va_cp_auto_switch_model_failed_total Auto model switch failures\n";
         out << "# TYPE va_cp_auto_switch_model_failed_total counter\n";
         out << "va_cp_auto_switch_model_failed_total " << gm.cp_auto_switch_model_failed_total << "\n";
+
+        // Subscription metrics (plain text)
+        if (subscriptions) {
+            auto ms = subscriptions->metricsSnapshot();
+            out << "# HELP va_subscriptions_queue_length Pending subscription tasks in queue\n";
+            out << "# TYPE va_subscriptions_queue_length gauge\n";
+            out << "va_subscriptions_queue_length " << static_cast<unsigned long long>(ms.queue_length) << "\n";
+            out << "# HELP va_subscriptions_in_progress Non-terminal subscriptions in progress\n";
+            out << "# TYPE va_subscriptions_in_progress gauge\n";
+            out << "va_subscriptions_in_progress " << static_cast<unsigned long long>(ms.in_progress) << "\n";
+            out << "# HELP va_subscriptions_states Subscriptions by current phase\n";
+            out << "# TYPE va_subscriptions_states gauge\n";
+            auto gg = [&](const char* phase, uint64_t v){ out << "va_subscriptions_states{phase=\""<<phase<<"\"} " << v << "\n"; };
+            gg("pending", ms.pending); gg("preparing", ms.preparing); gg("opening_rtsp", ms.opening);
+            gg("loading_model", ms.loading); gg("starting_pipeline", ms.starting); gg("ready", ms.ready);
+            gg("failed", ms.failed); gg("cancelled", ms.cancelled);
+            out << "# HELP va_subscriptions_completed_total Completed subscriptions by result\n";
+            out << "# TYPE va_subscriptions_completed_total counter\n";
+            out << "va_subscriptions_completed_total{result=\"ready\"} " << ms.completed_ready_total << "\n";
+            out << "va_subscriptions_completed_total{result=\"failed\"} " << ms.completed_failed_total << "\n";
+            out << "va_subscriptions_completed_total{result=\"cancelled\"} " << ms.completed_cancelled_total << "\n";
+            out << "# HELP va_subscription_duration_seconds Subscription total duration in seconds\n";
+            out << "# TYPE va_subscription_duration_seconds histogram\n";
+            unsigned long long acc = 0ULL;
+            for (size_t i=0;i<ms.bounds.size();++i) { acc += ms.bucket_counts[i]; out << "va_subscription_duration_seconds_bucket{le=\""<<ms.bounds[i]<<"\"} " << acc << "\n"; }
+            out << "va_subscription_duration_seconds_bucket{le=\"+Inf\"} " << ms.duration_count << "\n";
+            out << "va_subscription_duration_seconds_sum " << ms.duration_sum << "\n";
+            out << "va_subscription_duration_seconds_count " << ms.duration_count << "\n";
+        }
 
         // Per-source metrics (labels: source_id, path)
         auto classify_path = [](const va::core::TrackManager::PipelineInfo& info) -> std::string {
@@ -2646,6 +2711,34 @@ struct RestServer::Impl {
     }
     static void sseKeepAlive(int fd) {
         sseSendAll(fd, "\n");
+    }
+
+    void streamSubscriptionSSE(int fd, const HttpRequest& req, const std::string& id) {
+        (void)req;
+        if (!subscriptions) return;
+        sseWriteHeaders(fd);
+        auto state = subscriptions->get(id);
+        if (!state) { Json::Value e; e["error"] = "not_found"; sseEvent(fd, "error", e); return; }
+        auto last = SubscriptionPhase::Pending;
+        bool first = true;
+        const int interval_ms = 200;
+        while (true) {
+            auto st = subscriptions->get(id);
+            if (!st) break;
+            auto ph = st->phase.load();
+            if (first || ph != last) {
+                Json::Value data(Json::objectValue);
+                data["id"] = id;
+                data["phase"] = toString(ph);
+                if (!st->reason.empty()) data["reason"] = st->reason;
+                if (!st->pipeline_key.empty()) data["pipeline_key"] = st->pipeline_key;
+                if (!st->whep_url.empty()) data["whep_url"] = st->whep_url;
+                sseEvent(fd, "phase", data);
+                last = ph; first = false;
+                if (ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        }
     }
 
     void streamSourcesSSE(int fd, const HttpRequest& req) {
@@ -3706,3 +3799,4 @@ void RestServer::stop() {
 
 } // namespace va::server
 
+            

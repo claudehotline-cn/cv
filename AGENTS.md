@@ -4,9 +4,10 @@
 
 ## 项目结构与模块划分
 
-- `video-analyzer/` – 核心后端（RTSP 接入、预处理、推理、后处理、WebRTC/HLS 输出）。
-- `web-frontend/` – Web 界面，用于预览流与叠加层。
-- `video-source-manager/` – 管理 RTSP 源的工具集合。
+- `video-analyzer/` – 核心后端（简称VA）（RTSP 接入、预处理、推理、后处理、WebRTC/HLS 输出）。
+- `video-analyzer/src/control_plane_embedded` - 控制平面（简称CP），目前在VA项目中，后期考虑独立出去。前端项目只与CP项目交互，CP、VA、VSM之间采用gRPC通信。
+- `web-frontend/` – 前端项目，Web 界面，用于预览流与叠加层。
+- `video-source-manager/` – 管理 RTSP 源的工具集合（简称VSM）。
 - `docs/` – 设计笔记、GPU 全链路改造方案与规划、测试指南。
   - `design/` - 项目设计文档
   - `examples/` - 项目示例

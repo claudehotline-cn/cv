@@ -11,6 +11,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <array>
 
 namespace va::app {
 class Application;
@@ -44,6 +45,7 @@ struct SubscriptionState {
     std::string whep_url;
     std::atomic<bool> cancel{false};
     std::chrono::system_clock::time_point created_at{};
+    std::atomic<bool> metrics_recorded{false};
 };
 
 class SubscriptionManager {
@@ -55,6 +57,28 @@ public:
     std::shared_ptr<SubscriptionState> get(const std::string& id) const;
     bool cancel(const std::string& id);
     void setWhepBase(std::string whep_base_url);
+
+    struct MetricsSnapshot {
+        size_t queue_length{0};
+        size_t in_progress{0};
+        size_t pending{0};
+        size_t preparing{0};
+        size_t opening{0};
+        size_t loading{0};
+        size_t starting{0};
+        size_t ready{0};
+        size_t failed{0};
+        size_t cancelled{0};
+        uint64_t completed_ready_total{0};
+        uint64_t completed_failed_total{0};
+        uint64_t completed_cancelled_total{0};
+        // histogram buckets for total duration (s)
+        std::vector<double> bounds;
+        std::vector<uint64_t> bucket_counts; // same size as bounds
+        double duration_sum{0.0};
+        uint64_t duration_count{0};
+    };
+    MetricsSnapshot metricsSnapshot() const;
 
 private:
     using StatePtr = std::shared_ptr<SubscriptionState>;
@@ -78,6 +102,7 @@ private:
     void runSubscriptionTask(const std::string& id, const StatePtr& state);
     bool ensurePipelineStopped(const std::string& stream_id, const std::string& profile_id);
     std::string nextId();
+    void recordCompletion(const StatePtr& state, SubscriptionPhase phase);
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, StatePtr> states_;
@@ -94,6 +119,15 @@ private:
     std::condition_variable heavy_cv_;
     int heavy_slots_{2};
     int heavy_in_use_{0};
+
+    // Metrics
+    std::array<double, 6> hist_bounds_{ {0.5, 1.0, 2.0, 5.0, 10.0, 30.0} };
+    std::array<std::atomic<uint64_t>, 6> hist_counts_ { };
+    std::atomic<long long> hist_sum_us_{0};
+    std::atomic<uint64_t> hist_count_{0};
+    std::atomic<uint64_t> completed_ready_total_{0};
+    std::atomic<uint64_t> completed_failed_total_{0};
+    std::atomic<uint64_t> completed_cancelled_total_{0};
 };
 
 const char* toString(SubscriptionPhase phase);

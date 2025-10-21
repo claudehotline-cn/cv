@@ -28,6 +28,7 @@ SubscriptionManager::SubscriptionManager(va::app::Application& app)
     for (unsigned int i = 0; i < worker_count; ++i) {
         workers_.emplace_back(&SubscriptionManager::workerLoop, this);
     }
+    for (auto& c : hist_counts_) c.store(0);
 }
 
 SubscriptionManager::~SubscriptionManager() {
@@ -98,6 +99,7 @@ bool SubscriptionManager::cancel(const std::string& id) {
         if (!state->pipeline_key.empty()) {
             ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
         }
+        if (!state->metrics_recorded.load()) recordCompletion(state, phase);
         return true;
     }
     state->phase.store(SubscriptionPhase::Cancelled);
@@ -105,6 +107,7 @@ bool SubscriptionManager::cancel(const std::string& id) {
     if (!state->pipeline_key.empty()) {
         ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
     }
+    recordCompletion(state, SubscriptionPhase::Cancelled);
     return true;
 }
 
@@ -158,6 +161,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         if (!app_.loadModel(*state->request.model_id)) {
             state->phase.store(SubscriptionPhase::Failed);
             state->reason = app_.lastError().empty() ? "load_model_failed" : app_.lastError();
+            recordCompletion(state, SubscriptionPhase::Failed);
             return;
         }
     }
@@ -176,6 +180,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     if (!pipeline_key) {
         state->phase.store(SubscriptionPhase::Failed);
         state->reason = app_.lastError().empty() ? "subscribe_failed" : app_.lastError();
+        recordCompletion(state, SubscriptionPhase::Failed);
         return;
     }
 
@@ -194,10 +199,12 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
         state->phase.store(SubscriptionPhase::Cancelled);
         state->reason = "cancelled";
+        recordCompletion(state, SubscriptionPhase::Cancelled);
         return;
     }
 
     state->phase.store(SubscriptionPhase::Ready);
+    recordCompletion(state, SubscriptionPhase::Ready);
 }
 
 std::string SubscriptionManager::nextId() {
@@ -258,6 +265,64 @@ const char* toString(SubscriptionPhase phase) {
     default:
         return "unknown";
     }
+}
+
+void SubscriptionManager::recordCompletion(const StatePtr& state, SubscriptionPhase phase) {
+    if (!state) return;
+    bool expected = false;
+    if (!state->metrics_recorded.compare_exchange_strong(expected, true)) {
+        return; // already recorded
+    }
+    const auto now = std::chrono::system_clock::now();
+    const auto dur = now - state->created_at;
+    const double sec = std::chrono::duration<double>(dur).count();
+    const long long usec = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+    // histogram
+    for (size_t i = 0; i < hist_bounds_.size(); ++i) {
+        if (sec <= hist_bounds_[i]) { hist_counts_[i].fetch_add(1, std::memory_order_relaxed); break; }
+        if (i == hist_bounds_.size() - 1) { hist_counts_[i].fetch_add(1, std::memory_order_relaxed); }
+    }
+    hist_sum_us_.fetch_add(usec, std::memory_order_relaxed);
+    hist_count_.fetch_add(1, std::memory_order_relaxed);
+
+    switch (phase) {
+    case SubscriptionPhase::Ready: completed_ready_total_.fetch_add(1, std::memory_order_relaxed); break;
+    case SubscriptionPhase::Failed: completed_failed_total_.fetch_add(1, std::memory_order_relaxed); break;
+    case SubscriptionPhase::Cancelled: completed_cancelled_total_.fetch_add(1, std::memory_order_relaxed); break;
+    default: break; }
+}
+
+SubscriptionManager::MetricsSnapshot SubscriptionManager::metricsSnapshot() const {
+    MetricsSnapshot s;
+    // queue length
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        s.queue_length = pending_.size();
+        for (const auto& kv : states_) {
+            auto ph = kv.second->phase.load();
+            switch (ph) {
+            case SubscriptionPhase::Pending: s.pending++; break;
+            case SubscriptionPhase::Preparing: s.preparing++; break;
+            case SubscriptionPhase::OpeningRtsp: s.opening++; break;
+            case SubscriptionPhase::LoadingModel: s.loading++; break;
+            case SubscriptionPhase::StartingPipeline: s.starting++; break;
+            case SubscriptionPhase::Ready: s.ready++; break;
+            case SubscriptionPhase::Failed: s.failed++; break;
+            case SubscriptionPhase::Cancelled: s.cancelled++; break;
+            }
+        }
+    }
+    s.in_progress = s.pending + s.preparing + s.opening + s.loading + s.starting;
+    s.completed_ready_total = completed_ready_total_.load();
+    s.completed_failed_total = completed_failed_total_.load();
+    s.completed_cancelled_total = completed_cancelled_total_.load();
+    // histogram snapshot
+    s.bounds.assign(hist_bounds_.begin(), hist_bounds_.end());
+    s.bucket_counts.resize(hist_counts_.size());
+    for (size_t i=0;i<hist_counts_.size();++i) s.bucket_counts[i] = hist_counts_[i].load();
+    s.duration_sum = static_cast<double>(hist_sum_us_.load()) / 1e6;
+    s.duration_count = hist_count_.load();
+    return s;
 }
 
 } // namespace va::server

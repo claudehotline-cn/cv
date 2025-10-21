@@ -26,6 +26,26 @@ export function setEngine(options: Record<string, any>) {
   return http.post('/api/engine/set', options)
 }
 
+// --- Async subscriptions API ---
+export async function createSubscription(stream_id: string, profile: string, source_uri: string, model_id?: string): Promise<string> {
+  const body: any = { stream_id, profile, source_uri }
+  if (model_id) body.model_id = model_id
+  const r: any = await http.post('/api/subscriptions', body)
+  return r?.data?.id || ''
+}
+export function getSubscription(id: string) {
+  return http.get<any>(`/api/subscriptions/${encodeURIComponent(id)}`)
+}
+export function cancelSubscription(id: string) {
+  return fetch((http as any).url?.(`/api/subscriptions/${encodeURIComponent(id)}`) || ((import.meta as any).env?.VITE_API_BASE || '') + `/api/subscriptions/${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }
+  }).then(r => { if (!r.ok) throw new Error('cancelSubscription failed'); return r.json() })
+}
+export function subscriptionEventsUrl(id: string) {
+  const base = (((import.meta as any).env?.VITE_API_BASE || '') as string).toString().replace(/\/+$/, '')
+  return `${base}/api/subscriptions/${encodeURIComponent(id)}/events`
+}
+
 // Control-plane apply（保留旧接口别名）
 export function applyPipeline(spec: any) { return http.post('/api/control/apply_pipeline', spec) }
 export function applyPipelines(items: any[]) { return http.post('/api/control/apply_pipelines', { items }) }
