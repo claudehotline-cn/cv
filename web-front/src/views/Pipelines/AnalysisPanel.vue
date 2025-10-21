@@ -44,7 +44,7 @@
       </el-alert>
 
       <el-alert
-        v-if="store.errMsg"
+        v-if="store.errMsg && (String(store.subPhase||'').toLowerCase()==='failed' || String(store.subPhase||'').toLowerCase()==='cancelled')"
         type="error"
         show-icon
         :closable="false"
@@ -257,5 +257,7 @@ watch(() => route.query.pipeline, (val) => {
 .meta{ margin-top:4px; }
 .meta-item{ display:flex; gap:8px; font-size:13px; line-height:1.8; color: var(--va-text-2); }
 .meta-item strong{ color: var(--va-text-1); font-weight:600; }
-  .progress{ position:absolute; left:16px; right:16px; bottom:16px; background:rgba(0,0,0,0.45); border-radius:8px; padding:8px 12px; backdrop-filter: blur(4px); }`r`n  .progress .phase{ color:#fff; font-size:12px; margin-bottom:6px; }`r`n</style>
+.progress{ position:absolute; left:16px; right:16px; bottom:16px; background:rgba(0,0,0,0.45); border-radius:8px; padding:8px 12px; backdrop-filter: blur(4px); }
+.progress .phase{ color:#fff; font-size:12px; margin-bottom:6px; }
+</style>
 
