@@ -27,10 +27,11 @@ export function setEngine(options: Record<string, any>) {
 }
 
 // --- Async subscriptions API ---
-export async function createSubscription(stream_id: string, profile: string, source_uri: string, model_id?: string): Promise<string> {
+export async function createSubscription(stream_id: string, profile: string, source_uri: string, model_id?: string, opts?: { useExisting?: boolean }): Promise<string> {
   const body: any = { stream_id, profile, source_uri }
   if (model_id) body.model_id = model_id
-  const r: any = await http.post('/api/subscriptions', body)
+  const qp = opts?.useExisting ? '?use_existing=1' : ''
+  const r: any = await http.post('/api/subscriptions' + qp, body)
   return r?.data?.id || ''
 }
 export function getSubscription(id: string) {

@@ -65,7 +65,7 @@ export const useAnalysisStore = defineStore('analysis', {
           const arr = Array.isArray(raw) ? raw : []
           const mapStatus = (st: string) => {
             const s = (st || '').toString()
-            if (s === 'Ready') return 'Unknown'
+            if (s === 'Ready') return 'Stopped'
             return s
           }
           this.sources = arr
@@ -246,7 +246,7 @@ export const useAnalysisStore = defineStore('analysis', {
           const mod = await import('@/api/cp')
           // 防止同 stream:profile 残留管线导致内部切换失败，先尝试一次性退订（忽略错误）
           // 仅使用异步订阅路径，不调用旧的控制平面/同步接口
-          const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model)
+          const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model, { useExisting: true })
           if (!subId) throw new Error('createSubscription failed')
           this.currentSubId = subId
           // 建立 SSE
@@ -359,7 +359,7 @@ export const useAnalysisStore = defineStore('analysis', {
           // @ts-ignore
           if (typeof window !== 'undefined' && this.currentSourceId && this.currentPipeline && uri2) {
             const mod = await import('@/api/cp')
-            const subId = await mod.createSubscription(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined)
+            const subId = await mod.createSubscription(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined, { useExisting: true })
             this.currentSubId = subId
             try { this._subSSE?.close() } catch {}
             const es = new EventSource(mod.subscriptionEventsUrl(subId))
