@@ -57,6 +57,10 @@ public:
     std::shared_ptr<SubscriptionState> get(const std::string& id) const;
     bool cancel(const std::string& id);
     void setWhepBase(std::string whep_base_url);
+    void setMaxQueue(size_t n);
+    void setHeavySlots(int n);
+    size_t maxQueue() const;
+    int heavySlots() const;
 
     struct MetricsSnapshot {
         size_t queue_length{0};
@@ -128,7 +132,10 @@ private:
     std::atomic<uint64_t> completed_ready_total_{0};
     std::atomic<uint64_t> completed_failed_total_{0};
     std::atomic<uint64_t> completed_cancelled_total_{0};
-};
+
+    // 简单队列上限，防止过载（可后续改为从配置加载）
+    size_t max_queue_{1024};
+}; 
 
 const char* toString(SubscriptionPhase phase);
 

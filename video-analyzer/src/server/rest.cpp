@@ -1160,6 +1160,13 @@ struct RestServer::Impl {
         : options(std::move(opts)), app(application), server(options) {
         subscriptions = std::make_unique<SubscriptionManager>(app);
         subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
+        // optional configuration via environment variables
+        auto envInt = [](const char* name, int fallback){ const char* v = std::getenv(name); if(!v) return fallback; try { return std::stoi(v); } catch(...) { return fallback; } };
+        auto envSize = [](const char* name, size_t fallback){ const char* v = std::getenv(name); if(!v) return fallback; try { return static_cast<size_t>(std::stoll(v)); } catch(...) { return fallback; } };
+        int hs = envInt("VA_SUBSCRIPTION_HEAVY_SLOTS", 2);
+        size_t mq = envSize("VA_SUBSCRIPTION_MAX_QUEUE", 1024);
+        subscriptions->setHeavySlots(hs);
+        subscriptions->setMaxQueue(mq);
         // Initialize DB pool and repositories if configured
         try {
             const auto& dbc = app.appConfig().database;
@@ -1811,6 +1818,12 @@ struct RestServer::Impl {
         sfu["whep_base"] = config.sfu_whep_base;
         data["sfu"] = sfu;
 
+        // Subscriptions configuration snapshot
+        Json::Value subs(Json::objectValue);
+        subs["heavy_slots"] = subscriptions ? subscriptions->heavySlots() : 0;
+        subs["max_queue"] = static_cast<Json::UInt64>(subscriptions ? subscriptions->maxQueue() : 0);
+        data["subscriptions"] = subs;
+
         // Database summary (no secrets)
         {
             const auto& dbc = app.appConfig().database;
@@ -1836,8 +1849,8 @@ struct RestServer::Impl {
         runtime["cpu_fallback"] = runtime_status.cpu_fallback;
         data["engine_runtime"] = runtime;
 
-          payload["data"] = data;
-          return jsonResponse(payload, 200);
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
       }
       // --- Multistage graph helpers ---
       static std::vector<std::filesystem::path> graphDirCandidates() {
@@ -3000,7 +3013,11 @@ struct RestServer::Impl {
             payload["data"] = data;
             return jsonResponse(payload, 202);
         } catch (const std::exception& ex) {
-            return errorResponse(std::string("subscriptions: ") + ex.what(), 500);
+            const std::string msg = ex.what();
+            if (msg.find("queue_full") != std::string::npos) {
+                return errorResponse("subscriptions: queue_full", 429);
+            }
+            return errorResponse(std::string("subscriptions: ") + msg, 500);
         }
     }
 

@@ -50,6 +50,22 @@ void SubscriptionManager::setWhepBase(std::string whep_base_url) {
     whep_base_ = std::move(whep_base_url);
 }
 
+void SubscriptionManager::setMaxQueue(size_t n) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (n == 0) return; // ignore invalid
+    max_queue_ = n;
+}
+
+void SubscriptionManager::setHeavySlots(int n) {
+    std::lock_guard<std::mutex> lk(heavy_mu_);
+    if (n <= 0) return; // keep at least 1
+    heavy_slots_ = n;
+    heavy_cv_.notify_all();
+}
+
+size_t SubscriptionManager::maxQueue() const { return max_queue_; }
+int SubscriptionManager::heavySlots() const { return heavy_slots_; }
+
 std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready) {
     auto state = std::make_shared<SubscriptionState>();
     state->request = request;
@@ -74,6 +90,10 @@ std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, boo
                     return it->second;
                 }
             }
+        }
+        // 简易过载保护：当挂起任务过多时拒绝新入队
+        if (pending_.size() >= max_queue_) {
+            throw std::runtime_error("queue_full");
         }
         states_[id] = state;
         key_index_[key] = id;
