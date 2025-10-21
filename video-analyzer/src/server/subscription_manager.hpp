@@ -59,13 +59,15 @@ public:
     bool cancel(const std::string& id);
   void setWhepBase(std::string whep_base_url);
   void setMaxQueue(size_t n);
-  void setHeavySlots(int n);
-  void setModelSlots(int n);
-  void setRtspSlots(int n);
-  size_t maxQueue() const;
-  int heavySlots() const;
-  int modelSlots() const;
-  int rtspSlots() const;
+    void setHeavySlots(int n);
+    void setModelSlots(int n);
+    void setRtspSlots(int n);
+    void setTtlSeconds(int n);
+    size_t maxQueue() const;
+    int heavySlots() const;
+    int modelSlots() const;
+    int rtspSlots() const;
+    int ttlSeconds() const;
 
     struct MetricsSnapshot {
         size_t queue_length{0};
@@ -116,7 +118,9 @@ private:
   void runSubscriptionTask(const std::string& id, const StatePtr& state);
   bool ensurePipelineStopped(const std::string& stream_id, const std::string& profile_id);
   std::string nextId();
-  void recordCompletion(const StatePtr& state, SubscriptionPhase phase);
+    void recordCompletion(const StatePtr& state, SubscriptionPhase phase);
+    void cleanerLoop();
+    static std::string normalizeReason(const std::string& app_err, const char* fallback);
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, StatePtr> states_;
@@ -125,6 +129,8 @@ private:
     mutable std::condition_variable tasks_cv_;
     std::vector<std::thread> workers_;
     bool stop_{false};
+    std::thread cleaner_;
+    std::atomic<bool> cleaner_stop_{false};
 
     va::app::Application& app_;
     std::string whep_base_;
@@ -142,7 +148,7 @@ private:
   mutable std::mutex rtsp_mu_;
   std::condition_variable rtsp_cv_;
   int rtsp_slots_{4};
-  int rtsp_in_use_{0};
+    int rtsp_in_use_{0};
 
     // Metrics
     std::array<double, 6> hist_bounds_{ {0.5, 1.0, 2.0, 5.0, 10.0, 30.0} };
@@ -155,11 +161,14 @@ private:
 
   // Metrics: failed reasons
   mutable std::mutex reasons_mu_;
-  std::unordered_map<std::string, std::atomic<uint64_t>> failed_reasons_;
+    std::unordered_map<std::string, std::atomic<uint64_t>> failed_reasons_;
 
-  // 简单队列上限，防止过载（可后续改为从配置加载）
-  size_t max_queue_{1024};
-}; 
+    // 简单队列上限，防止过载（可后续改为从配置加载）
+    size_t max_queue_{1024};
+
+    // 终态任务保留 TTL（秒），到期后清理（默认 15 分钟）
+    int ttl_seconds_{900};
+};
 
 const char* toString(SubscriptionPhase phase);
 

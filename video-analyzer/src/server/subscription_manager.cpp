@@ -29,6 +29,8 @@ SubscriptionManager::SubscriptionManager(va::app::Application& app)
         workers_.emplace_back(&SubscriptionManager::workerLoop, this);
     }
     for (auto& c : hist_counts_) c.store(0);
+    cleaner_stop_.store(false, std::memory_order_relaxed);
+    cleaner_ = std::thread(&SubscriptionManager::cleanerLoop, this);
 }
 
 SubscriptionManager::~SubscriptionManager() {
@@ -37,12 +39,16 @@ SubscriptionManager::~SubscriptionManager() {
         stop_ = true;
     }
     tasks_cv_.notify_all();
+    cleaner_stop_.store(true, std::memory_order_relaxed);
     heavy_cv_.notify_all();
+    model_cv_.notify_all();
+    rtsp_cv_.notify_all();
     for (auto& t : workers_) {
         if (t.joinable()) {
             t.join();
         }
     }
+    if (cleaner_.joinable()) cleaner_.join();
 }
 
 void SubscriptionManager::setWhepBase(std::string whep_base_url) {
@@ -65,6 +71,18 @@ void SubscriptionManager::setHeavySlots(int n) {
 
 size_t SubscriptionManager::maxQueue() const { return max_queue_; }
 int SubscriptionManager::heavySlots() const { return heavy_slots_; }
+void SubscriptionManager::setModelSlots(int n) {
+    std::lock_guard<std::mutex> lk(model_mu_);
+    if (n <= 0) return; model_slots_ = n; model_cv_.notify_all();
+}
+void SubscriptionManager::setRtspSlots(int n) {
+    std::lock_guard<std::mutex> lk(rtsp_mu_);
+    if (n <= 0) return; rtsp_slots_ = n; rtsp_cv_.notify_all();
+}
+int SubscriptionManager::modelSlots() const { return model_slots_; }
+int SubscriptionManager::rtspSlots() const { return rtsp_slots_; }
+void SubscriptionManager::setTtlSeconds(int n) { if (n > 0) ttl_seconds_ = n; }
+int SubscriptionManager::ttlSeconds() const { return ttl_seconds_; }
 
 std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready) {
     auto state = std::make_shared<SubscriptionState>();
@@ -185,7 +203,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         }
         if (!app_.loadModel(*state->request.model_id)) {
             state->phase.store(SubscriptionPhase::Failed);
-            state->reason = app_.lastError().empty() ? "load_model_failed" : app_.lastError();
+            state->reason = normalizeReason(app_.lastError(), "load_model_failed");
             recordCompletion(state, SubscriptionPhase::Failed);
             return;
         }
@@ -207,7 +225,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
                                  : std::optional<std::string>();
     if (!pipeline_key) {
         state->phase.store(SubscriptionPhase::Failed);
-        state->reason = app_.lastError().empty() ? "subscribe_failed" : app_.lastError();
+        state->reason = normalizeReason(app_.lastError(), "subscribe_failed");
         recordCompletion(state, SubscriptionPhase::Failed);
         return;
     }

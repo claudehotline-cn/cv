@@ -1166,11 +1166,13 @@ struct RestServer::Impl {
         int hs = envInt("VA_SUBSCRIPTION_HEAVY_SLOTS", 2);
         int ms = envInt("VA_SUBSCRIPTION_MODEL_SLOTS", 2);
         int rs = envInt("VA_SUBSCRIPTION_RTSP_SLOTS", 4);
+        int ttl = envInt("VA_SUBSCRIPTION_TTL_SEC", 900);
         size_t mq = envSize("VA_SUBSCRIPTION_MAX_QUEUE", 1024);
         subscriptions->setHeavySlots(hs);
         subscriptions->setModelSlots(ms);
         subscriptions->setRtspSlots(rs);
         subscriptions->setMaxQueue(mq);
+        subscriptions->setTtlSeconds(ttl);
         // Initialize DB pool and repositories if configured
         try {
             const auto& dbc = app.appConfig().database;
@@ -1828,6 +1830,7 @@ struct RestServer::Impl {
         subs["model_slots"] = subscriptions ? subscriptions->modelSlots() : 0;
         subs["rtsp_slots"] = subscriptions ? subscriptions->rtspSlots() : 0;
         subs["max_queue"] = static_cast<Json::UInt64>(subscriptions ? subscriptions->maxQueue() : 0);
+        subs["ttl_seconds"] = subscriptions ? subscriptions->ttlSeconds() : 0;
         data["subscriptions"] = subs;
 
         // Database summary (no secrets)
