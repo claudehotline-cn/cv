@@ -94,7 +94,7 @@
       <el-col :span="8">
         <el-card shadow="never" header="分析图 / 模型">
           <div v-if="currentGraph" class="meta-item"><strong>分析图:</strong><span>{{ currentGraph.name }}</span></div>
-          <div v-if="graphRequiresText" class="meta-item"><strong>要求:</strong><span>{{ graphRequiresText }}</span></div>
+          <div v-if="graphRequiresText()" class="meta-item"><strong>要求:</strong><span>{{ graphRequiresText() }}</span></div>
           <div v-if="store.currentModel" class="meta-item"><strong>模型:</strong><span>{{ store.currentModel.id }}</span></div>
           <div v-if="store.currentModel?.task" class="meta-item"><strong>任务:</strong><span>{{ store.currentModel.task }}</span></div>
           <div v-else-if="!store.currentModel">未选择模型</div>

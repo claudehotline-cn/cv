@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e": "playwright test --reporter=line"
   },
   "dependencies": {
     "@antv/x6": "^2.18.1",
@@ -24,6 +25,7 @@
     "vue3-virtual-scroll-list": "^0.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.2",
     "@types/node": "^20.11.30",
     "@vitejs/plugin-vue": "^5.0.4",
     "typescript": "^5.5.3",

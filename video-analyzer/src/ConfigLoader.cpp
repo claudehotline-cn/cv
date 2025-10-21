@@ -351,6 +351,19 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
             }
         }
     }
+    // subscriptions (ttl/slots/queue)
+    if (v["subscriptions"]) {
+        const auto subs = v["subscriptions"];
+        if (subs && subs.IsMap()) {
+            try { payload.subscriptions.heavy_slots = subs["heavy_slots"].as<int>(payload.subscriptions.heavy_slots); } catch (...) {}
+            try { payload.subscriptions.model_slots = subs["model_slots"].as<int>(payload.subscriptions.model_slots); } catch (...) {}
+            try { payload.subscriptions.rtsp_slots  = subs["rtsp_slots"].as<int>(payload.subscriptions.rtsp_slots); } catch (...) {}
+            try { payload.subscriptions.max_queue  = subs["max_queue"].as<std::size_t>(payload.subscriptions.max_queue); } catch (...) {}
+            try { payload.subscriptions.ttl_seconds = subs["ttl_seconds"].as<int>(payload.subscriptions.ttl_seconds); } catch (...) {}
+            payload.subscriptions.source = "config";
+        }
+    }
+
     // control_plane
     if (v["control_plane"]) {
         const auto cp = v["control_plane"];

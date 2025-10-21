@@ -1,0 +1,56 @@
+name: web-front E2E
+
+on:
+  push:
+    paths:
+      - 'web-front/**'
+      - '.github/workflows/web-front-e2e.yml'
+      - 'video-analyzer/src/**'
+  pull_request:
+    paths:
+      - 'web-front/**'
+      - 'video-analyzer/src/**'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        working-directory: web-front
+        run: |
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Build front-end
+        working-directory: web-front
+        run: npm run build
+
+      - name: Serve preview (background)
+        working-directory: web-front
+        run: |
+          npx serve -s dist -l 4173 &
+          echo $! > server.pid
+
+      - name: Run E2E tests (skip if backend absent)
+        working-directory: web-front
+        env:
+          E2E_BASE_URL: http://127.0.0.1:4173
+          # Backend base; tests会自动跳过不可达情形
+          E2E_API_BASE: http://127.0.0.1:8082
+        run: npm run e2e
+
+      - name: Stop preview
+        if: always()
+        working-directory: web-front
+        run: |
+          if [ -f server.pid ]; then kill $(cat server.pid) || true; fi
+

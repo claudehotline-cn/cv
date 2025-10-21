@@ -972,6 +972,12 @@ struct RestServer::Impl {
     std::unique_ptr<va::storage::GraphRepo> graphs_repo;
     std::unique_ptr<va::storage::SourceRepo> sources_repo;
     std::unique_ptr<SubscriptionManager> subscriptions;
+    // Subscriptions 配置来源回显
+    std::string subs_src_heavy {"defaults"};
+    std::string subs_src_model {"defaults"};
+    std::string subs_src_rtsp  {"defaults"};
+    std::string subs_src_queue {"defaults"};
+    std::string subs_src_ttl   {"defaults"};
 
     // Async DB writer (best-effort)
     std::mutex dbq_mutex;
@@ -1160,14 +1166,23 @@ struct RestServer::Impl {
         : options(std::move(opts)), app(application), server(options) {
         subscriptions = std::make_unique<SubscriptionManager>(app);
         subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
-        // optional configuration via environment variables
+        // 1) 读取 YAML 配置
+        const auto& cfg = app.appConfig().subscriptions;
+        int hs = cfg.heavy_slots > 0 ? cfg.heavy_slots : 2;     subs_src_heavy = (cfg.heavy_slots > 0 ? "config" : "defaults");
+        int ms = cfg.model_slots > 0 ? cfg.model_slots : 2;     subs_src_model = (cfg.model_slots > 0 ? "config" : "defaults");
+        int rs = cfg.rtsp_slots  > 0 ? cfg.rtsp_slots  : 4;     subs_src_rtsp  = (cfg.rtsp_slots  > 0 ? "config" : "defaults");
+        size_t mq = cfg.max_queue > 0 ? cfg.max_queue : 1024;   subs_src_queue = (cfg.max_queue  > 0 ? "config" : "defaults");
+        int ttl = cfg.ttl_seconds > 0 ? cfg.ttl_seconds : 900;  subs_src_ttl   = (cfg.ttl_seconds> 0 ? "config" : "defaults");
+        // 2) 环境变量覆盖（优先生效）
+        auto hasEnv = [](const char* name){ return std::getenv(name) != nullptr; };
         auto envInt = [](const char* name, int fallback){ const char* v = std::getenv(name); if(!v) return fallback; try { return std::stoi(v); } catch(...) { return fallback; } };
         auto envSize = [](const char* name, size_t fallback){ const char* v = std::getenv(name); if(!v) return fallback; try { return static_cast<size_t>(std::stoll(v)); } catch(...) { return fallback; } };
-        int hs = envInt("VA_SUBSCRIPTION_HEAVY_SLOTS", 2);
-        int ms = envInt("VA_SUBSCRIPTION_MODEL_SLOTS", 2);
-        int rs = envInt("VA_SUBSCRIPTION_RTSP_SLOTS", 4);
-        int ttl = envInt("VA_SUBSCRIPTION_TTL_SEC", 900);
-        size_t mq = envSize("VA_SUBSCRIPTION_MAX_QUEUE", 1024);
+        if (hasEnv("VA_SUBSCRIPTION_HEAVY_SLOTS")) { hs = envInt("VA_SUBSCRIPTION_HEAVY_SLOTS", hs); subs_src_heavy = "env"; }
+        if (hasEnv("VA_SUBSCRIPTION_MODEL_SLOTS")) { ms = envInt("VA_SUBSCRIPTION_MODEL_SLOTS", ms); subs_src_model = "env"; }
+        if (hasEnv("VA_SUBSCRIPTION_RTSP_SLOTS"))  { rs = envInt("VA_SUBSCRIPTION_RTSP_SLOTS", rs);  subs_src_rtsp  = "env"; }
+        if (hasEnv("VA_SUBSCRIPTION_MAX_QUEUE"))   { mq = envSize("VA_SUBSCRIPTION_MAX_QUEUE", mq); subs_src_queue = "env"; }
+        if (hasEnv("VA_SUBSCRIPTION_TTL_SEC"))     { ttl = envInt("VA_SUBSCRIPTION_TTL_SEC", ttl);  subs_src_ttl   = "env"; }
+        // 3) 应用到订阅管理器
         subscriptions->setHeavySlots(hs);
         subscriptions->setModelSlots(ms);
         subscriptions->setRtspSlots(rs);
@@ -1824,13 +1839,20 @@ struct RestServer::Impl {
         sfu["whep_base"] = config.sfu_whep_base;
         data["sfu"] = sfu;
 
-        // Subscriptions configuration snapshot
+        // Subscriptions configuration snapshot（含来源回显）
         Json::Value subs(Json::objectValue);
         subs["heavy_slots"] = subscriptions ? subscriptions->heavySlots() : 0;
         subs["model_slots"] = subscriptions ? subscriptions->modelSlots() : 0;
         subs["rtsp_slots"] = subscriptions ? subscriptions->rtspSlots() : 0;
         subs["max_queue"] = static_cast<Json::UInt64>(subscriptions ? subscriptions->maxQueue() : 0);
         subs["ttl_seconds"] = subscriptions ? subscriptions->ttlSeconds() : 0;
+        Json::Value src(Json::objectValue);
+        src["heavy_slots"] = subs_src_heavy;
+        src["model_slots"] = subs_src_model;
+        src["rtsp_slots"]  = subs_src_rtsp;
+        src["max_queue"]   = subs_src_queue;
+        src["ttl_seconds"] = subs_src_ttl;
+        subs["source"] = src;
         data["subscriptions"] = subs;
 
         // Database summary (no secrets)

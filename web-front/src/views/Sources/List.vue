@@ -37,7 +37,7 @@ async function fetchList() {
   try {
     const resp = await dataProvider.listSources()
     const items = (resp as any)?.data?.items ?? (resp as any)?.items ?? (Array.isArray(resp) ? (resp as any) : [])
-    const mapStatus = (s?: string) => (s === 'Ready' ? 'Unknown' : (s || ''))
+    const mapStatus = (s?: string) => (s === 'Ready' ? 'Stopped' : (s || ''))
     rows.value = (items || []).map((it: any) => ({
       ...it,
       status: mapStatus(it.status || it.phase),

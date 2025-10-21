@@ -112,11 +112,22 @@ struct ObservabilityConfig {
     std::string module_levels;
 };
 
+struct SubscriptionsConfig {
+    int heavy_slots {2};
+    int model_slots {2};
+    int rtsp_slots {4};
+    std::size_t max_queue {1024};
+    int ttl_seconds {900};
+    // 回显来源：defaults/config/env（仅用于 /api/system/info 展示，不参与业务）
+    std::string source;
+};
+
 struct AppConfigPayload {
     AppEngineSpec engine;
     std::string sfu_whip_base;
     std::string sfu_whep_base;
     ObservabilityConfig observability;
+    SubscriptionsConfig subscriptions; // 订阅参数（YAML 可配）
     struct DatabasePoolConfig {
         int min {4};
         int max {16};

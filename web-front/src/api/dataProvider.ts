@@ -200,38 +200,42 @@ export const dataProvider = {
   },
   // 长轮询 watch：回调拿到 { rev, items }，返回取消函数
   watchSources(cb: (payload: { rev: number, items: any[] }) => void, opts?: { intervalMs?: number; timeoutMs?: number }) {
-    // Prefer SSE if available
-    if (typeof window !== 'undefined' && typeof (window as any).EventSource === 'function') {
-      const es = new (window as any).EventSource(apiBase() + '/api/sources/watch_sse')
-      const onMsg = (e: MessageEvent) => { try { const j=JSON.parse((e as any).data||'{}'); const rev=Number(j?.rev||0); const items = Array.isArray(j?.items)? j.items: []; if (rev) cb({ rev, items }) } catch {} }
-      es.addEventListener('sources', onMsg as any)
-      es.addEventListener('message', onMsg as any)
-      return () => { try { es.close() } catch {} }
-    }
+    // 优先 VA SSE，其次回退 VSM SSE，最后长轮询
+    const canSSE = (typeof window !== 'undefined') && typeof (window as any).EventSource === 'function'
     let stopped = false
     let since = 0
-    const base = apiBase()
+    let es: EventSource | null = null
     const interval = Math.max(100, opts?.intervalMs ?? 0)
-    async function loop(){
+    const base = apiBase()
+    const dispatch = (rev: number, items: any[]) => { if (rev && !stopped) cb({ rev, items }) }
+    const attachVA = () => {
+      try {
+        es = new (window as any).EventSource(base + '/api/sources/watch_sse')
+        const onMsg = (e: MessageEvent) => { try { const j=JSON.parse((e as any).data||'{}'); const rev=Number(j?.rev||0); const items = Array.isArray(j?.items)? j.items: []; if (rev) { since = rev; dispatch(rev, items) } } catch {} }
+        es.addEventListener('sources', onMsg as any)
+        es.addEventListener('message', onMsg as any)
+        es.addEventListener('error', () => { try { es?.close() } catch {}; es = null; if (!stopped) attachVSM() })
+      } catch { attachVSM() }
+    }
+    const attachVSM = async () => {
+      try {
+        const mod = await import('@/api/vsm')
+        es = new (window as any).EventSource(mod.sourcesSseUrl({ since }))
+        es.addEventListener('message', (e: MessageEvent) => { try { const j=JSON.parse((e as any).data||'{}'); const rev=Number(j?.rev||0); const items = Array.isArray(j?.items)? j.items: []; if (rev) { since = rev; dispatch(rev, items) } } catch {} })
+        es.addEventListener('error', () => { try { es?.close() } catch {}; es = null; if (!stopped) startLongPoll() })
+      } catch { startLongPoll() }
+    }
+    const startLongPoll = async () => {
       while(!stopped){
         const url = new URL(base + '/api/sources/watch')
         if (since) url.searchParams.set('since', String(since))
         if (opts?.timeoutMs) url.searchParams.set('timeout_ms', String(opts.timeoutMs))
-        try{
-          const r = await fetch(url.toString(), { cache:'no-cache' })
-          if (!r.ok) throw new Error('watchSources failed')
-          const j = await r.json()
-          const d = j?.data || j
-          const rev = Number(d?.rev||0)
-          const items = Array.isArray(d?.items) ? d.items : []
-          // 更新 since 并派发
-          if (rev && rev !== since){ since = rev; cb({ rev, items }) }
-        }catch(e){ /* 忽略错误并稍后重试 */ }
+        try{ const r = await fetch(url.toString(), { cache:'no-cache' }); if (!r.ok) throw new Error('watchSources failed'); const j = await r.json(); const d = j?.data || j; const rev = Number(d?.rev||0); const items = Array.isArray(d?.items)? d.items: []; if (rev && rev !== since){ since = rev; dispatch(rev, items) } }catch{}
         if (interval) await new Promise(res => setTimeout(res, interval))
       }
     }
-    loop()
-    return () => { stopped = true }
+    if (canSSE) attachVA(); else startLongPoll()
+    return () => { stopped = true; try { es?.close() } catch {}; es = null }
   },
   async listModels() {
     if (isMock) return delay(modelsList as any)
