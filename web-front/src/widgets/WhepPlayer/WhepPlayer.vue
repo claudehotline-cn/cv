@@ -48,7 +48,7 @@ async function stopSession() {
   try {
     clearTimers()
     if (resourceUrl.value) {
-      try { await fetch(resourceUrl.value, { method: 'DELETE', mode: 'cors' }) } catch {}
+      try { await fetch(resourceUrl.value, { method: 'DELETE', mode: 'cors', keepalive: true as any }) } catch {}
       resourceUrl.value = ''
     }
     const pc = pcRef.value
@@ -361,6 +361,20 @@ async function refresh() { await stopSession(); if (props.autoplay && props.whep
 defineExpose({ refresh })
 onBeforeUnmount(() => { stopSession() })
 if (props.autoplay && props.whepUrl) ensureStart()
+
+// 在页面刷新/关闭时尝试优雅关闭会话（尽力而为）
+try {
+  const onUnload = () => {
+    try { clearTimers() } catch {}
+    const url = resourceUrl.value
+    if (url) {
+      try { navigator.sendBeacon && navigator.sendBeacon(url, new Blob([], { type: 'text/plain' })) } catch {}
+      try { fetch(url, { method: 'DELETE', mode: 'cors', keepalive: true as any }).catch(()=>{}) } catch {}
+    }
+    try { const pc = pcRef.value; if (pc) pc.close() } catch {}
+  }
+  window.addEventListener('beforeunload', onUnload)
+} catch {}
 </script>
 
 <style scoped>

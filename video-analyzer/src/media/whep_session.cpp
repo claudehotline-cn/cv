@@ -533,7 +533,16 @@ int WhepSessionManager::createSession(const std::string& streamKey,
       try { if (sess->videoTrack) sess->videoTrack->onOpen([sess, sid]{ sess->trackOpen.store(true); VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] track open sid=" << sid; }); } catch (...) {}
     }
 
-    pc->onStateChange([sess](rtc::PeerConnection::State st){ if (st == rtc::PeerConnection::State::Connected) { sess->pcConnected.store(true); sess->lastActive = std::chrono::steady_clock::now(); VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] pc connected sid=" << sess->sid; } });
+    pc->onStateChange([sess](rtc::PeerConnection::State st){
+      if (st == rtc::PeerConnection::State::Connected) {
+        sess->pcConnected.store(true);
+        sess->lastActive = std::chrono::steady_clock::now();
+        VA_LOG_C(::va::core::LogLevel::Info, "transport.webrtc") << "[WHEP] pc connected sid=" << sess->sid;
+      } else if (st == rtc::PeerConnection::State::Closed || st == rtc::PeerConnection::State::Failed) {
+        // 主动清理，避免悬挂会话在浏览器刷新/崩溃时长期存在，降低资源压力
+        try { WhepSessionManager::instance().deleteSession(sess->sid); } catch (...) {}
+      }
+    });
 
     // Create local answer
     try { auto ans = pc->createAnswer(); outAnswerSdp = ans.generateSdp(); }
