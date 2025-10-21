@@ -67,6 +67,12 @@
         <div v-if="store.subProgress > 0 && !store.analyzing" class="progress">
           <div class="phase">订阅构建中：{{ (store.subPhase || 'pending') }}</div>
           <el-progress :percentage="store.subProgress" :status="store.subPhase==='failed'?'exception':(store.subPhase==='ready'?'success':'')" :stroke-width="10" />
+          <div v-if="store.timeline" class="timeline">
+            <span>阶段耗时：</span>
+            <span v-if="dur('opening_rtsp')">RTSP {{ dur('opening_rtsp') }}s</span>
+            <span v-if="dur('loading_model')">模型 {{ dur('loading_model') }}s</span>
+            <span v-if="dur('starting_pipeline')">启动 {{ dur('starting_pipeline') }}s</span>
+          </div>
         </div>
       </div>
     </el-card>
@@ -230,6 +236,22 @@ async function onCancel() {
   ElMessage.info('已取消分析')
 }
 
+function dur(phase: 'opening_rtsp'|'loading_model'|'starting_pipeline') {
+  const tl: any = (store as any).timeline || null
+  if (!tl) return ''
+  const t = (k:string)=> Number(tl?.[k] || 0)
+  if (phase==='opening_rtsp') {
+    const a=t('opening_rtsp'), b=t('loading_model')||t('starting_pipeline')||t('ready')||t('failed')||t('cancelled')
+    if (a>0 && b>a) return ((b-a)/1000).toFixed(2)
+  } else if (phase==='loading_model') {
+    const a=t('loading_model'), b=t('starting_pipeline')||t('ready')||t('failed')||t('cancelled')
+    if (a>0 && b>a) return ((b-a)/1000).toFixed(2)
+  } else if (phase==='starting_pipeline') {
+    const a=t('starting_pipeline'), b=t('ready')||t('failed')||t('cancelled')
+    if (a>0 && b>a) return ((b-a)/1000).toFixed(2)
+  }
+  return ''
+}
 onMounted(async () => {
   await store.bootstrap()
   if (typeof route.query.source === 'string') store.setSource(route.query.source)
@@ -267,5 +289,6 @@ watch(() => route.query.pipeline, (val) => {
 .meta-item strong{ color: var(--va-text-1); font-weight:600; }
 .progress{ position:absolute; left:16px; right:16px; bottom:16px; background:rgba(0,0,0,0.45); border-radius:8px; padding:8px 12px; backdrop-filter: blur(4px); }
 .progress .phase{ color:#fff; font-size:12px; margin-bottom:6px; }
+.timeline{ display:flex; gap:10px; color:#fff; font-size:12px; margin-top:6px; opacity:0.9 }
 </style>
 

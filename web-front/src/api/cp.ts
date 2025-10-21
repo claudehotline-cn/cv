@@ -37,6 +37,9 @@ export async function createSubscription(stream_id: string, profile: string, sou
 export function getSubscription(id: string) {
   return http.get<any>(`/api/subscriptions/${encodeURIComponent(id)}`)
 }
+export function getSubscriptionWithTimeline(id: string) {
+  return http.get<any>(`/api/subscriptions/${encodeURIComponent(id)}?include=timeline`)
+}
 export function cancelSubscription(id: string) {
   return fetch((http as any).url?.(`/api/subscriptions/${encodeURIComponent(id)}`) || ((import.meta as any).env?.VITE_API_BASE || '') + `/api/subscriptions/${encodeURIComponent(id)}`, {
     method: 'DELETE', headers: { 'Content-Type': 'application/json' }

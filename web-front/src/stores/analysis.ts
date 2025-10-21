@@ -28,6 +28,7 @@ export const useAnalysisStore = defineStore('analysis', {
     currentSubId: '' as string,
     subPhase: '' as string,
     subProgress: 0 as number,
+    timeline: null as any,
     _subSSE: null as EventSource | null,
     _subRetries: 0 as number,
     muteAutoStartUntil: 0 as number,
@@ -364,7 +365,7 @@ export const useAnalysisStore = defineStore('analysis', {
             try { this._subSSE?.close() } catch {}
             const es = new EventSource(mod.subscriptionEventsUrl(subId))
             this._subSSE = es
-            es.addEventListener('phase', (ev: MessageEvent) => {
+            es.addEventListener('phase', async (ev: MessageEvent) => {
               try {
                 const data = JSON.parse((ev as any).data || '{}')
                 const phase = (data.phase || '').toString()
@@ -372,6 +373,12 @@ export const useAnalysisStore = defineStore('analysis', {
                 this.subProgress = ['pending','preparing','opening_rtsp','loading_model','starting_pipeline','ready'].indexOf(phase.toLowerCase()) >= 0
                   ? [5,15,35,65,85,100][['pending','preparing','opening_rtsp','loading_model','starting_pipeline','ready'].indexOf(phase.toLowerCase())]
                   : 0
+                // 拉取时间线（最小充分，每次阶段变化时查询一次）
+                try {
+                  const stAny: any = await mod.getSubscriptionWithTimeline(subId).catch(()=>null)
+                  const tl = stAny?.data?.timeline
+                  if (tl) this.timeline = tl
+                } catch {}
                 if (phase.toLowerCase() === 'ready') {
                   const w = (data.whep_url || '') as string
                   if (w) this.whepUrl = w; else this.updateWhepUrl()

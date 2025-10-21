@@ -2410,6 +2410,20 @@ struct RestServer::Impl {
             out << "va_subscription_duration_seconds_bucket{le=\"+Inf\"} " << ms.duration_count << "\n";
             out << "va_subscription_duration_seconds_sum " << ms.duration_sum << "\n";
             out << "va_subscription_duration_seconds_count " << ms.duration_count << "\n";
+
+            // Per-phase histograms (opening_rtsp/loading_model/starting_pipeline)
+            auto emit_phase_txt = [&](const char* phase, const std::vector<uint64_t>& buckets, double sum, uint64_t cnt){
+                out << "# HELP va_subscription_phase_seconds Subscription phase duration in seconds\n";
+                out << "# TYPE va_subscription_phase_seconds histogram\n";
+                unsigned long long accp = 0ULL;
+                for (size_t i=0;i<ms.bounds.size(); ++i) { accp += (i<buckets.size()? buckets[i]:0ULL); out << "va_subscription_phase_seconds_bucket{phase=\""<<phase<<"\",le=\""<<ms.bounds[i]<<"\"} " << accp << "\n"; }
+                out << "va_subscription_phase_seconds_bucket{phase=\""<<phase<<"\",le=\"+Inf\"} " << cnt << "\n";
+                out << "va_subscription_phase_seconds_sum{phase=\""<<phase<<"\"} " << sum << "\n";
+                out << "va_subscription_phase_seconds_count{phase=\""<<phase<<"\"} " << cnt << "\n";
+            };
+            emit_phase_txt("opening_rtsp", ms.opening_bucket_counts, ms.opening_duration_sum, ms.opening_duration_count);
+            emit_phase_txt("loading_model", ms.loading_bucket_counts, ms.loading_duration_sum, ms.loading_duration_count);
+            emit_phase_txt("starting_pipeline", ms.starting_bucket_counts, ms.starting_duration_sum, ms.starting_duration_count);
         }
 
         // Per-source metrics (labels: source_id, path)

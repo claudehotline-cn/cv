@@ -29,6 +29,9 @@ SubscriptionManager::SubscriptionManager(va::app::Application& app)
         workers_.emplace_back(&SubscriptionManager::workerLoop, this);
     }
     for (auto& c : hist_counts_) c.store(0);
+    for (auto& c : hist_opening_counts_) c.store(0);
+    for (auto& c : hist_loading_counts_) c.store(0);
+    for (auto& c : hist_starting_counts_) c.store(0);
     cleaner_stop_.store(false, std::memory_order_relaxed);
     cleaner_ = std::thread(&SubscriptionManager::cleanerLoop, this);
 }
@@ -423,6 +426,33 @@ void SubscriptionManager::recordCompletion(const StatePtr& state, SubscriptionPh
     hist_sum_us_.fetch_add(usec, std::memory_order_relaxed);
     hist_count_.fetch_add(1, std::memory_order_relaxed);
 
+    // per-phase durations using timeline if available
+    auto bump_hist = [&](double dsec, std::array<std::atomic<uint64_t>,6>& buckets,
+                         std::atomic<long long>& sum_us, std::atomic<uint64_t>& cnt){
+        if (dsec <= 0.0 || !std::isfinite(dsec)) return;
+        for (size_t i=0;i<hist_bounds_.size();++i) {
+            if (dsec <= hist_bounds_[i]) { buckets[i].fetch_add(1, std::memory_order_relaxed); break; }
+            if (i == hist_bounds_.size()-1) { buckets[i].fetch_add(1, std::memory_order_relaxed); }
+        }
+        long long us = static_cast<long long>(dsec * 1e6);
+        sum_us.fetch_add(us, std::memory_order_relaxed);
+        cnt.fetch_add(1, std::memory_order_relaxed);
+    };
+    auto ts = [&](std::atomic<std::uint64_t>& a){ return a.load(std::memory_order_relaxed); };
+    const uint64_t t_open = ts(state->ts_opening);
+    const uint64_t t_load = ts(state->ts_loading);
+    const uint64_t t_start= ts(state->ts_starting);
+    const uint64_t t_ready= ts(state->ts_ready);
+    const uint64_t t_fail = ts(state->ts_failed);
+    const uint64_t t_cancel = ts(state->ts_cancelled);
+    auto pick_end = [&](uint64_t a, uint64_t b, uint64_t c){ return a>0? a : (b>0? b : (c>0? c : 0)); };
+    const uint64_t end_open = pick_end(t_load, t_start, (phase==SubscriptionPhase::Ready? t_ready : (phase==SubscriptionPhase::Failed? t_fail : t_cancel)));
+    const uint64_t end_load = pick_end(t_start, (phase==SubscriptionPhase::Ready? t_ready : (phase==SubscriptionPhase::Failed? t_fail : t_cancel)), 0);
+    const uint64_t end_start= (phase==SubscriptionPhase::Ready? t_ready : (phase==SubscriptionPhase::Failed? t_fail : t_cancel));
+    if (t_open>0 && end_open>t_open) bump_hist((end_open - t_open)/1000.0, hist_opening_counts_, hist_opening_sum_us_, hist_opening_count_);
+    if (t_load>0 && end_load>t_load) bump_hist((end_load - t_load)/1000.0, hist_loading_counts_, hist_loading_sum_us_, hist_loading_count_);
+    if (t_start>0 && end_start>t_start) bump_hist((end_start - t_start)/1000.0, hist_starting_counts_, hist_starting_sum_us_, hist_starting_count_);
+
     switch (phase) {
     case SubscriptionPhase::Ready:
         completed_ready_total_.fetch_add(1, std::memory_order_relaxed);
@@ -473,6 +503,19 @@ SubscriptionManager::MetricsSnapshot SubscriptionManager::metricsSnapshot() cons
     for (size_t i=0;i<hist_counts_.size();++i) s.bucket_counts[i] = hist_counts_[i].load();
     s.duration_sum = static_cast<double>(hist_sum_us_.load()) / 1e6;
     s.duration_count = hist_count_.load();
+    // per-phase
+    s.opening_bucket_counts.resize(hist_opening_counts_.size());
+    s.loading_bucket_counts.resize(hist_loading_counts_.size());
+    s.starting_bucket_counts.resize(hist_starting_counts_.size());
+    for (size_t i=0;i<hist_opening_counts_.size();++i) s.opening_bucket_counts[i] = hist_opening_counts_[i].load();
+    for (size_t i=0;i<hist_loading_counts_.size();++i) s.loading_bucket_counts[i] = hist_loading_counts_[i].load();
+    for (size_t i=0;i<hist_starting_counts_.size();++i) s.starting_bucket_counts[i] = hist_starting_counts_[i].load();
+    s.opening_duration_sum = static_cast<double>(hist_opening_sum_us_.load()) / 1e6;
+    s.opening_duration_count = hist_opening_count_.load();
+    s.loading_duration_sum = static_cast<double>(hist_loading_sum_us_.load()) / 1e6;
+    s.loading_duration_count = hist_loading_count_.load();
+    s.starting_duration_sum = static_cast<double>(hist_starting_sum_us_.load()) / 1e6;
+    s.starting_duration_count = hist_starting_count_.load();
     // failed reasons snapshot
     {
         std::lock_guard<std::mutex> lk(reasons_mu_);

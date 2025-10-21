@@ -98,6 +98,16 @@ public:
         double duration_sum{0.0};
         uint64_t duration_count{0};
         std::vector<std::pair<std::string, uint64_t>> failed_by_reason;
+        // per-phase histograms (use same bounds)
+        std::vector<uint64_t> opening_bucket_counts;
+        std::vector<uint64_t> loading_bucket_counts;
+        std::vector<uint64_t> starting_bucket_counts;
+        double opening_duration_sum{0.0};
+        uint64_t opening_duration_count{0};
+        double loading_duration_sum{0.0};
+        uint64_t loading_duration_count{0};
+        double starting_duration_sum{0.0};
+        uint64_t starting_duration_count{0};
     };
     MetricsSnapshot metricsSnapshot() const;
 
@@ -164,6 +174,16 @@ private:
     std::array<std::atomic<uint64_t>, 6> hist_counts_ { };
     std::atomic<long long> hist_sum_us_{0};
     std::atomic<uint64_t> hist_count_{0};
+    // per-phase hist: opening_rtsp, loading_model, starting_pipeline
+    std::array<std::atomic<uint64_t>, 6> hist_opening_counts_ { };
+    std::array<std::atomic<uint64_t>, 6> hist_loading_counts_ { };
+    std::array<std::atomic<uint64_t>, 6> hist_starting_counts_ { };
+    std::atomic<long long> hist_opening_sum_us_{0};
+    std::atomic<uint64_t> hist_opening_count_{0};
+    std::atomic<long long> hist_loading_sum_us_{0};
+    std::atomic<uint64_t> hist_loading_count_{0};
+    std::atomic<long long> hist_starting_sum_us_{0};
+    std::atomic<uint64_t> hist_starting_count_{0};
     std::atomic<uint64_t> completed_ready_total_{0};
     std::atomic<uint64_t> completed_failed_total_{0};
     std::atomic<uint64_t> completed_cancelled_total_{0};
