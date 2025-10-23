@@ -1,35 +1,34 @@
 # 路线图总览
 
-- M0｜异步订阅与稳定播放：新建 `/api/subscriptions*` 与 SSE；前端统一 `createSubscription + SSE`，播放刷新不崩溃；基本指标上线。
-  - 验收：Start→Ready 可复现；取消可用；刷新稳定；/metrics 含队列、状态、完成计数与总时长直方图。
-- M1｜可靠性与可运维：配置（ttl/slots/queue）YAML 化并回显来源；Sources SSE 启用；失败原因标准化与面板；E2E 用例与 CI。
-  - 验收：System Info 展示来源与生效值；失败原因图可读；CI 3 条 E2E 稳定通过；旧接口默认 410。
-- M2｜规模化与长稳：分阶段限流调优（rtsp/model）；并发 N=50/100 与 24h 压测；SSE Last-Event-ID 与时间线；Grafana 告警完善。
-  - 验收：P95 订阅耗时达标（阈值可配）；失败率 <1%；SSE 断线重连稳定；面板/告警覆盖完整。
+- M0｜接口稳定性与可观测基线（已起步）
+  - 目标：REST 语义统一（POST 202+Location、GET ETag/304）、最小可观测性（系统/全局指标）、E2E 校验与构建稳定。
+  - 验收标准：headers+cache 测试通过；/metrics 基础指标可见；构建/运行脚本稳定；订阅 GET 304 生效。
+- M1｜WAL 与注册表预热
+  - 目标：WAL 重启恢复、Model/Codec Registry 预热与状态曝光、控制面指标完善（失败原因/耗时直方图）。
+  - 验收标准：重启后 inflight 状态不丢；/api/system/info 暴露预热状态；/metrics 出现 failed(restart)、inflight 时长直方图。
+- M2｜配额/ACL 与压测可视化
+  - 目标：配额/ACL 控制与告警、Grafana 大盘、P95/失败率门槛、24h soak 稳定运行。
+  - 验收标准：P95/FPS/失败率达标；大盘与告警覆盖关键链路；长时间 soak 无资源泄漏与崩溃。
 
 # 分阶段计划（表格）
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| P0 | 订阅 API+SSE+播放稳定 | /api/subscriptions*、SSE keepalive、WHEP 刷新清理 | 会话泄漏→双清理 | 刷新0崩溃 |
-| P1 | Sources SSE 与失败原因 | /api/sources/watch_sse、原因标准化与指标 | 代理超时→keepalive | 失败原因可见 |
-| P2 | 配置 YAML 化 | ttl/slots/queue 配置与 env 覆盖、来源回显 | 配置漂移→来源标注 | 配置稳定加载 |
-| P3 | E2E+CI | 三条用例脚本与 Actions | 选择器脆弱→语义选择 | CI 通过 |
-| P4 | 时间线与 Last-Event-ID | GET include=timeline、SSE id/retry | 重连丢事件→对齐 | 无丢/乱序 |
-| P5 | 并发与长稳压测 | N=50/100、24h；slots 调优 | 资源枯竭→限流配额 | 失败<1% |
-| P6 | 告警与面板完善 | P95、失败率、队列、原因面板 | 指标缺口→补采样点 | 告警有效 |
+| M0 | REST 语义统一；拆分大文件；基础指标；脚本化校验 | POST 202+Location、GET ETag/304；server/rest.cpp 模块化；/metrics 基线 | 链接被占用→先停再构建；SSE 异常→保活与限速 | headers+cache 通过；/metrics 可抓取；构建成功 |
+| M1 | WAL/Registry 预热；状态曝光；控制面直方图 | WAL 扫描与 TTL；Model/Codec LRU+idle TTL；/api/system/info 预热字段；CP 请求耗时直方图 | 重启竞态→加锁与去重；预热耗时→异步与限速 | 重启恢复率≈100%；failed(restart) 指标就绪 |
+| M2 | 配额/ACL；Grafana 大盘；压测/soak | per-key/GPU 配额与节流；ACL 配置/验证；Grafana 面板与告警；N=50/100 压测 | 规则误杀→灰度与豁免；高并发→背压与降级 | P95/失败率门槛达标；24h soak 0 崩溃/无泄漏 |
 
 # 依赖矩阵
 
 - 内部依赖：
-  - VA（订阅/SSE/指标/WHEP）；CP（内嵌控制）；VSM（源管理）；前端（store/视图/E2E）。
+  - video-analyzer（VA）；control_plane_embedded（内嵌控制器）；video-source-manager（VSM）；web-frontend（预览与可视化）。
 - 外部依赖（库/服务/硬件）：
-  - Prometheus/Grafana、MySQL；ffmpeg/mediamtx（RTSP）；libdatachannel（WebRTC）；GPU 驱动与 ONNX/TensorRT（可选，CPU 回退）。
+  - WinSock/Windows SDK；ONNX Runtime/TensorRT；FFmpeg/mediamtx；Prometheus/Grafana；MySQL（Connector/C++）；libdatachannel；NVIDIA GPU（NVDEC/NVENC）。
 
 # 风险清单（Top-5）
 
-- SSE 断流 → 网络波动/代理超时 → 事件间隙/无心跳 → keepalive+Last-Event-ID+轮询兜底。
-- 并发枯竭 → 模型/RTSP 吞吐不足 → 失败率升高 → 分阶段限流+配额与回退。
-- 会话泄漏 → 刷新/崩溃未清理 → 句柄/内存增长 → 浏览器 keepalive + 后端 Closed/Failed 自清理 + TTL。
-- 配置漂移 → 多来源不一致 → 行为不可预测 → YAML+env 覆盖策略与来源回显。
-- 观测缺口 → 原因/阶段不可见 → 诊断困难 → 失败原因标准化+时间线与阶段直方图。
+- SSE/连接管理不稳 → 长连接堆积或异常关闭 → 事件频率异常、FD 数上涨 → 限速+心跳+空闲超时+连接上限，必要时降级为长轮询。
+- 资源泄漏/内存增长 → 压测或 soak 中常驻内存爬升 → RSS/句柄/GC 指标异常 → 引入内存/FD 监控，分阶段压测与快照比对，回滚可疑改动。
+- 指标不一致/缺口 → 阶段直方图/失败原因缺失 → /metrics 缺字段或为 0 → 增量补齐指标，统一标签与枚举，测试脚本比对。
+- 预热/注册表抖动 → 大量模型/编解码预热耗时 → 启动时间过长或阻塞 → 异步预热+并发上限+LRU/TTL；/api/system/info 暴露进度与错误。
+- 过载与 429 策略 → 队列饱和/突发流量 → 响应耗时陡增、错误率上升 → 背压与 Retry-After；分级限流与配额（M2）；压测发现阈值并写入告警。

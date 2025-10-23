@@ -1,60 +1,71 @@
-# 项目上下文（自动生成 · 订阅与播放全链路）
+# 项目上下文（重建版）
 
-本文件汇总当前对话期间已实现与在研的关键信息，覆盖后端（VA/CP/VSM）、前端（web-front）、测试与运维观测。
+本文档汇总当前对话与本次改动的关键上下文，覆盖代码结构、接口语义、可观测性、构建运行与测试事实证据，以及后续工作方向，供团队与 CI/CD 参考。
 
-## 架构与模块
-- VA（video-analyzer）：RTSP 接入、预处理/推理/后处理、WHEP/WebRTC/HLS 输出；异步订阅与 SSE 事件流的服务端实现与指标出口。
-- CP（control_plane_embedded，内嵌于 VA）：提供管线编排与控制面 API（后续可独立）。
-- VSM（video-source-manager）：RTSP 源管理（gRPC 7070 / REST 7071）。
-- 前端（web-front）：统一走 createSubscription + SSE 路径，分析页播放（WHEP），观测页（Observability）与会话视图（Sessions）。
+## 仓库与模块
+- video-analyzer（VA）：核心后端。职责：RTSP 接入、预处理、推理、后处理、WHEP/HLS 输出、REST/SSE、Prometheus 指标、内嵌控制平面桥接。
+- video-analyzer/src/control_plane_embedded（CP）：内嵌控制平面控制器（gRPC/REST），后续可独立化。
+- video-source-manager（VSM）：RTSP 源管理（gRPC/REST）。
+- web-frontend：Web 前端，用于预览流与叠加层。
+- docs：设计/计划/示例/参考/需求/备忘录。
+- tools：构建与运行脚本（Windows 首选 pwsh）。
 
-## 关键接口（现状）
-- 订阅 REST：
-  - POST `/api/subscriptions?use_existing=1`（或头 `X-Subscription-Use-Existing: 1`）→ 202 + { id, phase=pending }；幂等复用相同 `stream_id:profile`。
-  - GET `/api/subscriptions/:id` → { phase, reason, pipeline_key, whep_url, created_at_ms }；终态时兜底持久化会话。
-  - DELETE `/api/subscriptions/:id` → 取消，兜底持久化会话。
-- 订阅事件 SSE：GET `/api/subscriptions/:id/events`
-  - 事件 `phase`：pending → preparing → opening_rtsp → loading_model → starting_pipeline → ready/failed/cancelled；10s keep-alive。
-- 源：GET `/api/sources`；SSE `GET /api/sources/watch_sse`（已启用）。
-- 系统信息：GET `/api/system/info` → `subscriptions.{heavy_slots,model_slots,rtsp_slots,max_queue,ttl_seconds}` 与 SFU/WHEP 基址等。
-- 播放：WHEP `/whep` 系列（前端 WhepPlayer 与后端 WhepSessionManager）。
+## 本次结构性改动（大文件拆分）
+目标：将 4000+ 行的 server/rest.cpp 按业务拆分，消除巨石文件带来的可维护性与编译时间问题。已完成：
+- 新增按主题的实现文件（均在 video-analyzer/src/server/）：
+  - rest_impl_core.cpp（Impl 构造/启动/DB 线程/保留通用内部实现）
+  - rest_routes.cpp（路由装配）
+  - rest_metrics.cpp（/metrics 与 metrics 配置）
+  - rest_logging.cpp（日志配置与日志/事件 SSE）
+  - rest_control.cpp（控制平面 REST：apply/apply_batch/hotswap/remove/status/drain 等）
+  - rest_system.cpp（/api/system/info、/api/system/stats、图谱枚举等）
+  - rest_models.cpp（模型/配置枚举）
+  - rest_sources.cpp（sources 聚合 + watch + SSE）
+  - rest_sessions.cpp（会话列表/长轮询）
+  - rest_subscriptions.cpp（订阅创建/查询/删除，SSE 由 logging/sources 覆盖）
+  - rest_db.cpp（数据库健康/清理/保留期状态）
+  - rest_whep.cpp（WHEP 协商与可选 gRPC 转发）
+- 新增头文件 rest_impl.hpp：仅保留声明与公用工具（HttpRequest/HttpResponse、SimpleHttpServer、JSON/ETag/错误回应等）。
+- 调整 CMake 以纳入新源文件；构建通过。
 
-## 并发/限流/队列（现状）
-- `heavy_slots`（兼容项）、分阶段信号量：
-  - `model_slots`：`loading_model` 并发（默认 2）。
-  - `rtsp_slots`：`starting_pipeline`/打开 RTSP 并发（默认 4）。
-- 队列上限：`max_queue`（默认 1024），满则 POST /api/subscriptions 返回 429 queue_full。
-- TTL 清理：`ttl_seconds`（默认 900s），终态订阅逾时由清理线程回收（内存状态）。
-- 配置方式：环境变量（VA_SUBSCRIPTION_MODEL_SLOTS / RTSP_SLOTS / HEAVY_SLOTS / MAX_QUEUE / TTL_SEC），后续接入 YAML（规划中）。
+## API 行为与本次修复
+- /api/subscriptions（关键语义补全）
+  - POST /api/subscriptions → 202 + Location 头（指向 /api/subscriptions/{id}），并通过 Access-Control-Expose-Headers 暴露 Location；响应体 { success, code, data }。
+  - GET /api/subscriptions/{id} → 支持 ETag/If-None-Match：未变化返回 304；变化时 200 并携带 ETag（弱校验值基于 phase 与各阶段时间戳聚合）。
+  - DELETE /api/subscriptions/{id} → 取消并返回 202，持久化状态（若启用 MySQL）。
+- /metrics：基础指标可见（系统与全局指标），阶段直方图将在后续 M1/M2 中完善。
+- 其余路由保持原有语义，现由 rest_routes.cpp 统一注册。
 
-## 指标与观测（现状）
-- Prometheus 文本 `/metrics`：
-  - `va_subscriptions_queue_length`、`va_subscriptions_in_progress`、`va_subscriptions_states{phase}`。
-  - `va_subscriptions_completed_total{result=ready|failed|cancelled}`。
-  - `va_subscription_duration_seconds[_bucket/_sum/_count]`（总时长直方图）。
-  - `va_subscriptions_failed_by_reason_total{reason}`（失败原因标准化：open_rtsp_failed/_timeout、load_model_failed/_timeout、subscribe_failed、unknown）。
-- Grafana：已提供示例仪表盘与告警规则（docs/observability/grafana/*）。
-- 前端 Observability：
-  - System Info 卡片显示 WHEP Base 与 `heavy_slots/model_slots/rtsp_slots/max_queue/ttl_seconds`。
-  - Sessions 页面展示最近会话（已对接 DB/兜底快照）。
+## 构建、运行与发布
+- Windows（首选）：tools/build_va_with_vcvars.cmd，构建目录 video-analyzer/build-ninja。
+- 运行 VA：build-ninja/bin/VideoAnalyzer.exe build-ninja/bin/config（Windows 选定配置子目录）。
+- 验证监听：netstat -ano | find 8082；健康检查：GET http://127.0.0.1:8082/api/system/info。
+- 注意：当重新链接失败（LNK1104）多因进程占用 exe，需先 Stop-Process VideoAnalyzer 再构建。
 
-## 前端（现状）
-- 统一路径：Sources/List、Pipelines/AnalysisPanel、Stores/analysis.ts 走 `startAnalysis()/stopAnalysis()` → `createSubscription + SSE`，ready 后设置 WHEP URL 与播放。
-- 进度条：仅 SSE 就绪后 `analyzing=true`；错误终态集中展示；“取消”按钮走 `stopAnalysis()`。
-- 刷新稳定性：
-  - 前端 beforeunload 使用 `sendBeacon`/`fetch keepalive` 发送 WHEP DELETE；
-  - 后端 PeerConnection Closed/Failed 自动 `deleteSession`，避免刷新崩溃与悬挂会话。
-- 源监听：优先 VA `/api/sources/watch_sse`，失败回退 VSM SSE，再回退长轮询。
+## 测试与证据
+- 自动脚本（video-analyzer/test/scripts/）：
+  - check_headers_cache.py：验证 202+Location、ETag/304、（可选）429+Retry-After。当前结果：通过（队列未饱和时 429 跳过警告属预期）。
+  - check_metrics_exposure.py：验证基础指标曝光，当前结果：通过（阶段直方图缺失为 WARN，将在 M1/M2 完善）。
+- 手工确认：/api/system/info 返回 engine/runtime/observability/subscriptions/database 快照正常。
 
-## 测试与E2E（现状）
-- 数据源：`rtsp://127.0.0.1:8554/camera_01`（mediamtx/ffmpeg）。
-- 用例（Playwright）已手动执行：Start→Ready→取消、sources→analysis 路由、错误源行为；计划脚本化入仓并接入 CI。
+## 可观测性与指标
+- 系统：管线总数/运行数/FPS/传输包与字节。
+- 零拷贝路径与全局计数：d2d_nv12_frames、cpu_fallback_skips、eagain_retry_count、overlay_* 等。
+- 控制平面请求总数与耗时直方图：在 Impl 中聚合。
+- 订阅队列与 in_progress 快照（SubscriptionManager）：后续将按阶段输出直方图与失败原因聚合。
 
-## 已知/已修复
-- 刷新播放崩溃：已通过 WHEP 会话优雅关闭与后端自清理修复。
-- 旧控制平面订阅接口：前端已停用，后端保留（后续按开关 410 逐步移除）。
+## 近期完成的关键任务
+1) 拆分巨石文件，恢复可维护性与编译速度；
+2) 增补订阅接口的 HTTP 约定（Location、ETag/If-None-Match）；
+3) 修复 Windows 构建链路中 exe 占用导致的链接失败；
+4) 增加并运行后端校验脚本，CI 友好。
 
-## 待办（高优先）
-- 配置接入 YAML（ttl/slots/queue 等），`/api/system/info` 回显来源（env/config）。
-- 订阅时间线：GET include=timeline 与 SSE Last-Event-ID；阶段化耗时直方图；原因维度告警面板。
-- E2E 用例落档与 CI；并发与长稳压测（N=50/100、24h）。
+## 待办（高优先级）
+- M1：WAL/Restart 扫描、Model/Codec Registry 预热、/api/system/info 暴露预热状态、/metrics 增补 failed(restart) 与 inflight 时长。
+- M2：配额/ACL 策略、Grafana 大盘、压测与 24h soak、P95 与失败率达标。
+- SSE/长连接健壮性：socket 泄漏、异常关闭与重试策略的监控与缓解。
+
+## 术语
+- ETag/If-None-Match：用于订阅轮询的缓存与 304 语义，降低 GET 风险与负载。
+- WAL：重启后恢复 inflight 的持久化日志。
+- WHEP：WebRTC HTTP Egress；可本地或经 gRPC 转发到其他 VA。
