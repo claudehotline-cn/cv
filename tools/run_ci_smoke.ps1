@@ -82,6 +82,20 @@ if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for SSE cancel t
 python video-analyzer/test/scripts/check_cancel_sse_trace.py --base $BaseUrl
 Stop-VA
 
+Write-Host '== Test 5: System info subscriptions echo =='
+Stop-VA
+$proc = Start-VA
+if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for system info test' }
+python video-analyzer/test/scripts/check_system_info_subs.py --base $BaseUrl
+Stop-VA
+
+Write-Host '== Test 6: Metrics histogram + failed reasons presence =='
+Stop-VA
+$proc = Start-VA
+if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for metrics presence test' }
+python video-analyzer/test/scripts/check_metrics_hist_and_reasons.py --base $BaseUrl --poll-sec 8
+Stop-VA
+
 Write-Host '== Report: failed reasons unknown ratio (best-effort) =='
 try {
   $outDir = Join-Path 'video-analyzer' 'build-ninja/bin/logs'
