@@ -197,6 +197,9 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         try {
             mb.header("va_wal_failed_restart_total", "counter", "Subscriptions inflight before last restart (from WAL)");
             mb.sample("va_wal_failed_restart_total", "{}", static_cast<unsigned long long>(va::core::wal::failedRestartCount()));
+            // Minimal dimension labels for WAL: feature-enabled gauge（基数受控）
+            mb.header("va_feature_enabled", "gauge", "Feature toggle enabled (1/0)");
+            mb.sample("va_feature_enabled", "{feature=\"wal\"}", static_cast<unsigned long long>(va::core::wal::enabled() ? 1 : 0));
         } catch (...) {}
 
         // Model registry preheat metrics (M1)

@@ -111,14 +111,25 @@ void ModelRegistry::runPreheat() {
   std::mutex m;
   auto worker = [this,&m](std::string id){
     auto t0 = std::chrono::steady_clock::now();
-    this->touch(id);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    bool ok = false;
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      ok = (entries_.find(id) != entries_.end());
+    }
+    if (ok) {
+      this->touch(id);
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    } else {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      failed_total_.fetch_add(1, std::memory_order_relaxed);
+    }
     auto t1 = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> lk(m);
-    warmed_ += 1;
+    {
+      std::lock_guard<std::mutex> lk(m);
+      if (ok) warmed_ += 1;
+    }
     // metrics: histogram update (seconds)
     double sec = std::chrono::duration<double>(t1 - t0).count();
-    // cumulative-like bucket fill
     for (size_t i=0;i<hist_bounds_.size();++i) {
       if (sec <= hist_bounds_[i]) { hist_counts_[i].fetch_add(1, std::memory_order_relaxed); break; }
       if (i == hist_bounds_.size()-1) { hist_counts_[i].fetch_add(1, std::memory_order_relaxed); }
