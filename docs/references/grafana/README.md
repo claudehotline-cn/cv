@@ -13,6 +13,7 @@
 - 分阶段 p95：`va_subscription_phase_seconds_bucket`（opening/loading/starting）。
 - WAL：`va_wal_failed_restart_total`。
 - 预热：`va_model_preheat_enabled`、`va_model_preheat_warmed_total`、`va_model_preheat_duration_seconds_bucket`。
+- 配额：`va_quota_dropped_total`、`va_quota_would_drop_total`（建议使用 `sum(rate(...[5m]))`），`va_quota_enforce_percent`（当前生效的执行比例）。
 
 ## 备注
 - 面板为最小可用示例，可按需增减维度与时间窗口。
