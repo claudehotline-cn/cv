@@ -990,6 +990,8 @@ struct RestServer::Impl {
     std::string subs_src_rtsp  {"defaults"};
     std::string subs_src_queue {"defaults"};
     std::string subs_src_ttl   {"defaults"};
+    std::string subs_src_open_rtsp {"defaults"};
+    std::string subs_src_start_pipeline {"defaults"};
 
     // Async DB writer (best-effort)
     std::mutex dbq_mutex;

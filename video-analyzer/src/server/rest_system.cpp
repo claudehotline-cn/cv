@@ -132,12 +132,16 @@ HttpResponse RestServer::Impl::handleSystemInfo(const HttpRequest& /*req*/) {
   subs["model_slots"] = subscriptions ? subscriptions->modelSlots() : 0;
   subs["rtsp_slots"] = subscriptions ? subscriptions->rtspSlots() : 0;
   subs["max_queue"] = static_cast<Json::UInt64>(subscriptions ? subscriptions->maxQueue() : 0);
+  subs["open_rtsp_slots"] = subscriptions ? subscriptions->openRtspSlots() : 0;
+  subs["start_pipeline_slots"] = subscriptions ? subscriptions->startPipelineSlots() : 0;
   subs["ttl_seconds"] = subscriptions ? subscriptions->ttlSeconds() : 0;
   Json::Value src(Json::objectValue);
   src["heavy_slots"] = subs_src_heavy;
   src["model_slots"] = subs_src_model;
   src["rtsp_slots"]  = subs_src_rtsp;
   src["max_queue"]   = subs_src_queue;
+  src["open_rtsp_slots"] = subs_src_open_rtsp;
+  src["start_pipeline_slots"] = subs_src_start_pipeline;
   src["ttl_seconds"] = subs_src_ttl;
   subs["source"] = src;
   data["subscriptions"] = subs;

@@ -24,6 +24,9 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
     int hs = cfg.heavy_slots > 0 ? cfg.heavy_slots : 2;     subs_src_heavy = (cfg.heavy_slots > 0 ? "config" : "defaults");
     int ms = cfg.model_slots > 0 ? cfg.model_slots : 2;     subs_src_model = (cfg.model_slots > 0 ? "config" : "defaults");
     int rs = cfg.rtsp_slots  > 0 ? cfg.rtsp_slots  : 4;     subs_src_rtsp  = (cfg.rtsp_slots  > 0 ? "config" : "defaults");
+    int open = cfg.open_rtsp_slots >= 0 ? cfg.open_rtsp_slots : 0; subs_src_open_rtsp = (cfg.open_rtsp_slots >= 0 ? "config" : "defaults");
+    int start = cfg.start_pipeline_slots >= 0 ? cfg.start_pipeline_slots : 0; subs_src_start_pipeline = (cfg.start_pipeline_slots >= 0 ? "config" : "defaults");
+    if (cfg.load_model_slots > 0) { ms = cfg.load_model_slots; subs_src_model = "config"; }
     size_t mq = cfg.max_queue > 0 ? cfg.max_queue : 1024;   subs_src_queue = (cfg.max_queue  > 0 ? "config" : "defaults");
     int ttl = cfg.ttl_seconds > 0 ? cfg.ttl_seconds : 900;  subs_src_ttl   = (cfg.ttl_seconds> 0 ? "config" : "defaults");
     // 2) 环境变量覆盖（优先生效）
@@ -32,13 +35,18 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
     auto envSize = [](const char* name, size_t fallback) { const char* v = std::getenv(name); if(!v) return fallback; try { return static_cast<size_t>(std::stoll(v)); } catch(...) { return fallback; } };
     if (hasEnv("VA_SUBSCRIPTION_HEAVY_SLOTS")) { hs = envInt("VA_SUBSCRIPTION_HEAVY_SLOTS", hs); subs_src_heavy = "env"; }
     if (hasEnv("VA_SUBSCRIPTION_MODEL_SLOTS")) { ms = envInt("VA_SUBSCRIPTION_MODEL_SLOTS", ms); subs_src_model = "env"; }
+    if (hasEnv("VA_SUBSCRIPTION_LOAD_MODEL_SLOTS")) { ms = envInt("VA_SUBSCRIPTION_LOAD_MODEL_SLOTS", ms); subs_src_model = "env"; }
     if (hasEnv("VA_SUBSCRIPTION_RTSP_SLOTS"))  { rs = envInt("VA_SUBSCRIPTION_RTSP_SLOTS", rs);  subs_src_rtsp  = "env"; }
+    if (hasEnv("VA_SUBSCRIPTION_OPEN_RTSP_SLOTS"))  { open = envInt("VA_SUBSCRIPTION_OPEN_RTSP_SLOTS", open);  subs_src_open_rtsp  = "env"; }
+    if (hasEnv("VA_SUBSCRIPTION_START_PIPELINE_SLOTS"))  { start = envInt("VA_SUBSCRIPTION_START_PIPELINE_SLOTS", start);  subs_src_start_pipeline  = "env"; }
     if (hasEnv("VA_SUBSCRIPTION_MAX_QUEUE"))   { mq = envSize("VA_SUBSCRIPTION_MAX_QUEUE", mq); subs_src_queue = "env"; }
     if (hasEnv("VA_SUBSCRIPTION_TTL_SEC"))     { ttl = envInt("VA_SUBSCRIPTION_TTL_SEC", ttl);  subs_src_ttl   = "env"; }
     // 3) 应用到订阅管理器
     subscriptions->setHeavySlots(hs);
     subscriptions->setModelSlots(ms);
     subscriptions->setRtspSlots(rs);
+    subscriptions->setOpenRtspSlots(open);
+    subscriptions->setStartPipelineSlots(start);
     subscriptions->setMaxQueue(mq);
     subscriptions->setTtlSeconds(ttl);
     // Initialize DB pool and repositories if configured
