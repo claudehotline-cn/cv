@@ -82,5 +82,16 @@ if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for SSE cancel t
 python video-analyzer/test/scripts/check_cancel_sse_trace.py --base $BaseUrl
 Stop-VA
 
+Write-Host '== Report: failed reasons unknown ratio (best-effort) =='
+try {
+  $outDir = Join-Path 'video-analyzer' 'build-ninja/bin/logs'
+  if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out-Null }
+  $json = python video-analyzer/test/scripts/report_failed_unknown.py --base $BaseUrl
+  $json | Out-File -FilePath (Join-Path $outDir 'report_failed_unknown.json') -Encoding utf8
+  Write-Host 'saved' (Join-Path $outDir 'report_failed_unknown.json')
+} catch {
+  Write-Warning "report_failed_unknown failed: $_"
+}
+
 Write-Host 'All smoke tests passed.'
 
