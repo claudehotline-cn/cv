@@ -48,7 +48,7 @@ def main():
     try:
         assert wait_ok(12), "VA not healthy"
         # Create a subscription to ensure an enqueue event
-        payload = {"stream_id":"cam01","profile":"default","source_uri":"rtsp://127.0.0.1:8554/camera_01"}
+        payload = {"stream_id":"cam01","profile":"det_720p","source_uri":"rtsp://127.0.0.1:8554/camera_01"}
         _, code, _ = http_post("/api/subscriptions", payload)
         assert code in (200,202), f"unexpected subscribe code: {code}"
         # Quick restart to trigger failed restart scan
@@ -70,4 +70,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
