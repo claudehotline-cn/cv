@@ -265,7 +265,7 @@ bool SubscriptionManager::cancel(const std::string& id) {
         return true;
     }
     state->phase.store(SubscriptionPhase::Cancelled);
-    state->reason = "cancelled";
+    state->reason = va::core::reasons::kCancelled;
     if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) {
         auto now_ms = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -336,6 +336,8 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         if (!got_model) {
             state->phase.store(SubscriptionPhase::Failed);
             state->reason = va::core::reasons::kSubscribeFailed;
+            if (state->ts_failed.load(std::memory_order_relaxed) == 0)
+                state->ts_failed.store(now_ms(), std::memory_order_relaxed);
             recordCompletion(state, SubscriptionPhase::Failed);
             return;
         }
@@ -389,7 +391,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     if (state->cancel.load()) {
         ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
         state->phase.store(SubscriptionPhase::Cancelled);
-        state->reason = "cancelled";
+        state->reason = va::core::reasons::kCancelled;
         if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) state->ts_cancelled.store(now_ms(), std::memory_order_relaxed);
         recordCompletion(state, SubscriptionPhase::Cancelled);
         return;
