@@ -7,6 +7,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <array>
+#include <atomic>
 
 // 轻量骨架：ModelRegistry（LRU+idle TTL 预留）。
 // 当前版本仅记录模型元数据与最近访问时间；不持有实际推理会话。
@@ -56,6 +58,19 @@ public:
   std::string preheatStatus() const; // idle|running|done
   int warmedCount() const;
 
+  struct MetricsSnapshot {
+    bool enabled{false};
+    int concurrency{0};
+    int warmed{0};
+    // histogram bounds (seconds)
+    std::vector<double> bounds;
+    std::vector<std::uint64_t> bucket_counts; // same size as bounds
+    double duration_sum{0.0};
+    std::uint64_t duration_count{0};
+    std::uint64_t failed_total{0};
+  };
+  MetricsSnapshot metricsSnapshot() const;
+
 private:
   ModelRegistry() = default;
   void pruneIdleLocked();
@@ -75,6 +90,13 @@ private:
   enum class PreheatStatus { Idle, Running, Done };
   PreheatStatus preheat_status_{PreheatStatus::Idle};
   bool preheat_thread_spawned_{false};
+
+  // Metrics for preheat
+  std::array<double, 6> hist_bounds_{ {0.05, 0.1, 0.25, 0.5, 1.0, 2.0} };
+  std::array<std::atomic<std::uint64_t>, 6> hist_counts_{};
+  std::atomic<long long> hist_sum_us_{0};
+  std::atomic<std::uint64_t> hist_count_{0};
+  std::atomic<std::uint64_t> failed_total_{0};
 };
 
 } // namespace va::analyzer

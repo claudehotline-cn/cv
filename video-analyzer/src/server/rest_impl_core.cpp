@@ -1,9 +1,22 @@
 #include "server/rest_impl.hpp"
+#include "analyzer/model_registry.hpp"
+#include "core/wal.hpp"
 
 namespace va::server {
 
 RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application)
     : options(std::move(opts)), app(application), server(options) {
+    // WAL: init + mark restart + scan previous inflight (best-effort)
+    try { va::core::wal::init(); va::core::wal::mark_restart(); va::core::wal::scanInflightBeforeLastRestart(); } catch (...) {}
+
+    // Model registry: configure and start minimal preheat (best-effort)
+    try {
+        auto& mr = va::analyzer::ModelRegistry::instance();
+        mr.configureFromEnv();
+        mr.configurePreheatFromEnv();
+        mr.setModels(app.detectionModels());
+        mr.startPreheat();
+    } catch (...) { /* ignore */ }
     subscriptions = std::make_unique<SubscriptionManager>(app);
     subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
     // 1) 读取 YAML 配置

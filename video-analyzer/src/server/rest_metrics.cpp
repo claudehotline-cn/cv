@@ -1,4 +1,5 @@
 #include "server/rest_impl.hpp"
+#include "analyzer/model_registry.hpp"
 
 namespace va::server {
 
@@ -198,6 +199,27 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             mb.sample("va_wal_failed_restart_total", "{}", static_cast<unsigned long long>(va::core::wal::failedRestartCount()));
         } catch (...) {}
 
+        // Model registry preheat metrics (M1)
+        try {
+            auto& mr = va::analyzer::ModelRegistry::instance();
+            auto rs = mr.metricsSnapshot();
+            mb.header("va_model_preheat_enabled", "gauge", "Model preheat enabled (1/0)");
+            mb.sample("va_model_preheat_enabled", "{}", static_cast<unsigned long long>(rs.enabled ? 1 : 0));
+            mb.header("va_model_preheat_concurrency", "gauge", "Model preheat concurrency");
+            mb.sample("va_model_preheat_concurrency", "{}", static_cast<unsigned long long>(rs.concurrency));
+            mb.header("va_model_preheat_warmed_total", "gauge", "Models warmed (best-effort)");
+            mb.sample("va_model_preheat_warmed_total", "{}", static_cast<unsigned long long>(rs.warmed));
+            // duration histogram
+            mb.header("va_model_preheat_duration_seconds", "histogram", "Per-model preheat duration (s)");
+            unsigned long long accp = 0ULL;
+            for (size_t i=0;i<rs.bounds.size(); ++i) { accp += (i<rs.bucket_counts.size()? rs.bucket_counts[i] : 0ULL); std::ostringstream ls; ls << "{le=\""<<rs.bounds[i]<<"\"}"; mb.sample("va_model_preheat_duration_seconds_bucket", ls.str(), accp); }
+            std::ostringstream lsi; lsi << "{le=\"+Inf\"}"; mb.sample("va_model_preheat_duration_seconds_bucket", lsi.str(), rs.duration_count);
+            mb.sample("va_model_preheat_duration_seconds_sum", "{}", rs.duration_sum);
+            mb.sample("va_model_preheat_duration_seconds_count", "{}", rs.duration_count);
+            mb.header("va_model_preheat_failed_total", "counter", "Model preheat failures");
+            mb.sample("va_model_preheat_failed_total", "{}", static_cast<unsigned long long>(rs.failed_total));
+        } catch (...) {}
+
         // Subscription metrics (from SubscriptionManager, registry branch)
         if (subscriptions) {
             auto ms = subscriptions->metricsSnapshot();
@@ -231,6 +253,27 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             std::ostringstream lsi; lsi<<"{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi.str(), ms.duration_count);
             mb.sample("va_subscription_duration_seconds_sum", "{}", ms.duration_sum);
             mb.sample("va_subscription_duration_seconds_count", "{}", ms.duration_count);
+
+            // Per-phase duration histograms
+            auto emit_phase = [&](const char* phase,
+                                  const std::vector<uint64_t>& buckets,
+                                  double sum,
+                                  uint64_t cnt) {
+                mb.header("va_subscription_phase_seconds", "histogram", "Subscription phase duration in seconds");
+                unsigned long long accp = 0ULL;
+                for (size_t i=0;i<ms.bounds.size(); ++i) {
+                    accp += (i<buckets.size()? buckets[i]:0ULL);
+                    std::ostringstream ls; ls << "{phase=\""<<phase<<"\",le=\""<<ms.bounds[i]<<"\"}";
+                    mb.sample("va_subscription_phase_seconds_bucket", ls.str(), accp);
+                }
+                std::ostringstream lsi2; lsi2 << "{phase=\""<<phase<<"\",le=\"+Inf\"}"; mb.sample("va_subscription_phase_seconds_bucket", lsi2.str(), cnt);
+                std::ostringstream lss; lss << "{phase=\""<<phase<<"\"}";
+                mb.sample("va_subscription_phase_seconds_sum", lss.str(), sum);
+                mb.sample("va_subscription_phase_seconds_count", lss.str(), cnt);
+            };
+            emit_phase("opening_rtsp", ms.opening_bucket_counts, ms.opening_duration_sum, ms.opening_duration_count);
+            emit_phase("loading_model", ms.loading_bucket_counts, ms.loading_duration_sum, ms.loading_duration_count);
+            emit_phase("starting_pipeline", ms.starting_bucket_counts, ms.starting_duration_sum, ms.starting_duration_count);
         }
 
         HttpResponse resp;

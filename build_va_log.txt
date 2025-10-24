@@ -1,0 +1,39 @@
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.16
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+ninja: Entering directory `D:\\Projects\\ai\\cv\\video-analyzer\\build-ninja'
+[0/2] H:\CMake\bin\cmake.exe -P D:\Projects\ai\cv\video-analyzer\build-ninja\CMakeFiles\VerifyGlobs.cmake
+[1/3] "H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe"  /nologo /TP -DABSL_CONSUME_DLL -DHAVE_MYSQL_JDBC -DIXWEBSOCKET_HEADER_ONLY -DIXWEBSOCKET_USE_TLS=0 -DPROTOBUF_USE_DLLS -DUSE_CUDA -DUSE_FFMPEG -DUSE_GRPC -DUSE_ONNXRUNTIME -DVA_ENABLE_GRPC_SERVER -DVA_HAS_CUDA_KERNELS -DVA_WITH_MYSQL -DWITH_NVDEC -DWITH_NVENC -DYAML_CPP_STATIC_DEFINE -ID:\Projects\ai\cv\video-analyzer\include -ID:\Projects\ai\cv\third_party\onnxruntime-win-x64-gpu-1.23.0\include -ID:\Projects\ai\cv\video-analyzer\src -ID:\Projects\ai\cv\video-analyzer\build-ninja\generated -ID:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\include -ID:\Projects\ai\cv\third_party\mysql-connector-c++-9.4.0-winx64\include -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\vcpkg\installed\x64-windows\include" -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include" -I"H:\Windows Kits\10\include\10.0.26100.0\ucrt" -I"H:\Windows Kits\10\Include\10.0.26100.0\um" -I"H:\Windows Kits\10\Include\10.0.26100.0\shared" -ID:\Projects\ai\cv\third_party\yaml-cpp\yaml-cpp-0.8.0\include -external:ID:\Projects\vcpkg\installed\x64-windows\include\opencv4 -external:ID:\Projects\vcpkg\installed\x64-windows\include -external:I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\include" -external:W0 /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MD /W4 /utf-8 /showIncludes /FoCMakeFiles\VideoAnalyzer.dir\src\server\rest_metrics.cpp.obj /FdCMakeFiles\VideoAnalyzer.dir\ /FS -c D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp
+FAILED: [code=2] CMakeFiles/VideoAnalyzer.dir/src/server/rest_metrics.cpp.obj 
+"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe"  /nologo /TP -DABSL_CONSUME_DLL -DHAVE_MYSQL_JDBC -DIXWEBSOCKET_HEADER_ONLY -DIXWEBSOCKET_USE_TLS=0 -DPROTOBUF_USE_DLLS -DUSE_CUDA -DUSE_FFMPEG -DUSE_GRPC -DUSE_ONNXRUNTIME -DVA_ENABLE_GRPC_SERVER -DVA_HAS_CUDA_KERNELS -DVA_WITH_MYSQL -DWITH_NVDEC -DWITH_NVENC -DYAML_CPP_STATIC_DEFINE -ID:\Projects\ai\cv\video-analyzer\include -ID:\Projects\ai\cv\third_party\onnxruntime-win-x64-gpu-1.23.0\include -ID:\Projects\ai\cv\video-analyzer\src -ID:\Projects\ai\cv\video-analyzer\build-ninja\generated -ID:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\include -ID:\Projects\ai\cv\third_party\mysql-connector-c++-9.4.0-winx64\include -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\vcpkg\installed\x64-windows\include" -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include" -I"H:\Windows Kits\10\include\10.0.26100.0\ucrt" -I"H:\Windows Kits\10\Include\10.0.26100.0\um" -I"H:\Windows Kits\10\Include\10.0.26100.0\shared" -ID:\Projects\ai\cv\third_party\yaml-cpp\yaml-cpp-0.8.0\include -external:ID:\Projects\vcpkg\installed\x64-windows\include\opencv4 -external:ID:\Projects\vcpkg\installed\x64-windows\include -external:I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\include" -external:W0 /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MD /W4 /utf-8 /showIncludes /FoCMakeFiles\VideoAnalyzer.dir\src\server\rest_metrics.cpp.obj /FdCMakeFiles\VideoAnalyzer.dir\ /FS -c D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp
+D:\Projects\ai\cv\video-analyzer\build-ninja\generated\source_control.pb.h(2929): warning C4267: “return”: 从“size_t”转换到“int”，可能丢失数据
+D:\Projects\ai\cv\video-analyzer\build-ninja\generated\source_control.pb.h(3823): warning C4267: “return”: 从“size_t”转换到“int”，可能丢失数据
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(357): warning C4244: “初始化”: 从“SOCKET”转换到“int”，可能丢失数据
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(833): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(834): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(848): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(849): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(203): error C2039: "ModelRegistry": 不是 "va::analyzer" 的成员
+D:\Projects\ai\cv\video-analyzer\src\analyzer/analyzer.hpp(8): note: 参见“va::analyzer”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(203): error C3083: “ModelRegistry”:“::”左侧的符号必须是一种类型
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(203): error C2039: "instance": 不是 "va::analyzer" 的成员
+D:\Projects\ai\cv\video-analyzer\src\analyzer/analyzer.hpp(8): note: 参见“va::analyzer”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(203): error C3861: “instance”: 找不到标识符
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(206): error C3536: “rs”: 初始化之前无法使用
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(206): error C2661: “va::core::MetricsTextBuilder::sample”: 没有重载函数接受 2 个参数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(206): note: 尝试匹配参数列表“(const char [25], const char [3])”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(208): error C2661: “va::core::MetricsTextBuilder::sample”: 没有重载函数接受 2 个参数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(208): note: 尝试匹配参数列表“(const char [29], const char [3])”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(210): error C2661: “va::core::MetricsTextBuilder::sample”: 没有重载函数接受 2 个参数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(210): note: 尝试匹配参数列表“(const char [30], const char [3])”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(215): error C2661: “va::core::MetricsTextBuilder::sample”: 没有重载函数接受 2 个参数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(215): note: 尝试匹配参数列表“(const char [41], std::basic_string<char,std::char_traits<char>,std::allocator<char>>)”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(216): error C2661: “va::core::MetricsTextBuilder::sample”: 没有重载函数接受 2 个参数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(216): note: 尝试匹配参数列表“(const char [38], const char [3])”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(217): error C2661: “va::core::MetricsTextBuilder::sample”: 没有重载函数接受 2 个参数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(217): note: 尝试匹配参数列表“(const char [40], const char [3])”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(219): error C2661: “va::core::MetricsTextBuilder::sample”: 没有重载函数接受 2 个参数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(219): note: 尝试匹配参数列表“(const char [30], const char [3])”时
+ninja: build stopped: subcommand failed.

@@ -110,10 +110,21 @@ void ModelRegistry::runPreheat() {
   int in_flight = 0; size_t idx = 0;
   std::mutex m;
   auto worker = [this,&m](std::string id){
+    auto t0 = std::chrono::steady_clock::now();
     this->touch(id);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    auto t1 = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lk(m);
     warmed_ += 1;
+    // metrics: histogram update (seconds)
+    double sec = std::chrono::duration<double>(t1 - t0).count();
+    // cumulative-like bucket fill
+    for (size_t i=0;i<hist_bounds_.size();++i) {
+      if (sec <= hist_bounds_[i]) { hist_counts_[i].fetch_add(1, std::memory_order_relaxed); break; }
+      if (i == hist_bounds_.size()-1) { hist_counts_[i].fetch_add(1, std::memory_order_relaxed); }
+    }
+    hist_sum_us_.fetch_add(static_cast<long long>(sec * 1e6), std::memory_order_relaxed);
+    hist_count_.fetch_add(1, std::memory_order_relaxed);
   };
   std::vector<std::thread> threads;
   while (idx < items.size()) {
@@ -137,5 +148,22 @@ int ModelRegistry::preheatConcurrency() const { std::lock_guard<std::mutex> lk(m
 std::vector<std::string> ModelRegistry::preheatList() const { std::lock_guard<std::mutex> lk(mu_); return preheat_list_; }
 std::string ModelRegistry::preheatStatus() const { std::lock_guard<std::mutex> lk(mu_); switch(preheat_status_){case PreheatStatus::Idle: return "idle"; case PreheatStatus::Running: return "running"; default: return "done";} }
 int ModelRegistry::warmedCount() const { std::lock_guard<std::mutex> lk(mu_); return warmed_; }
+
+ModelRegistry::MetricsSnapshot ModelRegistry::metricsSnapshot() const {
+  MetricsSnapshot s;
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    s.enabled = preheat_enabled_;
+    s.concurrency = preheat_concurrency_;
+    s.warmed = warmed_;
+  }
+  s.bounds.assign(hist_bounds_.begin(), hist_bounds_.end());
+  s.bucket_counts.resize(hist_counts_.size());
+  for (size_t i=0;i<hist_counts_.size();++i) s.bucket_counts[i] = hist_counts_[i].load(std::memory_order_relaxed);
+  s.duration_sum = static_cast<double>(hist_sum_us_.load(std::memory_order_relaxed)) / 1e6;
+  s.duration_count = hist_count_.load(std::memory_order_relaxed);
+  s.failed_total = failed_total_.load(std::memory_order_relaxed);
+  return s;
+}
 
 } // namespace va::analyzer

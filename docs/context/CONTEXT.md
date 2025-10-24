@@ -61,3 +61,19 @@
 - 管理接口：/api/admin/wal/summary、/api/admin/wal/tail?n=200（读取证）。
 - 指标：订阅分阶段直方图与 WAL 维度标签；预热耗时与错误计数。
 - 脚本：WAL/预热校验脚本纳入 CI；文档补充 app.yaml 示例。
+
+## 进展追加（2025-10-24）
+- 新增管理接口（只读取证）：
+  - GET `/api/admin/wal/summary` → `{ enabled, failed_restart }`。
+  - GET `/api/admin/wal/tail?n=200` → `{ count, items[] }`（WAL 活动文件尾部）。
+- 指标补充：
+  - 订阅分阶段耗时直方图（opening_rtsp/loading_model/starting_pipeline）。
+  - 预热相关：`va_model_preheat_enabled`、`va_model_preheat_concurrency`、`va_model_preheat_warmed_total`、`va_model_preheat_duration_seconds{le=...}`、`va_model_preheat_failed_total`。
+  - `/metrics` 中 WAL 暴露：`va_wal_failed_restart_total`（已存在）。
+- 启动流程补强：
+  - 进程启动时 `wal::init()` → `mark_restart()` → `scanInflightBeforeLastRestart()`。
+  - ModelRegistry：从环境装配、采集模型清单、触发最小预热（并发可控）。
+- 测试新增：
+  - `test/scripts/check_admin_wal_endpoints.py`：管理接口基本校验（通过）。
+  - `test/scripts/check_preheat_status.py`：设置环境变量后校验 `/api/system/info.registry.preheat` 字段（通过）。
+  - `test/scripts/check_wal_scan.py`：启用 WAL 后制造一次订阅与快速重启，检查 `failed_restart` 非负且启用（通过）。

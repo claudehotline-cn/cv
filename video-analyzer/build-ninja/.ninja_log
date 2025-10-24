@@ -245,3 +245,16 @@
 3320	9577	7830102103074314	CMakeFiles/VideoAnalyzer.dir/src/server/rest_routes.cpp.obj	6539c24dede3678e
 3978	9747	7830102109652115	CMakeFiles/VideoAnalyzer.dir/src/server/rest_system.cpp.obj	1e1c0e6a0cf9012a
 9747	11296	7830102167353693	bin/VideoAnalyzer.exe	855a7cb47b8655e5
+17	69	7830109276871784	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+101	4038	7830109277714648	CMakeFiles/VideoAnalyzer.dir/src/server/rest_system.cpp.obj	1e1c0e6a0cf9012a
+93	4054	7830109277622652	CMakeFiles/VideoAnalyzer.dir/src/server/rest_impl_core.cpp.obj	e67636fb505c9aaa
+7	57	7830109641385860	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+68	699	7830109642003876	CMakeFiles/VideoAnalyzer.dir/src/analyzer/model_registry.cpp.obj	764b94bd4fe6a0da
+73	3652	7830109642048910	CMakeFiles/VideoAnalyzer.dir/src/app/application.cpp.obj	1ec01a0faa4bca57
+84	4022	7830109642159645	CMakeFiles/VideoAnalyzer.dir/src/server/rest_system.cpp.obj	1e1c0e6a0cf9012a
+76	4106	7830109642084113	CMakeFiles/VideoAnalyzer.dir/src/server/rest_impl_core.cpp.obj	e67636fb505c9aaa
+6	56	7830109966621063	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+5	56	7830111934071418	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+6	57	7830112270558663	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+69	4734	7830112271191362	CMakeFiles/VideoAnalyzer.dir/src/server/rest_metrics.cpp.obj	52fdc57fd6f8b31a
+4734	6589	7830112317843970	bin/VideoAnalyzer.exe	855a7cb47b8655e5
