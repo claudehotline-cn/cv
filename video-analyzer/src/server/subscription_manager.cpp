@@ -294,7 +294,9 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     if (state->ts_preparing.load(std::memory_order_relaxed) == 0) state->ts_preparing.store(now_ms(), std::memory_order_relaxed);
     if (state->cancel.load()) {
         state->phase.store(SubscriptionPhase::Cancelled);
-        state->reason = "cancelled";
+        state->reason = va::core::reasons::kCancelled;
+        if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) state->ts_cancelled.store(now_ms(), std::memory_order_relaxed);
+        recordCompletion(state, SubscriptionPhase::Cancelled);
         return;
     }
 
@@ -305,7 +307,9 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     struct OpenGuard { SubscriptionManager* m; bool a; ~OpenGuard(){ if(m&&a) m->releaseOpenRtspSlot(); } } og{this, got_open_slot};
     if (state->cancel.load()) {
         state->phase.store(SubscriptionPhase::Cancelled);
-        state->reason = "cancelled";
+        state->reason = va::core::reasons::kCancelled;
+        if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) state->ts_cancelled.store(now_ms(), std::memory_order_relaxed);
+        recordCompletion(state, SubscriptionPhase::Cancelled);
         return;
     }
 
@@ -318,7 +322,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         struct ModelGuard { SubscriptionManager* m; bool a; ~ModelGuard(){ if(m&&a) m->releaseModelSlot(); } } mg{this, got_model};
         if (!got_model) {
             state->phase.store(SubscriptionPhase::Failed);
-            state->reason = "shutdown";
+            state->reason = va::core::reasons::kSubscribeFailed;
             recordCompletion(state, SubscriptionPhase::Failed);
             return;
         }
@@ -333,7 +337,9 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
 
     if (state->cancel.load()) {
         state->phase.store(SubscriptionPhase::Cancelled);
-        state->reason = "cancelled";
+        state->reason = va::core::reasons::kCancelled;
+        if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) state->ts_cancelled.store(now_ms(), std::memory_order_relaxed);
+        recordCompletion(state, SubscriptionPhase::Cancelled);
         return;
     }
 
