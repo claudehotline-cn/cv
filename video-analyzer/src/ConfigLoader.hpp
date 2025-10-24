@@ -138,6 +138,12 @@ struct AppConfigPayload {
         struct DefaultCfg { int concurrent {3}; int rate_per_min {10}; } def;
         struct GlobalCfg { int concurrent {0}; } global; // 0=disabled
         struct AclCfg { std::vector<std::string> allowed_schemes; std::vector<std::string> allowed_profiles; } acl;
+        // Gray release / observe-only
+        bool observe_only { false };     // true: 不拦截，仅计数 would_drop
+        int enforce_percent { 100 };     // 0..100 采样拦截比例
+        std::vector<std::string> exempt_keys; // 白名单 keys，不受配额/ACL 影响
+        struct KeyOverride { std::string key; int concurrent {0}; int rate_per_min {0}; };
+        std::vector<KeyOverride> key_overrides; // 针对指定 key 的覆盖（0=不覆盖）
     } quotas;
     struct DatabasePoolConfig {
         int min {4};

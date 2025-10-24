@@ -53,8 +53,34 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                 if (v == "1" || v == "true" || v == "yes") prefer_reuse_ready = true;
             }
         } catch (...) { /* ignore */ }
-        // ACL checks (schemes and profiles)
+        // ACL checks (schemes and profiles) + quotas/gray release
         if (quotas.enabled) {
+            // Exempt keys bypass
+            auto keyEq = [&](const std::string& a, const std::string& b){ return toLower(a) == toLower(b); };
+            bool exempt = false; for (const auto& ek : quotas.exempt_keys) { if (keyEq(ek, request.requester_key.value_or(std::string()))) { exempt = true; break; } }
+            // Per-key overrides
+            int key_cc = quotas.def.concurrent; int key_rpm = quotas.def.rate_per_min;
+            for (const auto& ov : quotas.key_overrides) {
+                if (keyEq(ov.key, request.requester_key.value_or(std::string()))) {
+                    if (ov.concurrent > 0) key_cc = ov.concurrent;
+                    if (ov.rate_per_min > 0) key_rpm = ov.rate_per_min;
+                }
+            }
+            // Decide enforcement
+            bool enforce = !quotas.observe_only;
+            if (enforce && quotas.enforce_percent < 100) {
+                int dice = std::rand() % 100; enforce = (dice < quotas.enforce_percent);
+            }
+            auto record_would = [&](const char* reason){
+                if (enforce) return false; // if enforce==true, caller应立即 return
+                if (std::strcmp(reason, "global_concurrent")==0) quota_would_drop_global_concurrent_.fetch_add(1, std::memory_order_relaxed);
+                else if (std::strcmp(reason, "key_concurrent")==0) quota_would_drop_key_concurrent_.fetch_add(1, std::memory_order_relaxed);
+                else if (std::strcmp(reason, "key_rate")==0) quota_would_drop_key_rate_.fetch_add(1, std::memory_order_relaxed);
+                else if (std::strcmp(reason, "acl_scheme")==0) quota_would_drop_acl_scheme_.fetch_add(1, std::memory_order_relaxed);
+                else if (std::strcmp(reason, "acl_profile")==0) quota_would_drop_acl_profile_.fetch_add(1, std::memory_order_relaxed);
+                return true; // observed-only path: 允许继续
+            };
+            if (!exempt) {
             // scheme from source_uri
             auto src = request.source_uri;
             std::string sch; {
@@ -64,39 +90,35 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                 bool ok = false;
                 for (const auto& s : quotas.acl.allowed_schemes) { if (toLower(s) == sch) { ok = true; break; } }
                 if (!ok) {
-                    quota_drop_acl_scheme_.fetch_add(1, std::memory_order_relaxed);
-                    return errorResponse("acl: scheme not allowed", 403);
+                    if (enforce) { quota_drop_acl_scheme_.fetch_add(1, std::memory_order_relaxed); return errorResponse("acl: scheme not allowed", 403); }
+                    else { record_would("acl_scheme"); }
                 }
             }
             if (!quotas.acl.allowed_profiles.empty()) {
                 bool okp = false;
                 for (const auto& p : quotas.acl.allowed_profiles) { if (p == request.profile_id) { okp = true; break; } }
                 if (!okp) {
-                    quota_drop_acl_profile_.fetch_add(1, std::memory_order_relaxed);
-                    return errorResponse("acl: profile not allowed", 403);
+                    if (enforce) { quota_drop_acl_profile_.fetch_add(1, std::memory_order_relaxed); return errorResponse("acl: profile not allowed", 403); }
+                    else { record_would("acl_profile"); }
                 }
             }
             // Concurrency quotas
             if (quotas.global.concurrent > 0) {
                 auto ms = subscriptions->metricsSnapshot();
                 if (static_cast<int>(ms.in_progress) >= quotas.global.concurrent) {
-                    quota_drop_global_concurrent_.fetch_add(1, std::memory_order_relaxed);
-                    HttpResponse resp = errorResponse("quota: global concurrent limit", 429);
-                    resp.headers["Retry-After"] = "1";
-                    return resp;
+                    if (enforce) { quota_drop_global_concurrent_.fetch_add(1, std::memory_order_relaxed); HttpResponse resp = errorResponse("quota: global concurrent limit", 429); resp.headers["Retry-After"] = "1"; return resp; }
+                    else { record_would("global_concurrent"); }
                 }
             }
             const std::string key = request.requester_key.value_or(std::string());
-            if (quotas.def.concurrent > 0) {
+            if (key_cc > 0) {
                 int cur = subscriptions->countInProgressByKey(key);
-                if (cur >= quotas.def.concurrent) {
-                    quota_drop_key_concurrent_.fetch_add(1, std::memory_order_relaxed);
-                    HttpResponse resp = errorResponse("quota: key concurrent limit", 429);
-                    resp.headers["Retry-After"] = "1";
-                    return resp;
+                if (cur >= key_cc) {
+                    if (enforce) { quota_drop_key_concurrent_.fetch_add(1, std::memory_order_relaxed); HttpResponse resp = errorResponse("quota: key concurrent limit", 429); resp.headers["Retry-After"] = "1"; return resp; }
+                    else { record_would("key_concurrent"); }
                 }
             }
-            if (quotas.def.rate_per_min > 0) {
+            if (key_rpm > 0) {
                 auto now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
                 const std::uint64_t cutoff = now - 60000ULL;
                 bool over = false;
@@ -104,19 +126,18 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                     std::lock_guard<std::mutex> lk(quota_mu_);
                     auto& dq = quota_hits_by_key_ms_[key];
                     while (!dq.empty() && dq.front() < cutoff) dq.pop_front();
-                    if (static_cast<int>(dq.size()) >= quotas.def.rate_per_min) {
+                    if (static_cast<int>(dq.size()) >= key_rpm) {
                         over = true;
                     } else {
                         dq.push_back(now);
                     }
                 }
                 if (over) {
-                    quota_drop_key_rate_.fetch_add(1, std::memory_order_relaxed);
-                    HttpResponse resp = errorResponse("quota: key rate_per_min limit", 429);
-                    resp.headers["Retry-After"] = "60";
-                    return resp;
+                    if (enforce) { quota_drop_key_rate_.fetch_add(1, std::memory_order_relaxed); HttpResponse resp = errorResponse("quota: key rate_per_min limit", 429); resp.headers["Retry-After"] = "60"; return resp; }
+                    else { record_would("key_rate"); }
                 }
             }
+            } // not exempt
         }
         const std::string id = subscriptions->enqueue(request, prefer_reuse_ready);
         Json::Value payload = successPayload();

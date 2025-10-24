@@ -1,0 +1,36 @@
+name: VA Nightly Soak (Windows)
+
+on:
+  schedule:
+    - cron: '0 20 * * *' # daily 20:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  soak-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Soak run (build + start + load + capture)
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          & tools/run_soak.ps1 -BaseUrl 'http://127.0.0.1:8082' -Concurrency 20 -DurationMinutes 15 -ApiKey 'soak'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-artifacts
+          path: |
+            soak_summary.json
+            metrics.txt
+            wal_summary.json
+            wal_tail.json
+            video-analyzer/build-ninja/bin/config/**

@@ -669,9 +669,34 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             out << "va_cp_request_duration_seconds_sum{op=\""<<op<<"\"} "<< sum << "\n";
             out << "va_cp_request_duration_seconds_count{op=\""<<op<<"\"} "<< cnt << "\n";
         }
-    }
+        }
 
-    // Async DB writer queue lengths
+        // Quotas dropped/observe-only counters and feature toggles (plain text)
+        out << "# HELP va_quota_dropped_total Quota/ACL dropped requests by reason\n";
+        out << "# TYPE va_quota_dropped_total counter\n";
+        out << "va_quota_dropped_total{reason=\"global_concurrent\"} " << quota_drop_global_concurrent_.load(std::memory_order_relaxed) << "\n";
+        out << "va_quota_dropped_total{reason=\"key_concurrent\"} "    << quota_drop_key_concurrent_.load(std::memory_order_relaxed)    << "\n";
+        out << "va_quota_dropped_total{reason=\"key_rate\"} "          << quota_drop_key_rate_.load(std::memory_order_relaxed)          << "\n";
+        out << "va_quota_dropped_total{reason=\"acl_scheme\"} "        << quota_drop_acl_scheme_.load(std::memory_order_relaxed)        << "\n";
+        out << "va_quota_dropped_total{reason=\"acl_profile\"} "       << quota_drop_acl_profile_.load(std::memory_order_relaxed)       << "\n";
+
+        out << "# HELP va_quota_would_drop_total Quota/ACL would-drop (observe-only) by reason\n";
+        out << "# TYPE va_quota_would_drop_total counter\n";
+        out << "va_quota_would_drop_total{reason=\"global_concurrent\"} " << quota_would_drop_global_concurrent_.load(std::memory_order_relaxed) << "\n";
+        out << "va_quota_would_drop_total{reason=\"key_concurrent\"} "    << quota_would_drop_key_concurrent_.load(std::memory_order_relaxed)    << "\n";
+        out << "va_quota_would_drop_total{reason=\"key_rate\"} "          << quota_would_drop_key_rate_.load(std::memory_order_relaxed)          << "\n";
+        out << "va_quota_would_drop_total{reason=\"acl_scheme\"} "        << quota_would_drop_acl_scheme_.load(std::memory_order_relaxed)        << "\n";
+        out << "va_quota_would_drop_total{reason=\"acl_profile\"} "       << quota_would_drop_acl_profile_.load(std::memory_order_relaxed)       << "\n";
+
+        out << "# HELP va_feature_enabled Feature toggle enabled (1/0)\n";
+        out << "# TYPE va_feature_enabled gauge\n";
+        out << "va_feature_enabled{feature=\"quota_observe\"} " << (app.appConfig().quotas.observe_only ? 1 : 0) << "\n";
+        out << "va_feature_enabled{feature=\"quota_enforce\"} " << (app.appConfig().quotas.observe_only ? 0 : 1) << "\n";
+        out << "# HELP va_quota_enforce_percent Quota enforce percent (0-100)\n";
+        out << "# TYPE va_quota_enforce_percent gauge\n";
+        out << "va_quota_enforce_percent{} " << static_cast<unsigned long long>(app.appConfig().quotas.enforce_percent) << "\n";
+
+        // Async DB writer queue lengths
     {
         std::size_t qev = 0, qlg = 0;
         {

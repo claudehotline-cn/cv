@@ -368,7 +368,7 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
         }
     }
 
-    // quotas (P0)
+    // quotas (P0 + gray release)
     if (v["quotas"]) {
         const auto q = v["quotas"];
         if (q && q.IsMap()) {
@@ -385,13 +385,36 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
             }
             if (q["acl"]) {
                 const auto a = q["acl"];
-                if (a["allowed_schemes"]) {
+                if (a && a["allowed_schemes"]) {
                     payload.quotas.acl.allowed_schemes.clear();
                     for (const auto& it : a["allowed_schemes"]) payload.quotas.acl.allowed_schemes.push_back(it.as<std::string>());
                 }
-                if (a["allowed_profiles"]) {
+                if (a && a["allowed_profiles"]) {
                     payload.quotas.acl.allowed_profiles.clear();
                     for (const auto& it : a["allowed_profiles"]) payload.quotas.acl.allowed_profiles.push_back(it.as<std::string>());
+                }
+            }
+            // observe_only & enforce_percent
+            payload.quotas.observe_only = q["observe_only"].as<bool>(payload.quotas.observe_only);
+            {
+                int p = q["enforce_percent"].as<int>(payload.quotas.enforce_percent);
+                if (p < 0) p = 0; if (p > 100) p = 100; payload.quotas.enforce_percent = p;
+            }
+            // exempt_keys
+            payload.quotas.exempt_keys.clear();
+            if (q["exempt_keys"] && q["exempt_keys"].IsSequence()) {
+                for (const auto& it : q["exempt_keys"]) payload.quotas.exempt_keys.push_back(it.as<std::string>());
+            }
+            // key_overrides
+            payload.quotas.key_overrides.clear();
+            if (q["key_overrides"] && q["key_overrides"].IsSequence()) {
+                for (const auto& it : q["key_overrides"]) {
+                    if (!it || !it.IsMap()) continue;
+                    AppConfigPayload::QuotasConfig::KeyOverride o;
+                    o.key = it["key"].as<std::string>("");
+                    o.concurrent = it["concurrent"].as<int>(0);
+                    o.rate_per_min = it["rate_per_min"].as<int>(0);
+                    if (!o.key.empty()) payload.quotas.key_overrides.push_back(o);
                 }
             }
         }

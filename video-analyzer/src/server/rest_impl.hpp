@@ -49,6 +49,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <deque>
 #include <ctime>
 
 #ifdef _WIN32
@@ -1021,6 +1022,12 @@ struct RestServer::Impl {
     std::atomic<std::uint64_t> quota_drop_key_rate_{0};
     std::atomic<std::uint64_t> quota_drop_acl_scheme_{0};
     std::atomic<std::uint64_t> quota_drop_acl_profile_{0};
+    // Observe-only counts (no enforcement)
+    std::atomic<std::uint64_t> quota_would_drop_global_concurrent_{0};
+    std::atomic<std::uint64_t> quota_would_drop_key_concurrent_{0};
+    std::atomic<std::uint64_t> quota_would_drop_key_rate_{0};
+    std::atomic<std::uint64_t> quota_would_drop_acl_scheme_{0};
+    std::atomic<std::uint64_t> quota_would_drop_acl_profile_{0};
 
     std::optional<bool> metrics_registry_enabled_{};
     std::optional<bool> metrics_extended_labels_{};
