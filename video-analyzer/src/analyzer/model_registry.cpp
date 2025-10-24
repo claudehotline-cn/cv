@@ -50,6 +50,7 @@ void ModelRegistry::setModels(const std::vector<DetectionModelEntry>& models) {
     if (it == entries_.end()) {
       ModelMeta meta; meta.id = m.id; meta.task = m.task; meta.path = m.path; meta.provider.clear(); meta.device = 0; meta.last_used = std::chrono::system_clock::now();
       entries_.emplace(m.id, std::move(meta));
+      cache_new_total_.fetch_add(1, std::memory_order_relaxed);
     }
   }
   pruneIdleLocked();
@@ -58,7 +59,7 @@ void ModelRegistry::setModels(const std::vector<DetectionModelEntry>& models) {
 void ModelRegistry::touch(const std::string& model_id) {
   std::lock_guard<std::mutex> lk(mu_);
   auto it = entries_.find(model_id);
-  if (it != entries_.end()) it->second.last_used = std::chrono::system_clock::now();
+  if (it != entries_.end()) { it->second.last_used = std::chrono::system_clock::now(); cache_touch_total_.fetch_add(1, std::memory_order_relaxed); }
 }
 
 void ModelRegistry::schedulePreheat(const std::vector<std::string>& model_ids) {
@@ -74,6 +75,7 @@ void ModelRegistry::pruneIdleLocked() {
     auto age = std::chrono::duration_cast<std::chrono::seconds>(now - it->second.last_used).count();
     if (age >= idle_ttl_sec_ && entries_.size() > 1) {
       it = entries_.erase(it);
+      cache_evict_total_.fetch_add(1, std::memory_order_relaxed);
     } else {
       ++it;
     }
@@ -85,7 +87,7 @@ void ModelRegistry::pruneIdleLocked() {
     for (const auto& kv : entries_) arr.emplace_back(kv.first, kv.second.last_used);
     std::sort(arr.begin(), arr.end(), [](auto& a, auto& b){ return a.second < b.second; });
     std::size_t remove_n = entries_.size() - capacity_;
-    for (std::size_t i=0; i<remove_n && i<arr.size(); ++i) entries_.erase(arr[i].first);
+    for (std::size_t i=0; i<remove_n && i<arr.size(); ++i) { entries_.erase(arr[i].first); cache_evict_total_.fetch_add(1, std::memory_order_relaxed); }
   }
 }
 
@@ -159,6 +161,8 @@ int ModelRegistry::preheatConcurrency() const { std::lock_guard<std::mutex> lk(m
 std::vector<std::string> ModelRegistry::preheatList() const { std::lock_guard<std::mutex> lk(mu_); return preheat_list_; }
 std::string ModelRegistry::preheatStatus() const { std::lock_guard<std::mutex> lk(mu_); switch(preheat_status_){case PreheatStatus::Idle: return "idle"; case PreheatStatus::Running: return "running"; default: return "done";} }
 int ModelRegistry::warmedCount() const { std::lock_guard<std::mutex> lk(mu_); return warmed_; }
+std::size_t ModelRegistry::capacity() const { std::lock_guard<std::mutex> lk(mu_); return capacity_; }
+int ModelRegistry::idleTtlSeconds() const { std::lock_guard<std::mutex> lk(mu_); return idle_ttl_sec_; }
 
 ModelRegistry::MetricsSnapshot ModelRegistry::metricsSnapshot() const {
   MetricsSnapshot s;
@@ -167,6 +171,10 @@ ModelRegistry::MetricsSnapshot ModelRegistry::metricsSnapshot() const {
     s.enabled = preheat_enabled_;
     s.concurrency = preheat_concurrency_;
     s.warmed = warmed_;
+    s.cache_entries = entries_.size();
+    s.cache_new_total = cache_new_total_.load(std::memory_order_relaxed);
+    s.cache_touch_total = cache_touch_total_.load(std::memory_order_relaxed);
+    s.cache_evict_total = cache_evict_total_.load(std::memory_order_relaxed);
   }
   s.bounds.assign(hist_bounds_.begin(), hist_bounds_.end());
   s.bucket_counts.resize(hist_counts_.size());

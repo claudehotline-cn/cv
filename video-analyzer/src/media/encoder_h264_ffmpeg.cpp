@@ -1,4 +1,5 @@
 #include "media/encoder_h264_ffmpeg.hpp"
+#include "core/codec_registry.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -126,6 +127,8 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
     std::string encoder_name = codec && codec->name ? codec->name : "";
 
     VA_LOG_INFO() << "[Encoder] selected encoder name='" << encoder_name << "'";
+    // Metrics: encoder build (FFmpeg path)
+    try { va::core::CodecRegistry::noteEncoderBuild(encoder_name.empty()? std::string("ffmpeg") : encoder_name); } catch (...) {}
     if (encoder_name == "libx264") {
         const char* preset = settings.preset.empty() ? "veryfast" : settings.preset.c_str();
         av_opt_set(codec_ctx_->priv_data, "preset", preset, 0);

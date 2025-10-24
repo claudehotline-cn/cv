@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <queue>
+#include <deque>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -87,6 +88,11 @@ public:
     int openRtspSlots() const;
     int startPipelineSlots() const;
     int ttlSeconds() const;
+    // Fairness/merge metrics getters
+    uint64_t rrRotations() const;
+    uint64_t mergeHitNonTerminal() const;
+    uint64_t mergeHitReady() const;
+    uint64_t mergeMiss() const;
 
     struct MetricsSnapshot {
         size_t queue_length{0};
@@ -160,7 +166,7 @@ private:
     mutable std::mutex mutex_;
     std::unordered_map<std::string, StatePtr> states_;
     std::unordered_map<std::string, std::string> key_index_;
-    std::queue<Task> pending_;
+    std::deque<Task> pending_;
     mutable std::condition_variable tasks_cv_;
     std::vector<std::thread> workers_;
     bool stop_{false};
@@ -214,6 +220,14 @@ private:
     std::atomic<uint64_t> completed_ready_total_{0};
     std::atomic<uint64_t> completed_failed_total_{0};
     std::atomic<uint64_t> completed_cancelled_total_{0};
+
+    // Fair scheduling and merge metrics
+    std::string last_served_key_;
+    int fair_window_{8};
+    std::atomic<uint64_t> rr_rotations_{0};
+    std::atomic<uint64_t> merge_hit_non_terminal_{0};
+    std::atomic<uint64_t> merge_hit_ready_{0};
+    std::atomic<uint64_t> merge_miss_{0};
 
   // Metrics: failed reasons
   mutable std::mutex reasons_mu_;

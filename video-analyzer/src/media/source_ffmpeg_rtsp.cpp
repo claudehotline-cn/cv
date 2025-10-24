@@ -1,6 +1,7 @@
 #include "media/source_ffmpeg_rtsp.hpp"
 #include "core/logger.hpp"
 #include "core/drop_metrics.hpp"
+#include "core/codec_registry.hpp"
 #include "core/source_reconnects.hpp"
 
 namespace va::media {
@@ -174,6 +175,8 @@ bool FfmpegRtspSource::openImpl() {
             VA_LOG_C(::va::core::LogLevel::Error, "source.ffmpeg") << "avcodec_open2 failed ret=" << aopen << " (" << err << ")";
             closeImpl(); return false;
         }
+        // Metrics: decoder build (FFmpeg software path)
+        try { va::core::CodecRegistry::noteDecoderBuild(dec && dec->name ? dec->name : std::string("ffmpeg_sw")); } catch (...) {}
     }
     VA_LOG_C(::va::core::LogLevel::Info, "source.ffmpeg") << "open OK: " << dec_->width << "x" << dec_->height;
     return true;

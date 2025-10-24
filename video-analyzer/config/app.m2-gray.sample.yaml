@@ -1,0 +1,23 @@
+# M2 per-key gray rollout sample for quotas/ACL
+# Merge this quotas block into your runtime app.yaml (bin/config/app.yaml)
+
+quotas:
+  enabled: true
+  header_key: "X-API-Key"
+  default:
+    concurrent: 1
+    rate_per_min: 1
+  global:
+    concurrent: 100
+  acl:
+    allowed_schemes: ["rtsp", "rtsps"]
+    allowed_profiles: ["det_720p", "seg_720p"]
+  observe_only: false
+  enforce_percent: 100
+  exempt_keys: []
+  key_overrides:
+    - key: "vip-observe"
+      observe_only: true
+    - key: "vip-canary"
+      enforce_percent: 50
+

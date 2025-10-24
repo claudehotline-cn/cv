@@ -1,4 +1,5 @@
 #include "media/encoder_h264_nvenc.hpp"
+#include "core/codec_registry.hpp"
 
 namespace va::media {
 
@@ -8,7 +9,12 @@ bool NvencH264Encoder::open(const Settings& settings) {
     if (s.codec.empty() || s.codec == "h264") {
         s.codec = "h264_nvenc";
     }
-    return inner_.open(s);
+    bool ok = inner_.open(s);
+    if (ok) {
+        // Metrics: encoder build (NVENC path)
+        try { va::core::CodecRegistry::noteEncoderBuild(std::string("h264_nvenc")); } catch (...) {}
+    }
+    return ok;
 }
 
 bool NvencH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet) {
@@ -40,4 +46,3 @@ std::shared_ptr<IEncoder> makeNvencEncoder(const va::core::EncoderConfig& cfg) {
 }
 
 } // namespace va::media
-

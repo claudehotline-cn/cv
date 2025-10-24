@@ -174,6 +174,7 @@ HttpResponse RestServer::Impl::handleSystemInfo(const HttpRequest& /*req*/) {
   try {
     auto& mr = va::analyzer::ModelRegistry::instance();
     Json::Value reg(Json::objectValue);
+    // Preheat
     Json::Value pre(Json::objectValue);
     pre["enabled"] = mr.preheatEnabled();
     pre["concurrency"] = mr.preheatConcurrency();
@@ -185,7 +186,51 @@ HttpResponse RestServer::Impl::handleSystemInfo(const HttpRequest& /*req*/) {
     pre["status"] = mr.preheatStatus();
     pre["warmed"] = mr.warmedCount();
     reg["preheat"] = pre;
+    // Cache
+    Json::Value cache(Json::objectValue);
+    cache["enabled"] = mr.enabled();
+    cache["capacity"] = static_cast<Json::UInt64>(mr.capacity());
+    cache["idle_ttl_seconds"] = mr.idleTtlSeconds();
+    // entries from metrics snapshot
+    auto rs = mr.metricsSnapshot();
+    cache["entries"] = static_cast<Json::UInt64>(rs.cache_entries);
+    reg["cache"] = cache;
     data["registry"] = reg;
+  } catch (...) { /* ignore */ }
+  // Quotas/ACL snapshot (M2)
+  try {
+    const auto& q = app.appConfig().quotas;
+    Json::Value quotas(Json::objectValue);
+    quotas["enabled"] = q.enabled;
+    quotas["header_key"] = q.header_key;
+    quotas["observe_only"] = q.observe_only;
+    quotas["enforce_percent"] = q.enforce_percent;
+    Json::Value def(Json::objectValue);
+    def["concurrent"] = q.def.concurrent;
+    def["rate_per_min"] = q.def.rate_per_min;
+    quotas["default"] = def;
+    Json::Value g(Json::objectValue);
+    g["concurrent"] = q.global.concurrent;
+    quotas["global"] = g;
+    Json::Value acl(Json::objectValue);
+    {
+      Json::Value as(Json::arrayValue); for (const auto& s : q.acl.allowed_schemes) as.append(s); acl["allowed_schemes"] = as;
+      Json::Value ap(Json::arrayValue); for (const auto& p : q.acl.allowed_profiles) ap.append(p); acl["allowed_profiles"] = ap;
+    }
+    quotas["acl"] = acl;
+    {
+      Json::Value ex(Json::arrayValue); for (const auto& k : q.exempt_keys) ex.append(k); quotas["exempt_keys"] = ex;
+      Json::Value ovs(Json::arrayValue);
+      for (const auto& ov : q.key_overrides) {
+        Json::Value o(Json::objectValue);
+        o["key"] = ov.key; o["concurrent"] = ov.concurrent; o["rate_per_min"] = ov.rate_per_min;
+        if (ov.enforce_percent >= 0) o["enforce_percent"] = ov.enforce_percent;
+        if (ov.observe_only) o["observe_only"] = ov.observe_only;
+        ovs.append(o);
+      }
+      quotas["key_overrides"] = ovs;
+    }
+    data["quotas"] = quotas;
   } catch (...) { /* ignore */ }
   try {
     Json::Value wal(Json::objectValue);
@@ -305,6 +350,7 @@ HttpResponse RestServer::Impl::handlePreflight(const HttpRequest& req) {
 
         // Validate
         std::vector<std::string> reasons;
+        std::vector<std::string> advices;
         auto get_vec2i = [](const Json::Value& v) -> std::pair<int,int> {
             if (v.isArray() && v.size()>=2) return { v[0].asInt(), v[1].asInt() };
             return {0,0};
@@ -315,25 +361,68 @@ HttpResponse RestServer::Impl::handlePreflight(const HttpRequest& req) {
         std::string pix = caps.isMember("pix_fmt") ? caps["pix_fmt"].asString() : (caps.isMember("pixel_format")? caps["pixel_format"].asString() : "");
         if (!caps.isNull() && caps.isObject() && !pix.empty() && requires.isMember("color_format") && !in_str_list(requires["color_format"], pix)) {
             reasons.push_back(std::string("像素格式不匹配: ") + pix);
+            advices.push_back("切换为要求的 color_format（或在模型/图形中放宽 color_format）");
         }
         // resolution
         auto res = (caps.isObject() && caps.isMember("resolution")) ? get_vec2i(caps["resolution"]) : std::make_pair(0,0);
         auto maxr = requires.isMember("max_resolution") ? get_vec2i(requires["max_resolution"]) : std::make_pair(99999,99999);
         auto minr = requires.isMember("min_resolution") ? get_vec2i(requires["min_resolution"]) : std::make_pair(0,0);
         if ((res.first>0 && res.second>0)) {
-            if (res.first > maxr.first || res.second > maxr.second) {
+              if (res.first > maxr.first || res.second > maxr.second) {
                 reasons.push_back("分辨率超过上限: " + std::to_string(res.first) + "x" + std::to_string(res.second) + " > " + std::to_string(maxr.first) + "x" + std::to_string(maxr.second));
-            }
-            if (res.first < minr.first || res.second < minr.second) {
+                advices.push_back("降低分辨率至 <= " + std::to_string(maxr.first) + "x" + std::to_string(maxr.second));
+              }
+              if (res.first < minr.first || res.second < minr.second) {
                 reasons.push_back("分辨率低于下限: " + std::to_string(res.first) + "x" + std::to_string(res.second) + " < " + std::to_string(minr.first) + "x" + std::to_string(minr.second));
-            }
+                advices.push_back("提高分辨率至 >= " + std::to_string(minr.first) + "x" + std::to_string(minr.second));
+              }
         }
         // fps
         int fps = (caps.isObject() && caps.isMember("fps")) ? caps["fps"].asInt() : ((caps.isObject() && caps.isMember("frame_rate"))? caps["frame_rate"].asInt() : 0);
         auto fr = requires.isMember("fps_range") ? get_vec2i(requires["fps_range"]) : std::make_pair(0, 1000);
         if (fps>0 && (fps < fr.first || fps > fr.second)) {
             reasons.push_back("帧率不在范围 " + std::to_string(fr.first) + "-" + std::to_string(fr.second) + ": " + std::to_string(fps));
+            if (fps < fr.first) advices.push_back("提高帧率至 >= " + std::to_string(fr.first));
+            if (fps > fr.second) advices.push_back("降低帧率至 <= " + std::to_string(fr.second));
         }
+
+        // Quotas/ACL evaluation (read-only prediction)
+        Json::Value quotas_eval(Json::objectValue);
+        try {
+            const auto& q = app.appConfig().quotas;
+            quotas_eval["enabled"] = q.enabled;
+            std::string requester_key;
+            // Header first, then body.requester_key
+            std::string header_name = q.header_key.empty()? std::string("X-API-Key") : q.header_key;
+            std::string header_lc = toLower(header_name);
+            for (const auto& h : req.headers) { if (toLower(h.first) == header_lc) { requester_key = h.second; break; } }
+            if (requester_key.empty() && body.isMember("requester_key") && body["requester_key"].isString()) requester_key = body["requester_key"].asString();
+            std::string profile = body.isMember("profile") && body["profile"].isString() ? body["profile"].asString() : std::string();
+            std::string source_uri = body.isMember("source_uri") && body["source_uri"].isString() ? body["source_uri"].asString() : std::string();
+            // scheme
+            std::string sch; { auto p = source_uri.find(":"); if (p!=std::string::npos) sch = toLower(source_uri.substr(0,p)); }
+            auto keyEq = [&](const std::string& a, const std::string& b){ return toLower(a)==toLower(b); };
+            // overrides
+            int key_cc = q.def.concurrent; int key_rpm = q.def.rate_per_min; (void)key_rpm;
+            bool ov_observe_only=false; bool ov_has_enf=false; int ov_enf=-1;
+            for (const auto& ov : q.key_overrides) {
+                if (keyEq(ov.key, requester_key)) {
+                    if (ov.concurrent > 0) key_cc = ov.concurrent;
+                    if (ov.observe_only) ov_observe_only = true;
+                    if (ov.enforce_percent >= 0 && ov.enforce_percent <= 100) { ov_has_enf = true; ov_enf = ov.enforce_percent; }
+                }
+            }
+            bool observe_only = q.observe_only || ov_observe_only;
+            int eff_enf = ov_has_enf ? ov_enf : q.enforce_percent;
+            quotas_eval["observe_only"] = observe_only;
+            quotas_eval["enforce_percent"] = eff_enf;
+            Json::Value would(Json::arrayValue);
+            if (!q.acl.allowed_schemes.empty() && !sch.empty()) { bool ok=false; for(const auto& s:q.acl.allowed_schemes){ if(toLower(s)==sch){ ok=true; break; }} if(!ok) would.append("acl_scheme"); }
+            if (!q.acl.allowed_profiles.empty() && !profile.empty()) { bool okp=false; for(const auto& p:q.acl.allowed_profiles){ if(p==profile){ okp=true; break; }} if(!okp) would.append("acl_profile"); }
+            if (q.global.concurrent > 0 && subscriptions) { auto ms=subscriptions->metricsSnapshot(); if (static_cast<int>(ms.in_progress) >= q.global.concurrent) would.append("global_concurrent"); }
+            if (key_cc > 0 && subscriptions && !requester_key.empty()) { int cur=subscriptions->countInProgressByKey(requester_key); if (cur >= key_cc) would.append("key_concurrent"); }
+            quotas_eval["would_drop"] = would;
+        } catch (...) {}
 
         Json::Value payload = successPayload();
         Json::Value data(Json::objectValue);
@@ -341,6 +430,30 @@ HttpResponse RestServer::Impl::handlePreflight(const HttpRequest& req) {
         Json::Value arr(Json::arrayValue); for(const auto& r: reasons) arr.append(r); data["reasons"] = arr;
         if (!requires.isNull()) data["requires"] = requires;
         if (!caps.isNull()) data["caps"] = caps;
+        if (!advices.empty()) { Json::Value arr2(Json::arrayValue); for (const auto& s : advices) arr2.append(s); data["advice"] = arr2; }
+        if (!quotas_eval.isNull()) {
+            // Provide suggestions for predicted would_drop reasons
+            try {
+                Json::Value qadv(Json::arrayValue);
+                if (quotas_eval.isMember("would_drop") && quotas_eval["would_drop"].isArray()) {
+                    for (const auto& w : quotas_eval["would_drop"]) {
+                        if (!w.isString()) continue;
+                        const std::string r = w.asString();
+                        Json::Value item(Json::objectValue);
+                        item["reason"] = r;
+                        if (r == "acl_scheme") item["suggest"] = "更换为允许的协议方案(如 rtsp/rtsp+ssl)或更新 ACL 配置";
+                        else if (r == "acl_profile") item["suggest"] = "切换为允许的 profile 或在配置中添加该 profile";
+                        else if (r == "global_concurrent") item["suggest"] = "等待系统空闲或扩大全局并发上限";
+                        else if (r == "key_concurrent") item["suggest"] = "降低该 key 的并发或为该 key 提升并发上限";
+                        else if (r == "key_rate") item["suggest"] = "降低每分钟创建频率或提高该 key 的速率配额";
+                        else item["suggest"] = "联系管理员查看配额与 ACL 设置";
+                        qadv.append(item);
+                    }
+                }
+                if (!qadv.empty()) data["quotas_advice"] = qadv;
+            } catch (...) {}
+            data["quotas"] = quotas_eval;
+        }
         payload["data"] = data;
         return jsonResponse(payload, 200);
     } catch (const std::exception& ex) {
@@ -382,3 +495,6 @@ HttpResponse RestServer::Impl::handleSystemStats(const HttpRequest& /*req*/) {
 }
 
 } // namespace va::server
+
+// cache-info-marker
+

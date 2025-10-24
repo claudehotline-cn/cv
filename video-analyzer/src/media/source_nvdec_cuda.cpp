@@ -2,6 +2,7 @@
 #include "core/logger.hpp"
 #include "core/nvdec_events.hpp"
 #include "core/drop_metrics.hpp"
+#include "core/codec_registry.hpp"
 
 namespace va::media {
 
@@ -128,6 +129,8 @@ bool NvdecRtspSource::openImpl() {
     }
 
     if (avcodec_open2(dec_ctx_, dec, nullptr) < 0) { closeImpl(); return false; }
+    // Metrics: decoder build (NVDEC path)
+    try { va::core::CodecRegistry::noteDecoderBuild(std::string("nvdec")); } catch (...) {}
     width_ = dec_ctx_->width;
     height_ = dec_ctx_->height;
     return true;

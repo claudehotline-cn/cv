@@ -1,0 +1,63 @@
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.16
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+ninja: Entering directory `D:\\Projects\\ai\\cv\\video-analyzer\\build-ninja'
+[0/2] H:\CMake\bin\cmake.exe -P D:\Projects\ai\cv\video-analyzer\build-ninja\CMakeFiles\VerifyGlobs.cmake
+ninja: no work to do.
+admin wal endpoints: OK
+Requirement already satisfied: pip in h:\anaconda3\lib\site-packages (25.2)
+Requirement already satisfied: requests in h:\anaconda3\lib\site-packages (2.32.3)
+Requirement already satisfied: charset-normalizer<4,>=2 in h:\anaconda3\lib\site-packages (from requests) (3.3.2)
+Requirement already satisfied: idna<4,>=2.5 in h:\anaconda3\lib\site-packages (from requests) (3.7)
+Requirement already satisfied: urllib3<3,>=1.21.1 in h:\anaconda3\lib\site-packages (from requests) (2.3.0)
+Requirement already satisfied: certifi>=2017.4.17 in h:\anaconda3\lib\site-packages (from requests) (2025.8.3)
+[OK] phase histogram present
+[OK] metrics exposure looks good (base)
+[OK] headers + cache semantics verified
+[FAIL] POST expected 200/202, got 429
+2025-10-25 02:21:54.460 [INFO][app] Using user-provided config directory: 'video-analyzer\build-ninja\bin\config'
+2025-10-25 02:21:54.462 [INFO][app] [Startup] multistage use=true graph_id='analyzer_multistage_example' yaml=''
+2025-10-25 02:21:54.462 [INFO][app] [Startup] engine.options keys: use_multistage graph_id
+2025-10-25 02:21:54.462 [INFO][app] [Startup] resolved graph YAML: D:\Projects\ai\cv\video-analyzer\build-ninja\bin\config\graphs\analyzer_multistage_example.yaml
+2025-10-25 02:21:54.462 [INFO][composition] engine.set(commit) type='ort-cpu' provider='cpu' device=0 use_multistage='true' graph_id='analyzer_multistage_example' yaml='D:\Projects\ai\cv\video-analyzer\build-ninja\bin\config\graphs\analyzer_multistage_example.yaml' option_keys=[use_io_binding,overlay_alpha,prefer_pinned_memory,allow_cpu_fallback,enable_profiling,warmup_runs,use_ffmpeg_source,overlay_thickness,trt_fp16,graph_id,trt_int8,trt_workspace_mb,use_multistage,multistage_yaml]
+2025-10-25 02:21:54.465 [INFO][rest] listening on 0.0.0.0:8082
+2025-10-25 02:21:54.466 [INFO][app] [ControlPlane] gRPC started at 0.0.0.0:50051
+2025-10-25 02:21:54.466 [INFO][app] Video analyzer running.
+2025-10-25 02:21:54.466 [INFO][app] [ControlPlane] VSM watch connecting addr=127.0.0.1:7070 interval_ms=1500
+preheat status: OK
+2025-10-25 02:21:56.664 [INFO][app] Using user-provided config directory: 'video-analyzer\build-ninja\bin\config'
+2025-10-25 02:21:56.667 [INFO][app] [Startup] multistage use=true graph_id='analyzer_multistage_example' yaml=''
+2025-10-25 02:21:56.667 [INFO][app] [Startup] engine.options keys: use_multistage graph_id
+2025-10-25 02:21:56.667 [INFO][app] [Startup] resolved graph YAML: D:\Projects\ai\cv\video-analyzer\build-ninja\bin\config\graphs\analyzer_multistage_example.yaml
+2025-10-25 02:21:56.667 [INFO][composition] engine.set(commit) type='ort-cpu' provider='cpu' device=0 use_multistage='true' graph_id='analyzer_multistage_example' yaml='D:\Projects\ai\cv\video-analyzer\build-ninja\bin\config\graphs\analyzer_multistage_example.yaml' option_keys=[use_io_binding,overlay_alpha,prefer_pinned_memory,allow_cpu_fallback,enable_profiling,warmup_runs,use_ffmpeg_source,overlay_thickness,trt_fp16,graph_id,trt_int8,trt_workspace_mb,use_multistage,multistage_yaml]
+2025-10-25 02:21:56.673 [INFO][rest] listening on 0.0.0.0:8082
+2025-10-25 02:21:56.673 [INFO][app] [ControlPlane] gRPC started at 0.0.0.0:50051
+2025-10-25 02:21:56.673 [INFO][app] Video analyzer running.
+2025-10-25 02:21:56.674 [INFO][app] [ControlPlane] VSM watch connecting addr=127.0.0.1:7070 interval_ms=1500
+2025-10-25 02:21:57.176 [INFO][app] [PipelineBuilder] building pipeline stream=cam01 profile=det_720p uri=rtsp://127.0.0.1:8554/camera_01 model=det:yolo:v12l
+2025-10-25 02:21:57.177 [INFO][app] [PipelineBuilder] creating source...
+2025-10-25 02:21:57.177 [INFO][composition] FFmpeg RTSP source selected for URI rtsp://127.0.0.1:8554/camera_01
+2025-10-25 02:21:57.177 [INFO][app] [PipelineBuilder] source created.
+2025-10-25 02:21:57.177 [INFO][app] [PipelineBuilder] creating analyzer...
+2025-10-25 02:21:57.177 [INFO][composition] Multistage analyzer enabled (via engine option/env).
+2025-10-25 02:21:57.256 [INFO][app] Using user-provided config directory: 'video-analyzer\build-ninja\bin\config'
+2025-10-25 02:21:57.258 [INFO][app] [Startup] multistage use=true graph_id='analyzer_multistage_example' yaml=''
+2025-10-25 02:21:57.258 [INFO][app] [Startup] engine.options keys: use_multistage graph_id
+2025-10-25 02:21:57.258 [INFO][app] [Startup] resolved graph YAML: D:\Projects\ai\cv\video-analyzer\build-ninja\bin\config\graphs\analyzer_multistage_example.yaml
+2025-10-25 02:21:57.258 [INFO][composition] engine.set(commit) type='ort-cpu' provider='cpu' device=0 use_multistage='true' graph_id='analyzer_multistage_example' yaml='D:\Projects\ai\cv\video-analyzer\build-ninja\bin\config\graphs\analyzer_multistage_example.yaml' option_keys=[use_io_binding,overlay_alpha,prefer_pinned_memory,allow_cpu_fallback,enable_profiling,warmup_runs,use_ffmpeg_source,overlay_thickness,trt_fp16,graph_id,trt_int8,trt_workspace_mb,use_multistage,multistage_yaml]
+2025-10-25 02:21:57.262 [INFO][rest] listening on 0.0.0.0:8082
+2025-10-25 02:21:57.263 [INFO][app] [ControlPlane] gRPC started at 0.0.0.0:50051
+2025-10-25 02:21:57.263 [INFO][app] Video analyzer running.
+2025-10-25 02:21:57.263 [INFO][app] [ControlPlane] VSM watch connecting addr=127.0.0.1:7070 interval_ms=1500
+wal scan: OK (failed_restart= 1 )
+{'id': '00000001e271c1b1', 'delete_code': 202, 'sse_connected': True, 'observed_phases': ['starting_pipeline', 'cancelled'], 'got_cancel_sse': True, 'phase': 'cancelled', 'timeline_keys': ['cancelled', 'loading_model', 'opening_rtsp', 'pending', 'preparing', 'starting_pipeline'], 'pass': True}
+{'missing': [], 'bad_types': [], 'bad_source': [], 'pass': True}
+{'phase': 'failed', 'has_total_hist': True, 'has_phase_hist': True, 'has_failed_reason': True, 'pass': True}
+{"pass": true, "missing": [], "values": {"enabled": true, "enforce_percent": 100, "exempt_count": 0, "override_count": 0}}
+{"pass": true, "missing": []}
+{"pass": true, "checks": {"allowed_202": true, "disallowed_scheme_403": true, "disallowed_profile_403": true}, "skips": []}
+{"pass": true, "skipped": true, "reason": "precondition not met: http allowed or exempt_keys empty"}
+{"pass": true, "skipped": true, "reason": "no key_overrides configured", "checks": {}}
+

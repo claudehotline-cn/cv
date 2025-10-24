@@ -1,34 +1,29 @@
 # 路线图总览
 
-- M0｜接口稳定性与可观测基线（已起步）
-  - 目标：统一 REST 语义（POST 202+Location、GET ETag/304），提供系统/全局基础指标，构建与运行脚本稳定。
-  - 验收标准：headers+cache 脚本通过；/metrics 基础指标可抓取；订阅 GET 命中 304；构建与启动一次成功。
-- M1｜WAL 与注册表预热（进行中）
-  - 目标：接入 WAL 持久化与重启扫描、模型/编解码注册表预热、将状态/指标对外曝光。
-  - 验收标准：/api/system/info 暴露 wal/registry.preheat 字段；/metrics 出现 va_wal_failed_restart_total；WAL 文件滚动与 TTL 生效；重启后 inflight 近似统计可用。
-- M2｜配额/ACL 与压测可视化（规划）
-  - 目标：配额/ACL 生效并可观测；Grafana 大盘；N=50/100 压测与 24h soak 通过；P95/失败率等门槛达标。
-  - 验收标准：P95 达标、失败率低于阈值；大盘覆盖关键链路；长时间运行无崩溃与资源泄漏。
+- M0「REST 稳定化与拆分」：完成 `rest.cpp` 业务化拆分；POST 订阅返回 202+Location；GET 订阅支持 ETag/304；取消与 reason 归一。验收：构建通过、冒烟测试通过、Headers/ETag 用例通过。
+- M1「WAL 与预热」：订阅事件 WAL 持久化+重启扫描；模型/编解码预热与状态曝光；指标完善与 Admin 只读接口。验收：WAL 计数器增长、`/admin/wal` 可用、`/system/info` 预热字段正确、相关脚本通过。
+- M2「配额/ACL 灰度与压测」：observe_only/enforce_percent 灰度发布；ACL/Key 覆盖；Grafana 大盘完善；soak 稳定。验收：丢弃/将丢弃指标符合灰度预期；soak 误差低于阈值；面板可直观诊断。
 
 # 分阶段计划（表格）
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| M0 | REST 语义统一；拆分大文件；基础指标；脚本化校验 | POST 202+Location；GET ETag/304；rest.cpp 模块化；基线指标 | 链接占用→先停再构建；SSE 异常→心跳/限速 | headers+cache 通过；/metrics 可抓取；构建通过 |
-| M1 | WAL + 预热 + 状态曝光 | WAL init/mark_restart/scan；注册表预热；/system/info & /metrics 暴露 | 文件滚动/锁竞争→加锁与 size/TTL 滚动；预热耗时→并发上限 | /system/info 含 wal/registry；va_wal_failed_restart_total 可见 |
-| M2 | 配额/ACL；Grafana；压测/soak | per-key/GPU 配额/节流；ACL 配置/验证；Grafana 面板；压测脚本 | 规则误杀→灰度豁免；高并发→背压降级 | P95、失败率达标；24h soak 0 崩溃/无泄漏 |
+| M0 | REST 拆分+语义加固 | 路由拆分、ETag/304、202+Location、取消归一 | 回归多、接口行为变更 → 加冒烟与兼容层 | Headers/ETag 用例 100% 通过 |
+| M1 | WAL 最小闭环、预热 | JSONL 滚动/TTL、重启扫描、后台预热 | IO 抖动/旋转错误 → 限流+重试+告警 | wal_failed_restart_total=0（常态） |
+| M2 | 配额/ACL 灰度 | observe/enforce、key 覆盖、ACL 规则 | 误封或放行 → 灰度+白名单+只观察期 | dropped≤期望；would_drop≥dropped |
+| 观测 | 指标/面板完善 | 阶段直方图、失败原因维度、配额看板 | 指标基数过高 → 采样+聚合 | 指标样本稳定、面板无报警 |
+| CI/测试 | 脚本与 E2E | pwsh 编排、Python 脚本、MCP 取证 | Windows 环境差异 → 容错与超时提升 | 冒烟全绿，soak 误差<1% |
 
 # 依赖矩阵
 
-- 内部依赖：
-  - video-analyzer（VA）、control_plane_embedded、video-source-manager（VSM）、web-frontend（可视化与 E2E）。
-- 外部依赖（库/服务/硬件）：
-  - WinSock/Windows SDK；ONNX Runtime/TensorRT；FFmpeg/mediamtx；Prometheus/Grafana；MySQL（Connector/C++）；libdatachannel；NVIDIA GPU（NVDEC/NVENC）。
+- 内部依赖：VA ⇄ VSM（gRPC/REST）；CP ⇄ VA/VSM（gRPC）；前端 ⇄ CP（HTTP）。
+- 外部依赖（库/服务/硬件）：MySQL(127.0.0.1:13306)；RTSP 服务；Prometheus/Grafana；可选 CUDA/NVDEC/NVENC；CMake/VS 工具链。
 
 # 风险清单（Top-5）
 
-- SSE/连接管理不稳 → 长连接堆积或异常关闭 → 事件频率异常、FD 数上涨 → 心跳+限速+空闲超时+连接上限，必要时降级为长轮询。
-- 资源泄漏/内存增长 → 压测或 soak 中常驻内存爬升 → RSS/句柄异常 → 引入内存/FD 监控，阶段性压测与快照比对，回滚可疑改动。
-- 指标缺口/不一致 → 阶段直方图、失败原因缺失 → /metrics 值为 0 → 增量补齐指标，统一枚举与标签，脚本对齐校验。
-- 预热抖动 → 大量模型/编解码预热耗时 → 启动延时 → 异步预热+并发上限+LRU/TTL；/system/info 暴露进度与错误。
-- 过载与 429 策略 → 突发流量导致队列饱和 → 响应变慢/错误率升高 → 背压与 Retry-After；配额分级（M2）；压测阈值接入告警。
+- Windows 链接占用 → 进程未停 → 构建失败/LNK1104 → 构建前 Stop-Process/端口检查。
+- RTSP/网络抖动 → 并发/重试不足 → soak err 上升 → 提高超时与退避、并发降级、错误分类上报。
+- 数据库不可用 → 源管理失败 → `/api/sources` 异常 → 启动前健康检查、重试与降级（只读缓存）。
+- 指标基数过高 → 存储/面板卡顿 → 报警延迟 → 指标降维/采样、分桶与聚合控制。
+- WAL 旋转/TTL 缺陷 → 扫描遗漏/膨胀 → 重启恢复异常 → 写入护栏、扫描校验、e2e 重启演练与告警。
+

@@ -1,4 +1,5 @@
 #include "server/rest_impl.hpp"
+#include "server/sse_metrics.hpp"
 
 namespace va::server {
 
@@ -126,6 +127,9 @@ HttpResponse RestServer::Impl::handleSourcesWatch(const HttpRequest& req) {
 }
 
 void RestServer::Impl::streamSourcesSSE(int fd, const HttpRequest& req) {
+    struct Guard { ~Guard(){ va::server::g_sse_sources_active.fetch_sub(1, std::memory_order_relaxed); } } guard;
+    va::server::g_sse_sources_active.fetch_add(1, std::memory_order_relaxed);
+    try { auto it=req.headers.find("Last-Event-ID"); if (it!=req.headers.end()) va::server::g_sse_reconnects_total.fetch_add(1ULL, std::memory_order_relaxed); } catch (...) {}
     sseWriteHeaders(fd);
     auto q = parseQueryKV(req.query);
     auto get_uint64 = [&](const char* k, uint64_t def) { auto it=q.find(k); if(it==q.end()) return def; try{ return static_cast<uint64_t>(std::stoull(it->second)); }catch(...) { return def; } };

@@ -1,20 +1,20 @@
 engine:
-  type: ort-cuda
-  provider: cuda
+  type: ort-cpu
+  provider: cpu
   device: 0
   options:
     # Default to FFmpeg RTSP source for better stability on Windows
-    use_ffmpeg_source: false
-    use_nvdec: true
-    use_nvenc: true
+    use_ffmpeg_source: true
+    use_nvdec: false
+    use_nvenc: false
     use_multistage: true
-    use_io_binding: true
-    device_output_views: true
+    use_io_binding: false
+    device_output_views: false
     stage_device_outputs: false
-    use_cuda_nms: true
+    use_cuda_nms: false
     render_passthrough: false
-    render_cuda: true
-    use_cuda_preproc: true
+    render_cuda: false
+    use_cuda_preproc: false
     graph_id: analyzer_multistage_example
     warmup_runs: auto
     overlay_thickness: 3                                                       
@@ -32,7 +32,7 @@ defaults:
     impl: ffmpeg
     rtsp:
       prefer_tcp: true
-      timeout_ms: 5000
+      timeout_ms: 1500
   encoder:
     impl: ffmpeg_h264
     width: 1280
@@ -113,3 +113,13 @@ quotas:
   acl:
     allowed_schemes: ["rtsp", "rtsps"]
     allowed_profiles: ["det_720p", "seg_720p"]
+  observe_only: false
+  enforce_percent: 100
+  exempt_keys: []
+  key_overrides:
+    - key: "vip-observe"
+      observe_only: true
+    - key: "vip-canary"
+      enforce_percent: 50
+
+

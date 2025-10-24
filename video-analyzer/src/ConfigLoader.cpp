@@ -414,6 +414,10 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
                     o.key = it["key"].as<std::string>("");
                     o.concurrent = it["concurrent"].as<int>(0);
                     o.rate_per_min = it["rate_per_min"].as<int>(0);
+                    // Optional gray controls per-key
+                    o.observe_only = it["observe_only"].as<bool>(false);
+                    o.enforce_percent = it["enforce_percent"].as<int>(-1);
+                    if (o.enforce_percent < -1) o.enforce_percent = -1; if (o.enforce_percent > 100) o.enforce_percent = 100;
                     if (!o.key.empty()) payload.quotas.key_overrides.push_back(o);
                 }
             }

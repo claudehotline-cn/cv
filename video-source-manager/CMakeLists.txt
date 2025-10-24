@@ -42,40 +42,34 @@ set(HDR
 add_executable(${PROJECT_NAME} ${SRC} ${HDR})
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-# gRPC / Protobuf (optional)
-option(USE_GRPC "Enable gRPC for VSM" ON)
-if (USE_GRPC)
-    find_package(protobuf CONFIG QUIET)
-    find_package(gRPC CONFIG QUIET)
-    if (Protobuf_FOUND AND gRPC_FOUND)
-        add_definitions(-DUSE_GRPC)
-        set(_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
-        set(_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
-        file(MAKE_DIRECTORY ${_GEN_DIR})
-        set(pb_cc  ${_GEN_DIR}/source_control.pb.cc)
-        set(pb_h   ${_GEN_DIR}/source_control.pb.h)
-        set(grpc_cc ${_GEN_DIR}/source_control.grpc.pb.cc)
-        set(grpc_h  ${_GEN_DIR}/source_control.grpc.pb.h)
-        add_custom_command(OUTPUT ${pb_cc} ${pb_h}
-            COMMAND protobuf::protoc ARGS --cpp_out ${_GEN_DIR} -I ${_PROTO_DIR} ${_PROTO_DIR}/source_control.proto
-            DEPENDS ${_PROTO_DIR}/source_control.proto)
-        add_custom_command(OUTPUT ${grpc_cc} ${grpc_h}
-            COMMAND protobuf::protoc ARGS --grpc_out ${_GEN_DIR} --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin> -I ${_PROTO_DIR} ${_PROTO_DIR}/source_control.proto
-            DEPENDS ${_PROTO_DIR}/source_control.proto)
-        add_library(vsm_source_control_proto ${pb_cc} ${grpc_cc})
-        target_include_directories(vsm_source_control_proto PUBLIC ${_GEN_DIR})
-        # Ensure protobuf headers from vcpkg are preferred to avoid version mismatch
-        if (EXISTS "D:/Projects/vcpkg/installed/x64-windows/include")
-            target_include_directories(vsm_source_control_proto PUBLIC "D:/Projects/vcpkg/installed/x64-windows/include")
-            target_include_directories(${PROJECT_NAME} PRIVATE "D:/Projects/vcpkg/installed/x64-windows/include")
-        endif()
-        target_link_libraries(vsm_source_control_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
-        target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
-        target_link_libraries(${PROJECT_NAME} PRIVATE vsm_source_control_proto)
-    else()
-        message(WARNING "gRPC/Protobuf not found; building VSM without RPC server")
-    endif()
+# gRPC / Protobuf (REQUIRED)
+# VSM 必须提供 gRPC 能力；如未找到依赖，直接中止配置
+find_package(protobuf CONFIG REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
+add_definitions(-DUSE_GRPC)
+set(_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
+set(_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${_GEN_DIR})
+set(pb_cc  ${_GEN_DIR}/source_control.pb.cc)
+set(pb_h   ${_GEN_DIR}/source_control.pb.h)
+set(grpc_cc ${_GEN_DIR}/source_control.grpc.pb.cc)
+set(grpc_h  ${_GEN_DIR}/source_control.grpc.pb.h)
+add_custom_command(OUTPUT ${pb_cc} ${pb_h}
+    COMMAND protobuf::protoc ARGS --cpp_out ${_GEN_DIR} -I ${_PROTO_DIR} ${_PROTO_DIR}/source_control.proto
+    DEPENDS ${_PROTO_DIR}/source_control.proto)
+add_custom_command(OUTPUT ${grpc_cc} ${grpc_h}
+    COMMAND protobuf::protoc ARGS --grpc_out ${_GEN_DIR} --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin> -I ${_PROTO_DIR} ${_PROTO_DIR}/source_control.proto
+    DEPENDS ${_PROTO_DIR}/source_control.proto)
+add_library(vsm_source_control_proto ${pb_cc} ${grpc_cc})
+target_include_directories(vsm_source_control_proto PUBLIC ${_GEN_DIR})
+# Ensure protobuf headers from vcpkg are preferred to avoid version mismatch
+if (EXISTS "D:/Projects/vcpkg/installed/x64-windows/include")
+    target_include_directories(vsm_source_control_proto PUBLIC "D:/Projects/vcpkg/installed/x64-windows/include")
+    target_include_directories(${PROJECT_NAME} PRIVATE "D:/Projects/vcpkg/installed/x64-windows/include")
 endif()
+target_link_libraries(vsm_source_control_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
+target_link_libraries(${PROJECT_NAME} PRIVATE vsm_source_control_proto)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${OpenCV_LIBS})
 if (WIN32)

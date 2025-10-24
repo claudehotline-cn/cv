@@ -1,5 +1,4 @@
 #include "server/rest_impl.hpp"
-#include "server/sse_metrics.hpp"
 
 namespace va::server {
 
@@ -112,50 +111,16 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
             if (quotas.global.concurrent > 0) {
                 auto ms = subscriptions->metricsSnapshot();
                 if (static_cast<int>(ms.in_progress) >= quotas.global.concurrent) {
-                    if (enforce) {
-                        quota_drop_global_concurrent_.fetch_add(1, std::memory_order_relaxed);
-                        HttpResponse resp = errorResponse("quota: global concurrent limit", 429);
-                        std::string ra = "1";
-                        try {
-                            size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                            int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                            int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                            int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
-                            int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                            int est = 1;
-                            if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                            if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
-                        } catch (...) {}
-                        resp.headers["Retry-After"] = ra;
-                        resp.headers["X-Quota-Reason"] = "global_concurrent";
-                        resp.headers["X-Quota-Advice"] = "reduce concurrency or retry later";
-                        return resp;
-                    } else { record_would("global_concurrent"); }
+                    if (enforce) { quota_drop_global_concurrent_.fetch_add(1, std::memory_order_relaxed); HttpResponse resp = errorResponse("quota: global concurrent limit", 429); resp.headers["Retry-After"] = "1"; resp.headers["X-Quota-Reason"] = "global_concurrent"; resp.headers["X-Quota-Advice"] = "reduce concurrency or retry later"; return resp; }
+                    else { record_would("global_concurrent"); }
                 }
             }
             const std::string key = request.requester_key.value_or(std::string());
             if (key_cc > 0) {
                 int cur = subscriptions->countInProgressByKey(key);
                 if (cur >= key_cc) {
-                    if (enforce) {
-                        quota_drop_key_concurrent_.fetch_add(1, std::memory_order_relaxed);
-                        HttpResponse resp = errorResponse("quota: key concurrent limit", 429);
-                        std::string ra = "1";
-                        try {
-                            size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                            int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                            int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                            int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
-                            int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                            int est = 1;
-                            if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                            if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
-                        } catch (...) {}
-                        resp.headers["Retry-After"] = ra;
-                        resp.headers["X-Quota-Reason"] = "key_concurrent";
-                        resp.headers["X-Quota-Advice"] = "reduce concurrent requests for this key";
-                        return resp;
-                    } else { record_would("key_concurrent"); }
+                    if (enforce) { quota_drop_key_concurrent_.fetch_add(1, std::memory_order_relaxed); HttpResponse resp = errorResponse("quota: key concurrent limit", 429); resp.headers["Retry-After"] = "1"; resp.headers["X-Quota-Reason"] = "key_concurrent"; resp.headers["X-Quota-Advice"] = "reduce concurrent requests for this key"; return resp; }
+                    else { record_would("key_concurrent"); }
                 }
             }
             if (key_rpm > 0) {
@@ -173,25 +138,7 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                     }
                 }
                 if (over) {
-                if (enforce) {
-                    quota_drop_key_rate_.fetch_add(1, std::memory_order_relaxed);
-                    HttpResponse resp = errorResponse("quota: key rate_per_min limit", 429);
-                    std::string ra = "60";
-                    try {
-                        size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                        int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                        int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                        int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
-                        int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                        int est = 60;
-                        if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                        if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
-                    } catch (...) {}
-                    resp.headers["Retry-After"] = ra;
-                    resp.headers["X-Quota-Reason"] = "key_rate";
-                    resp.headers["X-Quota-Advice"] = "wait and retry or request higher rate_per_min for your key";
-                    return resp;
-                }
+                    if (enforce) { quota_drop_key_rate_.fetch_add(1, std::memory_order_relaxed); HttpResponse resp = errorResponse("quota: key rate_per_min limit", 429); resp.headers["Retry-After"] = "60"; resp.headers["X-Quota-Reason"] = "key_rate"; resp.headers["X-Quota-Advice"] = "wait 60s or request higher rate_per_min for your key"; return resp; }
                     else { record_would("key_rate"); }
                 }
             }
@@ -222,21 +169,7 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
     } catch (const std::exception& ex) {
         const std::string msg = ex.what();
         if (msg.find("queue_full") != std::string::npos) {
-            HttpResponse resp = errorResponse("subscriptions: queue_full", 429);
-            // 动态补齐 Retry-After
-            std::string ra = "1";
-            try {
-                size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
-                int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                int est = 1;
-                if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
-            } catch (...) {}
-            resp.headers["Retry-After"] = ra;
-            return resp;
+            return errorResponse("subscriptions: queue_full", 429);
         }
         return errorResponse(std::string("subscriptions: ") + msg, 500);
     }
@@ -649,10 +582,6 @@ HttpResponse RestServer::Impl::handleSetEngine(const HttpRequest& req) {
 
 void RestServer::Impl::streamSubscriptionSSE(int fd, const HttpRequest& req, const std::string& id) {
     if (!subscriptions) return;
-    // SSE metrics: active connections and reconnects
-    struct Guard { ~Guard(){ va::server::g_sse_subscriptions_active.fetch_sub(1, std::memory_order_relaxed); } } guard;
-    va::server::g_sse_subscriptions_active.fetch_add(1, std::memory_order_relaxed);
-    try { auto it=req.headers.find("Last-Event-ID"); if (it!=req.headers.end()) va::server::g_sse_reconnects_total.fetch_add(1ULL, std::memory_order_relaxed); } catch (...) {}
     sseWriteHeaders(fd);
     auto state = subscriptions->get(id);
     if (!state) { Json::Value e; e["error"] = "not_found"; sseEvent(fd, "error", e); return; }

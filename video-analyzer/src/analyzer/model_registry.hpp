@@ -57,11 +57,19 @@ public:
   std::vector<std::string> preheatList() const;
   std::string preheatStatus() const; // idle|running|done
   int warmedCount() const;
+  // Cache config getters (for /system/info)
+  std::size_t capacity() const;
+  int idleTtlSeconds() const;
 
   struct MetricsSnapshot {
     bool enabled{false};
     int concurrency{0};
     int warmed{0};
+    // cache stats
+    std::size_t cache_entries{0};
+    std::uint64_t cache_new_total{0};
+    std::uint64_t cache_touch_total{0};
+    std::uint64_t cache_evict_total{0};
     // histogram bounds (seconds)
     std::vector<double> bounds;
     std::vector<std::uint64_t> bucket_counts; // same size as bounds
@@ -97,6 +105,10 @@ private:
   std::atomic<long long> hist_sum_us_{0};
   std::atomic<std::uint64_t> hist_count_{0};
   std::atomic<std::uint64_t> failed_total_{0};
+  // Cache metrics
+  std::atomic<std::uint64_t> cache_new_total_{0};
+  std::atomic<std::uint64_t> cache_touch_total_{0};
+  std::atomic<std::uint64_t> cache_evict_total_{0};
 };
 
 } // namespace va::analyzer

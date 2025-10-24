@@ -1,4 +1,6 @@
 #include "server/rest_impl.hpp"
+#include "server/sse_metrics.hpp"
+#include <atomic>
 
 namespace va::server {
 
@@ -146,6 +148,11 @@ void RestServer::Impl::sseKeepAlive(int fd) {
 }
 
 void RestServer::Impl::streamLogsSSE(int fd, const HttpRequest& req) {
+    // Active connections accounting
+    struct Guard { ~Guard(){ g_sse_logs_active.fetch_sub(1, std::memory_order_relaxed); } } guard;
+    g_sse_logs_active.fetch_add(1, std::memory_order_relaxed);
+    // Reconnect signal
+    try { auto it=req.headers.find("Last-Event-ID"); if (it!=req.headers.end()) g_sse_reconnects_total.fetch_add(1, std::memory_order_relaxed); } catch (...) {}
     sseWriteHeaders(fd);
     auto q = parseQueryKV(req.query);
     std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
@@ -162,6 +169,9 @@ void RestServer::Impl::streamLogsSSE(int fd, const HttpRequest& req) {
 }
 
 void RestServer::Impl::streamEventsSSE(int fd, const HttpRequest& req) {
+    struct Guard { ~Guard(){ g_sse_events_active.fetch_sub(1, std::memory_order_relaxed); } } guard;
+    g_sse_events_active.fetch_add(1, std::memory_order_relaxed);
+    try { auto it=req.headers.find("Last-Event-ID"); if (it!=req.headers.end()) g_sse_reconnects_total.fetch_add(1, std::memory_order_relaxed); } catch (...) {}
     sseWriteHeaders(fd);
     auto q = parseQueryKV(req.query);
     std::string pipeline = q.count("pipeline") ? q["pipeline"] : std::string();
@@ -301,3 +311,11 @@ HttpResponse RestServer::Impl::handleEventsWatch(const HttpRequest& req) {
 }
 
 } // namespace va::server
+namespace va::server {
+// Define SSE metrics counters
+std::atomic<int> g_sse_subscriptions_active{0};
+std::atomic<int> g_sse_sources_active{0};
+std::atomic<int> g_sse_logs_active{0};
+std::atomic<int> g_sse_events_active{0};
+std::atomic<unsigned long long> g_sse_reconnects_total{0ULL};
+}

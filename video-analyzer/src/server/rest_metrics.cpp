@@ -1,5 +1,7 @@
 #include "server/rest_impl.hpp"
 #include "analyzer/model_registry.hpp"
+#include "server/sse_metrics.hpp"
+#include "core/codec_registry.hpp"
 
 namespace va::server {
 
@@ -202,7 +204,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             mb.sample("va_feature_enabled", "{feature=\"wal\"}", static_cast<unsigned long long>(va::core::wal::enabled() ? 1 : 0));
         } catch (...) {}
 
-        // Model registry preheat metrics (M1)
+        // Model registry preheat & cache metrics (M1/M2)
         try {
             auto& mr = va::analyzer::ModelRegistry::instance();
             auto rs = mr.metricsSnapshot();
@@ -212,6 +214,15 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             mb.sample("va_model_preheat_concurrency", "{}", static_cast<unsigned long long>(rs.concurrency));
             mb.header("va_model_preheat_warmed_total", "gauge", "Models warmed (best-effort)");
             mb.sample("va_model_preheat_warmed_total", "{}", static_cast<unsigned long long>(rs.warmed));
+            // Cache metrics
+            mb.header("va_model_cache_entries", "gauge", "Model registry cache entries");
+            mb.sample("va_model_cache_entries", "{}", static_cast<unsigned long long>(rs.cache_entries));
+            mb.header("va_model_cache_new_total", "counter", "Model registry cache new entries");
+            mb.sample("va_model_cache_new_total", "{}", static_cast<unsigned long long>(rs.cache_new_total));
+            mb.header("va_model_cache_touch_total", "counter", "Model registry cache touch (hits)");
+            mb.sample("va_model_cache_touch_total", "{}", static_cast<unsigned long long>(rs.cache_touch_total));
+            mb.header("va_model_cache_evict_total", "counter", "Model registry cache evictions");
+            mb.sample("va_model_cache_evict_total", "{}", static_cast<unsigned long long>(rs.cache_evict_total));
             // duration histogram
             mb.header("va_model_preheat_duration_seconds", "histogram", "Per-model preheat duration (s)");
             unsigned long long accp = 0ULL;
@@ -223,13 +234,64 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             mb.sample("va_model_preheat_failed_total", "{}", static_cast<unsigned long long>(rs.failed_total));
         } catch (...) {}
 
+        // Codec registry metrics (optional; metrics-only, no caching)
+        try {
+            auto cs = va::core::CodecRegistry::snapshot();
+            mb.header("va_codec_decoder_build_total", "counter", "Decoder builds by impl");
+            for (const auto& kv : cs.decoder_build_by_impl) { std::ostringstream ls; ls<<"{impl=\""<<kv.impl<<"\"}"; mb.sample("va_codec_decoder_build_total", ls.str(), kv.value); }
+            mb.header("va_codec_decoder_hit_total", "counter", "Decoder cache hits by impl");
+            for (const auto& kv : cs.decoder_hit_by_impl) { std::ostringstream ls; ls<<"{impl=\""<<kv.impl<<"\"}"; mb.sample("va_codec_decoder_hit_total", ls.str(), kv.value); }
+            mb.header("va_codec_encoder_build_total", "counter", "Encoder builds by impl");
+            for (const auto& kv : cs.encoder_build_by_impl) { std::ostringstream ls; ls<<"{impl=\""<<kv.impl<<"\"}"; mb.sample("va_codec_encoder_build_total", ls.str(), kv.value); }
+            mb.header("va_codec_encoder_hit_total", "counter", "Encoder cache hits by impl");
+            for (const auto& kv : cs.encoder_hit_by_impl) { std::ostringstream ls; ls<<"{impl=\""<<kv.impl<<"\"}"; mb.sample("va_codec_encoder_hit_total", ls.str(), kv.value); }
+        } catch (...) {}
+
         // Subscription metrics (from SubscriptionManager, registry branch)
         if (subscriptions) {
             auto ms = subscriptions->metricsSnapshot();
             mb.header("va_subscriptions_queue_length", "gauge", "Pending subscription tasks in queue");
             mb.sample("va_subscriptions_queue_length", "{}", static_cast<unsigned long long>(ms.queue_length));
+            // Backpressure: slots and estimated retry-after (best-effort)
+            try {
+                int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
+                int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
+                int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
+                mb.header("va_subscriptions_slots", "gauge", "Slots for phases");
+                auto emit_slot = [&](const char* t, int v){ std::ostringstream ls; ls<<"{type=\""<<t<<"\"}"; mb.sample("va_subscriptions_slots", ls.str(), static_cast<unsigned long long>(v)); };
+                emit_slot("open_rtsp", s_open);
+                emit_slot("load_model", s_load);
+                emit_slot("start_pipeline", s_start);
+                // Estimated retry-after given current queue pressure (cap 60s)
+                int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
+                int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
+                if (est < 1) est = 1; if (est > 60) est = 60;
+                mb.header("va_backpressure_retry_after_seconds", "gauge", "Estimated Retry-After based on queue/slots");
+                mb.sample("va_backpressure_retry_after_seconds", "{}", static_cast<unsigned long long>(est));
+            } catch (...) {}
             mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
             mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
+            // SSE connection metrics
+            try {
+                mb.header("va_sse_connections", "gauge", "Active SSE connections by channel");
+                auto emit_conn = [&](const char* ch, unsigned long long v){ std::ostringstream ls; ls<<"{channel=\\\""<<ch<<"\\\"}"; mb.sample("va_sse_connections", ls.str(), v); };
+                emit_conn("subscriptions", static_cast<unsigned long long>(va::server::g_sse_subscriptions_active.load()));
+                emit_conn("sources",       static_cast<unsigned long long>(va::server::g_sse_sources_active.load()));
+                emit_conn("logs",          static_cast<unsigned long long>(va::server::g_sse_logs_active.load()));
+                emit_conn("events",        static_cast<unsigned long long>(va::server::g_sse_events_active.load()));
+                mb.header("va_sse_reconnects_total", "counter", "SSE reconnect events (Last-Event-ID seen)");
+                mb.sample("va_sse_reconnects_total", "{}", va::server::g_sse_reconnects_total.load());
+            } catch (...) {}
+            // Merge and fairness metrics
+            try {
+                mb.header("va_subscriptions_merge_total", "counter", "use_existing merge counters by type");
+                auto emit_merge = [&](const char* t, unsigned long long v){ std::ostringstream ls; ls<<"{type=\\\""<<t<<"\\\"}"; mb.sample("va_subscriptions_merge_total", ls.str(), v); };
+                emit_merge("non_terminal", subscriptions->mergeHitNonTerminal());
+                emit_merge("ready", subscriptions->mergeHitReady());
+                emit_merge("miss", subscriptions->mergeMiss());
+                mb.header("va_subscriptions_rr_rotations_total", "counter", "Fair scheduling rotations (window picks)");
+                mb.sample("va_subscriptions_rr_rotations_total", "{}", subscriptions->rrRotations());
+            } catch (...) {}
             // States gauges
             mb.header("va_subscriptions_states", "gauge", "Subscriptions by current phase");
             auto g = [&](const char* phase, uint64_t v) { std::ostringstream ls; ls<<"{phase=\""<<phase<<"\"}"; mb.sample("va_subscriptions_states", ls.str(), v); };
@@ -279,15 +341,32 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             emit_phase("starting_pipeline", ms.starting_bucket_counts, ms.starting_duration_sum, ms.starting_duration_count);
         }
 
-        // Quotas dropped counters (low cardinality)
+        // Quotas: dropped + would-drop + feature toggles (low cardinality)
         try {
+            // dropped
             mb.header("va_quota_dropped_total", "counter", "Quota/ACL dropped requests by reason");
-            auto emit = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_dropped_total", ls.str(), val); };
-            emit("global_concurrent", quota_drop_global_concurrent_.load(std::memory_order_relaxed));
-            emit("key_concurrent",    quota_drop_key_concurrent_.load(std::memory_order_relaxed));
-            emit("key_rate",          quota_drop_key_rate_.load(std::memory_order_relaxed));
-            emit("acl_scheme",        quota_drop_acl_scheme_.load(std::memory_order_relaxed));
-            emit("acl_profile",       quota_drop_acl_profile_.load(std::memory_order_relaxed));
+            auto emit_drop = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_dropped_total", ls.str(), val); };
+            emit_drop("global_concurrent", quota_drop_global_concurrent_.load(std::memory_order_relaxed));
+            emit_drop("key_concurrent",    quota_drop_key_concurrent_.load(std::memory_order_relaxed));
+            emit_drop("key_rate",          quota_drop_key_rate_.load(std::memory_order_relaxed));
+            emit_drop("acl_scheme",        quota_drop_acl_scheme_.load(std::memory_order_relaxed));
+            emit_drop("acl_profile",       quota_drop_acl_profile_.load(std::memory_order_relaxed));
+
+            // would-drop (observe-only path)
+            mb.header("va_quota_would_drop_total", "counter", "Quota/ACL would-drop (observe-only) by reason");
+            auto emit_would = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_would_drop_total", ls.str(), val); };
+            emit_would("global_concurrent", quota_would_drop_global_concurrent_.load(std::memory_order_relaxed));
+            emit_would("key_concurrent",    quota_would_drop_key_concurrent_.load(std::memory_order_relaxed));
+            emit_would("key_rate",          quota_would_drop_key_rate_.load(std::memory_order_relaxed));
+            emit_would("acl_scheme",        quota_would_drop_acl_scheme_.load(std::memory_order_relaxed));
+            emit_would("acl_profile",       quota_would_drop_acl_profile_.load(std::memory_order_relaxed));
+
+            // feature toggles + enforce percent
+            mb.header("va_feature_enabled", "gauge", "Feature toggle enabled (1/0)");
+            mb.sample("va_feature_enabled", "{feature=\"quota_observe\"}", static_cast<unsigned long long>(app.appConfig().quotas.observe_only ? 1 : 0));
+            mb.sample("va_feature_enabled", "{feature=\"quota_enforce\"}", static_cast<unsigned long long>(app.appConfig().quotas.observe_only ? 0 : 1));
+            mb.header("va_quota_enforce_percent", "gauge", "Quota enforce percent (0-100)");
+            mb.sample("va_quota_enforce_percent", "{}", static_cast<unsigned long long>(app.appConfig().quotas.enforce_percent));
         } catch (...) {}
 
         HttpResponse resp;
@@ -381,9 +460,45 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         out << "# HELP va_subscriptions_queue_length Pending subscription tasks in queue\n";
         out << "# TYPE va_subscriptions_queue_length gauge\n";
         out << "va_subscriptions_queue_length " << static_cast<unsigned long long>(ms.queue_length) << "\n";
+        // Backpressure (plain text)
+        try {
+            int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
+            int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
+            int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
+            out << "# HELP va_subscriptions_slots Slots for phases\n";
+            out << "# TYPE va_subscriptions_slots gauge\n";
+            out << "va_subscriptions_slots{type=\"open_rtsp\"} " << s_open  << "\n";
+            out << "va_subscriptions_slots{type=\"load_model\"} " << s_load  << "\n";
+            out << "va_subscriptions_slots{type=\"start_pipeline\"} " << s_start << "\n";
+            int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
+            int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
+            if (est < 1) est = 1; if (est > 60) est = 60;
+            out << "# HELP va_backpressure_retry_after_seconds Estimated Retry-After based on queue/slots\n";
+            out << "# TYPE va_backpressure_retry_after_seconds gauge\n";
+            out << "va_backpressure_retry_after_seconds " << est << "\n";
+        } catch (...) {}
         out << "# HELP va_subscriptions_in_progress Non-terminal subscriptions in progress\n";
         out << "# TYPE va_subscriptions_in_progress gauge\n";
         out << "va_subscriptions_in_progress " << static_cast<unsigned long long>(ms.in_progress) << "\n";
+        // SSE metrics (plain text)
+        out << "# HELP va_sse_connections Active SSE connections by channel\n";
+        out << "# TYPE va_sse_connections gauge\n";
+        out << "va_sse_connections{channel=\"subscriptions\"} " << va::server::g_sse_subscriptions_active.load() << "\n";
+        out << "va_sse_connections{channel=\"sources\"} " << va::server::g_sse_sources_active.load() << "\n";
+        out << "va_sse_connections{channel=\"logs\"} " << va::server::g_sse_logs_active.load() << "\n";
+        out << "va_sse_connections{channel=\"events\"} " << va::server::g_sse_events_active.load() << "\n";
+        out << "# HELP va_sse_reconnects_total SSE reconnect events (Last-Event-ID seen)\n";
+        out << "# TYPE va_sse_reconnects_total counter\n";
+        out << "va_sse_reconnects_total " << va::server::g_sse_reconnects_total.load() << "\n";
+        // Merge and fairness metrics
+        out << "# HELP va_subscriptions_merge_total use_existing merge counters by type\n";
+        out << "# TYPE va_subscriptions_merge_total counter\n";
+        out << "va_subscriptions_merge_total{type=\"non_terminal\"} " << subscriptions->mergeHitNonTerminal() << "\n";
+        out << "va_subscriptions_merge_total{type=\"ready\"} " << subscriptions->mergeHitReady() << "\n";
+        out << "va_subscriptions_merge_total{type=\"miss\"} " << subscriptions->mergeMiss() << "\n";
+        out << "# HELP va_subscriptions_rr_rotations_total Fair scheduling rotations (window picks)\n";
+        out << "# TYPE va_subscriptions_rr_rotations_total counter\n";
+        out << "va_subscriptions_rr_rotations_total " << subscriptions->rrRotations() << "\n";
         out << "# HELP va_subscriptions_states Subscriptions by current phase\n";
         out << "# TYPE va_subscriptions_states gauge\n";
         auto gg = [&](const char* phase, uint64_t v) { out << "va_subscriptions_states{phase=\""<<phase<<"\"} " << v << "\n"; };
@@ -672,6 +787,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         }
 
         // Quotas dropped/observe-only counters and feature toggles (plain text)
+        // M2: ensure always emitted regardless of pipelines
         out << "# HELP va_quota_dropped_total Quota/ACL dropped requests by reason\n";
         out << "# TYPE va_quota_dropped_total counter\n";
         out << "va_quota_dropped_total{reason=\"global_concurrent\"} " << quota_drop_global_concurrent_.load(std::memory_order_relaxed) << "\n";

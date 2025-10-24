@@ -1,0 +1,75 @@
+groups:
+- name: va-m2-quotas
+  interval: 30s
+  rules:
+  - alert: VAQuotaDropSpike
+    expr: sum(rate(va_quota_dropped_total[5m])) > 0.5
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "VA quota drops spiking"
+      description: "Drops per second > 0.5 in last 5m. Investigate enforce_percent and recent traffic."
+  - alert: VAQuotaWouldDropHigh
+    expr: sum(rate(va_quota_would_drop_total[5m])) > 2
+    for: 3m
+    labels:
+      severity: info
+    annotations:
+      summary: "VA would-drop high (observe-only)"
+      description: "Observe-only drops > 2 rps in last 5m. Consider raising limits or increasing enforce rollout."
+  - alert: VAQuotaEnforcePercentLow
+    expr: avg(va_quota_enforce_percent) < 50
+    for: 5m
+    labels:
+      severity: info
+    annotations:
+      summary: "VA enforce percent below target"
+      description: "Current enforce_percent < 50 for over 5m. Ensure rollout matches expectation."
+- name: va-m2-failures
+  interval: 30s
+  rules:
+  - alert: VASubscriptionFailuresElevated
+    expr: sum(rate(va_subscriptions_failed_by_reason_total[5m])) > 0.2
+    for: 3m
+    labels:
+      severity: warning
+    annotations:
+      summary: "VA subscription failures elevated"
+      description: "Failed subscriptions > 0.2 rps. Check failed reasons panel and recent changes."
+
+- name: va-phases-and-queue
+  interval: 30s
+  rules:
+  - alert: VAPhaseP95High
+    expr: histogram_quantile(0.95, sum by (le, phase) (rate(va_subscription_phase_seconds_bucket[5m]))) > 5
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Phase p95 high: {{ $labels.phase }}"
+      description: "p95 duration of phase {{ $labels.phase }} exceeds 5s over 5m window."
+  - alert: VAPhaseP99High
+    expr: histogram_quantile(0.99, sum by (le, phase) (rate(va_subscription_phase_seconds_bucket[10m]))) > 8
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Phase p99 high: {{ $labels.phase }}"
+      description: "p99 duration of phase {{ $labels.phase }} exceeds 8s over 10m window."
+  - alert: VASubscriptionsQueueHigh
+    expr: avg_over_time(va_subscriptions_queue_length[5m]) > 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Subscriptions queue high"
+      description: "Average queue length > 10 over 5m; consider scaling workers or throttling intake."
+  - alert: VASubscriptionsQueueSustainedHigh
+    expr: avg_over_time(va_subscriptions_queue_length[10m]) > 30
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Subscriptions queue sustained high"
+      description: "Average queue length > 30 over 10m; likely saturation. Investigate capacity and upstream traffic."

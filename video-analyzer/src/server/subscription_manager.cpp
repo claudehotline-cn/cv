@@ -187,6 +187,11 @@ int SubscriptionManager::startPipelineSlots() const {
 void SubscriptionManager::setTtlSeconds(int n) { if (n > 0) ttl_seconds_ = n; }
 int SubscriptionManager::ttlSeconds() const { return ttl_seconds_; }
 
+uint64_t SubscriptionManager::rrRotations() const { return rr_rotations_.load(std::memory_order_relaxed); }
+uint64_t SubscriptionManager::mergeHitNonTerminal() const { return merge_hit_non_terminal_.load(std::memory_order_relaxed); }
+uint64_t SubscriptionManager::mergeHitReady() const { return merge_hit_ready_.load(std::memory_order_relaxed); }
+uint64_t SubscriptionManager::mergeMiss() const { return merge_miss_.load(std::memory_order_relaxed); }
+
 std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready) {
     auto state = std::make_shared<SubscriptionState>();
     state->request = request;
@@ -206,13 +211,10 @@ std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, boo
             if (sit != states_.end()) {
                 auto phase = sit->second->phase.load();
                 // 如果仍在进行中，直接复用
-                if (!isTerminalPhase(phase)) {
-                    return it->second;
-                }
+                if (!isTerminalPhase(phase)) { merge_hit_non_terminal_.fetch_add(1, std::memory_order_relaxed); return it->second; }
                 // 若已 Ready 且调用方要求优先复用，则直接返回现有订阅 ID
-                if (prefer_reuse_ready && phase == SubscriptionPhase::Ready) {
-                    return it->second;
-                }
+                if (prefer_reuse_ready && phase == SubscriptionPhase::Ready) { merge_hit_ready_.fetch_add(1, std::memory_order_relaxed); return it->second; }
+                if (prefer_reuse_ready && phase != SubscriptionPhase::Ready) { merge_miss_.fetch_add(1, std::memory_order_relaxed); }
             }
         }
         // 简易过载保护：当挂起任务过多时拒绝新入队
@@ -221,7 +223,7 @@ std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, boo
         }
         states_[id] = state;
         key_index_[key] = id;
-        pending_.push(Task{id, state});
+        pending_.push_back(Task{id, state});
     }
     // WAL：记录入队（最小充分）
     try {
@@ -288,8 +290,22 @@ void SubscriptionManager::workerLoop() {
             if (stop_ && pending_.empty()) {
                 return;
             }
-            task = pending_.front();
-            pending_.pop();
+            size_t idx = 0;
+            const size_t n = pending_.size();
+            if (n > 1) {
+                const size_t win = static_cast<size_t>(std::min<int>(fair_window_, static_cast<int>(n)));
+                for (size_t i = 0; i < win; ++i) {
+                    const auto& cand = pending_[i];
+                    if (cand.state) {
+                        std::string key = cand.state->request.stream_id + ":" + cand.state->request.profile_id;
+                        if (last_served_key_.empty() || key != last_served_key_) { idx = i; break; }
+                    }
+                }
+            }
+            task = pending_[idx];
+            pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(idx));
+            if (idx > 0) rr_rotations_.fetch_add(1, std::memory_order_relaxed);
+            if (task.state) last_served_key_ = task.state->request.stream_id + ":" + task.state->request.profile_id;
         }
 
         if (!task.state) {
@@ -303,6 +319,19 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
     if (!state) return;
 
     auto now_ms = [](){ return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()); };
+    // Best-effort completion guard: if any early return forgets to record, ensure metrics/WAL get a terminal record
+    struct CompletionGuard {
+        SubscriptionManager* self{nullptr};
+        StatePtr st;
+        ~CompletionGuard(){
+            if (!self || !st) return;
+            auto ph = st->phase.load();
+            if (isTerminalPhase(ph)) {
+                // recordCompletion() is idempotent via metrics_recorded flag
+                self->recordCompletion(st, ph);
+            }
+        }
+    } completion{this, state};
     state->phase.store(SubscriptionPhase::Preparing);
     if (state->ts_preparing.load(std::memory_order_relaxed) == 0) state->ts_preparing.store(now_ms(), std::memory_order_relaxed);
     if (state->cancel.load()) {

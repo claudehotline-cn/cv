@@ -110,7 +110,12 @@ bool GrpcServer::Start() {
   impl_->service = new Impl::ServiceImpl(impl_->ctl);
   grpc::ServerBuilder b; b.AddListeningPort(impl_->addr, grpc::InsecureServerCredentials());
   b.RegisterService(impl_->service); impl_->server = b.BuildAndStart();
-  return (bool)impl_->server;
+  bool ok = (bool)impl_->server;
+  if (ok) {
+    // minimal startup log (stdout)
+    std::cout << "[vsm.grpc] listening on " << impl_->addr << std::endl;
+  }
+  return ok;
 #else
   (void)impl_;
   return true;
