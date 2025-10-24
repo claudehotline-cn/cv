@@ -27,6 +27,13 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
         request.stream_id = *stream_opt;
         request.profile_id = *profile_opt;
         request.source_uri = *uri_opt;
+        // Extract requester key for quotas
+        const auto& quotas = app.appConfig().quotas;
+        std::string header_name = quotas.header_key.empty()? std::string("X-API-Key") : quotas.header_key;
+        std::string header_lc = toLower(header_name);
+        for (const auto& h : req.headers) {
+            if (toLower(h.first) == header_lc) { request.requester_key = h.second; break; }
+        }
         if (body.isMember("model_id") && body["model_id"].isString()) {
             auto v = body["model_id"].asString();
             if (!v.empty()) request.model_id = v;
@@ -46,6 +53,71 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                 if (v == "1" || v == "true" || v == "yes") prefer_reuse_ready = true;
             }
         } catch (...) { /* ignore */ }
+        // ACL checks (schemes and profiles)
+        if (quotas.enabled) {
+            // scheme from source_uri
+            auto src = request.source_uri;
+            std::string sch; {
+                auto p = src.find(":"); if (p != std::string::npos) sch = toLower(src.substr(0, p));
+            }
+            if (!quotas.acl.allowed_schemes.empty()) {
+                bool ok = false;
+                for (const auto& s : quotas.acl.allowed_schemes) { if (toLower(s) == sch) { ok = true; break; } }
+                if (!ok) {
+                    quota_drop_acl_scheme_.fetch_add(1, std::memory_order_relaxed);
+                    return errorResponse("acl: scheme not allowed", 403);
+                }
+            }
+            if (!quotas.acl.allowed_profiles.empty()) {
+                bool okp = false;
+                for (const auto& p : quotas.acl.allowed_profiles) { if (p == request.profile_id) { okp = true; break; } }
+                if (!okp) {
+                    quota_drop_acl_profile_.fetch_add(1, std::memory_order_relaxed);
+                    return errorResponse("acl: profile not allowed", 403);
+                }
+            }
+            // Concurrency quotas
+            if (quotas.global.concurrent > 0) {
+                auto ms = subscriptions->metricsSnapshot();
+                if (static_cast<int>(ms.in_progress) >= quotas.global.concurrent) {
+                    quota_drop_global_concurrent_.fetch_add(1, std::memory_order_relaxed);
+                    HttpResponse resp = errorResponse("quota: global concurrent limit", 429);
+                    resp.headers["Retry-After"] = "1";
+                    return resp;
+                }
+            }
+            const std::string key = request.requester_key.value_or(std::string());
+            if (quotas.def.concurrent > 0) {
+                int cur = subscriptions->countInProgressByKey(key);
+                if (cur >= quotas.def.concurrent) {
+                    quota_drop_key_concurrent_.fetch_add(1, std::memory_order_relaxed);
+                    HttpResponse resp = errorResponse("quota: key concurrent limit", 429);
+                    resp.headers["Retry-After"] = "1";
+                    return resp;
+                }
+            }
+            if (quotas.def.rate_per_min > 0) {
+                auto now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                const std::uint64_t cutoff = now - 60000ULL;
+                bool over = false;
+                {
+                    std::lock_guard<std::mutex> lk(quota_mu_);
+                    auto& dq = quota_hits_by_key_ms_[key];
+                    while (!dq.empty() && dq.front() < cutoff) dq.pop_front();
+                    if (static_cast<int>(dq.size()) >= quotas.def.rate_per_min) {
+                        over = true;
+                    } else {
+                        dq.push_back(now);
+                    }
+                }
+                if (over) {
+                    quota_drop_key_rate_.fetch_add(1, std::memory_order_relaxed);
+                    HttpResponse resp = errorResponse("quota: key rate_per_min limit", 429);
+                    resp.headers["Retry-After"] = "60";
+                    return resp;
+                }
+            }
+        }
         const std::string id = subscriptions->enqueue(request, prefer_reuse_ready);
         Json::Value payload = successPayload();
         Json::Value data(Json::objectValue);

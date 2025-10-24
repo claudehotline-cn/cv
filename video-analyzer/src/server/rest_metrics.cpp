@@ -279,6 +279,17 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             emit_phase("starting_pipeline", ms.starting_bucket_counts, ms.starting_duration_sum, ms.starting_duration_count);
         }
 
+        // Quotas dropped counters (low cardinality)
+        try {
+            mb.header("va_quota_dropped_total", "counter", "Quota/ACL dropped requests by reason");
+            auto emit = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_dropped_total", ls.str(), val); };
+            emit("global_concurrent", quota_drop_global_concurrent_.load(std::memory_order_relaxed));
+            emit("key_concurrent",    quota_drop_key_concurrent_.load(std::memory_order_relaxed));
+            emit("key_rate",          quota_drop_key_rate_.load(std::memory_order_relaxed));
+            emit("acl_scheme",        quota_drop_acl_scheme_.load(std::memory_order_relaxed));
+            emit("acl_profile",       quota_drop_acl_profile_.load(std::memory_order_relaxed));
+        } catch (...) {}
+
         HttpResponse resp;
         resp.status_code = 200;
         resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8";

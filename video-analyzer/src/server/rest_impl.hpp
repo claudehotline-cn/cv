@@ -1013,6 +1013,15 @@ struct RestServer::Impl {
     std::unordered_map<std::string, std::uint64_t> cp_hist_count;
     const std::vector<double> cp_bounds {0.005,0.01,0.025,0.05,0.1,0.25,0.5,1.0,2.5,5.0,10.0};
 
+    // Quotas/rate limiting (per key, best-effort)
+    std::mutex quota_mu_;
+    std::unordered_map<std::string, std::deque<std::uint64_t>> quota_hits_by_key_ms_;
+    std::atomic<std::uint64_t> quota_drop_global_concurrent_{0};
+    std::atomic<std::uint64_t> quota_drop_key_concurrent_{0};
+    std::atomic<std::uint64_t> quota_drop_key_rate_{0};
+    std::atomic<std::uint64_t> quota_drop_acl_scheme_{0};
+    std::atomic<std::uint64_t> quota_drop_acl_profile_{0};
+
     std::optional<bool> metrics_registry_enabled_{};
     std::optional<bool> metrics_extended_labels_{};
 
