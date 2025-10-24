@@ -1,71 +1,63 @@
-# 项目上下文（重建版）
+# 项目上下文（重建版｜2025-10-24）
 
-本文档汇总当前对话与本次改动的关键上下文，覆盖代码结构、接口语义、可观测性、构建运行与测试事实证据，以及后续工作方向，供团队与 CI/CD 参考。
+本文汇总当前对话期间完成的关键变更、接口语义、可观测性、构建运行与测试证据，以及 M1（WAL 与预热）推进状态，供团队协作与 CI/CD 参考。
 
 ## 仓库与模块
-- video-analyzer（VA）：核心后端。职责：RTSP 接入、预处理、推理、后处理、WHEP/HLS 输出、REST/SSE、Prometheus 指标、内嵌控制平面桥接。
-- video-analyzer/src/control_plane_embedded（CP）：内嵌控制平面控制器（gRPC/REST），后续可独立化。
+- video-analyzer（VA）：核心后端。RTSP 接入、预处理/推理/后处理、WHEP/HLS 输出、REST/SSE、Prometheus 指标。
+- video-analyzer/src/control_plane_embedded（CP）：内嵌控制平面路由与控制器（gRPC/REST）。
 - video-source-manager（VSM）：RTSP 源管理（gRPC/REST）。
-- web-frontend：Web 前端，用于预览流与叠加层。
-- docs：设计/计划/示例/参考/需求/备忘录。
-- tools：构建与运行脚本（Windows 首选 pwsh）。
+- web-frontend：Web 前端（预览、叠加层与观测）。
+- docs：设计、计划、参考、需求、备忘录；tools：构建与运行脚本（Windows 优先 pwsh）。
 
-## 本次结构性改动（大文件拆分）
-目标：将 4000+ 行的 server/rest.cpp 按业务拆分，消除巨石文件带来的可维护性与编译时间问题。已完成：
-- 新增按主题的实现文件（均在 video-analyzer/src/server/）：
-  - rest_impl_core.cpp（Impl 构造/启动/DB 线程/保留通用内部实现）
-  - rest_routes.cpp（路由装配）
-  - rest_metrics.cpp（/metrics 与 metrics 配置）
+## 大文件拆分（已完成）
+- 将 4000+ 行的 server/rest.cpp 按业务主题拆分为：
+  - rest_impl_core.cpp（Impl 构造/启动、DB 线程、通用内部逻辑）
+  - rest_routes.cpp（路由注册）
+  - rest_metrics.cpp（/metrics 与指标配置）
   - rest_logging.cpp（日志配置与日志/事件 SSE）
-  - rest_control.cpp（控制平面 REST：apply/apply_batch/hotswap/remove/status/drain 等）
-  - rest_system.cpp（/api/system/info、/api/system/stats、图谱枚举等）
-  - rest_models.cpp（模型/配置枚举）
-  - rest_sources.cpp（sources 聚合 + watch + SSE）
-  - rest_sessions.cpp（会话列表/长轮询）
-  - rest_subscriptions.cpp（订阅创建/查询/删除，SSE 由 logging/sources 覆盖）
-  - rest_db.cpp（数据库健康/清理/保留期状态）
-  - rest_whep.cpp（WHEP 协商与可选 gRPC 转发）
-- 新增头文件 rest_impl.hpp：仅保留声明与公用工具（HttpRequest/HttpResponse、SimpleHttpServer、JSON/ETag/错误回应等）。
-- 调整 CMake 以纳入新源文件；构建通过。
+  - rest_control.cpp（控制面 REST：apply/apply_batch/hotswap/remove/status/drain）
+  - rest_system.cpp（/api/system/info、/api/system/stats、图谱枚举）
+  - 以及 rest_models.cpp、rest_sources.cpp、rest_sessions.cpp、rest_subscriptions.cpp、rest_db.cpp、rest_whep.cpp
+- 新增 rest_impl.hpp：集中声明与通用工具（HttpRequest/HttpResponse、SimpleHttpServer、错误与 JSON 工具）。
+- CMake 已纳入新源；构建通过。
 
-## API 行为与本次修复
-- /api/subscriptions（关键语义补全）
-  - POST /api/subscriptions → 202 + Location 头（指向 /api/subscriptions/{id}），并通过 Access-Control-Expose-Headers 暴露 Location；响应体 { success, code, data }。
-  - GET /api/subscriptions/{id} → 支持 ETag/If-None-Match：未变化返回 304；变化时 200 并携带 ETag（弱校验值基于 phase 与各阶段时间戳聚合）。
-  - DELETE /api/subscriptions/{id} → 取消并返回 202，持久化状态（若启用 MySQL）。
-- /metrics：基础指标可见（系统与全局指标），阶段直方图将在后续 M1/M2 中完善。
-- 其余路由保持原有语义，现由 rest_routes.cpp 统一注册。
+## 接口语义修复（M0）
+- /api/subscriptions
+  - POST → 202 + Location（指向 /api/subscriptions/{id}），并通过 Access-Control-Expose-Headers 暴露 Location。
+  - GET /{id} → 支持 ETag/If-None-Match：未变化返回 304；变化 200 并携带弱 ETag（基于 phase 与时间线哈希）。
+  - DELETE /{id} → 202；若启用 DB，持久化完成态。
+- 其余 API 维持原语义，由 rest_routes.cpp 统一注册。
 
-## 构建、运行与发布
-- Windows（首选）：tools/build_va_with_vcvars.cmd，构建目录 video-analyzer/build-ninja。
-- 运行 VA：build-ninja/bin/VideoAnalyzer.exe build-ninja/bin/config（Windows 选定配置子目录）。
-- 验证监听：netstat -ano | find 8082；健康检查：GET http://127.0.0.1:8082/api/system/info。
-- 注意：当重新链接失败（LNK1104）多因进程占用 exe，需先 Stop-Process VideoAnalyzer 再构建。
+## 可观测性与指标（M0→M1）
+- 基线（/metrics）：系统（管线/FPS/传输）、全局（零拷贝/编码器重试）、控制面（总数+耗时直方图）、订阅（队列/状态/完成态/时长直方图/失败原因）。
+- 新增（M1）：va_wal_failed_restart_total（上次重启前 inflight 的近似计数）。
+
+## WAL 集成（M1｜已接入最小闭环）
+- 环境变量：VA_WAL_SUBSCRIPTIONS=1（启用）、VA_WAL_MAX_BYTES、VA_WAL_MAX_FILES、VA_WAL_TTL_SECONDS（滚动/保留）。
+- 文件：logs/subscriptions.wal（JSON 行）；事件：enqueue/ready/failed/cancelled/restart。
+- 生命周期：订阅入队与完成态写 WAL。
+- 启动：wal::init() → mark_restart() → scanInflightBeforeLastRestart()。
+- /api/system/info 暴露 wal: { enabled, failed_restart }。
+
+## 模型注册表预热（M1｜已接入最小闭环）
+- 环境变量：VA_MODEL_REGISTRY_ENABLED、VA_MODEL_REGISTRY_CAP、VA_MODEL_IDLE_TTL_SEC、VA_MODEL_PREHEAT_ENABLED、VA_MODEL_PREHEAT_CONCURRENCY、VA_MODEL_PREHEAT_LIST。
+- 启动：加载模型清单 → 解析预热配置 → 后台并发预热（best‑effort）。
+- /api/system/info 暴露 registry.preheat: { enabled, concurrency, list, status: idle|running|done, warmed }。
+
+## 构建与运行
+- Windows：& tools/build_va_with_vcvars.cmd
+  - 生成目录：video-analyzer/build-ninja
+  - 运行：build-ninja/bin/VideoAnalyzer.exe build-ninja/bin/config
+  - 常见：LNK1104（exe 被占用）→ 先 Stop-Process VideoAnalyzer 再构建。
+- 健康检查：GET http://127.0.0.1:8082/api/system/info（code=OK）。
 
 ## 测试与证据
-- 自动脚本（video-analyzer/test/scripts/）：
-  - check_headers_cache.py：验证 202+Location、ETag/304、（可选）429+Retry-After。当前结果：通过（队列未饱和时 429 跳过警告属预期）。
-  - check_metrics_exposure.py：验证基础指标曝光，当前结果：通过（阶段直方图缺失为 WARN，将在 M1/M2 完善）。
-- 手工确认：/api/system/info 返回 engine/runtime/observability/subscriptions/database 快照正常。
+- 脚本：
+  - check_headers_cache.py：验证 202+Location、ETag/304；队列未饱和时 429 跳过为 WARN → 通过。
+  - check_metrics_exposure.py：基础指标曝光 → 通过（阶段直方图缺失为可接受 WARN）。
+- 手工：/api/system/info 新增 registry.preheat 与 wal 字段；/metrics 新增 va_wal_failed_restart_total；8082 监听正常。
 
-## 可观测性与指标
-- 系统：管线总数/运行数/FPS/传输包与字节。
-- 零拷贝路径与全局计数：d2d_nv12_frames、cpu_fallback_skips、eagain_retry_count、overlay_* 等。
-- 控制平面请求总数与耗时直方图：在 Impl 中聚合。
-- 订阅队列与 in_progress 快照（SubscriptionManager）：后续将按阶段输出直方图与失败原因聚合。
-
-## 近期完成的关键任务
-1) 拆分巨石文件，恢复可维护性与编译速度；
-2) 增补订阅接口的 HTTP 约定（Location、ETag/If-None-Match）；
-3) 修复 Windows 构建链路中 exe 占用导致的链接失败；
-4) 增加并运行后端校验脚本，CI 友好。
-
-## 待办（高优先级）
-- M1：WAL/Restart 扫描、Model/Codec Registry 预热、/api/system/info 暴露预热状态、/metrics 增补 failed(restart) 与 inflight 时长。
-- M2：配额/ACL 策略、Grafana 大盘、压测与 24h soak、P95 与失败率达标。
-- SSE/长连接健壮性：socket 泄漏、异常关闭与重试策略的监控与缓解。
-
-## 术语
-- ETag/If-None-Match：用于订阅轮询的缓存与 304 语义，降低 GET 风险与负载。
-- WAL：重启后恢复 inflight 的持久化日志。
-- WHEP：WebRTC HTTP Egress；可本地或经 gRPC 转发到其他 VA。
+## 待办（M1 继续）
+- 管理接口：/api/admin/wal/summary、/api/admin/wal/tail?n=200（读取证）。
+- 指标：订阅分阶段直方图与 WAL 维度标签；预热耗时与错误计数。
+- 脚本：WAL/预热校验脚本纳入 CI；文档补充 app.yaml 示例。
