@@ -17,6 +17,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/observability/logs', component: () => import('@/views/Observability/Logs.vue'), meta: { title: 'Logs' } },
   { path: '/observability/events', component: () => import('@/views/Observability/Events.vue'), meta: { title: 'Events' } },
   { path: '/observability/sessions', component: () => import('@/views/Observability/Sessions.vue'), meta: { title: 'Sessions' } },
+  { path: '/admin', component: () => import('@/views/Admin.vue'), meta: { title: 'Admin' } },
   { path: '/orchestration', component: () => import('@/views/Orchestration.vue'), meta: { title: 'Orchestration' } },
   { path: '/settings', component: () => import('@/views/Settings.vue'), meta: { title: 'Settings' } },
   { path: '/about', component: () => import('@/views/About.vue'), meta: { title: 'About' } },

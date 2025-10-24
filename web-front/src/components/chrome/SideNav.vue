@@ -45,3 +45,4 @@ const active = useRoute().path
 .menu{ border-right: none; padding-top: 8px; }
 .copyright{ color: var(--va-text-2); opacity: .6; font-size: 12px; padding: 12px; }
 </style>
+
