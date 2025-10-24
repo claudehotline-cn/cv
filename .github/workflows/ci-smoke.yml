@@ -1,0 +1,28 @@
+name: VA Smoke (WAL & Preheat)
+
+on:
+  push:
+    branches: [ IOBinding ]
+  pull_request:
+    branches: [ IOBinding ]
+  workflow_dispatch: {}
+
+jobs:
+  smoke-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run smoke tests (build + run)
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          & tools/run_ci_smoke.ps1 -BuildMode ci
+
