@@ -109,9 +109,22 @@ std::string SubscriptionManager::normalizeReason(const std::string& app_err, con
         if (contains("model") || contains("onnx") || contains("session")) return va::core::reasons::kLoadModelTimeout;
     }
     if (contains("rtsp") && (contains("open") || contains("connect") || contains("teardown"))) return va::core::reasons::kOpenRtspFailed;
-    if (contains("model") || contains("onnx") || contains("session")) return va::core::reasons::kLoadModelFailed;
+    if (contains("onnx") || contains("session") || contains("model")) return va::core::reasons::kLoadModelFailed;
     if (contains("pipeline") || contains("subscribe") || contains("start")) return va::core::reasons::kSubscribeFailed;
     if (contains("cancel")) return va::core::reasons::kCancelled;
+
+    // Static table for common Application::last_error_ values
+    if (contains("application not initialized"))   return va::core::reasons::kAppNotInitialized;
+    if (contains("profile not found"))             return va::core::reasons::kProfileNotFound;
+    if (contains("model not found"))               return va::core::reasons::kModelNotFound;
+    if (contains("no model resolved"))             return va::core::reasons::kNoModelResolved;
+    if (contains("pipeline initialization failed"))return va::core::reasons::kPipelineInitFailed;
+    if (contains("failed to initialize pipeline for model")) return va::core::reasons::kPipelineInitModel;
+    if (contains("failed to switch source"))       return va::core::reasons::kSwitchSourceFailed;
+    if (contains("failed to switch model"))        return va::core::reasons::kSwitchModelFailed;
+    if (contains("failed to switch task"))         return va::core::reasons::kSwitchTaskFailed;
+    if (contains("failed to update analyzer params")) return va::core::reasons::kUpdateParamsFailed;
+    if (contains("failed to set engine"))          return va::core::reasons::kSetEngineFailed;
 
     return (fallback && *fallback) ? std::string(fallback) : std::string(va::core::reasons::kUnknown);
 }
