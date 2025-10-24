@@ -223,7 +223,9 @@ target_sources(${PROJECT_NAME}
         src/core/wal.cpp
         src/core/wal.hpp
         src/analyzer/model_registry.cpp
-        src/analyzer/model_registry.hpp)
+        src/analyzer/model_registry.hpp
+        # Admin: WAL read-only endpoints
+        src/server/rest_admin_wal.cpp)
 
 # Optional: gRPC/Protobuf integration for control plane
 if (USE_GRPC)

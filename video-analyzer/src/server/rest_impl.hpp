@@ -1071,6 +1071,10 @@ struct RestServer::Impl {
     HttpResponse handleMetricsConfigGet(const HttpRequest& req);
     HttpResponse handleMetricsConfigSet(const HttpRequest& req);
 
+    // Admin: WAL evidence (read-only)
+    HttpResponse handleWalSummary(const HttpRequest& req);
+    HttpResponse handleWalTail(const HttpRequest& req);
+
     // Logging and SSE utilities
     static va::core::LogLevel parseLevelStr(const std::string& s);
     HttpResponse handleLoggingGet(const HttpRequest& req);

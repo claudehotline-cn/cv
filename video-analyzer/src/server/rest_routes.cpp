@@ -160,6 +160,12 @@ void RestServer::Impl::registerRoutes() {
     server.addRoute("GET", "/api/metrics", metricsCfgGet);
     server.addRoute("POST", "/api/metrics/set", metricsCfgSet);
 
+    // Admin: WAL evidence endpoints (read-only)
+    auto walSummaryHandler = [this](const HttpRequest& req) { return handleWalSummary(req); };
+    auto walTailHandler    = [this](const HttpRequest& req) { return handleWalTail(req); };
+    server.addRoute("GET", "/api/admin/wal/summary", walSummaryHandler);
+    server.addRoute("GET", "/api/admin/wal/tail", walTailHandler);
+
     // Observability: logs/events
     auto logsRecentHandler = [this](const HttpRequest& req) { return handleLogsRecent(req); };
     auto logsWatchHandler  = [this](const HttpRequest& req) { return handleLogsWatch(req); };
