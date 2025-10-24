@@ -10,6 +10,7 @@
 #include "core/source_reconnects.hpp"
 #include "core/nvdec_events.hpp"
 #include "core/metrics_text_builder.hpp"
+#include "core/wal.hpp"
 
 #include "storage/db_pool.hpp"
 #include "storage/log_repo.hpp"

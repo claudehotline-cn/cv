@@ -219,7 +219,11 @@ target_sources(${PROJECT_NAME}
 target_sources(${PROJECT_NAME}
     PRIVATE
         src/server/subscription_manager.cpp
-        src/server/subscription_manager.hpp)
+        src/server/subscription_manager.hpp
+        src/core/wal.cpp
+        src/core/wal.hpp
+        src/analyzer/model_registry.cpp
+        src/analyzer/model_registry.hpp)
 
 # Optional: gRPC/Protobuf integration for control plane
 if (USE_GRPC)

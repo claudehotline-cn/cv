@@ -358,9 +358,42 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
             try { payload.subscriptions.heavy_slots = subs["heavy_slots"].as<int>(payload.subscriptions.heavy_slots); } catch (...) {}
             try { payload.subscriptions.model_slots = subs["model_slots"].as<int>(payload.subscriptions.model_slots); } catch (...) {}
             try { payload.subscriptions.rtsp_slots  = subs["rtsp_slots"].as<int>(payload.subscriptions.rtsp_slots); } catch (...) {}
+            // 分阶段并发（可选）
+            try { payload.subscriptions.open_rtsp_slots = subs["open_rtsp_slots"].as<int>(payload.subscriptions.open_rtsp_slots); } catch (...) {}
+            try { payload.subscriptions.load_model_slots = subs["load_model_slots"].as<int>(payload.subscriptions.load_model_slots); } catch (...) {}
+            try { payload.subscriptions.start_pipeline_slots = subs["start_pipeline_slots"].as<int>(payload.subscriptions.start_pipeline_slots); } catch (...) {}
             try { payload.subscriptions.max_queue  = subs["max_queue"].as<std::size_t>(payload.subscriptions.max_queue); } catch (...) {}
             try { payload.subscriptions.ttl_seconds = subs["ttl_seconds"].as<int>(payload.subscriptions.ttl_seconds); } catch (...) {}
             payload.subscriptions.source = "config";
+        }
+    }
+
+    // quotas (P0)
+    if (v["quotas"]) {
+        const auto q = v["quotas"];
+        if (q && q.IsMap()) {
+            payload.quotas.enabled = q["enabled"].as<bool>(payload.quotas.enabled);
+            payload.quotas.header_key = q["header_key"].as<std::string>(payload.quotas.header_key);
+            if (q["default"]) {
+                const auto d = q["default"];
+                payload.quotas.def.concurrent = d["concurrent"].as<int>(payload.quotas.def.concurrent);
+                payload.quotas.def.rate_per_min = d["rate_per_min"].as<int>(payload.quotas.def.rate_per_min);
+            }
+            if (q["global"]) {
+                const auto g = q["global"];
+                payload.quotas.global.concurrent = g["concurrent"].as<int>(payload.quotas.global.concurrent);
+            }
+            if (q["acl"]) {
+                const auto a = q["acl"];
+                if (a["allowed_schemes"]) {
+                    payload.quotas.acl.allowed_schemes.clear();
+                    for (const auto& it : a["allowed_schemes"]) payload.quotas.acl.allowed_schemes.push_back(it.as<std::string>());
+                }
+                if (a["allowed_profiles"]) {
+                    payload.quotas.acl.allowed_profiles.clear();
+                    for (const auto& it : a["allowed_profiles"]) payload.quotas.acl.allowed_profiles.push_back(it.as<std::string>());
+                }
+            }
         }
     }
 

@@ -1,0 +1,1 @@
+det:yolo:v12l,det:yolo:v8n

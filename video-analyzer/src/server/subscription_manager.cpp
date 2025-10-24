@@ -1,4 +1,6 @@
 #include "server/subscription_manager.hpp"
+#include "core/wal.hpp"
+#include "core/reason_codes.hpp"
 
 #include "app/application.hpp"
 
@@ -24,6 +26,8 @@ bool isTerminalPhase(SubscriptionPhase phase) {
 
 SubscriptionManager::SubscriptionManager(va::app::Application& app)
     : app_(app) {
+    // Best-effort：初始化 WAL（可选）
+    try { va::core::wal::init(); } catch (...) {}
     const unsigned int worker_count = std::max(1u, std::thread::hardware_concurrency());
     for (unsigned int i = 0; i < worker_count; ++i) {
         workers_.emplace_back(&SubscriptionManager::workerLoop, this);
@@ -101,15 +105,15 @@ std::string SubscriptionManager::normalizeReason(const std::string& app_err, con
     auto contains = [&](const char* k){ return s.find(k) != std::string::npos; };
 
     if (contains("timeout")) {
-        if (contains("rtsp") || contains("connect") || contains("open")) return "open_rtsp_timeout";
-        if (contains("model") || contains("onnx") || contains("session")) return "load_model_timeout";
+        if (contains("rtsp") || contains("connect") || contains("open")) return va::core::reasons::kOpenRtspTimeout;
+        if (contains("model") || contains("onnx") || contains("session")) return va::core::reasons::kLoadModelTimeout;
     }
-    if (contains("rtsp") && (contains("open") || contains("connect") || contains("teardown"))) return "open_rtsp_failed";
-    if (contains("model") || contains("onnx") || contains("session")) return "load_model_failed";
-    if (contains("pipeline") || contains("subscribe") || contains("start")) return "subscribe_failed";
-    if (contains("cancel")) return "cancelled";
+    if (contains("rtsp") && (contains("open") || contains("connect") || contains("teardown"))) return va::core::reasons::kOpenRtspFailed;
+    if (contains("model") || contains("onnx") || contains("session")) return va::core::reasons::kLoadModelFailed;
+    if (contains("pipeline") || contains("subscribe") || contains("start")) return va::core::reasons::kSubscribeFailed;
+    if (contains("cancel")) return va::core::reasons::kCancelled;
 
-    return (fallback && *fallback) ? std::string(fallback) : std::string("unknown");
+    return (fallback && *fallback) ? std::string(fallback) : std::string(va::core::reasons::kUnknown);
 }
 
 void SubscriptionManager::setWhepBase(std::string whep_base_url) {
@@ -142,12 +146,38 @@ void SubscriptionManager::setRtspSlots(int n) {
 }
 int SubscriptionManager::modelSlots() const { return model_slots_; }
 int SubscriptionManager::rtspSlots() const { return rtsp_slots_; }
+// Optional per-phase slot setters/getters
+void SubscriptionManager::setOpenRtspSlots(int n) {
+    std::lock_guard<std::mutex> lk(open_mu_);
+    // Allow 0 to disable gating; negative ignored
+    if (n < 0) return;
+    open_rtsp_slots_ = n;
+    open_cv_.notify_all();
+}
+
+int SubscriptionManager::openRtspSlots() const {
+    std::lock_guard<std::mutex> lk(open_mu_);
+    return open_rtsp_slots_;
+}
+
+void SubscriptionManager::setStartPipelineSlots(int n) {
+    std::lock_guard<std::mutex> lk(start_mu_);
+    if (n < 0) return;
+    start_slots_ = n;
+    start_cv_.notify_all();
+}
+
+int SubscriptionManager::startPipelineSlots() const {
+    std::lock_guard<std::mutex> lk(start_mu_);
+    return start_slots_;
+}
 void SubscriptionManager::setTtlSeconds(int n) { if (n > 0) ttl_seconds_ = n; }
 int SubscriptionManager::ttlSeconds() const { return ttl_seconds_; }
 
 std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready) {
     auto state = std::make_shared<SubscriptionState>();
     state->request = request;
+    if (request.requester_key) state->requester_key = *request.requester_key;
     state->created_at = std::chrono::system_clock::now();
     // 记录 pending 时间（ms since epoch）
     state->ts_pending.store(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count()), std::memory_order_relaxed);
@@ -180,6 +210,19 @@ std::string SubscriptionManager::enqueue(const SubscriptionRequest& request, boo
         key_index_[key] = id;
         pending_.push(Task{id, state});
     }
+    // WAL：记录入队（最小充分）
+    try {
+        va::core::wal::append_subscription_event(
+            "enqueue", id, key, "pending", std::string(),
+            state->ts_pending.load(std::memory_order_relaxed),
+            state->ts_preparing.load(std::memory_order_relaxed),
+            state->ts_opening.load(std::memory_order_relaxed),
+            state->ts_loading.load(std::memory_order_relaxed),
+            state->ts_starting.load(std::memory_order_relaxed),
+            state->ts_ready.load(std::memory_order_relaxed),
+            state->ts_failed.load(std::memory_order_relaxed),
+            state->ts_cancelled.load(std::memory_order_relaxed));
+    } catch (...) {}
 
     tasks_cv_.notify_one();
     return id;
@@ -210,6 +253,12 @@ bool SubscriptionManager::cancel(const std::string& id) {
     }
     state->phase.store(SubscriptionPhase::Cancelled);
     state->reason = "cancelled";
+    if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) {
+        auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        state->ts_cancelled.store(now_ms, std::memory_order_relaxed);
+    }
     if (!state->pipeline_key.empty()) {
         ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
     }
@@ -251,12 +300,17 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
 
     state->phase.store(SubscriptionPhase::OpeningRtsp);
     if (state->ts_opening.load(std::memory_order_relaxed) == 0) state->ts_opening.store(now_ms(), std::memory_order_relaxed);
+    // 分阶段限流：OpeningRtsp（可选，0=未启用）
+    bool got_open_slot = acquireOpenRtspSlot();
+    struct OpenGuard { SubscriptionManager* m; bool a; ~OpenGuard(){ if(m&&a) m->releaseOpenRtspSlot(); } } og{this, got_open_slot};
     if (state->cancel.load()) {
         state->phase.store(SubscriptionPhase::Cancelled);
         state->reason = "cancelled";
         return;
     }
 
+    // 进入 LoadingModel 前释放 opening slot（提前释放并关闭 RAII）
+    if (got_open_slot) { releaseOpenRtspSlot(); got_open_slot = false; og.a = false; }
     state->phase.store(SubscriptionPhase::LoadingModel);
     if (state->ts_loading.load(std::memory_order_relaxed) == 0) state->ts_loading.store(now_ms(), std::memory_order_relaxed);
     if (state->request.model_id) {
@@ -271,6 +325,7 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         if (!app_.loadModel(*state->request.model_id)) {
             state->phase.store(SubscriptionPhase::Failed);
             state->reason = normalizeReason(app_.lastError(), "load_model_failed");
+            if (state->ts_failed.load(std::memory_order_relaxed) == 0) state->ts_failed.store(now_ms(), std::memory_order_relaxed);
             recordCompletion(state, SubscriptionPhase::Failed);
             return;
         }
@@ -284,16 +339,19 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
 
     state->phase.store(SubscriptionPhase::StartingPipeline);
     if (state->ts_starting.load(std::memory_order_relaxed) == 0) state->ts_starting.store(now_ms(), std::memory_order_relaxed);
-    bool got_rtsp = acquireRtspSlot();
-    struct RtspGuard { SubscriptionManager* m; bool a; ~RtspGuard(){ if(m&&a) m->releaseRtspSlot(); } } rg{this, got_rtsp};
-    auto pipeline_key = got_rtsp ? app_.subscribeStream(state->request.stream_id,
+    // 分阶段限流：优先使用 start_pipeline_slots；未设置则回退到 rtsp_slots
+    bool use_start = (startPipelineSlots() > 0);
+    bool got_start = use_start ? acquireStartSlot() : acquireRtspSlot();
+    struct StartGuard { SubscriptionManager* m; bool use_start; bool a; ~StartGuard(){ if(!m) return; if (use_start){ if(a) m->releaseStartSlot(); } else { if(a) m->releaseRtspSlot(); } } } sg{this, use_start, got_start};
+    auto pipeline_key = got_start ? app_.subscribeStream(state->request.stream_id,
                                              state->request.profile_id,
                                              state->request.source_uri,
                                              state->request.model_id)
-                                 : std::optional<std::string>();
+                                  : std::optional<std::string>();
     if (!pipeline_key) {
         state->phase.store(SubscriptionPhase::Failed);
         state->reason = normalizeReason(app_.lastError(), "subscribe_failed");
+        if (state->ts_failed.load(std::memory_order_relaxed) == 0) state->ts_failed.store(now_ms(), std::memory_order_relaxed);
         recordCompletion(state, SubscriptionPhase::Failed);
         return;
     }
@@ -313,14 +371,14 @@ void SubscriptionManager::runSubscriptionTask(const std::string& /*id*/, const S
         ensurePipelineStopped(state->request.stream_id, state->request.profile_id);
         state->phase.store(SubscriptionPhase::Cancelled);
         state->reason = "cancelled";
-        recordCompletion(state, SubscriptionPhase::Cancelled);
         if (state->ts_cancelled.load(std::memory_order_relaxed) == 0) state->ts_cancelled.store(now_ms(), std::memory_order_relaxed);
+        recordCompletion(state, SubscriptionPhase::Cancelled);
         return;
     }
 
     state->phase.store(SubscriptionPhase::Ready);
-    recordCompletion(state, SubscriptionPhase::Ready);
     if (state->ts_ready.load(std::memory_order_relaxed) == 0) state->ts_ready.store(now_ms(), std::memory_order_relaxed);
+    recordCompletion(state, SubscriptionPhase::Ready);
 }
 
 std::string SubscriptionManager::nextId() {
@@ -375,6 +433,36 @@ void SubscriptionManager::releaseRtspSlot() {
     std::lock_guard<std::mutex> lk(rtsp_mu_);
     if (rtsp_in_use_ > 0) --rtsp_in_use_;
     rtsp_cv_.notify_one();
+}
+bool SubscriptionManager::acquireOpenRtspSlot() {
+    std::unique_lock<std::mutex> lk(open_mu_);
+    // Disabled when not configured (>0 means enabled gating)
+    if (open_rtsp_slots_ <= 0) return false;
+    open_cv_.wait(lk, [this]() { return stop_ || open_in_use_ < open_rtsp_slots_; });
+    if (stop_) return false;
+    ++open_in_use_;
+    return true;
+}
+
+void SubscriptionManager::releaseOpenRtspSlot() {
+    std::lock_guard<std::mutex> lk(open_mu_);
+    if (open_in_use_ > 0) --open_in_use_;
+    open_cv_.notify_one();
+}
+
+bool SubscriptionManager::acquireStartSlot() {
+    std::unique_lock<std::mutex> lk(start_mu_);
+    if (start_slots_ <= 0) return false;
+    start_cv_.wait(lk, [this]() { return stop_ || start_in_use_ < start_slots_; });
+    if (stop_) return false;
+    ++start_in_use_;
+    return true;
+}
+
+void SubscriptionManager::releaseStartSlot() {
+    std::lock_guard<std::mutex> lk(start_mu_);
+    if (start_in_use_ > 0) --start_in_use_;
+    start_cv_.notify_one();
 }
 
 bool SubscriptionManager::ensurePipelineStopped(const std::string& stream_id, const std::string& profile_id) {
@@ -471,6 +559,23 @@ void SubscriptionManager::recordCompletion(const StatePtr& state, SubscriptionPh
         completed_cancelled_total_.fetch_add(1, std::memory_order_relaxed);
         break;
     default: break; }
+
+    // WAL：记录完成态（ready/failed/cancelled）
+    try {
+        const std::string key = state->request.stream_id + ":" + state->request.profile_id;
+        std::string ph = toString(phase);
+        const std::string reason_code = state->reason;
+        va::core::wal::append_subscription_event(
+            ph, /*sub_id*/ state->pipeline_key.empty() ? std::string() : state->pipeline_key, key, ph, reason_code,
+            state->ts_pending.load(std::memory_order_relaxed),
+            state->ts_preparing.load(std::memory_order_relaxed),
+            state->ts_opening.load(std::memory_order_relaxed),
+            state->ts_loading.load(std::memory_order_relaxed),
+            state->ts_starting.load(std::memory_order_relaxed),
+            state->ts_ready.load(std::memory_order_relaxed),
+            state->ts_failed.load(std::memory_order_relaxed),
+            state->ts_cancelled.load(std::memory_order_relaxed));
+    } catch (...) {}
 }
 
 SubscriptionManager::MetricsSnapshot SubscriptionManager::metricsSnapshot() const {
@@ -525,6 +630,18 @@ SubscriptionManager::MetricsSnapshot SubscriptionManager::metricsSnapshot() cons
         }
     }
     return s;
+}
+
+int SubscriptionManager::countInProgressByKey(const std::string& key) const {
+    if (key.empty()) return 0;
+    std::lock_guard<std::mutex> lk(mutex_);
+    int n = 0;
+    for (const auto& kv : states_) {
+        auto ph = kv.second->phase.load();
+        if (ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) continue;
+        if (kv.second->requester_key == key) ++n;
+    }
+    return n;
 }
 
 } // namespace va::server

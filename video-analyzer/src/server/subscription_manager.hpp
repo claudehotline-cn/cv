@@ -35,6 +35,8 @@ struct SubscriptionRequest {
     std::string profile_id;
     std::string source_uri;
     std::optional<std::string> model_id;
+    // Optional: requester identity for quota/ACL tracking
+    std::optional<std::string> requester_key;
 };
 
 struct SubscriptionState {
@@ -47,6 +49,8 @@ struct SubscriptionState {
     std::chrono::system_clock::time_point created_at{};
     std::atomic<bool> metrics_recorded{false};
     std::atomic<bool> db_recorded{false};
+    // requester identity (for quotas)
+    std::string requester_key;
     // 阶段时间线（ms since epoch），原子写一次读取多次，避免锁
     std::atomic<std::uint64_t> ts_pending{0};
     std::atomic<std::uint64_t> ts_preparing{0};
@@ -63,7 +67,8 @@ public:
     explicit SubscriptionManager(va::app::Application& app);
     ~SubscriptionManager();
 
-    std::string enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready = false);
+    // 默认幂等复用：同一 stream_id:profile_id 已 Ready 时直接复用现有订阅
+    std::string enqueue(const SubscriptionRequest& request, bool prefer_reuse_ready = true);
     std::shared_ptr<SubscriptionState> get(const std::string& id) const;
     bool cancel(const std::string& id);
   void setWhepBase(std::string whep_base_url);
@@ -71,11 +76,16 @@ public:
     void setHeavySlots(int n);
     void setModelSlots(int n);
     void setRtspSlots(int n);
+    // 分阶段并发：可选（未设置则由服务器侧回退到 legacy 值）
+    void setOpenRtspSlots(int n);
+    void setStartPipelineSlots(int n);
     void setTtlSeconds(int n);
     size_t maxQueue() const;
     int heavySlots() const;
     int modelSlots() const;
     int rtspSlots() const;
+    int openRtspSlots() const;
+    int startPipelineSlots() const;
     int ttlSeconds() const;
 
     struct MetricsSnapshot {
@@ -110,6 +120,8 @@ public:
         uint64_t starting_duration_count{0};
     };
     MetricsSnapshot metricsSnapshot() const;
+    // Count non-terminal states by requester_key (for quotas)
+    int countInProgressByKey(const std::string& key) const;
 
 private:
     using StatePtr = std::shared_ptr<SubscriptionState>;
@@ -134,6 +146,10 @@ private:
   void releaseModelSlot();
   bool acquireRtspSlot();
   void releaseRtspSlot();
+  bool acquireOpenRtspSlot();
+  void releaseOpenRtspSlot();
+  bool acquireStartSlot();
+  void releaseStartSlot();
   void runSubscriptionTask(const std::string& id, const StatePtr& state);
   bool ensurePipelineStopped(const std::string& stream_id, const std::string& profile_id);
   std::string nextId();
@@ -168,6 +184,17 @@ private:
   std::condition_variable rtsp_cv_;
   int rtsp_slots_{4};
     int rtsp_in_use_{0};
+
+  // Optional: per-phase slots
+  mutable std::mutex open_mu_;
+  std::condition_variable open_cv_;
+  int open_rtsp_slots_{0};
+  int open_in_use_{0};
+
+  mutable std::mutex start_mu_;
+  std::condition_variable start_cv_;
+  int start_slots_{0};
+  int start_in_use_{0};
 
     // Metrics
     std::array<double, 6> hist_bounds_{ {0.5, 1.0, 2.0, 5.0, 10.0, 30.0} };

@@ -1,0 +1,141 @@
+# HELP va_pipelines_total Total pipelines
+# TYPE va_pipelines_total gauge
+va_pipelines_total{} 0
+# HELP va_pipelines_running Running pipelines
+# TYPE va_pipelines_running gauge
+va_pipelines_running{} 0
+# HELP va_pipeline_aggregate_fps Aggregate FPS across pipelines
+# TYPE va_pipeline_aggregate_fps gauge
+va_pipeline_aggregate_fps{} 0
+# HELP va_frames_processed_total Frames processed (sum)
+# TYPE va_frames_processed_total counter
+va_frames_processed_total{} 0
+# HELP va_frames_dropped_total Frames dropped (sum)
+# TYPE va_frames_dropped_total counter
+va_frames_dropped_total{} 0
+# HELP va_transport_packets_total Transport packets sent (sum)
+# TYPE va_transport_packets_total counter
+va_transport_packets_total{} 0
+# HELP va_transport_bytes_total Transport bytes sent (sum)
+# TYPE va_transport_bytes_total counter
+va_transport_bytes_total{} 0
+# HELP va_d2d_nv12_frames_total NVENC device NV12 direct-feed frames
+# TYPE va_d2d_nv12_frames_total counter
+va_d2d_nv12_frames_total{} 0
+# HELP va_cpu_fallback_skips_total CPU upload skipped (device NV12 path)
+# TYPE va_cpu_fallback_skips_total counter
+va_cpu_fallback_skips_total{} 0
+# HELP va_encoder_eagain_retry_total Encoder EAGAIN drain+retry occurrences
+# TYPE va_encoder_eagain_retry_total counter
+va_encoder_eagain_retry_total{} 0
+# HELP va_overlay_nv12_kernel_hits_total NV12 kernel overlay executions
+# TYPE va_overlay_nv12_kernel_hits_total counter
+va_overlay_nv12_kernel_hits_total{} 0
+# HELP va_overlay_nv12_passthrough_total NV12 overlay passthrough (no boxes)
+# TYPE va_overlay_nv12_passthrough_total counter
+va_overlay_nv12_passthrough_total{} 0
+# HELP va_cp_auto_subscribe_total Auto subscribe events (success)
+# TYPE va_cp_auto_subscribe_total counter
+va_cp_auto_subscribe_total{} 0
+# HELP va_cp_auto_unsubscribe_total Auto unsubscribe events (success)
+# TYPE va_cp_auto_unsubscribe_total counter
+va_cp_auto_unsubscribe_total{} 0
+# HELP va_cp_auto_switch_source_total Auto source switch events (success)
+# TYPE va_cp_auto_switch_source_total counter
+va_cp_auto_switch_source_total{} 0
+# HELP va_cp_auto_switch_model_total Auto model switch events (success)
+# TYPE va_cp_auto_switch_model_total counter
+va_cp_auto_switch_model_total{} 0
+# HELP va_cp_auto_subscribe_failed_total Auto subscribe failures
+# TYPE va_cp_auto_subscribe_failed_total counter
+va_cp_auto_subscribe_failed_total{} 0
+# HELP va_cp_auto_switch_source_failed_total Auto source switch failures
+# TYPE va_cp_auto_switch_source_failed_total counter
+va_cp_auto_switch_source_failed_total{} 0
+# HELP va_cp_auto_switch_model_failed_total Auto model switch failures
+# TYPE va_cp_auto_switch_model_failed_total counter
+va_cp_auto_switch_model_failed_total{} 0
+# HELP va_pipeline_fps Pipeline FPS per source
+# TYPE va_pipeline_fps gauge
+# HELP va_frame_latency_ms Frame processing latency per stage
+# TYPE va_frame_latency_ms histogram
+# HELP va_encoder_packets_total Encoded packets per source
+# TYPE va_encoder_packets_total counter
+# HELP va_encoder_bytes_total Encoded bytes per source
+# TYPE va_encoder_bytes_total counter
+# HELP va_encoder_eagain_total Encoder EAGAIN occurrences per source
+# TYPE va_encoder_eagain_total counter
+# HELP va_rtsp_source_reconnects_total RTSP source reconnects
+# TYPE va_rtsp_source_reconnects_total counter
+# HELP va_nvdec_device_recover_total NVDEC device-path recovery events
+# TYPE va_nvdec_device_recover_total counter
+# HELP va_nvdec_await_idr_total NVDEC await-IDR occurrences (startup/reopen)
+# TYPE va_nvdec_await_idr_total counter
+# HELP va_cp_requests_total Control-plane requests total by op/code
+# TYPE va_cp_requests_total counter
+# HELP va_cp_request_duration_seconds Control-plane request duration (s)
+# TYPE va_cp_request_duration_seconds histogram
+# HELP va_subscriptions_queue_length Pending subscription tasks in queue
+# TYPE va_subscriptions_queue_length gauge
+va_subscriptions_queue_length{} 0
+# HELP va_subscriptions_in_progress Non-terminal subscriptions in progress
+# TYPE va_subscriptions_in_progress gauge
+va_subscriptions_in_progress{} 0
+# HELP va_subscriptions_states Subscriptions by current phase
+# TYPE va_subscriptions_states gauge
+va_subscriptions_states{phase="pending"} 0
+va_subscriptions_states{phase="preparing"} 0
+va_subscriptions_states{phase="opening_rtsp"} 0
+va_subscriptions_states{phase="loading_model"} 0
+va_subscriptions_states{phase="starting_pipeline"} 0
+va_subscriptions_states{phase="ready"} 0
+va_subscriptions_states{phase="failed"} 0
+va_subscriptions_states{phase="cancelled"} 0
+# HELP va_subscriptions_completed_total Completed subscriptions by result
+# TYPE va_subscriptions_completed_total counter
+va_subscriptions_completed_total{result="ready"} 0
+va_subscriptions_completed_total{result="failed"} 0
+va_subscriptions_completed_total{result="cancelled"} 0
+# HELP va_subscriptions_failed_by_reason_total Failed subscriptions by reason
+# TYPE va_subscriptions_failed_by_reason_total counter
+# HELP va_subscription_duration_seconds Subscription total duration in seconds
+# TYPE va_subscription_duration_seconds histogram
+va_subscription_duration_seconds_bucket{le="0.5"} 0
+va_subscription_duration_seconds_bucket{le="1"} 0
+va_subscription_duration_seconds_bucket{le="2"} 0
+va_subscription_duration_seconds_bucket{le="5"} 0
+va_subscription_duration_seconds_bucket{le="10"} 0
+va_subscription_duration_seconds_bucket{le="30"} 0
+va_subscription_duration_seconds_bucket{le="+Inf"} 0
+va_subscription_duration_seconds_sum{} 0
+va_subscription_duration_seconds_count{} 0
+# HELP va_subscription_phase_seconds Subscription phase duration in seconds
+# TYPE va_subscription_phase_seconds histogram
+va_subscription_phase_seconds_bucket{phase="opening_rtsp",le="0.5"} 0
+va_subscription_phase_seconds_bucket{phase="opening_rtsp",le="1"} 0
+va_subscription_phase_seconds_bucket{phase="opening_rtsp",le="2"} 0
+va_subscription_phase_seconds_bucket{phase="opening_rtsp",le="5"} 0
+va_subscription_phase_seconds_bucket{phase="opening_rtsp",le="10"} 0
+va_subscription_phase_seconds_bucket{phase="opening_rtsp",le="30"} 0
+va_subscription_phase_seconds_bucket{phase="opening_rtsp",le="+Inf"} 0
+va_subscription_phase_seconds_sum{phase="opening_rtsp"} 0
+va_subscription_phase_seconds_count{phase="opening_rtsp"} 0
+va_subscription_phase_seconds_bucket{phase="loading_model",le="0.5"} 0
+va_subscription_phase_seconds_bucket{phase="loading_model",le="1"} 0
+va_subscription_phase_seconds_bucket{phase="loading_model",le="2"} 0
+va_subscription_phase_seconds_bucket{phase="loading_model",le="5"} 0
+va_subscription_phase_seconds_bucket{phase="loading_model",le="10"} 0
+va_subscription_phase_seconds_bucket{phase="loading_model",le="30"} 0
+va_subscription_phase_seconds_bucket{phase="loading_model",le="+Inf"} 0
+va_subscription_phase_seconds_sum{phase="loading_model"} 0
+va_subscription_phase_seconds_count{phase="loading_model"} 0
+va_subscription_phase_seconds_bucket{phase="starting_pipeline",le="0.5"} 0
+va_subscription_phase_seconds_bucket{phase="starting_pipeline",le="1"} 0
+va_subscription_phase_seconds_bucket{phase="starting_pipeline",le="2"} 0
+va_subscription_phase_seconds_bucket{phase="starting_pipeline",le="5"} 0
+va_subscription_phase_seconds_bucket{phase="starting_pipeline",le="10"} 0
+va_subscription_phase_seconds_bucket{phase="starting_pipeline",le="30"} 0
+va_subscription_phase_seconds_bucket{phase="starting_pipeline",le="+Inf"} 0
+va_subscription_phase_seconds_sum{phase="starting_pipeline"} 0
+va_subscription_phase_seconds_count{phase="starting_pipeline"} 0
+

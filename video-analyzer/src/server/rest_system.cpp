@@ -1,4 +1,6 @@
 #include "server/rest_impl.hpp"
+#include "analyzer/model_registry.hpp"
+#include "core/wal.hpp"
 
 namespace va::server {
 
@@ -164,6 +166,29 @@ HttpResponse RestServer::Impl::handleSystemInfo(const HttpRequest& /*req*/) {
   runtime["device_binding"] = runtime_status.device_binding;
   runtime["cpu_fallback"] = runtime_status.cpu_fallback;
   data["engine_runtime"] = runtime;
+  // Registry preheat and WAL status (M1)
+  try {
+    auto& mr = va::analyzer::ModelRegistry::instance();
+    Json::Value reg(Json::objectValue);
+    Json::Value pre(Json::objectValue);
+    pre["enabled"] = mr.preheatEnabled();
+    pre["concurrency"] = mr.preheatConcurrency();
+    {
+      Json::Value lst(Json::arrayValue);
+      for (const auto& id : mr.preheatList()) lst.append(id);
+      pre["list"] = lst;
+    }
+    pre["status"] = mr.preheatStatus();
+    pre["warmed"] = mr.warmedCount();
+    reg["preheat"] = pre;
+    data["registry"] = reg;
+  } catch (...) { /* ignore */ }
+  try {
+    Json::Value wal(Json::objectValue);
+    wal["enabled"] = va::core::wal::enabled();
+    wal["failed_restart"] = static_cast<Json::UInt64>(va::core::wal::failedRestartCount());
+    data["wal"] = wal;
+  } catch (...) { /* ignore */ }
 
   payload["data"] = data;
   return jsonResponse(payload, 200);

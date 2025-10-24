@@ -5,8 +5,10 @@
 #include "core/logger.hpp"
 #include "core/global_metrics.hpp"
 #include "core/drop_metrics.hpp"
+#include "core/wal.hpp"
 #include "core/source_reconnects.hpp"
 #include "core/nvdec_events.hpp"
+#include "analyzer/model_registry.hpp"
 
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
 #include "control_plane_embedded/adapters/graph_adapter_yaml.hpp"
@@ -151,6 +153,14 @@ bool Application::initialize(const std::string& config_dir) {
     }
     analyzer_params_ = ConfigLoader::loadAnalyzerParams(config_dir_);
     app_config_ = ConfigLoader::loadAppConfig(config_dir_);
+
+    // M1 骨架：ModelRegistry（最小集成，不改变现有行为）
+    try {
+        va::analyzer::ModelRegistry::instance().configureFromEnv();
+        va::analyzer::ModelRegistry::instance().setModels(detection_models_);
+        va::analyzer::ModelRegistry::instance().configurePreheatFromEnv();
+        va::analyzer::ModelRegistry::instance().startPreheat();
+    } catch (...) { /* best-effort */ }
 
     va::core::Logger::instance().configure(app_config_.observability);
     // Configure per-source metrics TTL (shard cleanup)
@@ -820,6 +830,13 @@ bool Application::switchModel(const std::string& stream_id,
     } catch (...) { /* best-effort */ }
 
     last_error_.clear();
+
+    // M1: WAL 初始化 + 重启标记 + 扫描上次未完成订阅（best-effort）
+    try {
+        va::core::wal::init();
+        va::core::wal::mark_restart();
+        va::core::wal::scanInflightBeforeLastRestart();
+    } catch (...) { /* ignore */ }
     return true;
 }
 

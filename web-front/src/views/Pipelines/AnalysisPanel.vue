@@ -13,7 +13,7 @@
           <el-select v-model="selectedGraph" filterable placeholder="选择分析图" style="width:240px" :loading="store.loading">
             <el-option v-for="g in graphs" :key="g.graph_id" :label="graphLabel(g)" :value="g.graph_id" />
           </el-select>
-          <el-select v-model="selectedModel" placeholder="选择分析模型" style="width:220px" :disabled="!store.analyzing || !models.length">
+          <el-select v-model="selectedModel" placeholder="选择分析模型" style="width:220px" :disabled="!models.length">
             <el-option v-for="m in models" :key="m.id" :label="modelLabel(m)" :value="m.id" />
           </el-select>
           <el-switch v-model="autoPlay" active-text="自动播放" style="margin-left:8px" />

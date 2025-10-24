@@ -192,6 +192,12 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             }
         }
 
+        // WAL/Restart metrics (M1)
+        try {
+            mb.header("va_wal_failed_restart_total", "counter", "Subscriptions inflight before last restart (from WAL)");
+            mb.sample("va_wal_failed_restart_total", "{}", static_cast<unsigned long long>(va::core::wal::failedRestartCount()));
+        } catch (...) {}
+
         // Subscription metrics (from SubscriptionManager, registry branch)
         if (subscriptions) {
             auto ms = subscriptions->metricsSnapshot();

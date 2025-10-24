@@ -116,6 +116,10 @@ struct SubscriptionsConfig {
     int heavy_slots {2};
     int model_slots {2};
     int rtsp_slots {4};
+    // 分阶段并发（若未设置则在服务器初始化时回退到 legacy 值）
+    int open_rtsp_slots {0};
+    int load_model_slots {0};
+    int start_pipeline_slots {0};
     std::size_t max_queue {1024};
     int ttl_seconds {900};
     // 回显来源：defaults/config/env（仅用于 /api/system/info 展示，不参与业务）
@@ -128,6 +132,13 @@ struct AppConfigPayload {
     std::string sfu_whep_base;
     ObservabilityConfig observability;
     SubscriptionsConfig subscriptions; // 订阅参数（YAML 可配）
+    struct QuotasConfig {
+        bool enabled { false };
+        std::string header_key { "X-API-Key" };
+        struct DefaultCfg { int concurrent {3}; int rate_per_min {10}; } def;
+        struct GlobalCfg { int concurrent {0}; } global; // 0=disabled
+        struct AclCfg { std::vector<std::string> allowed_schemes; std::vector<std::string> allowed_profiles; } acl;
+    } quotas;
     struct DatabasePoolConfig {
         int min {4};
         int max {16};

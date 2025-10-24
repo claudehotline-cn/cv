@@ -92,3 +92,24 @@ control_plane:
   grpc_addr: "0.0.0.0:50051"
   vsm_addr: "127.0.0.1:7070"
   metrics_enabled: true
+subscriptions:
+  heavy_slots: 2
+  model_slots: 2
+  rtsp_slots: 4
+  open_rtsp_slots: 2
+  load_model_slots: 2
+  start_pipeline_slots: 2
+  max_queue: 1024
+  ttl_seconds: 900
+
+quotas:
+  enabled: true
+  header_key: "X-API-Key"
+  default:
+    concurrent: 1
+    rate_per_min: 1
+  global:
+    concurrent: 100
+  acl:
+    allowed_schemes: ["rtsp", "rtsps"]
+    allowed_profiles: ["det_720p", "seg_720p"]
