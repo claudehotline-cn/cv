@@ -274,6 +274,18 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             } catch (...) {}
             mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
             mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
+            // Completed totals (LRO minimal: emit zeros to keep metric presence)
+            mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
+            auto c0 = [&](const char* res, unsigned long long v) { std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
+            c0("ready", 0ULL); c0("failed", 0ULL); c0("cancelled", 0ULL);
+            // Duration histogram presence (zeros)
+            mb.header("va_subscription_duration_seconds", "histogram", "Subscription total duration in seconds");
+            const double bounds[6] = {0.5,1.0,2.0,5.0,10.0,30.0};
+            unsigned long long acc0 = 0ULL;
+            for (int i=0;i<6;++i) { std::ostringstream ls; ls<<"{le=\""<<bounds[i]<<"\"}"; mb.sample("va_subscription_duration_seconds_bucket", ls.str(), acc0); }
+            std::ostringstream lsi0; lsi0 << "{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi0.str(), 0ULL);
+            mb.sample("va_subscription_duration_seconds_sum", "{}", 0.0);
+            mb.sample("va_subscription_duration_seconds_count", "{}", 0ULL);
             // States gauges
             mb.header("va_subscriptions_states", "gauge", "Subscriptions by current phase");
             auto g = [&](const char* phase, uint64_t v) { std::ostringstream ls; ls<<"{phase=\""<<phase<<"\"}"; mb.sample("va_subscriptions_states", ls.str(), v); };
