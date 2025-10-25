@@ -1,11 +1,8 @@
 @echo off
 setlocal
 
-rem Usage: build_vsm.bat [ON|OFF]
-rem  - First arg toggles USE_GRPC (default: ON)
-
-set "USE_GRPC=%~1"
-if "%USE_GRPC%"=="" set "USE_GRPC=ON"
+rem Usage: build_vsm.bat
+rem  - gRPC 为必选依赖，由 CMake 内部强制启用；不再外部传参。
 
 rem Detect vcpkg toolchain
 if not defined VCPKG_ROOT set "VCPKG_ROOT=D:\Projects\vcpkg"
@@ -36,15 +33,14 @@ set "NINJA=%REPO%\tools\ninja.exe"
 set "GEN="
 if exist "%NINJA%" set "GEN=Ninja"
 
-echo === Configuring VideoSourceManager (USE_GRPC=%USE_GRPC%) ===
+echo === Configuring VideoSourceManager (gRPC REQUIRED) ===
 if "%GEN%"=="Ninja" (
-  cmake -S "%VSM_DIR%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_GRPC=%USE_GRPC% -DCMAKE_TOOLCHAIN_FILE="%VCPKG_TOOLCHAIN%"
+  cmake -S "%VSM_DIR%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%VCPKG_TOOLCHAIN%"
  ) else (
-  cmake -S "%VSM_DIR%" -B "%BUILD%" -DUSE_GRPC=%USE_GRPC% -DCMAKE_TOOLCHAIN_FILE="%VCPKG_TOOLCHAIN%"
+  cmake -S "%VSM_DIR%" -B "%BUILD%" -DCMAKE_TOOLCHAIN_FILE="%VCPKG_TOOLCHAIN%"
 )
 if errorlevel 1 exit /b 1
 
 echo === Building VideoSourceManager ===
 cmake --build "%BUILD%" -j
 exit /b %ERRORLEVEL%
-

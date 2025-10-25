@@ -24,7 +24,7 @@
 #include "lro/state_store.h"
 #include "lro/admission.h"
 
-#include "control_plane_embedded/controllers/pipeline_controller.hpp"
+#include "controlplane/controllers/pipeline_controller.hpp"
 
 #include <json/json.h>
 #include "core/error_codes.hpp"

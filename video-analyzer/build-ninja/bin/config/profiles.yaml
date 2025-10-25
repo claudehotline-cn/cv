@@ -7,19 +7,19 @@ profiles:
       variant: v12x
       onnx: "model/yolov12x.onnx"
       input_width: 640
-      input_height: 640
+      input_height: 64
     encoder:
       width: 1280
       height: 720
       fps: 30
       bitrate_kbps: 3500
-      gop: 30
+      # gop: 30
       bframes: 0
       zero_latency: true
       preset: veryfast
       tune: zerolatency
       profile: baseline
-      codec: h264_nvenc 
+      codec: h264_nvenc
     publish:
       whip_url_template: ""
   seg_720p:
@@ -36,7 +36,7 @@ profiles:
       height: 720
       fps: 30
       bitrate_kbps: 3500
-      gop: 30
+      # gop: 30
       bframes: 0
       zero_latency: true
       preset: veryfast

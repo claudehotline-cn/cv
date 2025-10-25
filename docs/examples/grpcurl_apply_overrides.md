@@ -1,10 +1,10 @@
 # AnalyzerControl ApplyPipeline / ApplyPipelines 示例（grpcurl）
 
-前置：控制面已在 VA 内置并开启（USE_GRPC=ON, VA_ENABLE_GRPC_SERVER=ON），监听 `0.0.0.0:50051`。
+前置：控制面已内置并开启，默认监听 `0.0.0.0:50051`（无须传入 USE_GRPC/VA_ENABLE_GRPC_SERVER 开关）。
 
-## 单条下发 ApplyPipeline
+## 单条调用 ApplyPipeline
 
-请求 JSON（可保存为 `grpc_apply_pipeline.json`）：
+准备 JSON，保存为 `grpc_apply_pipeline.json`：
 
 ```
 {
@@ -28,15 +28,15 @@
 }
 ```
 
-调用命令：
+调用：
 
 ```
 grpcurl -plaintext -d @ 127.0.0.1:50051 va.v1.AnalyzerControl/ApplyPipeline < grpc_apply_pipeline.json
 ```
 
-## 批量下发 ApplyPipelines
+## 批量调用 ApplyPipelines
 
-请求 JSON（可保存为 `grpc_apply_pipelines.json`）：
+准备 JSON，保存为 `grpc_apply_pipelines.json`：
 
 ```
 {
@@ -73,18 +73,18 @@ grpcurl -plaintext -d @ 127.0.0.1:50051 va.v1.AnalyzerControl/ApplyPipeline < gr
 }
 ```
 
-调用命令：
+调用：
 
 ```
 grpcurl -plaintext -d @ 127.0.0.1:50051 va.v1.AnalyzerControl/ApplyPipelines < grpc_apply_pipelines.json
 ```
 
-## 键名约定回顾
+## 参数约定与回滚
 
-- 节点参数覆写：
+- 节点覆盖写法
   - `node.<节点名>.<参数>=值`
-  - `type:<节点类型>.<参数>=值`（对同类型节点批量生效）
-- 引擎覆写（全局 EngineDescriptor）：
+  - `type:<节点类型>.<参数>=值`，同类型节点批量生效。
+- 引擎覆盖写法（EngineDescriptor 全量）
   - `engine.provider` / `engine.name` / `engine.device|engine.device_index`
-  - `engine.options.<k>=<v>`（对应 `app.yaml/engine.options` 的键）
+  - `engine.options.<k>=<v>` 对应 `app.yaml/engine.options`
 

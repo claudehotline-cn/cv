@@ -6,6 +6,38 @@ set(VCPKG_APPLOCAL_DEPS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Hint OpenCV install if environment provides typical Windows paths
+if (NOT DEFINED OpenCV_DIR)
+    if (EXISTS "H:/opencv/build/x64/vc16/lib/OpenCVConfig.cmake")
+        set(OpenCV_DIR "H:/opencv/build/x64/vc16/lib" CACHE PATH "OpenCV CMake config" FORCE)
+    elseif (EXISTS "H:/opencv/build/OpenCVConfig.cmake")
+        set(OpenCV_DIR "H:/opencv/build" CACHE PATH "OpenCV CMake config" FORCE)
+    endif()
+endif()
+if (DEFINED OpenCV_DIR)
+    list(PREPEND CMAKE_PREFIX_PATH "${OpenCV_DIR}")
+endif()
+message(STATUS "OpenCV_DIR hint: ${OpenCV_DIR}")
+
+# vcpkg hints early (for OpenCV, etc.)
+set(VCPKG_ROOT_DIR "$ENV{VCPKG_ROOT}")
+if (NOT VCPKG_ROOT_DIR)
+    set(VCPKG_ROOT_DIR "${CMAKE_SOURCE_DIR}/../vcpkg")
+endif()
+if (NOT EXISTS "${VCPKG_ROOT_DIR}")
+    set(VCPKG_ROOT_DIR "D:/Projects/vcpkg")
+endif()
+if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows")
+    list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+endif()
+# Additional common vcpkg locations (VS-integrated or custom drive)
+if (EXISTS "H:/vcpkg/installed/x64-windows")
+    list(PREPEND CMAKE_PREFIX_PATH "H:/vcpkg/installed/x64-windows")
+endif()
+if (EXISTS "H:/Program Files/Microsoft Visual Studio/2022/Community/VC/vcpkg/installed/x64-windows")
+    list(PREPEND CMAKE_PREFIX_PATH "H:/Program Files/Microsoft Visual Studio/2022/Community/VC/vcpkg/installed/x64-windows")
+endif()
+
 # Ninja+MSVC: 避免为对象编译生成 PDB（会通过 -Fd 传给 NVCC 并导致报错）
 if (MSVC AND CMAKE_GENERATOR MATCHES "Ninja")
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "Embedded") # /Z7, no /Fd
@@ -27,8 +59,9 @@ endif()
 
 find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
+option(VA_USE_LOCAL_YAML "Use bundled yaml-cpp under third_party" OFF)
 set(YAML_LOCAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/yaml-cpp/yaml-cpp-0.8.0")
-if(EXISTS "${YAML_LOCAL_ROOT}/CMakeLists.txt")
+if (VA_USE_LOCAL_YAML AND EXISTS "${YAML_LOCAL_ROOT}/CMakeLists.txt")
     set(YAML_CPP_TARGET yaml-cpp)
     add_subdirectory("${YAML_LOCAL_ROOT}" "${CMAKE_BINARY_DIR}/yaml-cpp" EXCLUDE_FROM_ALL)
 else()
@@ -74,8 +107,7 @@ option(USE_CUDA "Enable CUDA support for GPU inference" ON)
 option(WITH_CUDA_KERNELS "Build CUDA kernels (device-side decode/NMS/overlay)" OFF)
 option(WITH_NVDEC "Build NVDEC-based RTSP source (scaffold)" OFF)
 option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
-option(USE_GRPC "Enable gRPC control plane endpoints" OFF)
-option(VA_ENABLE_GRPC_SERVER "Build gRPC server implementation (requires working gRPC toolchain)" OFF)
+## gRPC 为必需能力：构建必须具备 Protobuf/gRPC，且默认开启服务端
 option(VA_BUILD_TESTS "Build unit test targets" OFF)
 option(VA_WITH_MYSQL "Enable MySQL-backed storage (mysql-connector-c++)" OFF)
 ## 默认 CUDA 架构（可在配置时覆盖）
@@ -116,13 +148,6 @@ find_library(ONNXRUNTIME_LIB NAMES onnxruntime
 set(ONNXRUNTIME_DLL_DIR "$ENV{ONNXRUNTIME_DLL_DIR}" CACHE PATH "Directory that contains onnxruntime*.dll (optional override)")
 
 # Optional vcpkg-installed dependencies
-set(VCPKG_ROOT_DIR "$ENV{VCPKG_ROOT}")
-if (NOT VCPKG_ROOT_DIR)
-    set(VCPKG_ROOT_DIR "${CMAKE_SOURCE_DIR}/../vcpkg")
-endif()
-if (NOT EXISTS "${VCPKG_ROOT_DIR}")
-    set(VCPKG_ROOT_DIR "D:/Projects/vcpkg")
-endif()
 set(VCPKG_LIB_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/lib")
 set(VCPKG_LIB_DIR_DEBUG "${VCPKG_ROOT_DIR}/installed/x64-windows/debug/lib")
 set(VCPKG_INCLUDE_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/include")
@@ -215,14 +240,14 @@ endif()
 # Control plane (embedded) sources — 无外部依赖占位，默认总是编译
 target_sources(${PROJECT_NAME}
     PRIVATE
-        src/control_plane_embedded/interfaces.hpp
-        src/control_plane_embedded/controllers/pipeline_controller.cpp
-        src/control_plane_embedded/controllers/pipeline_controller.hpp
-        src/control_plane_embedded/adapters/graph_adapter_yaml.cpp
-        src/control_plane_embedded/adapters/graph_adapter_yaml.hpp
-        src/control_plane_embedded/exporters/prometheus_exporter.cpp
-        src/control_plane_embedded/exporters/prometheus_exporter.hpp
-        src/control_plane_embedded/io/from_vsm_link.hpp)
+        src/controlplane/interfaces.hpp
+        src/controlplane/controllers/pipeline_controller.cpp
+        src/controlplane/controllers/pipeline_controller.hpp
+        src/controlplane/adapters/graph_adapter_yaml.cpp
+        src/controlplane/adapters/graph_adapter_yaml.hpp
+        src/controlplane/exporters/prometheus_exporter.cpp
+        src/controlplane/exporters/prometheus_exporter.hpp
+        src/controlplane/io/from_vsm_link.hpp)
 
 target_sources(${PROJECT_NAME}
     PRIVATE
@@ -234,14 +259,26 @@ target_sources(${PROJECT_NAME}
         # Admin: WAL read-only endpoints
         src/server/rest_admin_wal.cpp)
 
-# Optional: gRPC/Protobuf integration for control plane
-if (USE_GRPC)
-    # Prefer config packages from vcpkg to avoid mixing with system/anaconda modules
-    find_package(protobuf CONFIG QUIET)
-    find_package(gRPC CONFIG QUIET)
-    if (Protobuf_FOUND AND gRPC_FOUND)
-        message(STATUS "gRPC/Protobuf found: enabling AnalyzerControl service")
-        add_definitions(-DUSE_GRPC)
+## gRPC/Protobuf（REQUIRED）：通过 vcpkg 提示路径，强制启用
+# vcpkg hints (share config packages)
+if (DEFINED VCPKG_ROOT_DIR)
+    if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows/share/protobuf/protobuf-config.cmake")
+        list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+        set(Protobuf_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/share/protobuf")
+    endif()
+    if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows/share/grpc/gRPCConfig.cmake")
+        list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+        set(gRPC_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/share/grpc")
+    endif()
+endif()
+
+# Prefer config packages from vcpkg to avoid mixing with system/anaconda modules
+# Prefer Protobuf config package from vcpkg; uppercase name improves DIR hinting
+find_package(Protobuf CONFIG REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
+
+message(STATUS "gRPC/Protobuf found: enabling AnalyzerControl service")
+add_definitions(-DUSE_GRPC)
 
         set(_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
         set(_VSM_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../video-source-manager/proto)
@@ -337,17 +374,12 @@ if (USE_GRPC)
             target_link_libraries(${PROJECT_NAME} PRIVATE va_vsm_proto)
         endif()
 
-        if (VA_ENABLE_GRPC_SERVER)
-            add_definitions(-DVA_ENABLE_GRPC_SERVER)
-            target_sources(${PROJECT_NAME}
-                PRIVATE
-                    src/control_plane_embedded/api/grpc_server.cpp
-                    src/control_plane_embedded/api/grpc_server.hpp)
-        endif()
-    else()
-        message(WARNING "gRPC/Protobuf not found; building without gRPC (USE_GRPC=OFF)")
-    endif()
-endif()
+        # 始终启用 VA gRPC 服务端（构建必备）
+        add_definitions(-DVA_ENABLE_GRPC_SERVER)
+        target_sources(${PROJECT_NAME}
+            PRIVATE
+                src/controlplane/api/grpc_server.cpp
+                src/controlplane/api/grpc_server.hpp)
 
 if(FFMPEG_FOUND)
     if(FFMPEG_PKG_FOUND)
@@ -421,7 +453,12 @@ target_link_vcpkg_library(${PROJECT_NAME} "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_
 
 # ---- WHEP client probe (test tool) ----
 add_executable(WhepClientProbe src/tools/whep_client_probe.cpp)
-target_include_directories(WhepClientProbe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Add project + vcpkg include paths so <rtc/rtc.hpp> and other headers resolve
+target_include_directories(WhepClientProbe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${VCPKG_INCLUDE_DIR}
+    "D:/Projects/vcpkg/installed/x64-windows/include")
 target_link_vcpkg_library(WhepClientProbe "${DATA_CHANNEL_LIB_DEBUG}" "${DATA_CHANNEL_LIB_RELEASE}")
 target_link_vcpkg_library(WhepClientProbe "${JUICE_LIB_DEBUG}" "${JUICE_LIB_RELEASE}")
 target_link_vcpkg_library(WhepClientProbe "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_RELEASE}")
@@ -432,7 +469,12 @@ set_target_properties(WhepClientProbe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMA
 
 # ---- WHEP standalone server ----
 add_executable(WhepStandaloneServer src/tools/whep_standalone_server.cpp)
-target_include_directories(WhepStandaloneServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Add project + vcpkg include paths so <rtc/rtc.hpp> and other headers resolve
+target_include_directories(WhepStandaloneServer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${VCPKG_INCLUDE_DIR}
+    "D:/Projects/vcpkg/installed/x64-windows/include")
 target_link_vcpkg_library(WhepStandaloneServer "${DATA_CHANNEL_LIB_DEBUG}" "${DATA_CHANNEL_LIB_RELEASE}")
 target_link_vcpkg_library(WhepStandaloneServer "${JUICE_LIB_DEBUG}" "${JUICE_LIB_RELEASE}")
 target_link_vcpkg_library(WhepStandaloneServer "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_RELEASE}")

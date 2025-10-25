@@ -32,20 +32,20 @@ defaults:
     impl: ffmpeg
     rtsp:
       prefer_tcp: true
-      timeout_ms: 1500
+      timeout_ms: 5000
   encoder:
     impl: ffmpeg_h264
     width: 1280
     height: 720
     fps: 30
     bitrate_kbps: 3500
-    gop: 30
+    # gop: 30
     bframes: 0
     preset: veryfast
     tune_zerolatency: true
 security:
   allowed_source_schemes:
-    - rtsp
+    - rtsp你好
     - rtsps
   switch_limits:
     source_per_stream_per_sec: 0.2
@@ -113,13 +113,15 @@ quotas:
   acl:
     allowed_schemes: ["rtsp", "rtsps"]
     allowed_profiles: ["det_720p", "seg_720p"]
-  observe_only: false
-  enforce_percent: 100
-  exempt_keys: []
+  # 灰度与白名单（M2）
+  observe_only: false      # true 则仅观测 would_drop，不实际拦截
+  enforce_percent: 100     # 0..100 按百分比采样拦截
+  exempt_keys: []          # 免配额/ACL 的 keys
+  key_overrides: []        # 形如：[{ key: "vip-001", concurrent: 5, rate_per_min: 60 }]
+  # 也可按 key 进行灰度：observe_only / enforce_percent（覆盖全局）
+  # 例：
   # key_overrides:
   #   - key: "vip-observe"
   #     observe_only: true
   #   - key: "vip-canary"
-  #     enforce_percent: 50
-
-
+  #     enforce_percent: 50   # 对该 key 仅 50% 请求执行拦截

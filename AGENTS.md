@@ -5,9 +5,10 @@
 ## 1 项目结构与模块划分
 
 - `video-analyzer/` – 核心后端（简称VA）（RTSP 接入、预处理、推理、后处理、WebRTC/HLS 输出）。
-- `video-analyzer/src/control_plane_embedded` - 控制平面（简称CP），目前在VA项目中，后期考虑独立出去。前端项目只与CP项目交互，CP、VA、VSM之间采用gRPC通信。
+- `controlplane` - 控制平面（简称CP）。前端项目只与CP项目交互，CP、VA、VSM之间采用gRPC通信。
 - `web-frontend/` – 前端项目，Web 界面，用于预览流与叠加层。
 - `video-source-manager/` – 管理 RTSP 源的工具集合（简称VSM）。
+- `lro` - long-running operation 通用库。
 - `docs/` – 设计笔记、GPU 全链路改造方案与规划、测试指南。
   - `design/` - 项目设计文档
   - `examples/` - 项目示例
@@ -19,6 +20,8 @@
 - `third_party/` – 外部依赖或内置的第三方代码。
 - `db/` - 数据库脚本。
 - `logs/` - 项目日志
+- `.github` - github action 脚本目录
+- `grafana` - grafana 面板设计文档目录
 
 ## 2 工作流程
 
@@ -33,6 +36,7 @@
   - 构建脚本位于`D:\Projects\ai\cv\tools`目录下。
   - Windows：`video-analyzer` 项目在 `D:\Projects\ai\cv\video-analyzer\build-ninja` 目录下使用 `D:\Projects\ai\cv\tools\build_va_with_vcvars.cmd` 工具进行构建；`video-source-manager` 项目在 `D:\Projects\ai\cv\video-source-manager\build` 目录下使用`D:\Projects\ai\cv\tools\build_vsm_with_vcvars.cmd` 工具进行构建。
   - Linux/macOS：`cmake -S . -B build && cmake --build build -j`
+  - **不要随便清除构建目录，除非我允许**。
 
 ## 4 运行
 

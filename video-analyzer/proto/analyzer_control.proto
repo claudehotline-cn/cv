@@ -18,6 +18,8 @@ service AnalyzerControl {
   rpc SetEngine(SetEngineRequest) returns (SetEngineReply);
   rpc QueryRuntime(QueryRuntimeRequest) returns (QueryRuntimeReply);
   rpc ListPipelines(ListPipelinesRequest) returns (ListPipelinesReply);
+  // Watch phases of a subscription or stream (prototype)
+  rpc Watch(WatchRequest) returns (stream PhaseEvent);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -130,4 +132,17 @@ message PipelineItem {
 }
 message ListPipelinesReply {
   repeated PipelineItem items = 1;
+}
+
+// Prototype watch streaming
+message WatchRequest {
+  string subscription_id = 1; // optional
+  string stream_id = 2;       // optional
+  string profile = 3;         // optional
+}
+message PhaseEvent {
+  string id = 1;
+  string phase = 2;
+  int64 ts_ms = 3;
+  string reason = 4; // optional
 }

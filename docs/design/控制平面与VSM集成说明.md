@@ -1,49 +1,51 @@
-# 控制平面与 Video-Source-Manager 集成说明（阶段A骨架）
+# 控制平面与 Video-Source-Manager 集成说明（阶段A雏形）
 
-本次改造目标：将后端拆分为“控制平面（暂内嵌）+ video-analyzer（执行面）+ video-source-manager（VSM）”。当前提交实现了最小骨架，兼容现有功能，不引入额外运行时依赖。
+本说明简述控制平面（CP，内置于 VA）与视频源管理器（VSM）的集成关系与演进路径。
 
-## 目录与组件
+## 目标
+
+- 以 VA 为执行核心，内置最小可用的控制面能力（gRPC/REST）。
+- VSM 负责 RTSP 源管理与健康检查，后续通过 gRPC 与 VA 交互。
+- 设计保持开闭原则，后续可演进为独立进程或扩展更多适配器。
+
+## 目录概览
 
 - `video-analyzer/src/control_plane_embedded/`
-  - `interfaces.hpp`：Status、OpaquePtr、PlainPipelineSpec、IGraphAdapter/IExecutor 接口。
-  - `adapters/graph_adapter_yaml.*`：基于 `config/graphs/*.yaml` 构建 Multistage Graph，返回 SimpleExecutor（生命周期管理占位）。
-  - `controllers/pipeline_controller.*`：控制 Apply/Remove/Drain/HotSwapModel/GetStatus。
-  - `api/grpc_server.*`：gRPC 占位（未启用时返回空句柄，后续接入 gRPC/Proto）。
-  - `exporters/prometheus_exporter.*`：Prometheus 导出占位，后续接入 REST `/metrics`。
-  - `io/from_vsm_link.hpp`：与 VSM 的桥接占位，后续替换为共享内存/IPC/gRPC 流。
+  - `interfaces.hpp`：Status/OpaquePtr/PlainPipelineSpec/IGraphAdapter/IExecutor 等接口
+  - `adapters/graph_adapter_yaml.*`：从 `config/graphs/*.yaml` 解析多阶段图
+  - `controllers/pipeline_controller.*`：Apply/Remove/Drain/HotSwapModel/GetStatus
+  - `api/grpc_server.*`：AnalyzerControl gRPC 服务
+  - `exporters/prometheus_exporter.*`：REST `/metrics`
+  - `io/from_vsm_link.hpp`：与 VSM 的数据输入链路（占位，后续可替换为共享内存/IPC/gRPC）
 
-- `video-source-manager/`（骨架，未参与构建）
-  - `proto/source_control.proto`：Attach/Detach/GetHealth（根据参考设计文档）。
-  - `README.md`、`src/app/main.cpp`：占位。
+- `video-source-manager/`
+  - `proto/source_control.proto`：VSM 的 SourceControl gRPC 定义
+  - `src/app/*`：VSM 主程序与适配器
 
-## 配置
+## 说明
 
-- `video-analyzer/config/app.yaml` 新增：
+- 运行配置（VA，示例）：
 
 ```
 control_plane:
-  enabled: false
+  enabled: true
   grpc_addr: "0.0.0.0:50051"
-  metrics_enabled: false
+  metrics_enabled: true
 ```
 
-默认关闭控制平面与 gRPC，保持行为稳定。后续接入 gRPC 时可通过该段配置启用。
+- 构建约束（重要）：自 2025-10-25 起，VA/VSM 构建已强制启用 gRPC/Protobuf，文档中涉及 `USE_GRPC`、`VA_ENABLE_GRPC_SERVER` 的外部开关已废弃；无需也不应再通过 CMake 传入这些开关。
 
-## 构建
+## 下一阶段（B/C）
 
-- 不引入 gRPC/Protobuf 依赖，所有新增代码均可直接编译链接。
-- CMake 已加入 control_plane_embedded 源文件；proto 文件暂作为参考，不参与生成。
+1) 管理 gRPC 与 Proto
+   - `video-analyzer/proto/` 中维护 `analyzer_control.proto`、`pipeline.proto`。
+   - CMake 强制 `find_package(Protobuf CONFIG REQUIRED)`、`find_package(gRPC CONFIG REQUIRED)`。
+   - 使用 vcpkg 工具链统一依赖版本（`D:/Projects/vcpkg`）。
 
-## 下一步（阶段B/C）
+2) 执行器演进
+   - 逐步替换 `SimpleExecutor` 为可扩展的多阶段执行器/Runner，支持热切换与 Drain。
 
-1) 接入 gRPC 与 Proto
-   - 在 `video-analyzer/proto/` 放置 `analyzer_control.proto`、`pipeline.proto`，CMake 增加可选 `USE_GRPC`。
-   - `grpc_server` 替换为真实服务，将 RPC 转发到 `PipelineController`。
-
-2) 执行面耦合完善
-   - `SimpleExecutor` 替换为真正的执行器（与媒体管线/Runner 对接），支持热切模型与 Drain。
-
-3) VSM 落地
-   - 完成 `video-source-manager` 的最小服务：`SourceControl` gRPC 与 FFmpeg RTSP 适配。
-   - `ToAnalyzerLink` 替换为高效通道（共享内存/IPC/gRPC 流）。
+3) VSM 互通
+   - VSM 提供 `SourceControl` gRPC，用于源管理与健康检查。
+   - 向 VA 暴露的 `ToAnalyzerLink` 可按需要选择共享内存/IPC/gRPC。
 

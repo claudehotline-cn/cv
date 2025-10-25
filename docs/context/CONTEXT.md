@@ -1,55 +1,69 @@
-# CONTEXT（2025-10-25 更新）
+# CONTEXT（统一背景与当前共识）
 
-本文汇总当前对话的关键结论、系统现状与测试规约，便于协作与追踪。
+更新时间：2025-10-25
 
-## 仓库与模块
-- `video-analyzer`（VA）：核心后端，包含 RTSP 接入、预处理/推理/后处理、REST/SSE、Prometheus、WHEP/HLS。
-- `video-analyzer/src/control_plane_embedded`（CP）：内嵌控制平面，前端只与 CP 交互；CP/VA/VSM 通过 gRPC。
-- `video-source-manager`（VSM）：管理 RTSP 源，提供 gRPC/REST/metrics。
-- `web-front`：前端 UI（预览、Admin）。`docs/` 为设计/计划/参考与测试指南；`tools/` 为构建与测试脚本。
+本文件汇总本轮对话中达成的关键结论：代码组织、命名与构建策略、gRPC 依赖与控制平面职责边界、已完成工作与后续计划。用于团队对齐与后续实施的“唯一事实来源”。
 
-## 工作方式与约束
-- 统一使用 Windows `pwsh`；通过 `apply_patch` 修改代码；每日将进展追加到 `docs/memo`。
-- 前端测试遵循最小充分取证（Playwright MCP/Chrome DevTools MCP）；后端测试优先 Python 脚本与 pwsh 编排。
+## 项目结构与职责
 
-## 现状快照
-1) REST 拆分（M0 完成）
-   - 4000+ 行 `rest.cpp` 拆为若干按域文件并更新 CMake；语义加固：
-     - `POST /api/subscriptions` 返回 `202+Location`（并暴露 `Access-Control-Expose-Headers`）。
-     - `GET /api/subscriptions/{id}` 支持 `ETag/If-None-Match` 命中 `304`（弱 ETag 来源于 phase+timeline）。
-     - 取消与失败 reason 统一映射，补齐 `ts_failed/ts_cancelled`。
-2) LRO（通用长任务库，编译库形态）
-   - `lro/` 提供 `Runner/Operation/StateStore/Executors/Notifier/Admission` 等通用接口；不含 VA 业务常量。
-   - VA 订阅 POST/GET/DELETE/SSE 已切换到 Runner；/metrics 与 /system/info 使用 Runner 快照。
-3) WAL 与预热（M1 完成最小闭环）
-   - WAL 记录订阅 enqueue 与终态事件（JSONL，滚动与 TTL）；重启扫描统计 `failed_restart`；
-   - `/admin/wal/summary`、`/admin/wal/tail` 管理只读端点；`/metrics` 暴露 `va_wal_failed_restart_total` 与 feature 开关。
-   - 模型预热（列表/并发）与缓存指标已接入；`/system/info` 回显 `registry.preheat/cache` 状态。
-4) 配额/ACL（M2 进行中）
-   - 支持 observe_only/enforce_percent、exempt_keys、per-key overrides；动态 Retry-After 基于队列与槽位估算；
-   - 暴露 `va_quota_dropped_total`、`va_quota_would_drop_total`、`va_quota_enforce_percent` 等指标。
+- video-analyzer（VA）：核心后端（RTSP 接入、预处理/推理/后处理、WHEP/HLS、REST/指标）。
+  - 内嵌控制面 gRPC 服务保留在 VA 进程（AnalyzerControl）。
+- controlplane（CP）：对外唯一 REST/SSE 服务面，聚合/代理到 VA、VSM 的 gRPC；前端只与 CP 通信。
+- video-source-manager（VSM）：视频源管理（SourceControl gRPC：WatchState/GetHealth/Update/Attach/Detach）。
+- web-front：管理/预览 UI。
 
-## 指标与系统信息
-- 订阅：`va_subscriptions_queue_length`、`va_subscriptions_in_progress`、`va_subscriptions_states{phase}`、完成总数与时长直方图；
-- 预热/缓存：`va_model_preheat_*` 与 `va_model_cache_*`；
-- SSE：连接与重连计数；Codec：decoder/encoder build/hit；WAL：`va_wal_failed_restart_total`；
-- `/api/system/info` 回显 engine/options、subscriptions（slots/queue/states/source）、registry.preheat/cache、数据库与运行态快照。
+目录命名统一：
+- 根目录 controlplain → controlplane（可执行：`controlplane/build/bin/controlplane.exe`）。
+- VA 内嵌控制面目录：`video-analyzer/src/control_plane_embedded` → `video-analyzer/src/controlplane`（全量修正 include 与 CMake 源列表）。
 
-## 构建与运行
-- Windows：`& tools/build_va_with_vcvars.cmd`；运行：`video-analyzer/build-ninja/bin/VideoAnalyzer.exe video-analyzer/build-ninja/bin/config`。
-- 注意需先停止已运行的 `VideoAnalyzer.exe`，否则链接会失败（LNK1104）。
+## 构建与依赖（Windows）
 
-## 测试规约
-- 位置：`video-analyzer/test/scripts`；常用：
-  - 最小 API：`check_min_api_once.py`（POST→GET→DELETE+SSE）。
-  - WAL：`check_admin_wal_tail.py`、`check_wal_scan.py`；
-  - 预热/缓存：`check_preheat_status.py`、`check_model_cache_info.py`；
-  - 配额/ACL：`check_quota_*`、`check_acl_profile_scheme.py`；
-  - 指标：`check_metrics_exposure.py`、`check_metrics_hist_and_reasons.py`；
-  - SSE：`check_sse_metrics.py`。
+- 统一使用 vcpkg 工具链，禁止使用 Anaconda 库。
+  - VA：`tools/configure_va_nv.bat` 指定 `-DCMAKE_TOOLCHAIN_FILE` 与 `D:\Projects\vcpkg`，屏蔽 `H:\anaconda3`；构建产物：`video-analyzer/build-ninja/bin/VideoAnalyzer.exe`。
+  - VSM：`tools/build_vsm_with_vcvars.cmd` 清理 `-DUSE_GRPC` 开关，使用 vcpkg。
+  - CLI：`tools/build_cli.bat` 清理 `-DUSE_GRPC`，使用 vcpkg。
+  - CP：`tools/build_controlplane_with_vcvars.cmd`（新增）统一配置+构建。
 
-## 待办焦点（当前）
-- 在 metrics registry 分支补齐 `va_subscriptions_in_progress`（已完成）。
-- 将 `check_min_api_once.py` 集成进 `tools/run_ci_smoke.ps1`（已完成）。
-- 在 `video-analyzer/CMakeLists.txt` 链接 `lro_runtime`（已完成）。
+gRPC/Protobuf 策略：
+- VA 强制启用 `find_package(Protobuf CONFIG REQUIRED)`、`find_package(gRPC CONFIG REQUIRED)`；CMake 内部定义 `USE_GRPC`/`VA_ENABLE_GRPC_SERVER`；外部开关已废弃。
+- 依赖解析优先 vcpkg（OpenSSL/Zlib/Protobuf/gRPC/RE2/c-ares 等）。
+
+## controlplane 当前能力与差距
+
+已实现（controlplane/src/server/main.cpp）：
+- HTTP/CORS 基础；`/api/system/info` 聚合（2s 缓存，best-effort）
+- 订阅最小能力：`/api/subscriptions`（POST 受理 202+Location，GET 支持 ETag/304，DELETE 幂等）
+- 源管理起步：`/api/sources`（优先 WatchState 快照，回退 GetHealth），`/api/sources:enable|disable`
+- SSE 适配器：`CP_FAKE_WATCH=1` 时输出示例流；VA Watch 就绪后可桥接 gRPC→SSE
+
+待完善：
+- `/api/subscriptions/:id/events` SSE 接 VA Watch（gRPC 流）；
+- `/api/control/*`（apply/apply_pipelines/hotswap/pipeline/status/drain）转发到 VA AnalyzerControl；
+- `/api/orch/*` 编排到 VSM/VA；
+- 统一错误语义（gRPC→HTTP）、安全（CORS 白名单/Token/mTLS）、限流/熔断、指标与告警。
+
+## VA 侧“保留/迁移”边界
+
+- 迁移到 CP（对外）：`/api/subscriptions*`（含 SSE）、`/api/system/info`、`/api/sources*`、`/api/control/*`、`/api/orch/*`。
+- 保留在 VA（内部/底层）：`/metrics`、`/api/admin/wal/*`、`/api/db/*`、媒体/WHEP 路径（`video-analyzer/src/server/rest_whep.cpp`）。
+
+## 已完成关键变更（本轮）
+
+- 目录重命名与构建验证：
+  - controlplain → controlplane；VA 内嵌控制面目录改名；所有 include/CMake 修正；两端均构建通过。
+- 构建脚本与依赖：
+  - 全面切换 vcpkg；移除/清理 `-DUSE_GRPC`、`-DVA_ENABLE_GRPC_SERVER` 等无效参数；屏蔽 Anaconda 路径。
+- 最小冒烟：
+  - VA 监听 `9090/50051` 验证通过；CP `tools/run_cp_smoke.ps1` 通过（部分后端缺失用例 SKIP，`/api/system/info` PASS）。
+
+## 下一步计划（摘录）
+
+- M0：补齐 `/api/control/*` 映射、错误/指标规范、gRPC 客户端重试/超时。
+- M1：`/api/sources` watch（SSE）与 Restream 完整闭环（`source_id→rtsp_base+id`）。
+- M2：SSE 桥接（VA Watch）、安全（CORS 白名单、Token/mTLS）、限流/熔断、Grafana 告警。
+
+## 依赖与环境
+
+- 外部：gRPC/Protobuf/OpenSSL/Zlib/RE2/c-ares（vcpkg），CUDA（可选），MySQL/Redis（测试），RTSP 源（`rtsp://127.0.0.1:8554/camera_01`）。
+- 内部：VA AnalyzerControl gRPC、VSM SourceControl gRPC；前端仅接入 CP。
 

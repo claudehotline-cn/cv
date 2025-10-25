@@ -11,9 +11,9 @@
 #include "analyzer/model_registry.hpp"
 
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
-#include "control_plane_embedded/adapters/graph_adapter_yaml.hpp"
-#include "control_plane_embedded/controllers/pipeline_controller.hpp"
-#include "control_plane_embedded/api/grpc_server.hpp"
+#include "controlplane/adapters/graph_adapter_yaml.hpp"
+#include "controlplane/controllers/pipeline_controller.hpp"
+#include "controlplane/api/grpc_server.hpp"
 #endif
 
 #if defined(USE_GRPC)

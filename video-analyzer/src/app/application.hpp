@@ -6,7 +6,7 @@
 #include "core/track_manager.hpp"
 #include "server/rest.hpp"
 #include "ConfigLoader.hpp"
-#include "control_plane_embedded/interfaces.hpp"
+#include "controlplane/interfaces.hpp"
 
 #include <map>
 #include <memory>
