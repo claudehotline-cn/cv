@@ -49,6 +49,20 @@ struct RunnerConfig {
   std::function<std::string(const std::string&, const std::string&)> normalizer; // (app_err, fallback)
   struct MergePolicy { std::function<std::string(const std::string&)> base_key_fn; bool prefer_reuse_ready{true}; } merge;
   IWalAdapter* wal{nullptr};
+  // Minimal provider bridge into host application until native Steps are implemented
+  struct Provider {
+    // Create operation from spec, return id
+    std::function<std::string(const std::string& spec_json,
+                              const std::string& base_key,
+                              bool prefer_reuse_ready)> create;
+    // Cancel by id
+    std::function<bool(const std::string& id)> cancel;
+    // Fill Operation snapshot by id; return false when not found
+    std::function<bool(const std::string& id, Operation& out)> get;
+    // Optional: register watcher to push updates
+    std::function<void(const std::string& id,
+                       std::function<void(const Operation&)>)> watch;
+  } provider;
 };
 
 struct LroMetrics {
@@ -65,13 +79,30 @@ public:
   // Wire admission buckets from outside (e.g., open_rtsp/load_model/start_pipeline)
   void bindBucket(const std::string& /*name*/, void* /*counting_semaphore*/ ) {}
 
-  // Create/Get/Cancel minimal API (skeleton)
-  std::string create(const std::string& /*spec_json*/, const std::string& /*base_key*/, bool /*prefer_reuse_ready*/){ return {}; }
-  Operation get(const std::string& /*id*/) const { return {}; }
-  bool cancel(const std::string& /*id*/) { return true; }
+  // Create/Get/Cancel minimal API (provider-backed for now)
+  std::string create(const std::string& spec_json, const std::string& base_key, bool prefer_reuse_ready){
+    if (cfg_.provider.create) return cfg_.provider.create(spec_json, base_key, prefer_reuse_ready);
+    return {};
+  }
+  Operation get(const std::string& id) const {
+    Operation op; op.id = id; // id echo for caller convenience
+    if (cfg_.provider.get) {
+      Operation out;
+      if (cfg_.provider.get(id, out)) return out;
+      // not found -> empty id
+      return Operation{};
+    }
+    return op;
+  }
+  bool cancel(const std::string& id) {
+    if (cfg_.provider.cancel) return cfg_.provider.cancel(id);
+    return false;
+  }
 
   // Watch stream (hook for SSE/WS). on_event should be invoked on status changes.
-  void watch(const std::string& /*id*/, std::function<void(const Operation&)> /*on_event*/) {}
+  void watch(const std::string& id, std::function<void(const Operation&)> on_event) {
+    if (cfg_.provider.watch) { cfg_.provider.watch(id, std::move(on_event)); }
+  }
 
   LroMetrics metricsSnapshot() const { return {}; }
 
@@ -81,4 +112,3 @@ private:
 };
 
 } // namespace lro
-

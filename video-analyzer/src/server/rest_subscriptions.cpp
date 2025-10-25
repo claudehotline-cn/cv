@@ -197,7 +197,16 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
             }
             } // not exempt
         }
-        const std::string id = subscriptions->enqueue(request, prefer_reuse_ready);
+        std::string id;
+        if (lro_enabled_ && lro_runner_) {
+            const std::string base_key = request.stream_id + ":" + request.profile_id;
+            id = lro_runner_->create(req.body.empty()? std::string("{}") : req.body, base_key, prefer_reuse_ready);
+            if (id.empty()) {
+                return errorResponse("LRO create failed", 500);
+            }
+        } else {
+            id = subscriptions->enqueue(request, prefer_reuse_ready);
+        }
         Json::Value payload = successPayload();
         Json::Value data(Json::objectValue);
         data["id"] = id;
@@ -246,6 +255,14 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
     if (!subscriptions) {
         return errorResponse("subscription manager unavailable", 503);
     }
+    // Prefer LRO snapshot when enabled
+    lro::Operation op;
+    if (lro_enabled_ && lro_runner_) {
+        op = lro_runner_->get(id);
+        if (op.id.empty()) {
+            return errorResponse("subscription not found", 404);
+        }
+    }
     auto state = subscriptions->get(id);
     if (!state) {
         return errorResponse("subscription not found", 404);
@@ -253,15 +270,26 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
     // ETag support (weak): derive from timestamps and current phase
     auto etag_hex = [&](){
         uint64_t acc = 0;
-        acc ^= static_cast<uint64_t>(state->ts_pending.load());
-        acc ^= static_cast<uint64_t>(state->ts_preparing.load());
-        acc ^= static_cast<uint64_t>(state->ts_opening.load());
-        acc ^= static_cast<uint64_t>(state->ts_loading.load());
-        acc ^= static_cast<uint64_t>(state->ts_starting.load());
-        acc ^= static_cast<uint64_t>(state->ts_ready.load());
-        acc ^= static_cast<uint64_t>(state->ts_failed.load());
-        acc ^= static_cast<uint64_t>(state->ts_cancelled.load());
-        acc ^= static_cast<uint64_t>(static_cast<int>(state->phase.load()));
+        if (!op.id.empty()) {
+            acc ^= op.timeline.ts_pending;
+            acc ^= op.timeline.ts_preparing;
+            acc ^= op.timeline.ts_opening;
+            acc ^= op.timeline.ts_loading;
+            acc ^= op.timeline.ts_starting;
+            acc ^= op.timeline.ts_ready;
+            acc ^= op.timeline.ts_failed;
+            acc ^= op.timeline.ts_cancelled;
+        } else {
+            acc ^= static_cast<uint64_t>(state->ts_pending.load());
+            acc ^= static_cast<uint64_t>(state->ts_preparing.load());
+            acc ^= static_cast<uint64_t>(state->ts_opening.load());
+            acc ^= static_cast<uint64_t>(state->ts_loading.load());
+            acc ^= static_cast<uint64_t>(state->ts_starting.load());
+            acc ^= static_cast<uint64_t>(state->ts_ready.load());
+            acc ^= static_cast<uint64_t>(state->ts_failed.load());
+            acc ^= static_cast<uint64_t>(state->ts_cancelled.load());
+            acc ^= static_cast<uint64_t>(static_cast<int>(state->phase.load()));
+        }
         std::ostringstream os; os << 'W' << '/' << std::hex << acc; return os.str();
     }();
     // If-None-Match handling
@@ -273,7 +301,7 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
     Json::Value payload = successPayload();
     Json::Value data(Json::objectValue);
     data["id"] = id;
-    data["phase"] = toString(state->phase.load());
+    data["phase"] = (!op.id.empty() ? Json::Value(op.status.phase) : Json::Value(toString(state->phase.load())));
     data["stream_id"] = state->request.stream_id;
     data["profile_id"] = state->request.profile_id;
     data["source_uri"] = state->request.source_uri;
@@ -335,7 +363,13 @@ HttpResponse RestServer::Impl::handleSubscriptionDelete(const HttpRequest& /*req
     if (!subscriptions) {
         return errorResponse("subscription manager unavailable", 503);
     }
-    if (!subscriptions->cancel(id)) {
+    bool ok = false;
+    if (lro_enabled_ && lro_runner_) {
+        ok = lro_runner_->cancel(id);
+    } else {
+        ok = subscriptions->cancel(id);
+    }
+    if (!ok) {
         return errorResponse("subscription not found", 404);
     }
     // Persist cancellation for session (best-effort)

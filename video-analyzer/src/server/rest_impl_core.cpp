@@ -65,6 +65,65 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
             rcfg.admission = lro_admission_.get();
             rcfg.fair_window = 8;
             rcfg.retry_estimator = [](int qlen, int slots_min){ if (slots_min<=0) slots_min=1; int est = qlen/slots_min; if (est<1) est=1; if (est>60) est=60; return est; };
+            // Provider bridge -> current SubscriptionManager (transition phase)
+            rcfg.provider.create = [this](const std::string& spec_json,
+                                          const std::string& /*base_key*/,
+                                          bool prefer_reuse_ready) -> std::string {
+                Json::Value body = parseJson(spec_json);
+                SubscriptionRequest req;
+                auto stream_opt = getStringField(body, {"stream_id", "stream"});
+                auto profile_opt = getStringField(body, {"profile", "profile_id"});
+                auto uri_opt = getStringField(body, {"source_uri", "uri", "url"});
+                if (!stream_opt || !profile_opt || !uri_opt) {
+                    throw std::runtime_error("LRO: spec missing required fields");
+                }
+                req.stream_id = *stream_opt;
+                req.profile_id = *profile_opt;
+                req.source_uri = *uri_opt;
+                if (body.isMember("model_id") && body["model_id"].isString()) {
+                    auto v = body["model_id"].asString(); if (!v.empty()) req.model_id = v;
+                }
+                // Optional requester key (header is not available here; allow spec override)
+                if (body.isMember("requester_key") && body["requester_key"].isString()) {
+                    req.requester_key = body["requester_key"].asString();
+                }
+                if (subscriptions) {
+                    subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
+                    return subscriptions->enqueue(req, prefer_reuse_ready);
+                }
+                throw std::runtime_error("subscription manager unavailable");
+            };
+            rcfg.provider.get = [this](const std::string& id, lro::Operation& out) -> bool {
+                if (!subscriptions) return false;
+                auto st = subscriptions->get(id);
+                if (!st) return false;
+                out.id = id;
+                out.status.phase = toString(st->phase.load());
+                out.status.reason = st->reason;
+                out.timeline.ts_pending   = st->ts_pending.load();
+                out.timeline.ts_preparing = st->ts_preparing.load();
+                out.timeline.ts_opening   = st->ts_opening.load();
+                out.timeline.ts_loading   = st->ts_loading.load();
+                out.timeline.ts_starting  = st->ts_starting.load();
+                out.timeline.ts_ready     = st->ts_ready.load();
+                out.timeline.ts_failed    = st->ts_failed.load();
+                out.timeline.ts_cancelled = st->ts_cancelled.load();
+                // Pack minimal result/echo fields
+                try {
+                    Json::Value x(Json::objectValue);
+                    x["stream_id"] = st->request.stream_id;
+                    x["profile_id"] = st->request.profile_id;
+                    x["source_uri"] = st->request.source_uri;
+                    if (st->request.model_id) x["model_id"] = *st->request.model_id;
+                    if (!st->pipeline_key.empty()) x["pipeline_key"] = st->pipeline_key;
+                    if (!st->whep_url.empty()) x["whep_url"] = st->whep_url;
+                    Json::StreamWriterBuilder b; out.result_json = Json::writeString(b, x);
+                } catch (...) {}
+                return true;
+            };
+            rcfg.provider.cancel = [this](const std::string& id) -> bool {
+                if (!subscriptions) return false; return subscriptions->cancel(id);
+            };
             lro_runner_ = std::make_unique<lro::Runner>(rcfg);
             // Admission buckets mirror current config (best-effort; capacity is stored in policy)
             lro_admission_->setBucketCapacity("open_rtsp", open);
