@@ -20,10 +20,9 @@
 #include "storage/source_repo.hpp"
 #include "media/whep_session.hpp"
 #include "whep_control.grpc.pb.h"
-#include "server/subscription_manager.hpp"
-#include "lro/runner.hpp"
-#include "lro/state_store.hpp"
-#include "lro/admission.hpp"
+#include "lro/runner.h"
+#include "lro/state_store.h"
+#include "lro/admission.h"
 
 #include "control_plane_embedded/controllers/pipeline_controller.hpp"
 
@@ -986,7 +985,14 @@ struct RestServer::Impl {
     std::unique_ptr<va::storage::SessionRepo> sessions_repo;
     std::unique_ptr<va::storage::GraphRepo> graphs_repo;
     std::unique_ptr<va::storage::SourceRepo> sources_repo;
-    std::unique_ptr<SubscriptionManager> subscriptions;
+    // Legacy SubscriptionManager removed; runner + admission are the source of truth
+    int cfg_heavy_slots_{0};
+    int cfg_model_slots_{0};
+    int cfg_rtsp_slots_{0};
+    size_t cfg_max_queue_{0};
+    int cfg_ttl_seconds_{0};
+    int cfg_open_rtsp_slots_{0};
+    int cfg_start_pipeline_slots_{0};
     // Subscriptions 配置来源回显
     std::string subs_src_heavy {"defaults"};
     std::string subs_src_model {"defaults"};
@@ -1166,7 +1172,7 @@ struct RestServer::Impl {
     // LRO (Long-Running Operation) optional runner (feature-flagged)
     bool lro_enabled_{false};
     std::unique_ptr<lro::Runner> lro_runner_;
-    std::unique_ptr<lro::MemoryStore> lro_store_;
+    std::shared_ptr<lro::IStateStore> lro_store_;
     std::unique_ptr<lro::AdmissionPolicy> lro_admission_;
 };
 

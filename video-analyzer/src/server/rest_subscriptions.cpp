@@ -1,11 +1,13 @@
 #include "server/rest_impl.hpp"
+#include <functional>
+#include <chrono>
 #include "server/sse_metrics.hpp"
 
 namespace va::server {
 
 HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) {
-    if (!subscriptions) {
-        return errorResponse("subscription manager unavailable", 503);
+    if (!(lro_enabled_ && lro_runner_)) {
+        return errorResponse("LRO unavailable", 503);
     }
     try {
         const Json::Value body = parseJson(req.body);
@@ -24,22 +26,18 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
         if (!uri_opt || uri_opt->empty()) {
             return errorResponse("Missing required field: source_uri", 400);
         }
-        SubscriptionRequest request;
-        request.stream_id = *stream_opt;
-        request.profile_id = *profile_opt;
-        request.source_uri = *uri_opt;
+        const std::string stream_id = *stream_opt;
+        const std::string profile_id = *profile_opt;
+        const std::string uri = *uri_opt;
         // Extract requester key for quotas
         const auto& quotas = app.appConfig().quotas;
         std::string header_name = quotas.header_key.empty()? std::string("X-API-Key") : quotas.header_key;
         std::string header_lc = toLower(header_name);
+        std::string requester_key;
         for (const auto& h : req.headers) {
-            if (toLower(h.first) == header_lc) { request.requester_key = h.second; break; }
+            if (toLower(h.first) == header_lc) { requester_key = h.second; break; }
         }
-        if (body.isMember("model_id") && body["model_id"].isString()) {
-            auto v = body["model_id"].asString();
-            if (!v.empty()) request.model_id = v;
-        }
-        subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
+        // model_id 在 LRO 路径作为 spec 透传即可，无需写入旧 request 结构
         bool prefer_reuse_ready = false;
         // 简易解析：query 中包含 use_existing=1 或头部 X-Subscription-Use-Existing: 1
         try {
@@ -58,12 +56,12 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
         if (quotas.enabled) {
             // Exempt keys bypass
             auto keyEq = [&](const std::string& a, const std::string& b){ return toLower(a) == toLower(b); };
-            bool exempt = false; for (const auto& ek : quotas.exempt_keys) { if (keyEq(ek, request.requester_key.value_or(std::string()))) { exempt = true; break; } }
+            bool exempt = false; for (const auto& ek : quotas.exempt_keys) { if (keyEq(ek, requester_key)) { exempt = true; break; } }
             // Per-key overrides
             int key_cc = quotas.def.concurrent; int key_rpm = quotas.def.rate_per_min;
             bool ov_observe_only = false; bool ov_has_enf = false; int ov_enf_percent = -1;
             for (const auto& ov : quotas.key_overrides) {
-                if (keyEq(ov.key, request.requester_key.value_or(std::string()))) {
+                if (keyEq(ov.key, requester_key)) {
                     if (ov.concurrent > 0) key_cc = ov.concurrent;
                     if (ov.rate_per_min > 0) key_rpm = ov.rate_per_min;
                     if (ov.enforce_percent >= 0 && ov.enforce_percent <= 100) { ov_has_enf = true; ov_enf_percent = ov.enforce_percent; }
@@ -88,7 +86,7 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
             };
             if (!exempt) {
             // scheme from source_uri
-            auto src = request.source_uri;
+            auto src = uri;
             std::string sch; {
                 auto p = src.find(":"); if (p != std::string::npos) sch = toLower(src.substr(0, p));
             }
@@ -102,7 +100,7 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
             }
             if (!quotas.acl.allowed_profiles.empty()) {
                 bool okp = false;
-                for (const auto& p : quotas.acl.allowed_profiles) { if (p == request.profile_id) { okp = true; break; } }
+                for (const auto& p : quotas.acl.allowed_profiles) { if (p == profile_id) { okp = true; break; } }
                 if (!okp) {
                     if (enforce) { quota_drop_acl_profile_.fetch_add(1, std::memory_order_relaxed); HttpResponse resp = errorResponse("acl: profile not allowed", 403); resp.headers["X-Quota-Reason"] = "acl_profile"; std::string allowed; for (size_t i=0;i<quotas.acl.allowed_profiles.size();++i){ allowed += quotas.acl.allowed_profiles[i]; if (i+1<quotas.acl.allowed_profiles.size()) allowed += ','; } resp.headers["X-Quota-Advice"] = std::string("use one of profiles: ")+allowed; return resp; }
                     else { record_would("acl_profile"); }
@@ -110,17 +108,17 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
             }
             // Concurrency quotas
             if (quotas.global.concurrent > 0) {
-                auto ms = subscriptions->metricsSnapshot();
+                auto ms = lro_runner_->metricsSnapshot();
                 if (static_cast<int>(ms.in_progress) >= quotas.global.concurrent) {
                     if (enforce) {
                         quota_drop_global_concurrent_.fetch_add(1, std::memory_order_relaxed);
                         HttpResponse resp = errorResponse("quota: global concurrent limit", 429);
                         std::string ra = "1";
                         try {
-                            size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                            int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                            int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                            int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
+                            size_t qlen = lro_runner_->metricsSnapshot().queue_length;
+                            int s_open = lro_admission_? lro_admission_->getBucketCapacity("open_rtsp"):1;
+                            int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
+                            int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
                             int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
                             int est = 1;
                             if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
@@ -133,19 +131,19 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                     } else { record_would("global_concurrent"); }
                 }
             }
-            const std::string key = request.requester_key.value_or(std::string());
+            const std::string key = requester_key;
             if (key_cc > 0) {
-                int cur = subscriptions->countInProgressByKey(key);
+                int cur = 0; // LRO minimal: no per-key in-progress counting
                 if (cur >= key_cc) {
                     if (enforce) {
                         quota_drop_key_concurrent_.fetch_add(1, std::memory_order_relaxed);
                         HttpResponse resp = errorResponse("quota: key concurrent limit", 429);
                         std::string ra = "1";
                         try {
-                            size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                            int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                            int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                            int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
+                            size_t qlen = lro_runner_->metricsSnapshot().queue_length;
+                            int s_open = lro_admission_? lro_admission_->getBucketCapacity("open_rtsp"):1;
+                            int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
+                            int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
                             int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
                             int est = 1;
                             if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
@@ -178,10 +176,10 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                     HttpResponse resp = errorResponse("quota: key rate_per_min limit", 429);
                     std::string ra = "60";
                     try {
-                        size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                        int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                        int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                        int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
+                        size_t qlen = lro_runner_->metricsSnapshot().queue_length;
+                        int s_open = lro_admission_? lro_admission_->getBucketCapacity("open_rtsp"):1;
+                        int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
+                        int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
                         int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
                         int est = 60;
                         if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
@@ -199,27 +197,30 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
         }
         std::string id;
         if (lro_enabled_ && lro_runner_) {
-            const std::string base_key = request.stream_id + ":" + request.profile_id;
-            id = lro_runner_->create(req.body.empty()? std::string("{}") : req.body, base_key, prefer_reuse_ready);
+            // ensure requester_key present in spec for future per-key metrics
+            Json::Value body2 = body; if (!requester_key.empty()) body2["requester_key"] = requester_key;
+            Json::StreamWriterBuilder wb; std::string spec = Json::writeString(wb, body2);
+            const std::string base_key = stream_id + ":" + profile_id; // 作为幂等键
+            id = lro_runner_->create(spec, base_key);
             if (id.empty()) {
                 return errorResponse("LRO create failed", 500);
             }
         } else {
-            id = subscriptions->enqueue(request, prefer_reuse_ready);
+            return errorResponse("LRO unavailable", 503);
         }
         Json::Value payload = successPayload();
         Json::Value data(Json::objectValue);
         data["id"] = id;
         data["status"] = "accepted";
-        data["phase"] = toString(SubscriptionPhase::Pending);
-        data["stream_id"] = request.stream_id;
-        data["profile_id"] = request.profile_id;
+        data["phase"] = "pending";
+        data["stream_id"] = stream_id;
+        data["profile_id"] = profile_id;
         payload["data"] = data;
         // Record session start (best-effort)
         if (sessions_repo) {
             std::string err; std::int64_t sid = 0;
             const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-            (void)sessions_repo->start(request.stream_id, request.profile_id, request.model_id.value_or(std::string()), request.source_uri, now_ms, &sid, &err);
+            (void)sessions_repo->start(stream_id, profile_id, (body.isMember("model_id")? body["model_id"].asString():std::string()), uri, now_ms, &sid, &err);
         }
         // 202 + Location header for polling follow-up
         HttpResponse resp;
@@ -235,11 +236,11 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
             // 动态补齐 Retry-After
             std::string ra = "1";
             try {
-                size_t qlen = subscriptions->metricsSnapshot().queue_length;
-                int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
-                int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
+                size_t qlen = lro_runner_->metricsSnapshot().queue_length;
+                int s_open = lro_admission_? lro_admission_->getBucketCapacity("open_rtsp"):1;
+                int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
+                int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
+                int slots = std::max(1, std::min({s_open, s_load, s_start}));
                 int est = 1;
                 if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
                 if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
@@ -252,46 +253,11 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
 }
 
   HttpResponse RestServer::Impl::handleSubscriptionGet(const HttpRequest& req, const std::string& id) {
-    // Prefer LRO snapshot when enabled; fallback to legacy manager
-    lro::Operation op;
-    if (lro_enabled_ && lro_runner_) {
-        op = lro_runner_->get(id);
-        if (op.id.empty() && !subscriptions) {
-            return errorResponse("subscription not found", 404);
-        }
-    }
-    std::shared_ptr<SubscriptionState> state;
-    if (subscriptions && op.id.empty()) {
-        state = subscriptions->get(id);
-        if (!state) {
-            return errorResponse("subscription not found", 404);
-        }
-    }
+    if (!(lro_enabled_ && lro_runner_)) return errorResponse("LRO unavailable", 503);
+    auto op_ptr = lro_runner_->get(id);
+    if (!op_ptr) return errorResponse("subscription not found", 404);
     // ETag support (weak): derive from timestamps and current phase
-    auto etag_hex = [&](){
-        uint64_t acc = 0;
-        if (!op.id.empty()) {
-            acc ^= op.timeline.ts_pending;
-            acc ^= op.timeline.ts_preparing;
-            acc ^= op.timeline.ts_opening;
-            acc ^= op.timeline.ts_loading;
-            acc ^= op.timeline.ts_starting;
-            acc ^= op.timeline.ts_ready;
-            acc ^= op.timeline.ts_failed;
-            acc ^= op.timeline.ts_cancelled;
-        } else {
-            acc ^= static_cast<uint64_t>(state->ts_pending.load());
-            acc ^= static_cast<uint64_t>(state->ts_preparing.load());
-            acc ^= static_cast<uint64_t>(state->ts_opening.load());
-            acc ^= static_cast<uint64_t>(state->ts_loading.load());
-            acc ^= static_cast<uint64_t>(state->ts_starting.load());
-            acc ^= static_cast<uint64_t>(state->ts_ready.load());
-            acc ^= static_cast<uint64_t>(state->ts_failed.load());
-            acc ^= static_cast<uint64_t>(state->ts_cancelled.load());
-            acc ^= static_cast<uint64_t>(static_cast<int>(state->phase.load()));
-        }
-        std::ostringstream os; os << 'W' << '/' << std::hex << acc; return os.str();
-    }();
+    auto etag_hex = [&](){ std::ostringstream os; os << 'W' << '/' << std::hex << std::hash<std::string>{}(op_ptr->phase) << std::hex << op_ptr->created_at.time_since_epoch().count(); return os.str(); }();
     // If-None-Match handling
     std::string inm;
     try { for (const auto& kv : req.headers) { if (toLower(kv.first) == "if-none-match") { inm = kv.second; break; } } } catch (...) {}
@@ -301,11 +267,11 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
     Json::Value payload = successPayload();
     Json::Value data(Json::objectValue);
     data["id"] = id;
-    data["phase"] = (!op.id.empty() ? Json::Value(op.status.phase) : Json::Value(toString(state->phase.load())));
+    data["phase"] = op_ptr->phase;
     std::string stream_id, profile_id, source_uri;
-    if (!op.id.empty()) {
+    {
         try {
-            Json::Value sx = parseJson(op.spec_json);
+            Json::Value sx = parseJson(op_ptr->spec_json);
             if (sx.isObject()) {
                 if (sx.isMember("stream_id") && sx["stream_id"].isString()) stream_id = sx["stream_id"].asString();
                 if (sx.isMember("stream") && stream_id.empty() && sx["stream"].isString()) stream_id = sx["stream"].asString();
@@ -316,29 +282,18 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                 if (sx.isMember("url") && source_uri.empty() && sx["url"].isString()) source_uri = sx["url"].asString();
             }
         } catch (...) {}
-    } else {
-        stream_id = state->request.stream_id; profile_id = state->request.profile_id; source_uri = state->request.source_uri;
     }
     if (!stream_id.empty()) data["stream_id"] = stream_id;
     if (!profile_id.empty()) data["profile_id"] = profile_id;
     if (!source_uri.empty()) data["source_uri"] = source_uri;
-    if (!op.id.empty()) {
-        try { Json::Value sx = parseJson(op.spec_json); if (sx.isMember("model_id") && sx["model_id"].isString()) data["model_id"] = sx["model_id"].asString(); } catch (...) {}
+    {
+        try { Json::Value sx = parseJson(op_ptr->spec_json); if (sx.isMember("model_id") && sx["model_id"].isString()) data["model_id"] = sx["model_id"].asString(); } catch (...) {}
         // pipeline_key: for Application path we used pipeline key as id
         data["pipeline_key"] = id;
-        if (!op.status.reason.empty()) data["reason"] = op.status.reason;
-    } else {
-        if (state->request.model_id) data["model_id"] = *state->request.model_id;
-        if (!state->pipeline_key.empty()) data["pipeline_key"] = state->pipeline_key;
-        if (!state->whep_url.empty()) data["whep_url"] = state->whep_url;
-        if (!state->reason.empty()) data["reason"] = state->reason;
+        if (!op_ptr->reason.empty()) data["reason"] = op_ptr->reason;
     }
-    if (state) {
-        const auto created = std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count();
-        data["created_at_ms"] = static_cast<Json::UInt64>(created);
-    } else if (!op.id.empty() && op.timeline.ts_pending > 0) {
-        data["created_at_ms"] = static_cast<Json::UInt64>(op.timeline.ts_pending);
-    }
+    // created_at 作为最小时间线
+    try { auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(op_ptr->created_at.time_since_epoch()).count(); data["created_at_ms"] = static_cast<Json::Int64>(ms); } catch (...) {}
     // include=timeline 支持
     auto q = parseQueryKV(req.query);
     auto itInc = q.find("include");
@@ -346,32 +301,12 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
         std::string inc = toLower(itInc->second);
         if (inc.find("timeline") != std::string::npos) {
             Json::Value tl(Json::objectValue);
-            auto put_ts = [&](const char* k, std::uint64_t v) { if (v>0) tl[k] = static_cast<Json::UInt64>(v); };
-            put_ts("pending", state->ts_pending.load());
-            put_ts("preparing", state->ts_preparing.load());
-            put_ts("opening_rtsp", state->ts_opening.load());
-            put_ts("loading_model", state->ts_loading.load());
-            put_ts("starting_pipeline", state->ts_starting.load());
-            put_ts("ready", state->ts_ready.load());
-            put_ts("failed", state->ts_failed.load());
-            put_ts("cancelled", state->ts_cancelled.load());
+            tl["pending"] = data["created_at_ms"]; // 最小时间线
             data["timeline"] = tl;
         }
     }
     // Persist completion if terminal (best-effort, once)
-    if (sessions_repo && state) {
-        auto ph = state->phase.load();
-        if (ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) {
-            bool expected = false;
-            if (state->db_recorded.compare_exchange_strong(expected, true)) {
-                std::string err;
-                const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-                const char* status = (ph == SubscriptionPhase::Ready) ? "Ready" : (ph == SubscriptionPhase::Failed ? "Failed" : "Cancelled");
-                const std::string errmsg = state->reason;
-                (void)sessions_repo->completeLatest(state->request.stream_id, state->request.profile_id, status, errmsg, now_ms, &err);
-            }
-        }
-    }
+    // DB completion best-effort omitted in LRO path (future: join with Runner terminal events)
     payload["data"] = data;
     HttpResponse resp = jsonResponse(payload, 200);
     resp.headers["ETag"] = etag_hex;
@@ -380,29 +315,50 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
 }
 
 HttpResponse RestServer::Impl::handleSubscriptionDelete(const HttpRequest& /*req*/, const std::string& id) {
-    if (!subscriptions) {
-        return errorResponse("subscription manager unavailable", 503);
+    if (!(lro_enabled_ && lro_runner_)) {
+        return errorResponse("LRO unavailable", 503);
     }
-    bool ok = false;
-    if (lro_enabled_ && lro_runner_) {
-        ok = lro_runner_->cancel(id);
-    } else {
-        ok = subscriptions->cancel(id);
-    }
+    bool ok = lro_runner_->cancel(id);
     if (!ok) {
         return errorResponse("subscription not found", 404);
     }
-    // Persist cancellation for session (best-effort)
-    if (sessions_repo) {
-        auto st = subscriptions->get(id);
-        if (st) {
-            bool expected = false;
-            if (st->db_recorded.compare_exchange_strong(expected, true)) {
-                std::string err;
-                const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-                (void)sessions_repo->completeLatest(st->request.stream_id, st->request.profile_id, "Cancelled", std::string(), now_ms, &err);
+    // Try to cancel application pipeline as well (best-effort)
+    try {
+        auto op_ptr = lro_runner_->get(id);
+        if (op_ptr) {
+            std::string stream_id, profile_id;
+            try {
+                Json::Value sx = parseJson(op_ptr->spec_json);
+                if (sx.isMember("stream_id") && sx["stream_id"].isString()) stream_id = sx["stream_id"].asString();
+                if (sx.isMember("stream") && stream_id.empty() && sx["stream"].isString()) stream_id = sx["stream"].asString();
+                if (sx.isMember("profile") && sx["profile"].isString()) profile_id = sx["profile"].asString();
+                if (sx.isMember("profile_id") && profile_id.empty() && sx["profile_id"].isString()) profile_id = sx["profile_id"].asString();
+            } catch (...) {}
+            if (!stream_id.empty() && !profile_id.empty()) {
+                (void)app.unsubscribeStream(stream_id, profile_id);
             }
         }
+    } catch (...) {}
+    // Persist cancellation for session (best-effort)
+    if (sessions_repo) {
+        try {
+            auto del_ptr = lro_runner_->get(id);
+            if (del_ptr) {
+                std::string stream_id, profile_id;
+                try {
+                    Json::Value sx = parseJson(del_ptr->spec_json);
+                    if (sx.isMember("stream_id") && sx["stream_id"].isString()) stream_id = sx["stream_id"].asString();
+                    if (sx.isMember("stream") && stream_id.empty() && sx["stream"].isString()) stream_id = sx["stream"].asString();
+                    if (sx.isMember("profile") && sx["profile"].isString()) profile_id = sx["profile"].asString();
+                    if (sx.isMember("profile_id") && profile_id.empty() && sx["profile_id"].isString()) profile_id = sx["profile_id"].asString();
+                } catch (...) {}
+                if (!stream_id.empty() && !profile_id.empty()) {
+                    std::string err;
+                    const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                    (void)sessions_repo->completeLatest(stream_id, profile_id, "Cancelled", std::string(), now_ms, &err);
+                }
+            }
+        } catch (...) {}
     }
     Json::Value payload = successPayload();
     payload["data"]["id"] = id;
@@ -715,16 +671,16 @@ void RestServer::Impl::streamSubscriptionSSE(int fd, const HttpRequest& req, con
         std::uint64_t ev_id = 1;
         auto hit = req.headers.find("Last-Event-ID"); if (hit != req.headers.end()) { try { ev_id = static_cast<std::uint64_t>(std::stoull(hit->second) + 1ULL); } catch (...) {} }
         while (true) {
-            auto op = lro_runner_->get(id);
-            if (op.id.empty()) { Json::Value e; e["error"] = "not_found"; sseEvent(fd, "error", e); return; }
-            if (first || op.status.phase != last) {
+            auto op_ptr = lro_runner_->get(id);
+            if (!op_ptr) { Json::Value e; e["error"] = "not_found"; sseEvent(fd, "error", e); return; }
+            if (first || op_ptr->phase != last) {
                 Json::Value data(Json::objectValue);
                 data["id"] = id;
-                data["phase"] = op.status.phase;
-                if (!op.status.reason.empty()) data["reason"] = op.status.reason;
+                data["phase"] = op_ptr->phase;
+                if (!op_ptr->reason.empty()) data["reason"] = op_ptr->reason;
                 data["pipeline_key"] = id;
                 sseEventWithId(fd, "phase", data, ev_id++, 2500);
-                last = op.status.phase; first = false;
+                last = op_ptr->phase; first = false;
                 if (last == "ready" || last == "failed" || last == "cancelled") break;
             }
             auto now = std::chrono::steady_clock::now();
@@ -733,59 +689,8 @@ void RestServer::Impl::streamSubscriptionSSE(int fd, const HttpRequest& req, con
         }
         return;
     }
-    if (!subscriptions) return;
-    // SSE metrics: active connections and reconnects
-    struct Guard { ~Guard(){ va::server::g_sse_subscriptions_active.fetch_sub(1, std::memory_order_relaxed); } } guard;
-    va::server::g_sse_subscriptions_active.fetch_add(1, std::memory_order_relaxed);
-    try { auto it=req.headers.find("Last-Event-ID"); if (it!=req.headers.end()) va::server::g_sse_reconnects_total.fetch_add(1ULL, std::memory_order_relaxed); } catch (...) {}
-    sseWriteHeaders(fd);
-    auto state = subscriptions->get(id);
-    if (!state) { Json::Value e; e["error"] = "not_found"; sseEvent(fd, "error", e); return; }
-    auto last = SubscriptionPhase::Pending;
-    bool first = true;
-    const int interval_ms = 200;
-    const int keepalive_ms = 10000;
-    auto last_keepalive = std::chrono::steady_clock::now();
-    // Last-Event-ID 支持：从请求头恢复事件序号
-    std::uint64_t ev_id = 1;
-    auto hit = req.headers.find("Last-Event-ID");
-    if (hit != req.headers.end()) {
-        try { ev_id = static_cast<std::uint64_t>(std::stoull(hit->second) + 1ULL); } catch (...) {}
-    }
-    while (true) {
-        auto st = subscriptions->get(id);
-        if (!st) break;
-        auto ph = st->phase.load();
-        if (first || ph != last) {
-            Json::Value data(Json::objectValue);
-            data["id"] = id;
-            data["phase"] = toString(ph);
-            if (!st->reason.empty()) data["reason"] = st->reason;
-            if (!st->pipeline_key.empty()) data["pipeline_key"] = st->pipeline_key;
-            if (!st->whep_url.empty()) data["whep_url"] = st->whep_url;
-            sseEventWithId(fd, "phase", data, ev_id++, 2500);
-            // On terminal state, persist a session completion record once (best-effort)
-            if ((ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) && sessions_repo) {
-                bool expected = false;
-                if (st->db_recorded.compare_exchange_strong(expected, true)) {
-                    std::string err;
-                    const auto now_ms = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-                    const char* status = (ph == SubscriptionPhase::Ready) ? "Ready" : (ph == SubscriptionPhase::Failed ? "Failed" : "Cancelled");
-                    const std::string errmsg = st->reason;
-                    (void)sessions_repo->completeLatest(st->request.stream_id, st->request.profile_id, status, errmsg, now_ms, &err);
-                }
-            }
-            last = ph; first = false;
-            if (ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) break;
-        }
-        // keepalive
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_keepalive).count() >= keepalive_ms) {
-            sseKeepAlive(fd);
-            last_keepalive = now;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
-    }
+    return;
+    // legacy SSE path removed under LRO
 }
 
 } // namespace va::server

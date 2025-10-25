@@ -5,4 +5,55 @@
 [vcvarsall.bat] Environment initialized for: 'x64'
 ninja: Entering directory `D:\\Projects\\ai\\cv\\video-analyzer\\build-ninja'
 [0/2] H:\CMake\bin\cmake.exe -P D:\Projects\ai\cv\video-analyzer\build-ninja\CMakeFiles\VerifyGlobs.cmake
-ninja: no work to do.
+[1/3] "H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe"  /nologo /TP -DABSL_CONSUME_DLL -DHAVE_MYSQL_JDBC -DIXWEBSOCKET_HEADER_ONLY -DIXWEBSOCKET_USE_TLS=0 -DPROTOBUF_USE_DLLS -DUSE_CUDA -DUSE_FFMPEG -DUSE_GRPC -DUSE_ONNXRUNTIME -DVA_ENABLE_GRPC_SERVER -DVA_HAS_CUDA_KERNELS -DVA_WITH_MYSQL -DWITH_NVDEC -DWITH_NVENC -DYAML_CPP_STATIC_DEFINE -ID:\Projects\ai\cv\video-analyzer\include -ID:\Projects\ai\cv\third_party\onnxruntime-win-x64-gpu-1.23.0\include -ID:\Projects\ai\cv\video-analyzer\src -ID:\Projects\ai\cv\video-analyzer\build-ninja\generated -ID:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\include -ID:\Projects\ai\cv\third_party\mysql-connector-c++-9.4.0-winx64\include -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\vcpkg\installed\x64-windows\include" -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include" -I"H:\Windows Kits\10\include\10.0.26100.0\ucrt" -I"H:\Windows Kits\10\Include\10.0.26100.0\um" -I"H:\Windows Kits\10\Include\10.0.26100.0\shared" -ID:\Projects\ai\cv\video-analyzer\..\lro\include -ID:\Projects\ai\cv\third_party\yaml-cpp\yaml-cpp-0.8.0\include -ID:\Projects\ai\cv\lro\include -external:ID:\Projects\vcpkg\installed\x64-windows\include\opencv4 -external:ID:\Projects\vcpkg\installed\x64-windows\include -external:I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\include" -external:W0 /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MD /W4 /utf-8 /showIncludes /FoCMakeFiles\VideoAnalyzer.dir\src\server\rest_metrics.cpp.obj /FdCMakeFiles\VideoAnalyzer.dir\ /FS -c D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp
+FAILED: [code=2] CMakeFiles/VideoAnalyzer.dir/src/server/rest_metrics.cpp.obj 
+"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe"  /nologo /TP -DABSL_CONSUME_DLL -DHAVE_MYSQL_JDBC -DIXWEBSOCKET_HEADER_ONLY -DIXWEBSOCKET_USE_TLS=0 -DPROTOBUF_USE_DLLS -DUSE_CUDA -DUSE_FFMPEG -DUSE_GRPC -DUSE_ONNXRUNTIME -DVA_ENABLE_GRPC_SERVER -DVA_HAS_CUDA_KERNELS -DVA_WITH_MYSQL -DWITH_NVDEC -DWITH_NVENC -DYAML_CPP_STATIC_DEFINE -ID:\Projects\ai\cv\video-analyzer\include -ID:\Projects\ai\cv\third_party\onnxruntime-win-x64-gpu-1.23.0\include -ID:\Projects\ai\cv\video-analyzer\src -ID:\Projects\ai\cv\video-analyzer\build-ninja\generated -ID:\Projects\ai\cv\third_party\ffmpeg-prebuilt\ffmpeg-master-latest-win64-lgpl-shared\include -ID:\Projects\ai\cv\third_party\mysql-connector-c++-9.4.0-winx64\include -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\vcpkg\installed\x64-windows\include" -I"H:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include" -I"H:\Windows Kits\10\include\10.0.26100.0\ucrt" -I"H:\Windows Kits\10\Include\10.0.26100.0\um" -I"H:\Windows Kits\10\Include\10.0.26100.0\shared" -ID:\Projects\ai\cv\video-analyzer\..\lro\include -ID:\Projects\ai\cv\third_party\yaml-cpp\yaml-cpp-0.8.0\include -ID:\Projects\ai\cv\lro\include -external:ID:\Projects\vcpkg\installed\x64-windows\include\opencv4 -external:ID:\Projects\vcpkg\installed\x64-windows\include -external:I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\include" -external:W0 /DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MD /W4 /utf-8 /showIncludes /FoCMakeFiles\VideoAnalyzer.dir\src\server\rest_metrics.cpp.obj /FdCMakeFiles\VideoAnalyzer.dir\ /FS -c D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp
+D:\Projects\ai\cv\video-analyzer\build-ninja\generated\source_control.pb.h(2929): warning C4267: “return”: 从“size_t”转换到“int”，可能丢失数据
+D:\Projects\ai\cv\video-analyzer\build-ninja\generated\source_control.pb.h(3823): warning C4267: “return”: 从“size_t”转换到“int”，可能丢失数据
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(360): warning C4244: “初始化”: 从“SOCKET”转换到“int”，可能丢失数据
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(836): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(837): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(851): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server/rest_impl.hpp(852): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(297): error C2374: “c0”: 重定义；多次初始化
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(276): note: 参见“c0”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(297): error C2086: “va::server::RestServer::Impl::handleMetrics::<lambda_5a3cab435506eaf7c6267ba436767026> c0”: 重定义
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(276): note: 参见“c0”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(297): error C2371: “c0”: 重定义；不同的基类型
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(256): error C2317: 在行“256”上开始的“try”块没有 catch 处理程序
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(543): error C2374: “classify_path”: 重定义；多次初始化
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(61): note: 参见“classify_path”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(543): error C2086: “va::server::RestServer::Impl::handleMetrics::<lambda_7af70d122658da6bc46867197fc20182> classify_path”: 重定义
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(61): note: 参见“classify_path”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(543): error C2371: “classify_path”: 重定义；不同的基类型
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(551): error C2374: “ext_labels”: 重定义；多次初始化
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(68): note: 参见“ext_labels”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(551): error C2086: “const bool ext_labels”: 重定义
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(68): note: 参见“ext_labels”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(599): error C2374: “bounds_ms”: 重定义；多次初始化
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(102): note: 参见“bounds_ms”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(599): error C2086: “const double bounds_ms[10]”: 重定义
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(102): note: 参见“bounds_ms”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(602): error C2374: “emit_hist”: 重定义；多次初始化
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(103): note: 参见“emit_hist”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(602): error C2086: “va::server::RestServer::Impl::handleMetrics::<lambda_dbdfe2bf2411dd983ba062a816310a1b> emit_hist”: 重定义
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(103): note: 参见“emit_hist”的声明
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(602): error C2371: “emit_hist”: 重定义；不同的基类型
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(633): error C2064: 项不会计算为接受 4 个参数的函数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(633): note: 类不会将“operator()”或用户定义的转换运算符定义到指向函数的指针或指向函数的引用(它们接受适当数量的参数)
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(633): note: 尝试匹配参数列表“(const char [8], const std::string, const std::string, const va::core::Pipeline::LatencySnapshot)”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(634): error C2064: 项不会计算为接受 4 个参数的函数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(634): note: 类不会将“operator()”或用户定义的转换运算符定义到指向函数的指针或指向函数的引用(它们接受适当数量的参数)
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(634): note: 尝试匹配参数列表“(const char [6], const std::string, const std::string, const va::core::Pipeline::LatencySnapshot)”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(635): error C2064: 项不会计算为接受 4 个参数的函数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(635): note: 类不会将“operator()”或用户定义的转换运算符定义到指向函数的指针或指向函数的引用(它们接受适当数量的参数)
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(635): note: 尝试匹配参数列表“(const char [9], const std::string, const std::string, const va::core::Pipeline::LatencySnapshot)”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(636): error C2064: 项不会计算为接受 4 个参数的函数
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(636): note: 类不会将“operator()”或用户定义的转换运算符定义到指向函数的指针或指向函数的引用(它们接受适当数量的参数)
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(636): note: 尝试匹配参数列表“(const char [7], const std::string, const std::string, const va::core::Pipeline::LatencySnapshot)”时
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(837): error C2601: “va::server::RestServer::Impl::handleMetricsConfigGet”: 本地函数定义是非法的
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(8): note: 此行有一个“{”没有匹配项
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(849): error C2601: “va::server::RestServer::Impl::handleMetricsConfigSet”: 本地函数定义是非法的
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(8): note: 此行有一个“{”没有匹配项
+D:\Projects\ai\cv\video-analyzer\src\server\rest_metrics.cpp(6): fatal error C1075: “{”: 未找到匹配令牌
+ninja: build stopped: subcommand failed.

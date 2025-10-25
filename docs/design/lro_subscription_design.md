@@ -8,13 +8,13 @@
 ## 库形态与目录结构
 - 仓库：独立仓库（推荐）+ CMake 包目标 `lro::lro`，首期 header-first（便于快速集成）。
 - 目录（建议）：
-  - `include/lro/runner.hpp`：核心调度与执行（Runner/Operation/Step/Config）
-  - `include/lro/state_store.hpp`：IStateStore、MemoryStore、WalStoreAdapter
-  - `include/lro/admission.hpp`：AdmissionPolicy（多桶信号量+公平出队窗口）
-  - `include/lro/metrics.hpp`：指标采样/快照
-  - `include/lro/notifier.hpp`：INotifier（SSE/WS/Webhook）
-  - `include/lro/reason.hpp`：错误归一 normalize
-  - 可选适配：`include/lro/adapters/rest_simple.hpp`（REST 简化注册）、`include/lro/adapters/wal.hpp`
+  - `include/lro/runner.h`：核心调度与执行（Runner/Operation/Step/Config）
+  - `include/lro/state_store.h`：IStateStore、MemoryStore、WalStoreAdapter
+  - `include/lro/admission.h`：AdmissionPolicy（多桶信号量+公平出队窗口）
+  - `include/lro/metrics.h`：指标采样/快照
+  - `include/lro/notifier.h`：INotifier（SSE/WS/Webhook）
+  - `include/lro/reason.h`：错误归一 normalize
+  - 可选适配：`include/lro/adapters/rest_simple.h`（REST 简化注册）、`include/lro/adapters/wal.hpp`
 
 ## 核心模型与 API
 - Operation

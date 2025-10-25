@@ -271,119 +271,80 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 if (est < 1) est = 1; if (est > 60) est = 60;
                 mb.header("va_backpressure_retry_after_seconds", "gauge", "Estimated Retry-After based on queue/slots");
                 mb.sample("va_backpressure_retry_after_seconds", "{}", static_cast<unsigned long long>(est));
+            // Completed totals
+            mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
+            auto c0 = [&](const char* res, unsigned long long v) { std::ostringstream ls; ls<<"{result=\\\""<<res<<"\\\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
+            // Failed by reason (from store snapshot)
+            try {
+                std::map<std::string, std::uint64_t> fail_by_reason;
+                if (lro_store_) {
+                    lro_store_->for_each([&](const std::shared_ptr<lro::Operation>& op){
+                        if (!op) return; auto st = op->status.load(std::memory_order_relaxed);
+                        if (st != lro::Status::Failed) return;
+                        std::string r = op->reason.empty()? std::string("unknown"): op->reason;
+                        fail_by_reason[r] += 1ULL;
+                    });
+                }
+                if (!fail_by_reason.empty()) {
+                    mb.header("va_subscriptions_failed_by_reason_total", "counter", "Failed subscriptions by reason");
+                    for (const auto& kv : fail_by_reason) {
+                        std::ostringstream ls; ls<<"{reason=\\\""<<kv.first<<"\\\"}"; mb.sample("va_subscriptions_failed_by_reason_total", ls.str(), kv.second);
+                    }
+                }
             } catch (...) {}
-            mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
-            mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
-            // Completed totals (LRO minimal: emit zeros to keep metric presence)
+            // Completed totals
             mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
             auto c0 = [&](const char* res, unsigned long long v) { std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
-            c0("ready", 0ULL); c0("failed", 0ULL); c0("cancelled", 0ULL);
-            // Duration histogram presence (zeros)
-            mb.header("va_subscription_duration_seconds", "histogram", "Subscription total duration in seconds");
-            const double bounds[6] = {0.5,1.0,2.0,5.0,10.0,30.0};
-            unsigned long long acc0 = 0ULL;
-            for (int i=0;i<6;++i) { std::ostringstream ls; ls<<"{le=\""<<bounds[i]<<"\"}"; mb.sample("va_subscription_duration_seconds_bucket", ls.str(), acc0); }
-            std::ostringstream lsi0; lsi0 << "{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi0.str(), 0ULL);
-            mb.sample("va_subscription_duration_seconds_sum", "{}", 0.0);
-            mb.sample("va_subscription_duration_seconds_count", "{}", 0ULL);
-            // States gauges
-            mb.header("va_subscriptions_states", "gauge", "Subscriptions by current phase");
-            auto g = [&](const char* phase, uint64_t v) { std::ostringstream ls; ls<<"{phase=\""<<phase<<"\"}"; mb.sample("va_subscriptions_states", ls.str(), v); };
-            g("pending", ms.pending); g("preparing", ms.preparing); g("opening_rtsp", ms.opening);
-            g("loading_model", ms.loading); g("starting_pipeline", ms.starting); g("ready", ms.ready);
-            g("failed", ms.failed); g("cancelled", ms.cancelled);
-        } else if (subscriptions) {
-            auto ms = subscriptions->metricsSnapshot();
-            mb.header("va_subscriptions_queue_length", "gauge", "Pending subscription tasks in queue");
-            mb.sample("va_subscriptions_queue_length", "{}", static_cast<unsigned long long>(ms.queue_length));
-            // Backpressure: slots and estimated retry-after (best-effort)
+            c0("ready",     ms.completed_ready);
+            c0("failed",    ms.completed_failed);
+            c0("cancelled", ms.completed_cancelled);
+            // Duration histogram (created_at -> terminal finished_at)
             try {
-                int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-                int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-                int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
-                mb.header("va_subscriptions_slots", "gauge", "Slots for phases");
-                auto emit_slot = [&](const char* t, int v){ std::ostringstream ls; ls<<"{type=\""<<t<<"\"}"; mb.sample("va_subscriptions_slots", ls.str(), static_cast<unsigned long long>(v)); };
-                emit_slot("open_rtsp", s_open);
-                emit_slot("load_model", s_load);
-                emit_slot("start_pipeline", s_start);
-                // Estimated retry-after given current queue pressure (cap 60s)
-                int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                if (est < 1) est = 1; if (est > 60) est = 60;
-                mb.header("va_backpressure_retry_after_seconds", "gauge", "Estimated Retry-After based on queue/slots");
-                mb.sample("va_backpressure_retry_after_seconds", "{}", static_cast<unsigned long long>(est));
-            } catch (...) {}
-            mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
-            mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
-            // SSE connection metrics
-            try {
-                mb.header("va_sse_connections", "gauge", "Active SSE connections by channel");
-                auto emit_conn = [&](const char* ch, unsigned long long v){ std::ostringstream ls; ls<<"{channel=\\\""<<ch<<"\\\"}"; mb.sample("va_sse_connections", ls.str(), v); };
-                emit_conn("subscriptions", static_cast<unsigned long long>(va::server::g_sse_subscriptions_active.load()));
-                emit_conn("sources",       static_cast<unsigned long long>(va::server::g_sse_sources_active.load()));
-                emit_conn("logs",          static_cast<unsigned long long>(va::server::g_sse_logs_active.load()));
-                emit_conn("events",        static_cast<unsigned long long>(va::server::g_sse_events_active.load()));
-                mb.header("va_sse_reconnects_total", "counter", "SSE reconnect events (Last-Event-ID seen)");
-                mb.sample("va_sse_reconnects_total", "{}", va::server::g_sse_reconnects_total.load());
-            } catch (...) {}
-            // Merge and fairness metrics
-            try {
-                mb.header("va_subscriptions_merge_total", "counter", "use_existing merge counters by type");
-                auto emit_merge = [&](const char* t, unsigned long long v){ std::ostringstream ls; ls<<"{type=\\\""<<t<<"\\\"}"; mb.sample("va_subscriptions_merge_total", ls.str(), v); };
-                emit_merge("non_terminal", subscriptions->mergeHitNonTerminal());
-                emit_merge("ready", subscriptions->mergeHitReady());
-                emit_merge("miss", subscriptions->mergeMiss());
-                mb.header("va_subscriptions_rr_rotations_total", "counter", "Fair scheduling rotations (window picks)");
-                mb.sample("va_subscriptions_rr_rotations_total", "{}", subscriptions->rrRotations());
+                const double bounds[6] = {0.5,1.0,2.0,5.0,10.0,30.0};
+                unsigned long long buckets[6] = {0,0,0,0,0,0};
+                unsigned long long total_count = 0ULL; double total_sum = 0.0;
+                if (lro_store_) {
+                    lro_store_->for_each([&](const std::shared_ptr<lro::Operation>& op){
+                        if (!op) return; auto st = op->status.load(std::memory_order_relaxed);
+                        if (!(st==lro::Status::Ready || st==lro::Status::Failed || st==lro::Status::Cancelled)) return;
+                        if (op->finished_at.time_since_epoch().count() <= 0) return;
+                        double sec = std::chrono::duration<double>(op->finished_at - op->created_at).count(); if (sec < 0) sec = 0;
+                        size_t bi = 0; while (bi < 6 && sec > bounds[bi]) ++bi; if (bi < 6) buckets[bi]++;
+                        total_count++; total_sum += sec;
+                    });
+                }
+                mb.header("va_subscription_duration_seconds", "histogram", "Subscription total duration in seconds");
+                unsigned long long acc0 = 0ULL;
+                for (int i=0;i<6;++i) { acc0 += buckets[i]; std::ostringstream ls; ls<<"{le=\""<<bounds[i]<<"\"}"; mb.sample("va_subscription_duration_seconds_bucket", ls.str(), acc0); }
+                std::ostringstream lsi0; lsi0 << "{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi0.str(), static_cast<unsigned long long>(total_count));
+                mb.sample("va_subscription_duration_seconds_sum", "{}", total_sum);
+                mb.sample("va_subscription_duration_seconds_count", "{}", static_cast<unsigned long long>(total_count));
             } catch (...) {}
             // States gauges
             mb.header("va_subscriptions_states", "gauge", "Subscriptions by current phase");
             auto g = [&](const char* phase, uint64_t v) { std::ostringstream ls; ls<<"{phase=\""<<phase<<"\"}"; mb.sample("va_subscriptions_states", ls.str(), v); };
-            g("pending", ms.pending); g("preparing", ms.preparing); g("opening_rtsp", ms.opening);
-            g("loading_model", ms.loading); g("starting_pipeline", ms.starting); g("ready", ms.ready);
-            g("failed", ms.failed); g("cancelled", ms.cancelled);
-            // Completed totals by result
-            mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
-            auto c = [&](const char* res, uint64_t v) { std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
-            c("ready", ms.completed_ready_total); c("failed", ms.completed_failed_total); c("cancelled", ms.completed_cancelled_total);
-            if (!ms.failed_by_reason.empty()) {
-                mb.header("va_subscriptions_failed_by_reason_total", "counter", "Failed subscriptions by reason");
-                for (const auto& kv : ms.failed_by_reason) {
-                    std::ostringstream ls; ls<<"{reason=\""<<kv.first<<"\"}"; mb.sample("va_subscriptions_failed_by_reason_total", ls.str(), kv.second);
-                }
-            }
-            // Duration histogram
-            mb.header("va_subscription_duration_seconds", "histogram", "Subscription total duration in seconds");
-            unsigned long long acc = 0ULL;
-            for (size_t i=0;i<ms.bounds.size();++i) {
-                acc += ms.bucket_counts[i];
-                std::ostringstream ls; ls<<"{le=\""<<ms.bounds[i]<<"\"}"; mb.sample("va_subscription_duration_seconds_bucket", ls.str(), acc);
-            }
-            std::ostringstream lsi; lsi<<"{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi.str(), ms.duration_count);
-            mb.sample("va_subscription_duration_seconds_sum", "{}", ms.duration_sum);
-            mb.sample("va_subscription_duration_seconds_count", "{}", ms.duration_count);
-
-            // Per-phase duration histograms
-            auto emit_phase = [&](const char* phase,
-                                  const std::vector<uint64_t>& buckets,
-                                  double sum,
-                                  uint64_t cnt) {
-                mb.header("va_subscription_phase_seconds", "histogram", "Subscription phase duration in seconds");
-                unsigned long long accp = 0ULL;
-                for (size_t i=0;i<ms.bounds.size(); ++i) {
-                    accp += (i<buckets.size()? buckets[i]:0ULL);
-                    std::ostringstream ls; ls << "{phase=\""<<phase<<"\",le=\""<<ms.bounds[i]<<"\"}";
-                    mb.sample("va_subscription_phase_seconds_bucket", ls.str(), accp);
-                }
-                std::ostringstream lsi2; lsi2 << "{phase=\""<<phase<<"\",le=\"+Inf\"}"; mb.sample("va_subscription_phase_seconds_bucket", lsi2.str(), cnt);
-                std::ostringstream lss; lss << "{phase=\""<<phase<<"\"}";
-                mb.sample("va_subscription_phase_seconds_sum", lss.str(), sum);
-                mb.sample("va_subscription_phase_seconds_count", lss.str(), cnt);
-            };
-            emit_phase("opening_rtsp", ms.opening_bucket_counts, ms.opening_duration_sum, ms.opening_duration_count);
-            emit_phase("loading_model", ms.loading_bucket_counts, ms.loading_duration_sum, ms.loading_duration_count);
-            emit_phase("starting_pipeline", ms.starting_bucket_counts, ms.starting_duration_sum, ms.starting_duration_count);
+            auto get = [&](const char* k){ auto it = ms.states.find(k); return it==ms.states.end()? 0ULL : it->second; };
+            g("pending", get("pending")); g("preparing", get("preparing")); g("opening_rtsp", get("opening_rtsp"));
+            g("loading_model", get("loading_model")); g("starting_pipeline", get("starting_pipeline")); g("ready", get("ready"));
+            g("failed", get("failed")); g("cancelled", get("cancelled"));
         }
+        // SSE connection metrics (always)
+        try {
+            mb.header("va_sse_connections", "gauge", "Active SSE connections by channel");
+            auto emit_conn = [&](const char* ch, unsigned long long v){ std::ostringstream ls; ls<<"{channel=\\\""<<ch<<"\\\"}"; mb.sample("va_sse_connections", ls.str(), v); };
+            emit_conn("subscriptions", static_cast<unsigned long long>(va::server::g_sse_subscriptions_active.load()));
+            emit_conn("sources",       static_cast<unsigned long long>(va::server::g_sse_sources_active.load()));
+            emit_conn("logs",          static_cast<unsigned long long>(va::server::g_sse_logs_active.load()));
+            emit_conn("events",        static_cast<unsigned long long>(va::server::g_sse_events_active.load()));
+            mb.header("va_sse_reconnects_total", "counter", "SSE reconnect events (Last-Event-ID seen)");
+            mb.sample("va_sse_reconnects_total", "{}", va::server::g_sse_reconnects_total.load());
+        } catch (...) {}
+        // Merge/fairness placeholders (zeros) to keep metric presence
+        mb.header("va_subscriptions_merge_total", "counter", "use_existing merge counters by type");
+        auto emit_merge0 = [&](const char* t){ std::ostringstream ls; ls<<"{type=\\\""<<t<<"\\\"}"; mb.sample("va_subscriptions_merge_total", ls.str(), 0ULL); };
+        emit_merge0("non_terminal"); emit_merge0("ready"); emit_merge0("miss");
+        mb.header("va_subscriptions_rr_rotations_total", "counter", "Fair scheduling rotations (window picks)");
+        mb.sample("va_subscriptions_rr_rotations_total", "{}", 0ULL);
 
         // Quotas: dropped + would-drop + feature toggles (low cardinality)
         try {
@@ -499,22 +460,22 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
     out << "va_cp_auto_switch_model_failed_total " << gm.cp_auto_switch_model_failed_total << "\n";
 
     // Subscription metrics (plain text)
-    if (subscriptions) {
-        auto ms = subscriptions->metricsSnapshot();
+    if (lro_enabled_ && lro_runner_) {
+        auto ms = lro_runner_->metricsSnapshot();
         out << "# HELP va_subscriptions_queue_length Pending subscription tasks in queue\n";
         out << "# TYPE va_subscriptions_queue_length gauge\n";
         out << "va_subscriptions_queue_length " << static_cast<unsigned long long>(ms.queue_length) << "\n";
         // Backpressure (plain text)
         try {
-            int s_open = subscriptions->openRtspSlots(); if (s_open <= 0) s_open = subscriptions->rtspSlots();
-            int s_load = subscriptions->modelSlots(); if (s_load <= 0) s_load = 1;
-            int s_start= subscriptions->startPipelineSlots(); if (s_start <= 0) s_start = 1;
+            int s_open = lro_admission_? lro_admission_->getBucketCapacity("open_rtsp"):1;
+            int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
+            int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
             out << "# HELP va_subscriptions_slots Slots for phases\n";
             out << "# TYPE va_subscriptions_slots gauge\n";
             out << "va_subscriptions_slots{type=\"open_rtsp\"} " << s_open  << "\n";
             out << "va_subscriptions_slots{type=\"load_model\"} " << s_load  << "\n";
             out << "va_subscriptions_slots{type=\"start_pipeline\"} " << s_start << "\n";
-            int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
+            int slots = std::max(1, std::min({s_open, s_load, s_start}));
             int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
             if (est < 1) est = 1; if (est > 60) est = 60;
             out << "# HELP va_backpressure_retry_after_seconds Estimated Retry-After based on queue/slots\n";
@@ -524,6 +485,31 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         out << "# HELP va_subscriptions_in_progress Non-terminal subscriptions in progress\n";
         out << "# TYPE va_subscriptions_in_progress gauge\n";
         out << "va_subscriptions_in_progress " << static_cast<unsigned long long>(ms.in_progress) << "\n";
+        // Completed totals
+        out << "# HELP va_subscriptions_completed_total Completed subscriptions by result\n";
+        out << "# TYPE va_subscriptions_completed_total counter\n";
+        out << "va_subscriptions_completed_total{result=\"ready\"} " << ms.completed_ready << "\n";
+        out << "va_subscriptions_completed_total{result=\"failed\"} " << ms.completed_failed << "\n";
+        out << "va_subscriptions_completed_total{result=\"cancelled\"} " << ms.completed_cancelled << "\n";
+        // Failed by reason
+        try {
+            std::map<std::string, std::uint64_t> fail_by_reason;
+            if (lro_store_) {
+                lro_store_->for_each([&](const std::shared_ptr<lro::Operation>& op){
+                    if (!op) return; auto st = op->status.load(std::memory_order_relaxed);
+                    if (st != lro::Status::Failed) return;
+                    std::string r = op->reason.empty()? std::string("unknown"): op->reason;
+                    fail_by_reason[r] += 1ULL;
+                });
+            }
+            if (!fail_by_reason.empty()) {
+                out << "# HELP va_subscriptions_failed_by_reason_total Failed subscriptions by reason\n";
+                out << "# TYPE va_subscriptions_failed_by_reason_total counter\n";
+                for (const auto& kv : fail_by_reason) {
+                    out << "va_subscriptions_failed_by_reason_total{reason=\"" << kv.first << "\"} " << kv.second << "\n";
+                }
+            }
+        } catch (...) {}
         // SSE metrics (plain text)
         out << "# HELP va_sse_connections Active SSE connections by channel\n";
         out << "# TYPE va_sse_connections gauge\n";
@@ -537,51 +523,20 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         // Merge and fairness metrics
         out << "# HELP va_subscriptions_merge_total use_existing merge counters by type\n";
         out << "# TYPE va_subscriptions_merge_total counter\n";
-        out << "va_subscriptions_merge_total{type=\"non_terminal\"} " << subscriptions->mergeHitNonTerminal() << "\n";
-        out << "va_subscriptions_merge_total{type=\"ready\"} " << subscriptions->mergeHitReady() << "\n";
-        out << "va_subscriptions_merge_total{type=\"miss\"} " << subscriptions->mergeMiss() << "\n";
+        out << "va_subscriptions_merge_total{type=\"non_terminal\"} " << 0 << "\n";
+        out << "va_subscriptions_merge_total{type=\"ready\"} " << 0 << "\n";
+        out << "va_subscriptions_merge_total{type=\"miss\"} " << 0 << "\n";
         out << "# HELP va_subscriptions_rr_rotations_total Fair scheduling rotations (window picks)\n";
         out << "# TYPE va_subscriptions_rr_rotations_total counter\n";
-        out << "va_subscriptions_rr_rotations_total " << subscriptions->rrRotations() << "\n";
+        out << "va_subscriptions_rr_rotations_total " << 0 << "\n";
         out << "# HELP va_subscriptions_states Subscriptions by current phase\n";
         out << "# TYPE va_subscriptions_states gauge\n";
         auto gg = [&](const char* phase, uint64_t v) { out << "va_subscriptions_states{phase=\""<<phase<<"\"} " << v << "\n"; };
-        gg("pending", ms.pending); gg("preparing", ms.preparing); gg("opening_rtsp", ms.opening);
-        gg("loading_model", ms.loading); gg("starting_pipeline", ms.starting); gg("ready", ms.ready);
-        gg("failed", ms.failed); gg("cancelled", ms.cancelled);
-    out << "# HELP va_subscriptions_completed_total Completed subscriptions by result\n";
-    out << "# TYPE va_subscriptions_completed_total counter\n";
-    out << "va_subscriptions_completed_total{result=\"ready\"} " << ms.completed_ready_total << "\n";
-    out << "va_subscriptions_completed_total{result=\"failed\"} " << ms.completed_failed_total << "\n";
-    out << "va_subscriptions_completed_total{result=\"cancelled\"} " << ms.completed_cancelled_total << "\n";
-    if (!ms.failed_by_reason.empty()) {
-        out << "# HELP va_subscriptions_failed_by_reason_total Failed subscriptions by reason\n";
-        out << "# TYPE va_subscriptions_failed_by_reason_total counter\n";
-        for (const auto& kv : ms.failed_by_reason) {
-            out << "va_subscriptions_failed_by_reason_total{reason=\"" << kv.first << "\"} " << kv.second << "\n";
-        }
-    }
-        out << "# HELP va_subscription_duration_seconds Subscription total duration in seconds\n";
-        out << "# TYPE va_subscription_duration_seconds histogram\n";
-        unsigned long long acc = 0ULL;
-        for (size_t i=0;i<ms.bounds.size();++i) { acc += ms.bucket_counts[i]; out << "va_subscription_duration_seconds_bucket{le=\""<<ms.bounds[i]<<"\"} " << acc << "\n"; }
-        out << "va_subscription_duration_seconds_bucket{le=\"+Inf\"} " << ms.duration_count << "\n";
-        out << "va_subscription_duration_seconds_sum " << ms.duration_sum << "\n";
-        out << "va_subscription_duration_seconds_count " << ms.duration_count << "\n";
-
-        // Per-phase histograms (opening_rtsp/loading_model/starting_pipeline)
-        auto emit_phase_txt = [&](const char* phase, const std::vector<uint64_t>& buckets, double sum, uint64_t cnt) {
-            out << "# HELP va_subscription_phase_seconds Subscription phase duration in seconds\n";
-            out << "# TYPE va_subscription_phase_seconds histogram\n";
-            unsigned long long accp = 0ULL;
-            for (size_t i=0;i<ms.bounds.size(); ++i) { accp += (i<buckets.size()? buckets[i]:0ULL); out << "va_subscription_phase_seconds_bucket{phase=\""<<phase<<"\",le=\""<<ms.bounds[i]<<"\"} " << accp << "\n"; }
-            out << "va_subscription_phase_seconds_bucket{phase=\""<<phase<<"\",le=\"+Inf\"} " << cnt << "\n";
-            out << "va_subscription_phase_seconds_sum{phase=\""<<phase<<"\"} " << sum << "\n";
-            out << "va_subscription_phase_seconds_count{phase=\""<<phase<<"\"} " << cnt << "\n";
-        };
-        emit_phase_txt("opening_rtsp", ms.opening_bucket_counts, ms.opening_duration_sum, ms.opening_duration_count);
-        emit_phase_txt("loading_model", ms.loading_bucket_counts, ms.loading_duration_sum, ms.loading_duration_count);
-        emit_phase_txt("starting_pipeline", ms.starting_bucket_counts, ms.starting_duration_sum, ms.starting_duration_count);
+        auto get = [&](const char* k){ auto it = ms.states.find(k); return it==ms.states.end()? 0ULL : it->second; };
+        gg("pending", get("pending")); gg("preparing", get("preparing")); gg("opening_rtsp", get("opening_rtsp"));
+        gg("loading_model", get("loading_model")); gg("starting_pipeline", get("starting_pipeline")); gg("ready", get("ready"));
+        gg("failed", get("failed")); gg("cancelled", get("cancelled"));
+        // 注意：最小实现暂不输出 completed/histogram；保留基本队列、槽位、在途与状态分布
     }
 
     // Per-source metrics (labels: source_id, path)
@@ -903,3 +858,4 @@ HttpResponse RestServer::Impl::handleMetricsConfigSet(const HttpRequest& req) {
 }
 
 } // namespace va::server
+

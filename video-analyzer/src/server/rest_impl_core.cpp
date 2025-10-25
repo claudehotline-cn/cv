@@ -4,6 +4,20 @@
 
 namespace va::server {
 
+namespace {
+// 失败原因归一：根据错误文本关键字映射到标准码
+std::string normalize_reason(const std::string& err, const std::string& fallback) {
+    std::string s = toLower(err);
+    if (s.find("acl") != std::string::npos && s.find("scheme") != std::string::npos) return "acl_scheme";
+    if (s.find("acl") != std::string::npos && s.find("profile") != std::string::npos) return "acl_profile";
+    if ((s.find("open") != std::string::npos || s.find("connect") != std::string::npos || s.find("rtsp") != std::string::npos)) return "open_rtsp_failed";
+    if (s.find("model") != std::string::npos || s.find("load") != std::string::npos) return "load_model_failed";
+    if (s.find("start") != std::string::npos || s.find("pipeline") != std::string::npos) return "start_pipeline_failed";
+    if (s.find("subscribe") != std::string::npos) return "subscribe_failed";
+    return fallback;
+}
+} // anonymous
+
 RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application)
     : options(std::move(opts)), app(application), server(options) {
     // WAL: init + mark restart + scan previous inflight (best-effort)
@@ -17,8 +31,7 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
         mr.setModels(app.detectionModels());
         mr.startPreheat();
     } catch (...) { /* ignore */ }
-    subscriptions = std::make_unique<SubscriptionManager>(app);
-    subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
+    // Legacy SubscriptionManager removed; use LRO Runner + Admission
     // 1) 读取 YAML 配置
     const auto& cfg = app.appConfig().subscriptions;
     int hs = cfg.heavy_slots > 0 ? cfg.heavy_slots : 2;     subs_src_heavy = (cfg.heavy_slots > 0 ? "config" : "defaults");
@@ -42,13 +55,13 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
     if (hasEnv("VA_SUBSCRIPTION_MAX_QUEUE"))   { mq = envSize("VA_SUBSCRIPTION_MAX_QUEUE", mq); subs_src_queue = "env"; }
     if (hasEnv("VA_SUBSCRIPTION_TTL_SEC"))     { ttl = envInt("VA_SUBSCRIPTION_TTL_SEC", ttl);  subs_src_ttl   = "env"; }
     // 3) 应用到订阅管理器
-    subscriptions->setHeavySlots(hs);
-    subscriptions->setModelSlots(ms);
-    subscriptions->setRtspSlots(rs);
-    subscriptions->setOpenRtspSlots(open);
-    subscriptions->setStartPipelineSlots(start);
-    subscriptions->setMaxQueue(mq);
-    subscriptions->setTtlSeconds(ttl);
+    cfg_heavy_slots_ = hs;
+    cfg_model_slots_ = ms;
+    cfg_rtsp_slots_ = rs;
+    cfg_open_rtsp_slots_ = open;
+    cfg_start_pipeline_slots_ = start;
+    cfg_max_queue_ = mq;
+    cfg_ttl_seconds_ = ttl;
 
     // Optional: initialize LRO runner when enabled
     try {
@@ -61,77 +74,63 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
             lro_enabled_ = (v=="1"||v=="true"||v=="yes"||v=="on");
         }
         if (lro_enabled_) {
-            lro_store_ = std::make_unique<lro::MemoryStore>();
+            lro_store_ = lro::make_memory_store();
             lro_admission_ = std::make_unique<lro::AdmissionPolicy>();
-            lro::RunnerConfig rcfg;
-            rcfg.store = lro_store_.get();
-            rcfg.admission = lro_admission_.get();
-            rcfg.fair_window = 8;
-            rcfg.retry_estimator = [](int qlen, int slots_min){ if (slots_min<=0) slots_min=1; int est = qlen/slots_min; if (est<1) est=1; if (est>60) est=60; return est; };
-            // Provider bridge -> current SubscriptionManager (transition phase)
-            rcfg.provider.create = [this](const std::string& spec_json,
-                                          const std::string& /*base_key*/,
-                                          bool /*prefer_reuse_ready*/) -> std::string {
-                Json::Value body = parseJson(spec_json);
-                auto stream_opt = getStringField(body, {"stream_id", "stream"});
-                auto profile_opt = getStringField(body, {"profile", "profile_id"});
-                auto uri_opt = getStringField(body, {"source_uri", "uri", "url"});
-                if (!stream_opt || !profile_opt || !uri_opt) {
-                    throw std::runtime_error("LRO: spec missing required fields");
-                }
-                std::optional<std::string> model_override;
-                if (body.isMember("model_id") && body["model_id"].isString()) {
-                    auto v = body["model_id"].asString(); if (!v.empty()) model_override = v;
-                }
-                // Try native Application path first
-                if (true) {
-                    auto key = app.subscribeStream(*stream_opt, *profile_opt, *uri_opt, model_override);
-                    if (key && !key->empty()) {
-                        return *key; // use pipeline key as id
-                    }
-                }
-                // Fallback to legacy manager to preserve async semantics on failures
-                if (subscriptions) {
-                    SubscriptionRequest req;
-                    req.stream_id = *stream_opt; req.profile_id = *profile_opt; req.source_uri = *uri_opt; req.model_id = model_override;
-                    subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
-                    return subscriptions->enqueue(req, /*prefer_reuse_ready*/true);
-                }
-                // No path available
-                return std::string();
-            };
-            rcfg.provider.get = [this](const std::string& id, lro::Operation& out) -> bool {
-                if (!subscriptions) return false;
-                auto st = subscriptions->get(id);
-                if (!st) return false;
-                out.id = id;
-                out.status.phase = toString(st->phase.load());
-                out.status.reason = st->reason;
-                out.timeline.ts_pending   = st->ts_pending.load();
-                out.timeline.ts_preparing = st->ts_preparing.load();
-                out.timeline.ts_opening   = st->ts_opening.load();
-                out.timeline.ts_loading   = st->ts_loading.load();
-                out.timeline.ts_starting  = st->ts_starting.load();
-                out.timeline.ts_ready     = st->ts_ready.load();
-                out.timeline.ts_failed    = st->ts_failed.load();
-                out.timeline.ts_cancelled = st->ts_cancelled.load();
-                // Pack minimal result/echo fields
-                try {
-                    Json::Value x(Json::objectValue);
-                    x["stream_id"] = st->request.stream_id;
-                    x["profile_id"] = st->request.profile_id;
-                    x["source_uri"] = st->request.source_uri;
-                    if (st->request.model_id) x["model_id"] = *st->request.model_id;
-                    if (!st->pipeline_key.empty()) x["pipeline_key"] = st->pipeline_key;
-                    if (!st->whep_url.empty()) x["whep_url"] = st->whep_url;
-                    Json::StreamWriterBuilder b; out.result_json = Json::writeString(b, x);
-                } catch (...) {}
-                return true;
-            };
-            rcfg.provider.cancel = [this](const std::string& id) -> bool {
-                if (!subscriptions) return false; return subscriptions->cancel(id);
-            };
+            lro::RunnerConfig rcfg; rcfg.store = lro_store_;
             lro_runner_ = std::make_unique<lro::Runner>(rcfg);
+            // Attach minimal VA Steps: preparing -> starting_pipeline (subscribe) -> ready
+            lro_runner_->addStep(lro::Step{"prepare", [this](std::shared_ptr<lro::Operation>& op){
+                op->phase = "preparing";
+            }, lro::Step::IO, 10});
+            // opening_rtsp: minimal URI scheme validation
+            lro_runner_->addStep(lro::Step{"opening_rtsp", [this](std::shared_ptr<lro::Operation>& op){
+                op->phase = "opening_rtsp";
+                try {
+                    Json::Value sx = parseJson(op->spec_json);
+                    std::string uri; if (sx.isMember("source_uri") && sx["source_uri"].isString()) uri = sx["source_uri"].asString();
+                    if (sx.isMember("uri") && uri.empty() && sx["uri"].isString()) uri = sx["uri"].asString();
+                    if (sx.isMember("url") && uri.empty() && sx["url"].isString()) uri = sx["url"].asString();
+                    auto pos = uri.find(":"); std::string scheme = (pos==std::string::npos? std::string() : toLower(uri.substr(0,pos)));
+                    if (scheme.rfind("rtsp", 0) != 0) { op->reason = "acl_scheme"; throw std::runtime_error("scheme_not_allowed"); }
+                } catch (...) { if (op->phase != "failed") { op->status.store(lro::Status::Failed, std::memory_order_relaxed); op->phase = "failed"; } throw; }
+            }, lro::Step::IO, 20});
+            // loading_model: optional model load
+            lro_runner_->addStep(lro::Step{"loading_model", [this](std::shared_ptr<lro::Operation>& op){
+                op->phase = "loading_model";
+                try {
+                    Json::Value sx = parseJson(op->spec_json);
+                    if (sx.isMember("model_id") && sx["model_id"].isString()) {
+                        std::string mid = sx["model_id"].asString();
+                        if (!mid.empty()) {
+                            if (!app.loadModel(mid)) { op->reason = normalize_reason(app.lastError(), "load_model_failed"); throw std::runtime_error("load_model_failed"); }
+                        }
+                    }
+                } catch (...) { if (op->phase != "failed") { op->status.store(lro::Status::Failed, std::memory_order_relaxed); op->phase = "failed"; } throw; }
+            }, lro::Step::Heavy, 60});
+            lro_runner_->addStep(lro::Step{"start_pipeline", [this](std::shared_ptr<lro::Operation>& op){
+                try {
+                    std::string stream_id, profile_id, uri; std::optional<std::string> model_override;
+                    Json::Value sx = parseJson(op->spec_json);
+                    if (sx.isMember("stream_id") && sx["stream_id"].isString()) stream_id = sx["stream_id"].asString();
+                    if (sx.isMember("stream") && stream_id.empty() && sx["stream"].isString()) stream_id = sx["stream"].asString();
+                    if (sx.isMember("profile") && sx["profile"].isString()) profile_id = sx["profile"].asString();
+                    if (sx.isMember("profile_id") && profile_id.empty() && sx["profile_id"].isString()) profile_id = sx["profile_id"].asString();
+                    if (sx.isMember("source_uri") && sx["source_uri"].isString()) uri = sx["source_uri"].asString();
+                    if (sx.isMember("uri") && uri.empty() && sx["uri"].isString()) uri = sx["uri"].asString();
+                    if (sx.isMember("url") && uri.empty() && sx["url"].isString()) uri = sx["url"].asString();
+                    if (sx.isMember("model_id") && sx["model_id"].isString()) { auto v=sx["model_id"].asString(); if(!v.empty()) model_override=v; }
+                    if (stream_id.empty() || profile_id.empty() || uri.empty()) { op->reason = "bad_request"; throw std::runtime_error("missing fields"); }
+                    op->phase = "starting_pipeline";
+                    auto key = app.subscribeStream(stream_id, profile_id, uri, model_override);
+                    if (!key || key->empty()) { op->reason = normalize_reason(app.lastError(), "subscribe_failed"); op->status.store(lro::Status::Failed, std::memory_order_relaxed); op->phase = "failed"; throw std::runtime_error("subscribe_failed"); }
+                    // mark ready for minimal semantics; real readiness is async
+                    op->status.store(lro::Status::Ready, std::memory_order_relaxed);
+                    op->phase = "ready";
+                } catch (...) {
+                    if (op->phase != "ready") { op->status.store(lro::Status::Failed, std::memory_order_relaxed); op->phase = "failed"; op->finished_at = std::chrono::system_clock::now(); }
+                    throw;
+                }
+            }, lro::Step::Start, 80});
             // Admission buckets mirror current config (best-effort; capacity is stored in policy)
             lro_admission_->setBucketCapacity("open_rtsp", open);
             lro_admission_->setBucketCapacity("load_model", ms);

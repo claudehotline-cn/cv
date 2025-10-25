@@ -128,27 +128,28 @@ HttpResponse RestServer::Impl::handleSystemInfo(const HttpRequest& /*req*/) {
 
   // Subscriptions configuration snapshot（含来源回显）
   Json::Value subs(Json::objectValue);
-  subs["heavy_slots"] = subscriptions ? subscriptions->heavySlots() : 0;
-  subs["model_slots"] = subscriptions ? subscriptions->modelSlots() : 0;
-  subs["rtsp_slots"] = subscriptions ? subscriptions->rtspSlots() : 0;
-  subs["max_queue"] = static_cast<Json::UInt64>(subscriptions ? subscriptions->maxQueue() : 0);
-  subs["open_rtsp_slots"] = subscriptions ? subscriptions->openRtspSlots() : (lro_admission_ ? lro_admission_->getBucketCapacity("open_rtsp") : 0);
-  subs["start_pipeline_slots"] = subscriptions ? subscriptions->startPipelineSlots() : (lro_admission_ ? lro_admission_->getBucketCapacity("start_pipeline") : 0);
-  subs["ttl_seconds"] = subscriptions ? subscriptions->ttlSeconds() : 0;
+  subs["heavy_slots"] = cfg_heavy_slots_;
+  subs["model_slots"] = cfg_model_slots_;
+  subs["rtsp_slots"] = cfg_rtsp_slots_;
+  subs["max_queue"] = static_cast<Json::UInt64>(cfg_max_queue_);
+  subs["open_rtsp_slots"] = lro_admission_ ? lro_admission_->getBucketCapacity("open_rtsp") : cfg_open_rtsp_slots_;
+  subs["start_pipeline_slots"] = lro_admission_ ? lro_admission_->getBucketCapacity("start_pipeline") : cfg_start_pipeline_slots_;
+  subs["ttl_seconds"] = cfg_ttl_seconds_;
   // Runner snapshot (if enabled)
   if (lro_enabled_ && lro_runner_) {
       auto ms = lro_runner_->metricsSnapshot();
       subs["queue_length"] = static_cast<Json::UInt64>(ms.queue_length);
       subs["in_progress"] = static_cast<Json::UInt64>(ms.in_progress);
       Json::Value states(Json::objectValue);
-      states["pending"] = static_cast<Json::UInt64>(ms.pending);
-      states["preparing"] = static_cast<Json::UInt64>(ms.preparing);
-      states["opening_rtsp"] = static_cast<Json::UInt64>(ms.opening);
-      states["loading_model"] = static_cast<Json::UInt64>(ms.loading);
-      states["starting_pipeline"] = static_cast<Json::UInt64>(ms.starting);
-      states["ready"] = static_cast<Json::UInt64>(ms.ready);
-      states["failed"] = static_cast<Json::UInt64>(ms.failed);
-      states["cancelled"] = static_cast<Json::UInt64>(ms.cancelled);
+      auto get = [&](const char* k){ auto it = ms.states.find(k); return it==ms.states.end()? 0ULL : it->second; };
+      states["pending"] = static_cast<Json::UInt64>(get("pending"));
+      states["preparing"] = static_cast<Json::UInt64>(get("preparing"));
+      states["opening_rtsp"] = static_cast<Json::UInt64>(get("opening_rtsp"));
+      states["loading_model"] = static_cast<Json::UInt64>(get("loading_model"));
+      states["starting_pipeline"] = static_cast<Json::UInt64>(get("starting_pipeline"));
+      states["ready"] = static_cast<Json::UInt64>(get("ready"));
+      states["failed"] = static_cast<Json::UInt64>(get("failed"));
+      states["cancelled"] = static_cast<Json::UInt64>(get("cancelled"));
       subs["states"] = states;
   }
   Json::Value src(Json::objectValue);
@@ -435,8 +436,10 @@ HttpResponse RestServer::Impl::handlePreflight(const HttpRequest& req) {
             Json::Value would(Json::arrayValue);
             if (!q.acl.allowed_schemes.empty() && !sch.empty()) { bool ok=false; for(const auto& s:q.acl.allowed_schemes){ if(toLower(s)==sch){ ok=true; break; }} if(!ok) would.append("acl_scheme"); }
             if (!q.acl.allowed_profiles.empty() && !profile.empty()) { bool okp=false; for(const auto& p:q.acl.allowed_profiles){ if(p==profile){ okp=true; break; }} if(!okp) would.append("acl_profile"); }
-            if (q.global.concurrent > 0 && subscriptions) { auto ms=subscriptions->metricsSnapshot(); if (static_cast<int>(ms.in_progress) >= q.global.concurrent) would.append("global_concurrent"); }
-            if (key_cc > 0 && subscriptions && !requester_key.empty()) { int cur=subscriptions->countInProgressByKey(requester_key); if (cur >= key_cc) would.append("key_concurrent"); }
+            // Evaluate concurrency using LRO snapshot (legacy manager已移除，最小实现不提供 per-key in-progress 计数)
+            int inprog = 0; if (lro_enabled_ && lro_runner_) { inprog = static_cast<int>(lro_runner_->metricsSnapshot().in_progress); }
+            if (q.global.concurrent > 0 && inprog >= q.global.concurrent) { would.append("global_concurrent"); }
+            // key_concurrent: 需 Runner 才能提供 per-key in-progress，这里暂不评估
             quotas_eval["would_drop"] = would;
         } catch (...) {}
 

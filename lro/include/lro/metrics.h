@@ -8,9 +8,9 @@ namespace lro {
 struct ReasonCount { std::string reason; std::uint64_t count{0}; };
 
 struct PhaseHistogram {
-  std::vector<double> bounds;              // seconds
+  std::vector<double> bounds;               // seconds
   std::vector<std::uint64_t> bucket_counts; // same size as bounds
-  double sum_seconds{0.0};
+  double        sum_seconds{0.0};
   std::uint64_t count{0};
 };
 

@@ -204,6 +204,14 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE Threads::Threads
     PRIVATE ${YAML_CPP_TARGET})
 
+# Link LRO compiled library when present (keep header-only include for compatibility)
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../lro/CMakeLists.txt")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lro" "${CMAKE_BINARY_DIR}/lro" EXCLUDE_FROM_ALL)
+    if (TARGET lro_runtime)
+        target_link_libraries(${PROJECT_NAME} PRIVATE lro_runtime)
+    endif()
+endif()
+
 # Control plane (embedded) sources — 无外部依赖占位，默认总是编译
 target_sources(${PROJECT_NAME}
     PRIVATE
@@ -218,8 +226,7 @@ target_sources(${PROJECT_NAME}
 
 target_sources(${PROJECT_NAME}
     PRIVATE
-        src/server/subscription_manager.cpp
-        src/server/subscription_manager.hpp
+        
         src/core/wal.cpp
         src/core/wal.hpp
         src/analyzer/model_registry.cpp

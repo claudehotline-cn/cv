@@ -13,15 +13,15 @@ target_link_libraries(your_target PRIVATE lro::lro)
 
 ## Minimum C++ API (header-first)
 
-- include/lro/runner.hpp – Runner/Operation/Step/RunnerConfig
-- include/lro/state_store.hpp – IStateStore/MemoryStore/WalStoreAdapter (interfaces)
-- include/lro/admission.hpp – AdmissionPolicy (multi-bucket + fair window)
-- include/lro/metrics.hpp – Metrics snapshot types
-- include/lro/notifier.hpp – INotifier (SSE/WS/Webhook hooks)
-- include/lro/reason.hpp – normalizeReason hook
+- include/lro/runner.h – Runner/Operation/Step/RunnerConfig
+- include/lro/state_store.h – IStateStore/MemoryStore/WalStoreAdapter (interfaces)
+- include/lro/admission.h – AdmissionPolicy (multi-bucket + fair window)
+- include/lro/metrics.h – Metrics snapshot types
+- include/lro/notifier.h – INotifier (SSE/WS/Webhook hooks)
+- include/lro/reason.h – normalizeReason hook
 
 Adapters (optional):
-- include/lro/adapters/rest_simple.hpp – helper for REST wiring
+- include/lro/adapters/rest_simple.h – helper for REST wiring
 - include/lro/adapters/wal.hpp – WAL adapter interface
 
 This repository intentionally ships header-only skeletons to keep integration simple.
