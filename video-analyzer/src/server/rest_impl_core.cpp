@@ -53,7 +53,10 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
     // Optional: initialize LRO runner when enabled
     try {
         const char* lro_env = std::getenv("VA_LRO_ENABLED");
-        if (lro_env) {
+        if (!lro_env) {
+            // Default ON during transition: routed via provider bridge to legacy manager
+            lro_enabled_ = true;
+        } else {
             std::string v = lro_env; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
             lro_enabled_ = (v=="1"||v=="true"||v=="yes"||v=="on");
         }
