@@ -49,6 +49,29 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
     subscriptions->setStartPipelineSlots(start);
     subscriptions->setMaxQueue(mq);
     subscriptions->setTtlSeconds(ttl);
+
+    // Optional: initialize LRO runner when enabled
+    try {
+        const char* lro_env = std::getenv("VA_LRO_ENABLED");
+        if (lro_env) {
+            std::string v = lro_env; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+            lro_enabled_ = (v=="1"||v=="true"||v=="yes"||v=="on");
+        }
+        if (lro_enabled_) {
+            lro_store_ = std::make_unique<lro::MemoryStore>();
+            lro_admission_ = std::make_unique<lro::AdmissionPolicy>();
+            lro::RunnerConfig rcfg;
+            rcfg.store = lro_store_.get();
+            rcfg.admission = lro_admission_.get();
+            rcfg.fair_window = 8;
+            rcfg.retry_estimator = [](int qlen, int slots_min){ if (slots_min<=0) slots_min=1; int est = qlen/slots_min; if (est<1) est=1; if (est>60) est=60; return est; };
+            lro_runner_ = std::make_unique<lro::Runner>(rcfg);
+            // Admission buckets mirror current config (best-effort; capacity is stored in policy)
+            lro_admission_->setBucketCapacity("open_rtsp", open);
+            lro_admission_->setBucketCapacity("load_model", ms);
+            lro_admission_->setBucketCapacity("start_pipeline", start);
+        }
+    } catch (...) { lro_enabled_ = false; }
     // Initialize DB pool and repositories if configured
     try {
         const auto& dbc = app.appConfig().database;

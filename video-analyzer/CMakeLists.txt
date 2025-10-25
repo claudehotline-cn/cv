@@ -621,6 +621,11 @@ if (WIN32)
     endforeach()
 endif()
 
+# Add LRO header-only include path if present
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../lro/include")
+    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../lro/include")
+endif()
+
 if (VA_BUILD_TESTS)
     # Unit test: postproc threshold override
     add_executable(va_unit_test_postproc

@@ -21,6 +21,9 @@
 #include "media/whep_session.hpp"
 #include "whep_control.grpc.pb.h"
 #include "server/subscription_manager.hpp"
+#include "lro/runner.hpp"
+#include "lro/state_store.hpp"
+#include "lro/admission.hpp"
 
 #include "control_plane_embedded/controllers/pipeline_controller.hpp"
 
@@ -1159,6 +1162,12 @@ struct RestServer::Impl {
     HttpResponse handleWhepCreate(const HttpRequest& req);
     HttpResponse handleWhepPatch(const HttpRequest& req);
     HttpResponse handleWhepDelete(const HttpRequest& req);
+
+    // LRO (Long-Running Operation) optional runner (feature-flagged)
+    bool lro_enabled_{false};
+    std::unique_ptr<lro::Runner> lro_runner_;
+    std::unique_ptr<lro::MemoryStore> lro_store_;
+    std::unique_ptr<lro::AdmissionPolicy> lro_admission_;
 };
 
 } // namespace va::server
