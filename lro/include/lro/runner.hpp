@@ -4,6 +4,15 @@
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <unordered_map>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
+#include <chrono>
+#include <cstdio>
 
 namespace lro {
 
@@ -79,28 +88,63 @@ public:
   // Wire admission buckets from outside (e.g., open_rtsp/load_model/start_pipeline)
   void bindBucket(const std::string& /*name*/, void* /*counting_semaphore*/ ) {}
 
-  // Create/Get/Cancel minimal API (provider-backed for now)
+  // Create/Get/Cancel minimal API
   std::string create(const std::string& spec_json, const std::string& base_key, bool prefer_reuse_ready){
-    if (cfg_.provider.create) return cfg_.provider.create(spec_json, base_key, prefer_reuse_ready);
-    return {};
+    // Synchronously obtain canonical id from provider (bridge) to keep REST semantics
+    std::string id;
+    if (cfg_.provider.create) id = cfg_.provider.create(spec_json, base_key, prefer_reuse_ready);
+    if (id.empty()) {
+      // Fallback: generate ephemeral id (not ideal if provider absent)
+      id = genId(base_key);
+    }
+    // Initialize operation record
+    Operation op; op.id = id; op.spec_json = spec_json;
+    op.status.phase = "pending"; op.status.progress = 0; op.status.reason.clear();
+    op.timeline.ts_pending = now_ms();
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      ops_[id] = op;
+      q_.push_back(id);
+    }
+    cv_.notify_one();
+    ensure_worker();
+    // optional state store omitted in minimal runner
+    notify(id);
+    return id;
   }
   Operation get(const std::string& id) const {
-    Operation op; op.id = id; // id echo for caller convenience
-    if (cfg_.provider.get) {
-      Operation out;
-      if (cfg_.provider.get(id, out)) return out;
-      // not found -> empty id
-      return Operation{};
-    }
-    return op;
+    // Minimal runner stores in-memory
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = ops_.find(id);
+    if (it != ops_.end()) return it->second;
+    return Operation{}; // not found
   }
   bool cancel(const std::string& id) {
-    if (cfg_.provider.cancel) return cfg_.provider.cancel(id);
-    return false;
+    bool ok = false;
+    if (cfg_.provider.cancel) ok = cfg_.provider.cancel(id);
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = ops_.find(id);
+    if (it != ops_.end()) {
+      auto& op = it->second;
+      if (op.status.phase != "ready" && op.status.phase != "failed" && op.status.phase != "cancelled") {
+        op.status.phase = "cancelled";
+        op.timeline.ts_cancelled = now_ms();
+      }
+      ok = true; // best-effort
+    }
+    notify(id);
+    return ok;
   }
 
   // Watch stream (hook for SSE/WS). on_event should be invoked on status changes.
   void watch(const std::string& id, std::function<void(const Operation&)> on_event) {
+    // Register local watcher; emit current snapshot once
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      watchers_[id].push_back(on_event);
+    }
+    on_event(get(id));
+    // Optionally, also attach to provider's watch to propagate terminal events
     if (cfg_.provider.watch) { cfg_.provider.watch(id, std::move(on_event)); }
   }
 
@@ -109,6 +153,77 @@ public:
 private:
   RunnerConfig cfg_{};
   std::vector<Step> steps_{};
+  mutable std::mutex mu_;
+  std::unordered_map<std::string, Operation> ops_;
+  std::unordered_map<std::string, std::vector<std::function<void(const Operation&)>>> watchers_;
+  std::deque<std::string> q_;
+  std::condition_variable cv_;
+  std::atomic<bool> stop_{false};
+  std::thread worker_;
+
+  static std::uint64_t now_ms() {
+    using namespace std::chrono;
+    return static_cast<std::uint64_t>(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+  }
+  static std::string genId(const std::string& base_key){
+    // Simple hex-suffix id
+    static std::atomic<std::uint64_t> s{1};
+    std::uint64_t v = s.fetch_add(1);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%s-%llx", base_key.c_str(), static_cast<unsigned long long>(v));
+    return std::string(buf);
+  }
+  void ensure_worker() {
+    if (worker_.joinable()) return;
+    worker_ = std::thread([this]{ this->run(); });
+  }
+  void run() {
+    while (!stop_.load(std::memory_order_relaxed)) {
+      std::string id;
+      {
+        std::unique_lock<std::mutex> lk(mu_);
+        if (q_.empty()) {
+          cv_.wait_for(lk, std::chrono::milliseconds(200));
+          if (q_.empty()) continue;
+        }
+        id = q_.front(); q_.pop_front();
+      }
+      // Advance phases quickly to starting (best-effort timeline)
+      auto bump = [&](const char* phase, std::uint64_t* ts){
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = ops_.find(id);
+        if (it == ops_.end()) return;
+        auto& op = it->second;
+        if (std::string(phase) == op.status.phase) return;
+        op.status.phase = phase; if (ts) *ts = now_ms();
+        notify_nolock(id, op);
+      };
+      {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = ops_.find(id);
+        if (it == ops_.end()) continue;
+        // pending -> preparing
+      }
+      bump("preparing", nullptr); { std::lock_guard<std::mutex> lk(mu_); auto& op=ops_[id]; op.timeline.ts_preparing = now_ms(); } notify(id);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      bump("opening_rtsp", nullptr); { std::lock_guard<std::mutex> lk(mu_); auto& op=ops_[id]; op.timeline.ts_opening = now_ms(); } notify(id);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      bump("loading_model", nullptr); { std::lock_guard<std::mutex> lk(mu_); auto& op=ops_[id]; op.timeline.ts_loading = now_ms(); } notify(id);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      bump("starting_pipeline", nullptr); { std::lock_guard<std::mutex> lk(mu_); auto& op=ops_[id]; op.timeline.ts_starting = now_ms(); } notify(id);
+      // Do not mark ready/failed here; rely on underlying provider and REST GET fallback
+    }
+  }
+  void notify(const std::string& id) {
+    Operation snap = get(id);
+    std::lock_guard<std::mutex> lk(mu_);
+    notify_nolock(id, snap);
+  }
+  void notify_nolock(const std::string& id, const Operation& snap) {
+    auto it = watchers_.find(id);
+    if (it == watchers_.end()) return;
+    for (auto& cb : it->second) { try { cb(snap); } catch(...){} }
+  }
 };
 
 } // namespace lro
