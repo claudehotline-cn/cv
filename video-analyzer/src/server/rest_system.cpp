@@ -132,9 +132,25 @@ HttpResponse RestServer::Impl::handleSystemInfo(const HttpRequest& /*req*/) {
   subs["model_slots"] = subscriptions ? subscriptions->modelSlots() : 0;
   subs["rtsp_slots"] = subscriptions ? subscriptions->rtspSlots() : 0;
   subs["max_queue"] = static_cast<Json::UInt64>(subscriptions ? subscriptions->maxQueue() : 0);
-  subs["open_rtsp_slots"] = subscriptions ? subscriptions->openRtspSlots() : 0;
-  subs["start_pipeline_slots"] = subscriptions ? subscriptions->startPipelineSlots() : 0;
+  subs["open_rtsp_slots"] = subscriptions ? subscriptions->openRtspSlots() : (lro_admission_ ? lro_admission_->getBucketCapacity("open_rtsp") : 0);
+  subs["start_pipeline_slots"] = subscriptions ? subscriptions->startPipelineSlots() : (lro_admission_ ? lro_admission_->getBucketCapacity("start_pipeline") : 0);
   subs["ttl_seconds"] = subscriptions ? subscriptions->ttlSeconds() : 0;
+  // Runner snapshot (if enabled)
+  if (lro_enabled_ && lro_runner_) {
+      auto ms = lro_runner_->metricsSnapshot();
+      subs["queue_length"] = static_cast<Json::UInt64>(ms.queue_length);
+      subs["in_progress"] = static_cast<Json::UInt64>(ms.in_progress);
+      Json::Value states(Json::objectValue);
+      states["pending"] = static_cast<Json::UInt64>(ms.pending);
+      states["preparing"] = static_cast<Json::UInt64>(ms.preparing);
+      states["opening_rtsp"] = static_cast<Json::UInt64>(ms.opening);
+      states["loading_model"] = static_cast<Json::UInt64>(ms.loading);
+      states["starting_pipeline"] = static_cast<Json::UInt64>(ms.starting);
+      states["ready"] = static_cast<Json::UInt64>(ms.ready);
+      states["failed"] = static_cast<Json::UInt64>(ms.failed);
+      states["cancelled"] = static_cast<Json::UInt64>(ms.cancelled);
+      subs["states"] = states;
+  }
   Json::Value src(Json::objectValue);
   src["heavy_slots"] = subs_src_heavy;
   src["model_slots"] = subs_src_model;

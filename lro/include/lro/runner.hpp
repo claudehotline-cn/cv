@@ -75,9 +75,10 @@ struct RunnerConfig {
 };
 
 struct LroMetrics {
-  size_t queue_length{0};
-  size_t in_progress{0};
-  // Optional: histograms, reasons, fairness/merge counters, slots, backpressure estimate, etc.
+  std::size_t queue_length{0};
+  std::size_t in_progress{0};
+  // States
+  std::size_t pending{0}, preparing{0}, opening{0}, loading{0}, starting{0}, ready{0}, failed{0}, cancelled{0};
 };
 
 class Runner {
@@ -148,7 +149,24 @@ public:
     if (cfg_.provider.watch) { cfg_.provider.watch(id, std::move(on_event)); }
   }
 
-  LroMetrics metricsSnapshot() const { return {}; }
+  LroMetrics metricsSnapshot() const {
+    LroMetrics m;
+    std::lock_guard<std::mutex> lk(mu_);
+    m.queue_length = q_.size();
+    for (const auto& kv : ops_) {
+      const auto& ph = kv.second.status.phase;
+      if (ph != "ready" && ph != "failed" && ph != "cancelled") m.in_progress++;
+      if (ph == "pending") m.pending++;
+      else if (ph == "preparing") m.preparing++;
+      else if (ph == "opening_rtsp") m.opening++;
+      else if (ph == "loading_model") m.loading++;
+      else if (ph == "starting_pipeline") m.starting++;
+      else if (ph == "ready") m.ready++;
+      else if (ph == "failed") m.failed++;
+      else if (ph == "cancelled") m.cancelled++;
+    }
+    return m;
+  }
 
 private:
   RunnerConfig cfg_{};

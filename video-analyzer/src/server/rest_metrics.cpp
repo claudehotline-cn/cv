@@ -247,8 +247,40 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             for (const auto& kv : cs.encoder_hit_by_impl) { std::ostringstream ls; ls<<"{impl=\""<<kv.impl<<"\"}"; mb.sample("va_codec_encoder_hit_total", ls.str(), kv.value); }
         } catch (...) {}
 
-        // Subscription metrics (from SubscriptionManager, registry branch)
-        if (subscriptions) {
+        // Subscription metrics
+        if (lro_enabled_ && lro_runner_) {
+            auto ms = lro_runner_->metricsSnapshot();
+            mb.header("va_subscriptions_queue_length", "gauge", "Pending subscription tasks in queue");
+            mb.sample("va_subscriptions_queue_length", "{}", static_cast<unsigned long long>(ms.queue_length));
+            // Slots and backpressure (from admission capacities in Impl)
+            try {
+                int s_open = 0, s_load = 0, s_start = 0;
+                if (lro_admission_) {
+                    s_open = lro_admission_->getBucketCapacity("open_rtsp");
+                    s_load = lro_admission_->getBucketCapacity("load_model");
+                    s_start= lro_admission_->getBucketCapacity("start_pipeline");
+                }
+                if (s_open <= 0) s_open = 1; if (s_load <= 0) s_load = 1; if (s_start <= 0) s_start = 1;
+                mb.header("va_subscriptions_slots", "gauge", "Slots for phases");
+                auto emit_slot = [&](const char* t, int v){ std::ostringstream ls; ls<<"{type=\""<<t<<"\"}"; mb.sample("va_subscriptions_slots", ls.str(), static_cast<unsigned long long>(v)); };
+                emit_slot("open_rtsp", s_open);
+                emit_slot("load_model", s_load);
+                emit_slot("start_pipeline", s_start);
+                int slots = std::max(1, std::min({s_open, s_load, s_start}));
+                int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
+                if (est < 1) est = 1; if (est > 60) est = 60;
+                mb.header("va_backpressure_retry_after_seconds", "gauge", "Estimated Retry-After based on queue/slots");
+                mb.sample("va_backpressure_retry_after_seconds", "{}", static_cast<unsigned long long>(est));
+            } catch (...) {}
+            mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
+            mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
+            // States gauges
+            mb.header("va_subscriptions_states", "gauge", "Subscriptions by current phase");
+            auto g = [&](const char* phase, uint64_t v) { std::ostringstream ls; ls<<"{phase=\""<<phase<<"\"}"; mb.sample("va_subscriptions_states", ls.str(), v); };
+            g("pending", ms.pending); g("preparing", ms.preparing); g("opening_rtsp", ms.opening);
+            g("loading_model", ms.loading); g("starting_pipeline", ms.starting); g("ready", ms.ready);
+            g("failed", ms.failed); g("cancelled", ms.cancelled);
+        } else if (subscriptions) {
             auto ms = subscriptions->metricsSnapshot();
             mb.header("va_subscriptions_queue_length", "gauge", "Pending subscription tasks in queue");
             mb.sample("va_subscriptions_queue_length", "{}", static_cast<unsigned long long>(ms.queue_length));
