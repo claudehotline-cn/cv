@@ -1,0 +1,26 @@
+syntax = "proto3";
+package lro.rpc;
+
+message CreateRequest { string spec_json = 1; string idempotency_key = 2; }
+message CreateResponse { string id = 1; }
+message GetRequest { string id = 1; }
+message Operation {
+  string id = 1;
+  string status = 2;
+  string phase = 3;
+  string reason = 4;
+  string spec_json = 5;
+  string result_json = 6;
+  int64 created_at_ms = 7;
+  int64 finished_at_ms = 8;
+}
+message GetResponse { Operation op = 1; }
+message CancelRequest { string id = 1; }
+message CancelResponse { bool ok = 1; }
+
+service LroService {
+  rpc Create(CreateRequest) returns (CreateResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+}
+

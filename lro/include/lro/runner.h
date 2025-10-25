@@ -7,6 +7,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <condition_variable>
+#include <thread>
 #include "lro/operation.h"
 #include "lro/state_store.h"
 #include "lro/executors.h"
@@ -72,9 +73,40 @@ public:
     }
 
     // 最简 watch：注册回调，立即回放一次当前快照（更多持久化/事件总线留给宿主）
+    // One-shot watch (legacy behavior): invoke callback once with current snapshot
     void watch(const std::string& id, std::function<void(const std::shared_ptr<Operation>&)> cb) {
-        if (!cb) return;
-        cb(get(id));
+        if (!cb) return; cb(get(id));
+    }
+
+    struct WatchOptions { int interval_ms{200}; int keepalive_ms{10000}; };
+    struct WatchHandle { std::atomic<bool> stop{false}; };
+    // Continuous watch: spawn a lightweight polling loop that invokes cb on phase change
+    // and periodically for keepalive; returns a handle to allow caller-driven stop.
+    std::shared_ptr<WatchHandle> watch(const std::string& id,
+                                       std::function<void(const std::shared_ptr<Operation>&)> cb,
+                                       WatchOptions opts) {
+        auto handle = std::make_shared<WatchHandle>();
+        if (!cb) return handle;
+        std::thread([this, id, cb, opts, handle]{
+            std::string last;
+            auto last_keep = std::chrono::steady_clock::now();
+            while (!handle->stop.load(std::memory_order_relaxed)) {
+                auto op = this->get(id);
+                if (!op) { cb(op); return; }
+                // initial or phase changed
+                if (last.empty() || op->phase != last) { cb(op); last = op->phase; }
+                // terminal -> exit
+                auto st = op->status.load(std::memory_order_relaxed);
+                if (st==Status::Ready || st==Status::Failed || st==Status::Cancelled) return;
+                // keepalive
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_keep).count() >= opts.keepalive_ms) {
+                    cb(op); last_keep = now;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(opts.interval_ms));
+            }
+        }).detach();
+        return handle;
     }
 
     struct MetricsSnapshot {

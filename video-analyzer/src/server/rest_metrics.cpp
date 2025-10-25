@@ -2,6 +2,7 @@
 #include "analyzer/model_registry.hpp"
 #include "server/sse_metrics.hpp"
 #include "core/codec_registry.hpp"
+#include "core/wal.hpp"
 #include <map>
 
 namespace va::server {
@@ -203,6 +204,21 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             // Minimal dimension labels for WAL: feature-enabled gauge（基数受控）
             mb.header("va_feature_enabled", "gauge", "Feature toggle enabled (1/0)");
             mb.sample("va_feature_enabled", "{feature=\"wal\"}", static_cast<unsigned long long>(va::core::wal::enabled() ? 1 : 0));
+            // Mirror tail-derived WAL event counters (best-effort, low cardinality)
+            try {
+                auto lines = va::core::wal::tail(200);
+                unsigned long long c_enqueue = 0ULL, c_ready = 0ULL, c_failed = 0ULL, c_cancelled = 0ULL, c_restart = 0ULL;
+                for (const auto& s : lines) {
+                    if (s.find("\"op\":\"enqueue\"") != std::string::npos) c_enqueue++;
+                    else if (s.find("\"op\":\"ready\"") != std::string::npos) c_ready++;
+                    else if (s.find("\"op\":\"failed\"") != std::string::npos) c_failed++;
+                    else if (s.find("\"op\":\"cancelled\"") != std::string::npos) c_cancelled++;
+                    else if (s.find("\"op\":\"restart\"") != std::string::npos) c_restart++;
+                }
+                mb.header("va_wal_events_total", "counter", "WAL events observed from tail (best-effort)");
+                auto emit = [&](const char* op, unsigned long long v){ std::ostringstream ls; ls<<"{op=\\\""<<op<<"\\\"}"; mb.sample("va_wal_events_total", ls.str(), v); };
+                emit("enqueue", c_enqueue); emit("ready", c_ready); emit("failed", c_failed); emit("cancelled", c_cancelled); emit("restart", c_restart);
+            } catch (...) {}
         } catch (...) {}
 
         // Model registry preheat & cache metrics (M1/M2)
@@ -253,13 +269,17 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             auto ms = lro_runner_->metricsSnapshot();
             mb.header("va_subscriptions_queue_length", "gauge", "Pending subscription tasks in queue");
             mb.sample("va_subscriptions_queue_length", "{}", static_cast<unsigned long long>(ms.queue_length));
-            // Slots and backpressure (from admission capacities in Impl)
+            // In-progress gauge (parity with plain-text branch)
+            mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
+            mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
+            // Slots and backpressure (from admission snapshot in Impl)
             try {
-                int s_open = 0, s_load = 0, s_start = 0;
+                int s_open = 0, s_load = 0, s_start = 0; int fairw = 0;
                 if (lro_admission_) {
-                    s_open = lro_admission_->getBucketCapacity("open_rtsp");
-                    s_load = lro_admission_->getBucketCapacity("load_model");
-                    s_start= lro_admission_->getBucketCapacity("start_pipeline");
+                    auto as = lro_admission_->snapshot();
+                    fairw = as.fair_window;
+                    auto pick = [&](const char* k){ auto it = as.capacities.find(k); return it==as.capacities.end()? 0: it->second; };
+                    s_open = pick("open_rtsp"); s_load = pick("load_model"); s_start = pick("start_pipeline");
                 }
                 if (s_open <= 0) s_open = 1; if (s_load <= 0) s_load = 1; if (s_start <= 0) s_start = 1;
                 mb.header("va_subscriptions_slots", "gauge", "Slots for phases");
@@ -267,6 +287,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 emit_slot("open_rtsp", s_open);
                 emit_slot("load_model", s_load);
                 emit_slot("start_pipeline", s_start);
+                if (fairw > 0) { mb.header("va_subscriptions_fair_window", "gauge", "Admission fairness window size"); mb.sample("va_subscriptions_fair_window", "{}", static_cast<unsigned long long>(fairw)); }
                 int slots = std::max(1, std::min({s_open, s_load, s_start}));
                 int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
                 if (est < 1) est = 1; if (est > 60) est = 60;
@@ -385,6 +406,34 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
     }
 
     std::ostringstream out;
+    // WAL plain-text metrics (best-effort)
+    try {
+        out << "# HELP va_wal_failed_restart_total Subscriptions inflight before last restart (from WAL)\n";
+        out << "# TYPE va_wal_failed_restart_total counter\n";
+        out << "va_wal_failed_restart_total {} " << static_cast<unsigned long long>(va::core::wal::failedRestartCount()) << "\n";
+        out << "# HELP va_feature_enabled Feature toggle enabled (1/0)\n";
+        out << "# TYPE va_feature_enabled gauge\n";
+        out << "va_feature_enabled{feature=\"wal\"} " << static_cast<unsigned long long>(va::core::wal::enabled() ? 1 : 0) << "\n";
+        // Tail derived event counters (best-effort)
+        unsigned long long c_enqueue=0, c_ready=0, c_failed=0, c_cancelled=0, c_restart=0;
+        try {
+            auto lines = va::core::wal::tail(200);
+            for (const auto& s : lines) {
+                if (s.find("\"op\":\"enqueue\"") != std::string::npos) c_enqueue++;
+                else if (s.find("\"op\":\"ready\"") != std::string::npos) c_ready++;
+                else if (s.find("\"op\":\"failed\"") != std::string::npos) c_failed++;
+                else if (s.find("\"op\":\"cancelled\"") != std::string::npos) c_cancelled++;
+                else if (s.find("\"op\":\"restart\"") != std::string::npos) c_restart++;
+            }
+        } catch (...) {}
+        out << "# HELP va_wal_events_total WAL events observed from tail (best-effort)\n";
+        out << "# TYPE va_wal_events_total counter\n";
+        out << "va_wal_events_total{op=\"enqueue\"} " << c_enqueue << "\n";
+        out << "va_wal_events_total{op=\"ready\"} " << c_ready << "\n";
+        out << "va_wal_events_total{op=\"failed\"} " << c_failed << "\n";
+        out << "va_wal_events_total{op=\"cancelled\"} " << c_cancelled << "\n";
+        out << "va_wal_events_total{op=\"restart\"} " << c_restart << "\n";
+    } catch (...) {}
     out << "# HELP va_pipelines_total Total pipelines\n";
     out << "# TYPE va_pipelines_total gauge\n";
     out << "va_pipelines_total " << sys.total_pipelines << "\n";
@@ -470,14 +519,18 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         out << "va_subscriptions_queue_length " << static_cast<unsigned long long>(ms.queue_length) << "\n";
         // Backpressure (plain text)
         try {
-            int s_open = lro_admission_? lro_admission_->getBucketCapacity("open_rtsp"):1;
-            int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
-            int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
+            int s_open = 1, s_load = 1, s_start= 1; int fairw = 0;
+            if (lro_admission_) { auto as = lro_admission_->snapshot(); fairw = as.fair_window; auto pick = [&](const char* k){ auto it=as.capacities.find(k); return it==as.capacities.end()? 1: it->second; }; s_open=pick("open_rtsp"); s_load=pick("load_model"); s_start=pick("start_pipeline"); }
             out << "# HELP va_subscriptions_slots Slots for phases\n";
             out << "# TYPE va_subscriptions_slots gauge\n";
             out << "va_subscriptions_slots{type=\"open_rtsp\"} " << s_open  << "\n";
             out << "va_subscriptions_slots{type=\"load_model\"} " << s_load  << "\n";
             out << "va_subscriptions_slots{type=\"start_pipeline\"} " << s_start << "\n";
+            if (fairw > 0) {
+                out << "# HELP va_subscriptions_fair_window Admission fairness window size\n";
+                out << "# TYPE va_subscriptions_fair_window gauge\n";
+                out << "va_subscriptions_fair_window " << fairw << "\n";
+            }
             int slots = std::max(1, std::min({s_open, s_load, s_start}));
             int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
             if (est < 1) est = 1; if (est > 60) est = 60;

@@ -22,9 +22,11 @@ struct RouterHooks {
   // Note: SSE/WS stream hook omitted in skeleton
 };
 
-inline void register_basic_routes(RouterHooks&, Runner*) {
-  // left empty intentionally; users should implement routing in their server
-}
+// Register minimal REST-like routes to provided hooks.
+// Paths used by this helper:
+//  - POST   "/operations"            body = JSON spec (idempotency_key optional)
+//  - GET    "/operations"            id   = operation id
+//  - DELETE "/operations"            id   = operation id
+void register_basic_routes(RouterHooks& hooks, Runner* runner);
 
 } // namespace lro::rest
-

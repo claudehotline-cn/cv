@@ -1,40 +1,30 @@
+// This header intentionally contains only generic sample types for users who
+// want to build richer metrics on top of Runner. The LRO core does not depend
+// on these types and does not assume any domain-specific phases or reasons.
 #pragma once
 #include <string>
-#include <vector>
+#include <unordered_map>
 #include <cstdint>
 
 namespace lro {
 
 struct ReasonCount { std::string reason; std::uint64_t count{0}; };
 
-struct PhaseHistogram {
+struct GenericHistogram {
+  // Cumulative histogram representation
   std::vector<double> bounds;               // seconds
   std::vector<std::uint64_t> bucket_counts; // same size as bounds
   double        sum_seconds{0.0};
   std::uint64_t count{0};
 };
 
-struct LroMetricsDetail {
-  // Overall
+struct MetricsSample {
   std::size_t queue_length{0};
   std::size_t in_progress{0};
-  std::size_t completed_ready_total{0};
-  std::size_t completed_failed_total{0};
-  std::size_t completed_cancelled_total{0};
-  // Phase histograms
-  PhaseHistogram opening; PhaseHistogram loading; PhaseHistogram starting;
-  // Failed reasons (low cardinality)
-  std::vector<ReasonCount> failed_by_reason;
-  // Slots and backpressure estimate
-  int open_rtsp_slots{0}, load_model_slots{0}, start_pipeline_slots{0};
-  int retry_after_seconds{1};
-  // Merge/fair scheduling
-  std::uint64_t merge_non_terminal{0}, merge_ready{0}, merge_miss{0};
-  std::uint64_t rr_rotations_total{0};
-  // SSE
-  int sse_subscriptions{0}, sse_sources{0}, sse_logs{0}, sse_events{0};
-  std::uint64_t sse_reconnects_total{0};
+  std::unordered_map<std::string, std::uint64_t> states; // phase -> count
+  std::uint64_t completed_ready{0}, completed_failed{0}, completed_cancelled{0};
+  GenericHistogram total_duration;
+  std::vector<ReasonCount> failed_by_reason; // optional, user-populated
 };
 
 } // namespace lro
-

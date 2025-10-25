@@ -132,8 +132,16 @@ HttpResponse RestServer::Impl::handleSystemInfo(const HttpRequest& /*req*/) {
   subs["model_slots"] = cfg_model_slots_;
   subs["rtsp_slots"] = cfg_rtsp_slots_;
   subs["max_queue"] = static_cast<Json::UInt64>(cfg_max_queue_);
-  subs["open_rtsp_slots"] = lro_admission_ ? lro_admission_->getBucketCapacity("open_rtsp") : cfg_open_rtsp_slots_;
-  subs["start_pipeline_slots"] = lro_admission_ ? lro_admission_->getBucketCapacity("start_pipeline") : cfg_start_pipeline_slots_;
+  if (lro_admission_) {
+      auto as = lro_admission_->snapshot();
+      auto pick = [&](const char* k, int fallback){ auto it=as.capacities.find(k); return it==as.capacities.end()? fallback : it->second; };
+      subs["open_rtsp_slots"] = pick("open_rtsp", cfg_open_rtsp_slots_);
+      subs["start_pipeline_slots"] = pick("start_pipeline", cfg_start_pipeline_slots_);
+      subs["fair_window"] = as.fair_window;
+  } else {
+      subs["open_rtsp_slots"] = cfg_open_rtsp_slots_;
+      subs["start_pipeline_slots"] = cfg_start_pipeline_slots_;
+  }
   subs["ttl_seconds"] = cfg_ttl_seconds_;
   // Runner snapshot (if enabled)
   if (lro_enabled_ && lro_runner_) {

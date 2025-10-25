@@ -51,6 +51,13 @@ if ($BuildMode -eq 'ci') {
   & tools/build_va_with_vcvars.cmd | Tee-Object -FilePath build_va_log.txt
 }
 
+Write-Host '== Test 0: LRO library CI (unit + examples) =='
+try {
+  & tools/run_lro_ci.ps1 -BuildMode local | Tee-Object -FilePath lro_ci_log.txt
+} catch {
+  throw "LRO CI failed: $_"
+}
+
 Write-Host '== Test 1: admin WAL endpoints (WAL enabled) =='
 Stop-VA
 # Enable WAL for this run
@@ -70,6 +77,17 @@ try {
 } catch {
   Write-Warning "metrics/headers tests skipped or failed: $_"
 }
+Stop-VA
+
+Write-Host '== Test 1b: minimal API once (POST→GET→DELETE + SSE) =='
+Stop-VA
+$proc = Start-VA
+if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for minimal API test' }
+try {
+  python -m pip install --upgrade pip
+  python -m pip install requests
+} catch { Write-Warning "pip/requests install failed or skipped: $_" }
+python video-analyzer/test/scripts/check_min_api_once.py --base $BaseUrl
 Stop-VA
 
 Write-Host '== Test 2: model registry preheat status =='
@@ -101,6 +119,14 @@ Stop-VA
 $proc = Start-VA
 if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for metrics presence test' }
 python video-analyzer/test/scripts/check_metrics_hist_and_reasons.py --base $BaseUrl --poll-sec 8
+Stop-VA
+
+Write-Host '== Test 6b: Admission fair window exposure (metrics + system info) =='
+Stop-VA
+$proc = Start-VA
+if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for fair-window tests' }
+python video-analyzer/test/scripts/check_fair_window_metric.py --base $BaseUrl --timeout 6.0
+python video-analyzer/test/scripts/check_fair_window_info.py --base $BaseUrl --timeout 6.0
 Stop-VA
 
 Write-Host '== Test 7: Quotas snapshot与指标（M2） =='
