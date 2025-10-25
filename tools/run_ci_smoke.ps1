@@ -51,11 +51,14 @@ if ($BuildMode -eq 'ci') {
   & tools/build_va_with_vcvars.cmd | Tee-Object -FilePath build_va_log.txt
 }
 
-Write-Host '== Test 1: admin WAL endpoints (baseline server) =='
+Write-Host '== Test 1: admin WAL endpoints (WAL enabled) =='
 Stop-VA
+# Enable WAL for this run
+$Env:VA_WAL_SUBSCRIPTIONS = '1'
 $proc = Start-VA
 if (-not (Wait-Healthy -TimeoutSec 12)) { throw 'VA not healthy for admin wal test' }
-python video-analyzer/test/scripts/check_admin_wal_endpoints.py
+# Tail & summary quick check
+python video-analyzer/test/scripts/check_admin_wal_tail.py
 # While server is up, also run metrics+headers tests (requires requests)
 try {
   python -m pip install --upgrade pip
@@ -73,6 +76,8 @@ Write-Host '== Test 2: model registry preheat status =='
 python video-analyzer/test/scripts/check_preheat_status.py
 
 Write-Host '== Test 3: WAL scan after restart =='
+# Keep WAL env enabled for scan test
+$Env:VA_WAL_SUBSCRIPTIONS = '1'
 python video-analyzer/test/scripts/check_wal_scan.py
 Write-Host '== Test 3b: WAL rotation/TTL cross-restart evidence =='
 python video-analyzer/test/scripts/check_wal_rotation_ttl.py
