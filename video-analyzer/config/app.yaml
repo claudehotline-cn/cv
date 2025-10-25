@@ -45,7 +45,7 @@ defaults:
     tune_zerolatency: true
 security:
   allowed_source_schemes:
-    - rtsp
+    - rtsp你好
     - rtsps
   switch_limits:
     source_per_stream_per_sec: 0.2

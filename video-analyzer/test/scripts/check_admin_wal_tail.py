@@ -13,18 +13,21 @@ def http_get(path, timeout=8):
 
 def main():
     try:
-        s = http_get("/api/admin/wal/summary")
-        if not s.get("success"):
+        summary = http_get("/api/admin/wal/summary")
+        if not summary.get("success"):
             print("FAIL: summary.success is false")
             return 1
-        data = s.get("data", {})
-        enabled = bool(data.get("enabled", False))
-        failed_restart = int(data.get("failed_restart", 0))
-        if not enabled:
-            print("SKIP: wal disabled")
-            return 0
-        # When enabled, we at least assert field presence
-        print(json.dumps({"enabled": enabled, "failed_restart": failed_restart}, ensure_ascii=False))
+        enabled = bool(summary.get("data", {}).get("enabled", False))
+        # Tail always available as read-only; enabled controls append behavior
+        tail = http_get("/api/admin/wal/tail?n=50")
+        if not tail.get("success"):
+            print("FAIL: tail.success is false")
+            return 1
+        items = tail.get("data", {}).get("items", [])
+        print(json.dumps({
+            "enabled": enabled,
+            "count": len(items)
+        }, ensure_ascii=False))
         return 0
     except urllib.error.URLError as e:
         print(f"FAIL: http error: {e}")
