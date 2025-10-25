@@ -120,9 +120,9 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                             int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
                             int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
                             int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                            int est = 1;
-                            if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                            if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
+                            int est = lro_admission_ ? lro_admission_->estimateRetryAfterSeconds(qlen, slots)
+                                                     : (int)std::max(1, std::min(60, (int)std::ceil((qlen>0)? (double)qlen/(double)slots : 1.0)));
+                            ra = std::to_string(est);
                         } catch (...) {}
                         resp.headers["Retry-After"] = ra;
                         resp.headers["X-Quota-Reason"] = "global_concurrent";
@@ -145,9 +145,9 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                             int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
                             int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
                             int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                            int est = 1;
-                            if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                            if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
+                            int est = lro_admission_ ? lro_admission_->estimateRetryAfterSeconds(qlen, slots)
+                                                     : (int)std::max(1, std::min(60, (int)std::ceil((qlen>0)? (double)qlen/(double)slots : 1.0)));
+                            ra = std::to_string(est);
                         } catch (...) {}
                         resp.headers["Retry-After"] = ra;
                         resp.headers["X-Quota-Reason"] = "key_concurrent";
@@ -181,9 +181,9 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                         int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
                         int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
                         int slots = std::max(1, std::min({s_open>0?s_open:1, s_load, s_start}));
-                        int est = 60;
-                        if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                        if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
+                        int est = lro_admission_ ? lro_admission_->estimateRetryAfterSeconds(qlen, slots)
+                                                 : (int)std::max(1, std::min(60, (int)std::ceil((qlen>0)? (double)qlen/(double)slots : 1.0)));
+                        ra = std::to_string(est);
                     } catch (...) {}
                     resp.headers["Retry-After"] = ra;
                     resp.headers["X-Quota-Reason"] = "key_rate";
@@ -241,9 +241,9 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
                 int s_load = lro_admission_? lro_admission_->getBucketCapacity("load_model"):1;
                 int s_start= lro_admission_? lro_admission_->getBucketCapacity("start_pipeline"):1;
                 int slots = std::max(1, std::min({s_open, s_load, s_start}));
-                int est = 1;
-                if (qlen > 0) { double wait = static_cast<double>(qlen) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
-                if (est < 1) est = 1; if (est > 60) est = 60; ra = std::to_string(est);
+                int est = lro_admission_ ? lro_admission_->estimateRetryAfterSeconds(qlen, slots)
+                                         : (int)std::max(1, std::min(60, (int)std::ceil((qlen>0)? (double)qlen/(double)slots : 1.0)));
+                ra = std::to_string(est);
             } catch (...) {}
             resp.headers["Retry-After"] = ra;
             return resp;
