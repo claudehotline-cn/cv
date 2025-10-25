@@ -1,4 +1,5 @@
 #include "server/rest_impl.hpp"
+#include "core/wal.hpp"
 #include <functional>
 #include <chrono>
 #include "server/sse_metrics.hpp"
@@ -208,6 +209,14 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
         } else {
             return errorResponse("LRO unavailable", 503);
         }
+        // WAL: append enqueue event (best-effort)
+        try {
+            const std::string base_key2 = stream_id + ":" + profile_id;
+            std::uint64_t t_created = now_ms();
+            va::core::wal::append_subscription_event(
+                "enqueue", id, base_key2, "pending", std::string(),
+                t_created, 0, 0, 0, 0, 0, 0, 0);
+        } catch (...) {}
         Json::Value payload = successPayload();
         Json::Value data(Json::objectValue);
         data["id"] = id;
@@ -305,8 +314,32 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
             data["timeline"] = tl;
         }
     }
-    // Persist completion if terminal (best-effort, once)
-    // DB completion best-effort omitted in LRO path (future: join with Runner terminal events)
+    // WAL: if terminal, append terminal event once (best-effort)
+    try {
+        auto st = op_ptr->status.load(std::memory_order_relaxed);
+        const bool terminal = (st==lro::Status::Ready || st==lro::Status::Failed || st==lro::Status::Cancelled);
+        if (terminal) {
+            std::lock_guard<std::mutex> lk(wal_mu_);
+            if (!wal_appended_ids_.count(id)) {
+                const char* op = (st==lro::Status::Ready? "ready" : (st==lro::Status::Failed? "failed" : "cancelled"));
+                std::string base_key;
+                if (!stream_id.empty()) {
+                    base_key = stream_id;
+                    if (!profile_id.empty()) base_key += ":" + profile_id;
+                }
+                const std::uint64_t t_now = now_ms();
+                std::uint64_t t_created = 0ULL;
+                try { t_created = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(op_ptr->created_at.time_since_epoch()).count()); } catch (...) {}
+                va::core::wal::append_subscription_event(
+                    op, id, base_key, op_ptr->phase, op_ptr->reason,
+                    t_created, 0, 0, 0, 0,
+                    st==lro::Status::Ready? t_now : 0ULL,
+                    st==lro::Status::Failed? t_now : 0ULL,
+                    st==lro::Status::Cancelled? t_now : 0ULL);
+                wal_appended_ids_.insert(id);
+            }
+        }
+    } catch (...) {}
     payload["data"] = data;
     HttpResponse resp = jsonResponse(payload, 200);
     resp.headers["ETag"] = etag_hex;
@@ -337,6 +370,18 @@ HttpResponse RestServer::Impl::handleSubscriptionDelete(const HttpRequest& /*req
             if (!stream_id.empty() && !profile_id.empty()) {
                 (void)app.unsubscribeStream(stream_id, profile_id);
             }
+            // WAL: append cancelled terminal event once (best-effort)
+            try {
+                std::lock_guard<std::mutex> lk(wal_mu_);
+                if (!wal_appended_ids_.count(id)) {
+                    std::string base_key = stream_id.empty()? std::string() : (stream_id + ":" + profile_id);
+                    const std::uint64_t t_now = now_ms();
+                    std::uint64_t t_created = 0ULL; try { t_created = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(op_ptr->created_at.time_since_epoch()).count()); } catch (...) {}
+                    va::core::wal::append_subscription_event("cancelled", id, base_key, op_ptr->phase, op_ptr->reason,
+                        t_created, 0, 0, 0, 0, 0, 0, t_now);
+                    wal_appended_ids_.insert(id);
+                }
+            } catch (...) {}
         }
     } catch (...) {}
     // Persist cancellation for session (best-effort)

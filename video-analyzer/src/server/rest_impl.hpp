@@ -41,6 +41,7 @@
 #include <initializer_list>
 #include <filesystem>
 #include <map>
+#include <unordered_set>
 #include <mutex>
 #include <condition_variable>
 #include <optional>
@@ -1174,6 +1175,10 @@ struct RestServer::Impl {
     std::unique_ptr<lro::Runner> lro_runner_;
     std::shared_ptr<lro::IStateStore> lro_store_;
     std::unique_ptr<lro::AdmissionPolicy> lro_admission_;
+
+    // WAL bookkeeping to avoid duplicate terminal appends (best-effort only)
+    std::mutex wal_mu_;
+    std::unordered_set<std::string> wal_appended_ids_;
 };
 
 } // namespace va::server
