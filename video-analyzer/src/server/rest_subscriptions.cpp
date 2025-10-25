@@ -252,20 +252,20 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
 }
 
   HttpResponse RestServer::Impl::handleSubscriptionGet(const HttpRequest& req, const std::string& id) {
-    if (!subscriptions) {
-        return errorResponse("subscription manager unavailable", 503);
-    }
-    // Prefer LRO snapshot when enabled
+    // Prefer LRO snapshot when enabled; fallback to legacy manager
     lro::Operation op;
     if (lro_enabled_ && lro_runner_) {
         op = lro_runner_->get(id);
-        if (op.id.empty()) {
+        if (op.id.empty() && !subscriptions) {
             return errorResponse("subscription not found", 404);
         }
     }
-    auto state = subscriptions->get(id);
-    if (!state) {
-        return errorResponse("subscription not found", 404);
+    std::shared_ptr<SubscriptionState> state;
+    if (subscriptions && op.id.empty()) {
+        state = subscriptions->get(id);
+        if (!state) {
+            return errorResponse("subscription not found", 404);
+        }
     }
     // ETag support (weak): derive from timestamps and current phase
     auto etag_hex = [&](){
@@ -302,23 +302,43 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
     Json::Value data(Json::objectValue);
     data["id"] = id;
     data["phase"] = (!op.id.empty() ? Json::Value(op.status.phase) : Json::Value(toString(state->phase.load())));
-    data["stream_id"] = state->request.stream_id;
-    data["profile_id"] = state->request.profile_id;
-    data["source_uri"] = state->request.source_uri;
-    if (state->request.model_id) {
-        data["model_id"] = *state->request.model_id;
+    std::string stream_id, profile_id, source_uri;
+    if (!op.id.empty()) {
+        try {
+            Json::Value sx = parseJson(op.spec_json);
+            if (sx.isObject()) {
+                if (sx.isMember("stream_id") && sx["stream_id"].isString()) stream_id = sx["stream_id"].asString();
+                if (sx.isMember("stream") && stream_id.empty() && sx["stream"].isString()) stream_id = sx["stream"].asString();
+                if (sx.isMember("profile") && sx["profile"].isString()) profile_id = sx["profile"].asString();
+                if (sx.isMember("profile_id") && profile_id.empty() && sx["profile_id"].isString()) profile_id = sx["profile_id"].asString();
+                if (sx.isMember("source_uri") && sx["source_uri"].isString()) source_uri = sx["source_uri"].asString();
+                if (sx.isMember("uri") && source_uri.empty() && sx["uri"].isString()) source_uri = sx["uri"].asString();
+                if (sx.isMember("url") && source_uri.empty() && sx["url"].isString()) source_uri = sx["url"].asString();
+            }
+        } catch (...) {}
+    } else {
+        stream_id = state->request.stream_id; profile_id = state->request.profile_id; source_uri = state->request.source_uri;
     }
-    if (!state->pipeline_key.empty()) {
-        data["pipeline_key"] = state->pipeline_key;
+    if (!stream_id.empty()) data["stream_id"] = stream_id;
+    if (!profile_id.empty()) data["profile_id"] = profile_id;
+    if (!source_uri.empty()) data["source_uri"] = source_uri;
+    if (!op.id.empty()) {
+        try { Json::Value sx = parseJson(op.spec_json); if (sx.isMember("model_id") && sx["model_id"].isString()) data["model_id"] = sx["model_id"].asString(); } catch (...) {}
+        // pipeline_key: for Application path we used pipeline key as id
+        data["pipeline_key"] = id;
+        if (!op.status.reason.empty()) data["reason"] = op.status.reason;
+    } else {
+        if (state->request.model_id) data["model_id"] = *state->request.model_id;
+        if (!state->pipeline_key.empty()) data["pipeline_key"] = state->pipeline_key;
+        if (!state->whep_url.empty()) data["whep_url"] = state->whep_url;
+        if (!state->reason.empty()) data["reason"] = state->reason;
     }
-    if (!state->whep_url.empty()) {
-        data["whep_url"] = state->whep_url;
+    if (state) {
+        const auto created = std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count();
+        data["created_at_ms"] = static_cast<Json::UInt64>(created);
+    } else if (!op.id.empty() && op.timeline.ts_pending > 0) {
+        data["created_at_ms"] = static_cast<Json::UInt64>(op.timeline.ts_pending);
     }
-    if (!state->reason.empty()) {
-        data["reason"] = state->reason;
-    }
-    const auto created = std::chrono::duration_cast<std::chrono::milliseconds>(state->created_at.time_since_epoch()).count();
-    data["created_at_ms"] = static_cast<Json::UInt64>(created);
     // include=timeline 支持
     auto q = parseQueryKV(req.query);
     auto itInc = q.find("include");
@@ -339,7 +359,7 @@ HttpResponse RestServer::Impl::handleSubscriptionCreate(const HttpRequest& req) 
         }
     }
     // Persist completion if terminal (best-effort, once)
-    if (sessions_repo) {
+    if (sessions_repo && state) {
         auto ph = state->phase.load();
         if (ph == SubscriptionPhase::Ready || ph == SubscriptionPhase::Failed || ph == SubscriptionPhase::Cancelled) {
             bool expected = false;
@@ -682,6 +702,37 @@ HttpResponse RestServer::Impl::handleSetEngine(const HttpRequest& req) {
 }
 
 void RestServer::Impl::streamSubscriptionSSE(int fd, const HttpRequest& req, const std::string& id) {
+    if (lro_enabled_ && lro_runner_) {
+        struct Guard { ~Guard(){ va::server::g_sse_subscriptions_active.fetch_sub(1, std::memory_order_relaxed); } } guard;
+        va::server::g_sse_subscriptions_active.fetch_add(1, std::memory_order_relaxed);
+        try { auto it=req.headers.find("Last-Event-ID"); if (it!=req.headers.end()) va::server::g_sse_reconnects_total.fetch_add(1ULL, std::memory_order_relaxed); } catch (...) {}
+        sseWriteHeaders(fd);
+        auto last = std::string();
+        bool first = true;
+        const int interval_ms = 200;
+        const int keepalive_ms = 10000;
+        auto last_keepalive = std::chrono::steady_clock::now();
+        std::uint64_t ev_id = 1;
+        auto hit = req.headers.find("Last-Event-ID"); if (hit != req.headers.end()) { try { ev_id = static_cast<std::uint64_t>(std::stoull(hit->second) + 1ULL); } catch (...) {} }
+        while (true) {
+            auto op = lro_runner_->get(id);
+            if (op.id.empty()) { Json::Value e; e["error"] = "not_found"; sseEvent(fd, "error", e); return; }
+            if (first || op.status.phase != last) {
+                Json::Value data(Json::objectValue);
+                data["id"] = id;
+                data["phase"] = op.status.phase;
+                if (!op.status.reason.empty()) data["reason"] = op.status.reason;
+                data["pipeline_key"] = id;
+                sseEventWithId(fd, "phase", data, ev_id++, 2500);
+                last = op.status.phase; first = false;
+                if (last == "ready" || last == "failed" || last == "cancelled") break;
+            }
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_keepalive).count() >= keepalive_ms) { sseKeepAlive(fd); last_keepalive = now; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        }
+        return;
+    }
     if (!subscriptions) return;
     // SSE metrics: active connections and reconnects
     struct Guard { ~Guard(){ va::server::g_sse_subscriptions_active.fetch_sub(1, std::memory_order_relaxed); } } guard;

@@ -71,30 +71,34 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
             // Provider bridge -> current SubscriptionManager (transition phase)
             rcfg.provider.create = [this](const std::string& spec_json,
                                           const std::string& /*base_key*/,
-                                          bool prefer_reuse_ready) -> std::string {
+                                          bool /*prefer_reuse_ready*/) -> std::string {
                 Json::Value body = parseJson(spec_json);
-                SubscriptionRequest req;
                 auto stream_opt = getStringField(body, {"stream_id", "stream"});
                 auto profile_opt = getStringField(body, {"profile", "profile_id"});
                 auto uri_opt = getStringField(body, {"source_uri", "uri", "url"});
                 if (!stream_opt || !profile_opt || !uri_opt) {
                     throw std::runtime_error("LRO: spec missing required fields");
                 }
-                req.stream_id = *stream_opt;
-                req.profile_id = *profile_opt;
-                req.source_uri = *uri_opt;
+                std::optional<std::string> model_override;
                 if (body.isMember("model_id") && body["model_id"].isString()) {
-                    auto v = body["model_id"].asString(); if (!v.empty()) req.model_id = v;
+                    auto v = body["model_id"].asString(); if (!v.empty()) model_override = v;
                 }
-                // Optional requester key (header is not available here; allow spec override)
-                if (body.isMember("requester_key") && body["requester_key"].isString()) {
-                    req.requester_key = body["requester_key"].asString();
+                // Try native Application path first
+                if (true) {
+                    auto key = app.subscribeStream(*stream_opt, *profile_opt, *uri_opt, model_override);
+                    if (key && !key->empty()) {
+                        return *key; // use pipeline key as id
+                    }
                 }
+                // Fallback to legacy manager to preserve async semantics on failures
                 if (subscriptions) {
+                    SubscriptionRequest req;
+                    req.stream_id = *stream_opt; req.profile_id = *profile_opt; req.source_uri = *uri_opt; req.model_id = model_override;
                     subscriptions->setWhepBase(app.appConfig().sfu_whep_base);
-                    return subscriptions->enqueue(req, prefer_reuse_ready);
+                    return subscriptions->enqueue(req, /*prefer_reuse_ready*/true);
                 }
-                throw std::runtime_error("subscription manager unavailable");
+                // No path available
+                return std::string();
             };
             rcfg.provider.get = [this](const std::string& id, lro::Operation& out) -> bool {
                 if (!subscriptions) return false;
