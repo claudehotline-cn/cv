@@ -2,6 +2,7 @@
 #include "analyzer/model_registry.hpp"
 #include "server/sse_metrics.hpp"
 #include "core/codec_registry.hpp"
+#include <map>
 
 namespace va::server {
 
@@ -271,6 +272,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 if (est < 1) est = 1; if (est > 60) est = 60;
                 mb.header("va_backpressure_retry_after_seconds", "gauge", "Estimated Retry-After based on queue/slots");
                 mb.sample("va_backpressure_retry_after_seconds", "{}", static_cast<unsigned long long>(est));
+            } catch (...) {}
             // Completed totals
             mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
             auto c0 = [&](const char* res, unsigned long long v) { std::ostringstream ls; ls<<"{result=\\\""<<res<<"\\\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
@@ -294,7 +296,8 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             } catch (...) {}
             // Completed totals
             mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
-            auto c0 = [&](const char* res, unsigned long long v) { std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
+            // reuse the sampler defined above (avoid duplicate lambda declaration)
+            // c0 already defined earlier in this scope
             c0("ready",     ms.completed_ready);
             c0("failed",    ms.completed_failed);
             c0("cancelled", ms.completed_cancelled);
