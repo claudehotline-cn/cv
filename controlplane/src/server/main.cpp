@@ -21,6 +21,19 @@
 
 namespace controlplane { bool quick_probe_va(const std::string&); bool quick_probe_vsm(const std::string&); }
 
+namespace {
+struct ErrMap { int code; const char* text; };
+inline ErrMap cp_map_err(const std::string& emsg) {
+  ErrMap out{502, "BACKEND_ERROR"};
+  std::string s = emsg; for (auto& c : s) c = (char)tolower((unsigned char)c);
+  auto has = [&](const char* k){ return s.find(k) != std::string::npos; };
+  if (has("invalid") || has("bad arg") || has("missing")) { out = {400, "INVALID_ARGUMENT"}; }
+  else if (has("already exists") || has("conflict") || has("busy") || has("in use")) { out = {409, "CONFLICT"}; }
+  else if (has("not found") || has("no such") || has("unknown")) { out = {404, "NOT_FOUND"}; }
+  return out;
+}
+}
+
 int main(int argc, char** argv) {
   using namespace controlplane;
   std::string cfgDir = "controlplane/config";
@@ -193,7 +206,8 @@ int main(int argc, char** argv) {
         }
         std::string va_id, err;
         if (!va_subscribe(cfg.va_addr, stream_id, profile, source_uri, model_id, &va_id, &err)) {
-          r.status = 502; r.body = std::string("{\"code\":\"BACKEND_ERROR\",\"msg\":\"") + err + "\"}"; return r;
+          auto mm = cp_map_err(err);
+          r.status = mm.code; r.body = std::string("{\"code\":\"") + mm.text + "\",\"msg\":\"" + err + "\"}"; return r;
         }
         auto& st = Store::instance();
         auto cp_id = st.create(stream_id, profile, source_uri, model_id, va_id);
@@ -421,7 +435,7 @@ int main(int argc, char** argv) {
       }
       if (attach_id.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; controlplane::metrics::inc_request("/api/sources:enable", method, r.status); return r; }
       std::string err;
-      if (!vsm_set_enabled(cfg.vsm_addr, attach_id, true, &err)) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\"}"; controlplane::metrics::inc_request("/api/sources:enable", method, r.status); return r; }
+      if (!vsm_set_enabled(cfg.vsm_addr, attach_id, true, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\"}"; controlplane::metrics::inc_request("/api/sources:enable", method, r.status); return r; }
       r.status=202; r.body="{\"code\":\"ACCEPTED\"}"; controlplane::metrics::inc_request("/api/sources:enable", method, r.status); return r;
     }
     if (path.rfind("/api/sources:disable",0)==0 && method == "POST") {
@@ -456,7 +470,7 @@ int main(int argc, char** argv) {
       }
       if (attach_id.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; controlplane::metrics::inc_request("/api/sources:disable", method, r.status); return r; }
       std::string err;
-      if (!vsm_set_enabled(cfg.vsm_addr, attach_id, false, &err)) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\"}"; controlplane::metrics::inc_request("/api/sources:disable", method, r.status); return r; }
+      if (!vsm_set_enabled(cfg.vsm_addr, attach_id, false, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\"}"; controlplane::metrics::inc_request("/api/sources:disable", method, r.status); return r; }
       r.status=202; r.body="{\"code\":\"ACCEPTED\"}"; controlplane::metrics::inc_request("/api/sources:disable", method, r.status); return r;
     }
     // VA control: apply pipeline (M0 minimal)
@@ -498,7 +512,8 @@ int main(int argc, char** argv) {
       }
       std::string err2;
       if (!va_apply_pipeline(cfg.va_addr, pipeline_name, yaml_path, graph_id, serialized, format, revision, &err2)) {
-        r.status = 502; r.body = "{\"code\":\"BACKEND_ERROR\",\"msg\":\"" + err2 + "\"}"; controlplane::metrics::inc_request("/api/control/apply_pipeline", method, r.status); return r;
+        auto mm = cp_map_err(err2);
+        r.status = mm.code; r.body = std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err2+"\"}"; controlplane::metrics::inc_request("/api/control/apply_pipeline", method, r.status); return r;
       }
       r.status = 202; r.body = "{\"code\":\"ACCEPTED\"}"; controlplane::metrics::inc_request("/api/control/apply_pipeline", method, r.status); return r;
     }
@@ -530,7 +545,8 @@ int main(int argc, char** argv) {
       if (pipeline_name.empty()) { r.status = 400; r.body = "{\"code\":\"INVALID_ARGUMENT\"}"; controlplane::metrics::inc_request("/api/control/pipeline", method, r.status); return r; }
       std::string err3;
       if (!va_remove_pipeline(cfg.va_addr, pipeline_name, &err3)) {
-        r.status = 502; r.body = "{\"code\":\"BACKEND_ERROR\",\"msg\":\"" + err3 + "\"}"; controlplane::metrics::inc_request("/api/control/pipeline", method, r.status); return r;
+        auto mm = cp_map_err(err3);
+        r.status = mm.code; r.body = std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err3+"\"}"; controlplane::metrics::inc_request("/api/control/pipeline", method, r.status); return r;
       }
       r.status = 202; r.body = "{\"code\":\"ACCEPTED\"}"; controlplane::metrics::inc_request("/api/control/pipeline", method, r.status); return r;
     }
@@ -595,7 +611,7 @@ int main(int argc, char** argv) {
         }
       }
       if (pipeline_name.empty() || node.empty() || model_uri.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; controlplane::metrics::inc_request("/api/control/hotswap", method, r.status); return r; }
-      std::string errh; if (!va_hotswap_model(cfg.va_addr, pipeline_name, node, model_uri, &errh)) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\""+errh+"\"}"; controlplane::metrics::inc_request("/api/control/hotswap", method, r.status); return r; }
+      std::string errh; if (!va_hotswap_model(cfg.va_addr, pipeline_name, node, model_uri, &errh)) { auto mm=cp_map_err(errh); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+errh+"\"}"; controlplane::metrics::inc_request("/api/control/hotswap", method, r.status); return r; }
       r.status=202; r.body="{\"code\":\"ACCEPTED\"}"; controlplane::metrics::inc_request("/api/control/hotswap", method, r.status); return r;
     }
     // VA control: get status
@@ -614,7 +630,7 @@ int main(int argc, char** argv) {
       }
       if (pipeline_name.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; controlplane::metrics::inc_request("/api/control/status", method, r.status); return r; }
       std::string phase, metrics_json, errs;
-      if (!va_get_status(cfg.va_addr, pipeline_name, &phase, &metrics_json, &errs)) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\""+errs+"\"}"; controlplane::metrics::inc_request("/api/control/status", method, r.status); return r; }
+      if (!va_get_status(cfg.va_addr, pipeline_name, &phase, &metrics_json, &errs)) { auto mm=cp_map_err(errs); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+errs+"\"}"; controlplane::metrics::inc_request("/api/control/status", method, r.status); return r; }
       std::ostringstream os; os << "{\"code\":\"OK\",\"data\":{\"pipeline_name\":\""<<pipeline_name<<"\",\"phase\":\""<<phase<<"\""; if(!metrics_json.empty()){ os<<",\"metrics\":"<<metrics_json; } os << "}}";
       r.status=200; r.body=os.str(); controlplane::metrics::inc_request("/api/control/status", method, r.status); return r;
     }
@@ -646,7 +662,7 @@ int main(int argc, char** argv) {
         }
       }
       if (pipeline_name.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; controlplane::metrics::inc_request("/api/control/drain", method, r.status); return r; }
-      bool drained=false; std::string erd; if (!va_drain(cfg.va_addr, pipeline_name, timeout_sec, &drained, &erd)) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\""+erd+"\"}"; controlplane::metrics::inc_request("/api/control/drain", method, r.status); return r; }
+      bool drained=false; std::string erd; if (!va_drain(cfg.va_addr, pipeline_name, timeout_sec, &drained, &erd)) { auto mm=cp_map_err(erd); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+erd+"\"}"; controlplane::metrics::inc_request("/api/control/drain", method, r.status); return r; }
       r.status=202; r.body = std::string("{\"code\":\"ACCEPTED\",\"drained\":") + (drained?"true":"false") + "}"; controlplane::metrics::inc_request("/api/control/drain", method, r.status); return r;
     }
     if (path.rfind("/api/control", 0) == 0) {
