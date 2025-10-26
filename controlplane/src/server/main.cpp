@@ -622,6 +622,8 @@ int main(int argc, char** argv) {
         std::unique_ptr< grpc::ClientReader<vsm::v1::WatchStateReply> > reader(stub->WatchState(&ctx, req));
         if (!reader) throw std::runtime_error("VSM WatchState reader null");
         controlplane::sse::write_headers(writer);
+        // Emit an initial empty state to avoid client-side timeouts when there are no items yet
+        controlplane::sse::write_event(writer, "state", "{\\\"items\\\":[]}");
         vsm::v1::WatchStateReply rep;
         long long last_keep = 0;
         auto nowms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(); };
