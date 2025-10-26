@@ -22,6 +22,27 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
     if (root["restream"]) {
       auto r = root["restream"]; if (r["rtsp_base"]) out->restream_rtsp_base = r["rtsp_base"].as<std::string>();
     }
+    if (root["security"]) {
+      auto s = root["security"];
+      if (s["cors"]) {
+        auto c = s["cors"];
+        if (c["allowed_origins"]) {
+          out->security.cors_allowed_origins.clear();
+          for (auto it : c["allowed_origins"]) {
+            try { out->security.cors_allowed_origins.push_back(it.as<std::string>()); } catch (...) {}
+          }
+        }
+      }
+      if (s["auth"]) {
+        auto a = s["auth"]; if (a["bearer_token"]) out->security.bearer_token = a["bearer_token"].as<std::string>("");
+      }
+      if (s["rate_limit"]) {
+        auto rl = s["rate_limit"]; if (rl["rps"]) out->security.rate_limit_rps = rl["rps"].as<int>(0);
+      }
+    }
+    if (out->security.cors_allowed_origins.empty()) {
+      out->security.cors_allowed_origins.push_back("*");
+    }
     return true;
   } catch (const std::exception& ex) {
     if (err) *err = ex.what();

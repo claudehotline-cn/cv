@@ -43,13 +43,62 @@ int main(int argc, char** argv) {
   HttpServer http;
   auto handler = [cfg](const std::string& method, const std::string& path, const std::string& headers, const std::string& body) -> HttpResponse {
     HttpResponse r;
-    // default CORS for all responses
-    r.extraHeaders = "Access-Control-Allow-Origin: *\r\n";
+    // Helpers: extract header value by key (case-sensitive minimal)
+    auto get_header = [&](const std::string& key)->std::string{
+      auto p = headers.find(key);
+      if (p == std::string::npos) return {};
+      p += key.size();
+      auto e = headers.find("\r\n", p);
+      auto v = headers.substr(p, e==std::string::npos? std::string::npos : e-p);
+      size_t b=0; while (b<v.size() && (v[b]==' '||v[b]=='\t')) ++b; return v.substr(b);
+    };
+    auto origin = get_header("Origin:");
+    auto authz  = get_header("Authorization:");
+    auto origin_allowed = [&](){
+      const auto& allow = cfg.security.cors_allowed_origins;
+      if (allow.empty()) return true;
+      if (allow.size()==1 && allow[0]=="*") return true;
+      if (origin.empty()) return false;
+      for (const auto& o : allow) if (o==origin) return true;
+      return false;
+    }();
+    auto set_cors = [&](HttpResponse& rr){
+      if (cfg.security.cors_allowed_origins.size()==1 && cfg.security.cors_allowed_origins[0]=="*") {
+        rr.extraHeaders = "Access-Control-Allow-Origin: *\r\n";
+      } else if (!origin.empty() && origin_allowed) {
+        rr.extraHeaders = std::string("Access-Control-Allow-Origin: ") + origin + "\r\n";
+      }
+    };
+    set_cors(r);
     // CORS preflight
     if (method == "OPTIONS") {
       r.status = 200;
-      r.extraHeaders = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,DELETE,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,Authorization\r\n";
+      r.extraHeaders += "Access-Control-Allow-Methods: GET,POST,DELETE,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,Authorization\r\n";
       r.body = "{}"; return r;
+    }
+    // Security: bearer token (only when configured); exempt /metrics
+    auto needs_auth = [&](){ return !cfg.security.bearer_token.empty() && path.rfind("/metrics",0)!=0; }();
+    if (needs_auth) {
+      bool ok=false;
+      if (authz.rfind("Bearer ", 0) == 0) {
+        auto tok = authz.substr(7);
+        if (tok == cfg.security.bearer_token) ok = true;
+      }
+      if (!ok) { r.status=401; r.body="{\"code\":\"UNAUTHORIZED\"}"; set_cors(r); return r; }
+    }
+    // Per-route simple rate limit (best-effort)
+    if (cfg.security.rate_limit_rps > 0) {
+      struct Counter { int64_t sec; int count; };
+      static std::mutex mu; static std::unordered_map<std::string, Counter> map;
+      auto now = std::chrono::system_clock::now();
+      auto sec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+      {
+        std::lock_guard<std::mutex> lk(mu);
+        auto& c = map[path];
+        if (c.sec != sec) { c.sec = sec; c.count = 0; }
+        c.count++;
+        if (c.count > cfg.security.rate_limit_rps) { r.status=429; r.body="{\"code\":\"RATE_LIMIT\"}"; set_cors(r); return r; }
+      }
     }
     if (path == "/api/system/info" && method == "GET") {
       // Aggregate from VA QueryRuntime and VSM GetHealth (best-effort)

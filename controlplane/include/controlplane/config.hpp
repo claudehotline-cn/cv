@@ -1,7 +1,14 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace controlplane {
+
+struct SecurityConfig {
+  std::vector<std::string> cors_allowed_origins; // empty or ["*"] means allow all
+  std::string bearer_token; // empty disables auth
+  int rate_limit_rps{0};    // 0 disables per-route rate limit
+};
 
 struct AppConfig {
   std::string http_listen{"0.0.0.0:8080"};
@@ -12,6 +19,7 @@ struct AppConfig {
   int va_retries{1};
   // restream base, e.g., rtsp://127.0.0.1:8554/
   std::string restream_rtsp_base{"rtsp://127.0.0.1:8554/"};
+  SecurityConfig security{};
 };
 
 bool load_config(const std::string& dir, AppConfig* out, std::string* err);
