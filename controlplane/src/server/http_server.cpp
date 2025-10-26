@@ -87,8 +87,12 @@ bool HttpServer::start(const std::string& listen_addr, RouteHandler handler) {
       }
       auto pos = req.find("\r\n\r\n");
       if (pos != std::string::npos) { headers = req.substr(0, pos); body = req.substr(pos+4); }
-      // Streaming SSE detection (path ends with /events)
-      bool isSse = (method == "GET" && path.size() >= 7 && path.rfind("/events") == path.size()-7);
+      // Streaming SSE detection: subscription events (endswith /events) or sources watch endpoints
+      bool isSse = (method == "GET" && (
+        (path.size() >= 7 && path.rfind("/events") == path.size()-7) ||
+        (path.rfind("/api/sources/watch_sse", 0) == 0) ||
+        (path.rfind("/api/sources/watch", 0) == 0)
+      ));
       if (isSse && impl->streamHandler) {
         SOCKET cli_copy = cli;
         std::string m=method, p=path, h=headers, b=body;

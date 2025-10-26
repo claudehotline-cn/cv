@@ -611,10 +611,55 @@ int main(int argc, char** argv) {
     (void)headers; (void)body;
     // Only handle SSE endpoint: /api/subscriptions/{id}/events
     if (method != "GET") return false;
-    if (path.size() < 7 || path.rfind("/events") != path.size()-7) return false;
-    // Extract cp_id between /api/subscriptions/ and /events
-    std::string cp_id;
-    {
+
+    // Handle sources watch SSE: /api/sources/watch_sse or /api/sources/watch
+    if (path.rfind("/api/sources/watch_sse", 0) == 0 || path.rfind("/api/sources/watch", 0) == 0) {
+      try {
+        auto ch = grpc::CreateChannel(cfg.vsm_addr, grpc::InsecureChannelCredentials());
+        auto stub = vsm::v1::SourceControl::NewStub(ch);
+        grpc::ClientContext ctx;
+        vsm::v1::WatchStateRequest req; req.set_interval_ms(1000);
+        std::unique_ptr< grpc::ClientReader<vsm::v1::WatchStateReply> > reader(stub->WatchState(&ctx, req));
+        if (!reader) throw std::runtime_error("VSM WatchState reader null");
+        controlplane::sse::write_headers(writer);
+        vsm::v1::WatchStateReply rep;
+        long long last_keep = 0;
+        auto nowms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(); };
+        while (reader->Read(&rep)) {
+          std::ostringstream os;
+          os << "{\\\"items\\\":[";
+          bool first=true;
+          for (const auto& it : rep.items()) {
+            if (!first) os << ","; first=false;
+            os << "{\\\"attach_id\\\":\\\""<<it.attach_id()<<"\\\",\\\"phase\\\":\\\""<<it.phase()<<"\\\",\\\"fps\\\":"<<it.fps();
+            if (!it.profile().empty()) os << ",\\\"profile\\\":\\\""<<it.profile()<<"\\\"";
+            if (!it.model_id().empty()) os << ",\\\"model_id\\\":\\\""<<it.model_id()<<"\\\"";
+            if (!it.source_uri().empty()) os << ",\\\"source_uri\\\":\\\""<<it.source_uri()<<"\\\"";
+            os << "}";
+          }
+          os << "]}";
+          controlplane::sse::write_event(writer, "state", os.str());
+          last_keep = nowms();
+        }
+        // close SSE and finish; count as 200
+        if (nowms() - last_keep > 5000) controlplane::sse::write_comment(writer, "keepalive");
+        controlplane::sse::close(writer);
+        try { reader->Finish(); } catch (...) {}
+        controlplane::metrics::inc_request("/api/sources/watch_sse", method, 200);
+        return true;
+      } catch (...) {
+        controlplane::sse::write_headers(writer);
+        controlplane::sse::write_event(writer, "state", "{\\\"items\\\":[],\\\"error\\\":\\\"VSM_WATCH_UNAVAILABLE\\\"}");
+        controlplane::sse::close(writer);
+        controlplane::metrics::inc_request("/api/sources/watch_sse", method, 200);
+        return true;
+      }
+    }
+
+    // Handle subscription events: /api/subscriptions/{id}/events
+    if (path.size() >= 7 && path.rfind("/events") == path.size()-7) {
+      // Extract cp_id between /api/subscriptions/ and /events
+      std::string cp_id;
       const std::string prefix = "/api/subscriptions/";
       auto p = path.find(prefix);
       if (p != std::string::npos) {
@@ -622,19 +667,19 @@ int main(int argc, char** argv) {
         auto e = path.rfind("/events");
         if (e != std::string::npos && e > p) cp_id = path.substr(p, e-p);
       }
-    }
-    // Try to start VA Watch (adapter will stream and close if succeeds)
-    std::string werr;
-    if (!cp_id.empty() && try_start_va_watch(cfg, cp_id, writer, &werr)) {
+      // Try to start VA Watch (adapter will stream and close if succeeds)
+      std::string werr;
+      if (!cp_id.empty() && try_start_va_watch(cfg, cp_id, writer, &werr)) {
+        return true;
+      }
+      // Fallback SSE error
+      controlplane::sse::write_headers(writer);
+      controlplane::sse::write_event(writer, "error", "{\\\"code\\\":\\\"VA_WATCH_UNAVAILABLE\\\"}");
+      controlplane::sse::close(writer);
+      controlplane::metrics::inc_request("/api/subscriptions/{id}/events", method, 200);
       return true;
     }
-    // Write SSE response (skeleton)
-    controlplane::sse::write_headers(writer);
-    controlplane::sse::write_event(writer, "error", "{\\\"code\\\":\\\"VA_WATCH_UNAVAILABLE\\\"}");
-    controlplane::sse::write_comment(writer, "keepalive");
-    controlplane::sse::close(writer);
-    controlplane::metrics::inc_request("/api/subscriptions/{id}/events", method, 200);
-    return true;
+    return false;
   };
   if (!http.start(cfg.http_listen, handler, streamHandler)) {
     std::cerr << "[controlplane] http.start failed" << std::endl; return 1;
