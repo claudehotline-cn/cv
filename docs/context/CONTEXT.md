@@ -67,3 +67,20 @@ gRPC/Protobuf 策略：
 - 外部：gRPC/Protobuf/OpenSSL/Zlib/RE2/c-ares（vcpkg），CUDA（可选），MySQL/Redis（测试），RTSP 源（`rtsp://127.0.0.1:8554/camera_01`）。
 - 内部：VA AnalyzerControl gRPC、VSM SourceControl gRPC；前端仅接入 CP。
 
+## 安全基线（默认关闭，配置可控）
+
+- CORS 白名单：`security.cors.allowed_origins` 支持 `"*"` 或指定 Origin 列表；动态回显 `Access-Control-Allow-Origin`。
+- Bearer Token：`security.auth.bearer_token` 非空时开启校验；`/metrics` 默认豁免。
+- 简单限流：`security.rate_limit.rps` 为每路由每秒的上限；0 关闭。
+
+示例（controlplane/config/app.yaml）：
+
+```yaml
+security:
+  cors:
+    allowed_origins: ["http://127.0.0.1:3000"]
+  auth:
+    bearer_token: "your_token"
+  rate_limit:
+    rps: 50
+```

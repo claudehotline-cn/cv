@@ -11,3 +11,12 @@ restream:
   rtsp_base: rtsp://127.0.0.1:8554/
 observability:
   metrics_registry_enabled: true
+
+# 安全基线（默认关闭；按需开启）
+# security:
+#   cors:
+#     allowed_origins: ["*"]           # 或 ["http://127.0.0.1:3000"]
+#   auth:
+#     bearer_token: ""                 # 令牌非空时开启校验（/metrics 豁免）
+#   rate_limit:
+#     rps: 0                           # 每路由每秒请求上限；0 表示关闭
