@@ -45,6 +45,8 @@ int main(int argc, char** argv) {
     std::cerr << "[controlplane] load_config failed: " << err << std::endl;
     return 1;
   }
+  // Initialize gRPC TLS (if configured)
+  try { controlplane::init_grpc_tls_from_config(cfg); } catch (...) {}
   std::cout << "[controlplane] listen=" << cfg.http_listen
             << " va=" << cfg.va_addr << " vsm=" << cfg.vsm_addr << std::endl;
 

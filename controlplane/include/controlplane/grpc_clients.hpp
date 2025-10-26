@@ -8,6 +8,10 @@ namespace controlplane {
 bool quick_probe_va(const std::string& addr);
 bool quick_probe_vsm(const std::string& addr);
 
+// Initialize TLS options from app config; call once at startup
+struct AppConfig; // fwd
+void init_grpc_tls_from_config(const AppConfig& cfg);
+
 // VA subscription RPCs
 bool va_subscribe(const std::string& addr,
                   const std::string& stream_id,

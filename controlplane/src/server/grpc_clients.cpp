@@ -4,6 +4,8 @@
 #include <chrono>
 
 #include <grpcpp/grpcpp.h>
+#include "controlplane/config.hpp"
+#include <fstream>
 
 #include "analyzer_control.grpc.pb.h"
 #include "source_control.grpc.pb.h"
@@ -12,15 +14,34 @@
 
 namespace controlplane {
 
-static std::shared_ptr<grpc::Channel> make_channel(const std::string& addr) {
+static std::shared_ptr<grpc::ChannelCredentials> g_va_creds;
+static std::shared_ptr<grpc::ChannelCredentials> g_vsm_creds;
+static std::shared_ptr<grpc::Channel> make_channel(const std::string& addr, bool is_va) {
   grpc::ChannelArguments args;
   args.SetMaxReceiveMessageSize(-1);
-  return grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args);
+  auto creds = is_va ? g_va_creds : g_vsm_creds;
+  if (!creds) creds = grpc::InsecureChannelCredentials();
+  return grpc::CreateCustomChannel(addr, creds, args);
+}
+
+void init_grpc_tls_from_config(const AppConfig& cfg) {
+  auto build = [](const TlsOptions& opt) -> std::shared_ptr<grpc::ChannelCredentials> {
+    if (!opt.enabled) return nullptr;
+    grpc::SslCredentialsOptions ssl;
+    try {
+      if (!opt.root_cert_file.empty()) { std::ifstream f(opt.root_cert_file, std::ios::binary); ssl.pem_root_certs.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); }
+      if (!opt.client_cert_file.empty()) { std::ifstream f(opt.client_cert_file, std::ios::binary); ssl.pem_cert_chain.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); }
+      if (!opt.client_key_file.empty()) { std::ifstream f(opt.client_key_file, std::ios::binary); ssl.pem_private_key.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); }
+    } catch (...) {}
+    return grpc::SslCredentials(ssl);
+  };
+  g_va_creds = build(cfg.va_tls);
+  g_vsm_creds = build(cfg.vsm_tls);
 }
 
 bool quick_probe_va(const std::string& addr) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(1500));
@@ -44,7 +65,7 @@ bool quick_probe_va(const std::string& addr) {
 
 bool quick_probe_vsm(const std::string& addr) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, false);
     auto stub = vsm::v1::SourceControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(1500));
@@ -72,7 +93,7 @@ bool va_subscribe(const std::string& addr,
                   std::string* subscription_id,
                   std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(5000));
@@ -101,7 +122,7 @@ bool va_unsubscribe(const std::string& addr,
                     const std::string& profile,
                     std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(5000));
@@ -127,7 +148,7 @@ bool vsm_set_enabled(const std::string& addr,
                      bool enabled,
                      std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = vsm::v1::SourceControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(5000));
@@ -157,7 +178,7 @@ bool va_apply_pipeline(const std::string& addr,
                        const std::string& revision,
                        std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
@@ -189,7 +210,7 @@ bool va_remove_pipeline(const std::string& addr,
                         const std::string& pipeline_name,
                         std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
@@ -215,7 +236,7 @@ bool va_apply_pipelines(const std::string& addr,
                         std::vector<std::string>* errors,
                         std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(15000));
@@ -251,7 +272,7 @@ bool va_hotswap_model(const std::string& addr,
                       const std::string& model_uri,
                       std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
@@ -276,7 +297,7 @@ bool va_get_status(const std::string& addr,
                    std::string* metrics_json,
                    std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
@@ -300,7 +321,7 @@ bool va_drain(const std::string& addr,
               bool* drained,
               std::string* err) {
   try {
-    auto ch = make_channel(addr);
+    auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
     grpc::ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000 + timeout_sec*1000));
@@ -318,5 +339,8 @@ bool va_drain(const std::string& addr,
 }
 
 } // namespace controlplane
+
+
+
 
 
