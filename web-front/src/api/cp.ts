@@ -27,10 +27,19 @@ export function setEngine(options: Record<string, any>) {
 }
 
 // --- Async subscriptions API ---
-export async function createSubscription(stream_id: string, profile: string, source_uri: string, model_id?: string, opts?: { useExisting?: boolean }): Promise<string> {
-  const body: any = { stream_id, profile, source_uri }
+export async function createSubscription(stream_id: string, profile: string, source_uri: string, model_id?: string, opts?: { useExisting?: boolean, source_id?: string }): Promise<string> {
+  const body: any = { stream_id, profile }
+  if (source_uri) body.source_uri = source_uri
+  if (!source_uri && opts?.source_id) body.source_id = opts.source_id
   if (model_id) body.model_id = model_id
-  const qp = opts?.useExisting ? '?use_existing=1' : ''
+  const q = new URLSearchParams()
+  if (opts?.useExisting) q.set('use_existing', '1')
+  // 兼容后端查询串回退解析
+  if (stream_id) q.set('stream_id', stream_id)
+  if (profile) q.set('profile', profile)
+  if (body.source_uri) q.set('source_uri', body.source_uri)
+  if (!body.source_uri && opts?.source_id) q.set('source_id', opts.source_id)
+  const qp = q.toString() ? ('?' + q.toString()) : ''
   const r: any = await http.post('/api/subscriptions' + qp, body)
   return r?.data?.id || ''
 }

@@ -172,6 +172,16 @@ struct AppConfigPayload {
         bool enabled {false};
         std::string grpc_addr; // e.g., 0.0.0.0:9090
         std::string vsm_addr;  // optional: vsm gRPC address for WatchState, e.g., 127.0.0.1:7070
+        struct TlsServerConfig {
+            bool enabled { true }; // 默认开启 TLS
+            // 可选：根证书（用于双向认证时校验客户端证书链）
+            std::string root_cert_file;
+            // 服务端证书/私钥
+            std::string server_cert_file;
+            std::string server_key_file;
+            // 是否要求并校验客户端证书（mTLS）
+            bool require_client_cert { true };
+        } tls;
         // WatchState tunables (defaults match env-based values)
         int watch_interval_ms {1500};
         int debounce_ms {300};

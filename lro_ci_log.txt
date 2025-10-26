@@ -1,8 +1,0 @@
-**********************************************************************
-** Visual Studio 2022 Developer Command Prompt v17.14.16
-** Copyright (c) 2025 Microsoft Corporation
-**********************************************************************
-[vcvarsall.bat] Environment initialized for: 'x64'
-ninja: Entering directory `D:\\Projects\\ai\\cv\\video-analyzer\\build-ninja'
-[0/2] H:\CMake\bin\cmake.exe -P D:\Projects\ai\cv\video-analyzer\build-ninja\CMakeFiles\VerifyGlobs.cmake
-ninja: no work to do.

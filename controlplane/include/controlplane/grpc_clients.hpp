@@ -1,6 +1,14 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <memory>
+// Require concrete Stub definitions for nested types
+#include "analyzer_control.grpc.pb.h"
+#include "source_control.grpc.pb.h"
+
+// Forward declarations for gRPC stubs (global namespace)
+namespace va { namespace v1 { class AnalyzerControl; } }
+namespace vsm { namespace v1 { class SourceControl; } }
 
 namespace controlplane {
 
@@ -11,6 +19,13 @@ bool quick_probe_vsm(const std::string& addr);
 // Initialize TLS options from app config; call once at startup
 struct AppConfig; // fwd
 void init_grpc_tls_from_config(const AppConfig& cfg);
+
+// Get last observed gRPC status code from a client call (thread-local).
+// Returns -1 if no call has been made in this thread.
+int last_grpc_status_code();
+
+// Set last observed gRPC status code for the current thread (helpers for direct stub usage)
+void set_last_grpc_status_code(int code);
 
 // VA subscription RPCs
 bool va_subscribe(const std::string& addr,
@@ -78,6 +93,10 @@ bool va_drain(const std::string& addr,
               int timeout_sec,
               bool* drained,
               std::string* err);
+
+// Helpers to create stubs with configured TLS credentials
+std::unique_ptr<::va::v1::AnalyzerControl::Stub> make_va_stub(const std::string& addr);
+std::unique_ptr<::vsm::v1::SourceControl::Stub> make_vsm_stub(const std::string& addr);
 
 } // namespace controlplane
 

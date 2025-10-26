@@ -429,7 +429,19 @@ void Application::startVsmWatchIfConfigured() {
                 args.SetInt("grpc.keepalive_time_ms", ka_time);
                 args.SetInt("grpc.keepalive_timeout_ms", ka_timeout);
                 args.SetInt("grpc.keepalive_permit_without_calls", ka_permit);
-                auto channel = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args);
+                // Use TLS to match VSM server default (self-signed CA). Fallback to insecure only if TLS files missing.
+                auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
+                std::shared_ptr<grpc::ChannelCredentials> creds;
+                try {
+                    std::string ca = app_config_.control_plane.tls.root_cert_file;
+                    if (!ca.empty()) {
+                        grpc::SslCredentialsOptions ssl;
+                        try { ssl.pem_root_certs = read_all(ca); } catch (...) {}
+                        creds = grpc::SslCredentials(ssl);
+                    }
+                } catch (...) {}
+                if (!creds) creds = grpc::InsecureChannelCredentials();
+                auto channel = grpc::CreateCustomChannel(addr, creds, args);
                 std::unique_ptr<vsm::v1::SourceControl::Stub> stub = vsm::v1::SourceControl::NewStub(channel);
                 grpc::ClientContext ctx;
                 // Set a generous deadline to detect dead streams

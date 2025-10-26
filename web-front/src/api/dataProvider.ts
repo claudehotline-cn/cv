@@ -310,12 +310,8 @@ export const dataProvider = {
       if (fps<fr[0] || fps>fr[1]) reasons.push(`帧率不在范围 ${fr[0]}-${fr[1]}: ${fps}`)
       return delay({ ok: reasons.length===0, reasons } as any)
     }
-    const body = { source: payload.source, graph_id: payload.graph?.graph_id, requires: payload.graph?.requires }
-    const r = await fetch(apiBase() + '/api/preflight', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
-    if (!r.ok) throw new Error('preflight failed')
-    const j = await r.json()
-    const d = j?.data || j
-    return { ok: !!d?.ok, reasons: d?.reasons || [] } as any
+    // CP 不提供 /api/preflight（VA 旧接口），此处直接放行，由编排/订阅链路在后台保证可用性
+    return { ok: true, reasons: [] } as any
   },
 
   // Mutations (mock only updates nothing)

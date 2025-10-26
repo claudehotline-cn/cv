@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <grpcpp/grpcpp.h>
 #include "analyzer_control.grpc.pb.h"
+#include "controlplane/grpc_clients.hpp"
 
 namespace controlplane {
 
@@ -44,11 +45,12 @@ bool try_start_va_watch(const AppConfig& cfg, const std::string& cp_id, StreamWr
 
   // Start gRPC Watch
   try {
-    auto ch = grpc::CreateChannel(cfg.va_addr, grpc::InsecureChannelCredentials());
-    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    auto stub = controlplane::make_va_stub(cfg.va_addr);
     grpc::ClientContext ctx;
-    // Optional deadline (keep long for streaming)
-    // ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::minutes(5));
+    // Optional deadline from config
+    if (cfg.sse.idle_close_ms > 0) {
+      ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(cfg.sse.idle_close_ms));
+    }
 
     va::v1::WatchRequest req; req.set_subscription_id(subscription_id);
     std::unique_ptr< grpc::ClientReader<va::v1::PhaseEvent> > reader(stub->Watch(&ctx, req));
@@ -59,7 +61,7 @@ bool try_start_va_watch(const AppConfig& cfg, const std::string& cp_id, StreamWr
 
     va::v1::PhaseEvent pev;
     long long last_keep = now_ms();
-    const long long keepalive_interval_ms = 10000;
+    const long long keepalive_interval_ms = cfg.sse.keepalive_ms > 0 ? cfg.sse.keepalive_ms : 10000;
     while (reader->Read(&pev)) {
       // Map VA event to CP SSE (use cp_id for id)
       controlplane::events::PhaseEvent e;

@@ -45,7 +45,7 @@ defaults:
     tune_zerolatency: true
 security:
   allowed_source_schemes:
-    - rtsp你好
+    - rtsp
     - rtsps
   switch_limits:
     source_per_stream_per_sec: 0.2
@@ -91,6 +91,13 @@ control_plane:
   enabled: true
   grpc_addr: "0.0.0.0:50051"
   vsm_addr: "127.0.0.1:7070"
+  tls:
+    enabled: true
+    # 建议使用绝对路径以避免工作目录差异
+    root_cert_file: "D:\\Projects\\ai\\cv\\controlplane\\config\\certs\\ca.pem"
+    server_cert_file: "D:\\Projects\\ai\\cv\\controlplane\\config\\certs\\va_server.crt"
+    server_key_file: "D:\\Projects\\ai\\cv\\controlplane\\config\\certs\\va_server.key"
+    require_client_cert: true
   metrics_enabled: true
 subscriptions:
   heavy_slots: 2

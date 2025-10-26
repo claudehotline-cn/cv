@@ -20,6 +20,11 @@ export default defineConfig({
       '/metrics': {
         target: process.env.VITE_API_BASE || 'http://127.0.0.1:8082',
         changeOrigin: true
+      },
+      // VA WHEP negotiation (media path stays on VA; CP does not proxy it)
+      '/whep': {
+        target: process.env.VITE_VA_BASE || 'http://127.0.0.1:8082',
+        changeOrigin: true
       }
     }
   },
@@ -29,4 +34,3 @@ export default defineConfig({
     }
   }
 })
-

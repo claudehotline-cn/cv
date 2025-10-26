@@ -241,6 +241,8 @@ export const useAnalysisStore = defineStore('analysis', {
           }
           if (this.sources.length) this.currentSourceId = this.sources[0].id
         } catch {}
+        // 最后兜底：使用默认测试源 id（restream 基址由 CP 配置）
+        if (!this.currentSourceId) this.currentSourceId = (import.meta as any).env?.VITE_DEFAULT_SOURCE_ID || 'camera_01'
       }
       try {
         const src = this.sources.find(s => s.id === this.currentSourceId)
@@ -253,7 +255,7 @@ export const useAnalysisStore = defineStore('analysis', {
           const mod = await import('@/api/cp')
           // 防止同 stream:profile 残留管线导致内部切换失败，先尝试一次性退订（忽略错误）
           // 仅使用异步订阅路径，不调用旧的控制平面/同步接口
-          const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model, { useExisting: true })
+          const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model, { useExisting: true, source_id: this.currentSourceId })
           if (!subId) throw new Error('createSubscription failed')
           this.currentSubId = subId
           // 建立 SSE
@@ -374,7 +376,7 @@ export const useAnalysisStore = defineStore('analysis', {
           // @ts-ignore
           if (typeof window !== 'undefined' && this.currentSourceId && this.currentPipeline && uri2) {
             const mod = await import('@/api/cp')
-            const subId = await mod.createSubscription(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined, { useExisting: true })
+            const subId = await mod.createSubscription(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined, { useExisting: true, source_id: this.currentSourceId })
             this.currentSubId = subId
             try { this._subSSE?.close() } catch {}
             const es = new EventSource(mod.subscriptionEventsUrl(subId))

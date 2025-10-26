@@ -1,0 +1,4 @@
+[mtls-] stop any existing controlplane (best-effort)
+[mtls-] start probe (server)
+[mtls-] start controlplane (bad CA)
+[mtls-] PASS

@@ -29,6 +29,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # YAML-CPP: reuse repo-bundled if present, otherwise try system
 set(YAML_LOCAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/yaml-cpp/yaml-cpp-0.8.0")
@@ -84,10 +85,12 @@ add_executable(controlplane
   src/server/config.cpp
   src/server/http_server.cpp
   src/server/watch_adapter.cpp
+  src/server/circuit_breaker.cpp
   src/server/metrics.cpp
+  src/server/logging.cpp
   src/server/store.cpp)
 target_include_directories(controlplane PRIVATE include "${GEN_DIR}")
-target_link_libraries(controlplane PRIVATE ${YAML_CPP_TARGET} cp_proto_objs gRPC::grpc++ protobuf::libprotobuf)
+target_link_libraries(controlplane PRIVATE ${YAML_CPP_TARGET} cp_proto_objs gRPC::grpc++ protobuf::libprotobuf nlohmann_json::nlohmann_json)
 if (WIN32)
   target_link_libraries(controlplane PRIVATE ws2_32)
 endif()

@@ -113,6 +113,17 @@ cd video-analyzer/build/bin/Release
 - 指标：管线 FPS、延迟、传输字节与包数；可从 /api/system/stats 获取
 - 常见问题：RTSP 丢包、DataChannel 未收到帧、CUDA 不兼容（见 webrtc-protocol 与 README“快速开始”）
 
+## 启动与测试（TLS）
+- 一键启动后端栈（VSM/VA/CP，TLS）：
+  - `pwsh tools/start_stack_tls.ps1 -KillExisting`
+- 控制平面冒烟（TLS）：
+  - `pwsh tools/run_cp_smoke.ps1 -BaseUrl http://127.0.0.1:18080 -CfgDir controlplane/config`
+- mTLS 连通性回归：
+  - `pwsh tools/test_mtls_connectivity.ps1`
+  - `pwsh tools/test_mtls_negative.ps1`
+- SSE Soak（2 分钟示例）：
+  - `pwsh tools/run_cp_sse_soak_tls.ps1 -Sec 120`
+
 ## 路线图（Roadmap）
 - WHIP/WHEP（RFC 9725）对接与可选替换 DataChannel 路径
 - STUN/TURN 与公网穿透
@@ -124,3 +135,9 @@ cd video-analyzer/build/bin/Release
 - 变更 REST/信令协议时，请同步更新 docs/webrtc-protocol.md
 - 新增脚本/配置时，补充 README 或 docs 使用说明
 - 提交前请确保 cmake --build . --config Release 通过
+
+## 更多文档（快速链接）
+- TLS 一键化与说明：`docs/README-TLS-一键化.md`
+- 上下文摘要：`docs/context/CONTEXT.md`
+- 路线图：`docs/context/ROADMAP.md`
+- VA→CP REST 迁移指南：`docs/plans/va_rest_迁移指南.md`

@@ -1,22 +1,35 @@
 server:
-  http_listen: 0.0.0.0:8080
+  http_listen: 127.0.0.1:18080
 va:
   grpc_addr: 127.0.0.1:50051
-  timeout_ms: 8000
-  retries: 1
+  timeout_ms: 30000
+  retries: 0
+  tls:
+    enabled: true
+    root_cert_file: controlplane/config/certs/ca.pem
+    client_cert_file: controlplane/config/certs/cp_client.crt
+    client_key_file: controlplane/config/certs/cp_client.key
 vsm:
   grpc_addr: 127.0.0.1:7070
-  timeout_ms: 8000
+  retries: 1
+  tls:
+    enabled: true
+    root_cert_file: controlplane/config/certs/ca.pem
+    client_cert_file: controlplane/config/certs/cp_client.crt
+    client_key_file: controlplane/config/certs/cp_client.key
 restream:
   rtsp_base: rtsp://127.0.0.1:8554/
-observability:
-  metrics_registry_enabled: true
+## 可选：SSE 参数
+# sse:
+#   keepalive_ms: 10000
+#   idle_close_ms: 300000
+#   sources:
+#     interval_ms: 1000
+security:
+  cors:
+    allowed_origins: ["*"]
+  auth:
+    bearer_token: ""
+  rate_limit:
+    rps: 0
 
-# 安全基线（默认关闭；按需开启）
-# security:
-#   cors:
-#     allowed_origins: ["*"]           # 或 ["http://127.0.0.1:3000"]
-#   auth:
-#     bearer_token: ""                 # 令牌非空时开启校验（/metrics 豁免）
-#   rate_limit:
-#     rps: 0                           # 每路由每秒请求上限；0 表示关闭

@@ -17,6 +17,12 @@ struct TlsOptions {
   std::string client_key_file;  // PEM file path (optional)
 };
 
+struct SseOptions {
+  int keepalive_ms{10000};      // send keepalive comment if no events before close
+  int idle_close_ms{0};         // optional max lifetime; 0 disables
+  int sources_interval_ms{1000}; // VSM WatchState request interval
+};
+
 struct AppConfig {
   std::string http_listen{"0.0.0.0:8080"};
   std::string va_addr{"127.0.0.1:50051"};
@@ -24,11 +30,13 @@ struct AppConfig {
   int va_timeout_ms{8000};
   int vsm_timeout_ms{8000};
   int va_retries{1};
+  int vsm_retries{0};
   // restream base, e.g., rtsp://127.0.0.1:8554/
   std::string restream_rtsp_base{"rtsp://127.0.0.1:8554/"};
   SecurityConfig security{};
   TlsOptions va_tls{};
   TlsOptions vsm_tls{};
+  SseOptions sse{};
 };
 
 bool load_config(const std::string& dir, AppConfig* out, std::string* err);

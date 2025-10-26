@@ -107,6 +107,8 @@ option(USE_CUDA "Enable CUDA support for GPU inference" ON)
 option(WITH_CUDA_KERNELS "Build CUDA kernels (device-side decode/NMS/overlay)" OFF)
 option(WITH_NVDEC "Build NVDEC-based RTSP source (scaffold)" OFF)
 option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
+option(VA_DISABLE_HTTP_PUBLIC "Disable public HTTP routes (keep WHEP/metrics)" OFF)
+option(VA_REST_DEPRECATED_410 "Expose deprecated VA REST endpoints as 410 Gone placeholders when public HTTP disabled" OFF)
 ## gRPC 为必需能力：构建必须具备 Protobuf/gRPC，且默认开启服务端
 option(VA_BUILD_TESTS "Build unit test targets" OFF)
 option(VA_WITH_MYSQL "Enable MySQL-backed storage (mysql-connector-c++)" OFF)
@@ -220,6 +222,13 @@ if (CUDAToolkit_FOUND)
 endif()
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
+
+if (VA_DISABLE_HTTP_PUBLIC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_DISABLE_HTTP_PUBLIC)
+endif()
+if (VA_REST_DEPRECATED_410)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_REST_DEPRECATED_410)
+endif()
 
 target_include_directories(${PROJECT_NAME}
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -447,7 +447,25 @@ OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl) {
     auto* svc = new AnalyzerControlServiceImpl(ctl, nullptr);
     auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
-    b.AddListeningPort(addr, grpc::InsecureServerCredentials());
+    auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
+    std::shared_ptr<grpc::ServerCredentials> creds;
+    {
+        const char* en = std::getenv("VA_TLS_ENABLED");
+        bool enable_tls = (en && (std::string(en)=="1" || std::string(en)=="true" || std::string(en)=="TRUE"));
+        if (enable_tls) {
+            std::string ca = std::getenv("VA_TLS_CA")? std::getenv("VA_TLS_CA") : std::string("controlplane/config/certs/ca.pem");
+            std::string cert = std::getenv("VA_TLS_CERT")? std::getenv("VA_TLS_CERT") : std::string("controlplane/config/certs/va_server.crt");
+            std::string key = std::getenv("VA_TLS_KEY")? std::getenv("VA_TLS_KEY") : std::string("controlplane/config/certs/va_server.key");
+            grpc::SslServerCredentialsOptions opts;
+            try { if (!ca.empty()) opts.pem_root_certs = read_all(ca); } catch (...) {}
+            try { grpc::SslServerCredentialsOptions::PemKeyCertPair pkc{ read_all(key), read_all(cert) }; opts.pem_key_cert_pairs.push_back(pkc); } catch (...) {}
+            opts.client_certificate_request = GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY;
+            creds = grpc::SslServerCredentials(opts);
+        } else {
+            creds = grpc::InsecureServerCredentials();
+        }
+    }
+    b.AddListeningPort(addr, creds);
     b.RegisterService(svc);
     b.RegisterService(whep);
     std::unique_ptr<grpc::Server> server = b.BuildAndStart();
@@ -460,7 +478,34 @@ OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl, va::
     auto* svc = new AnalyzerControlServiceImpl(ctl, app);
     auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
-    b.AddListeningPort(addr, grpc::InsecureServerCredentials());
+    auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
+    std::shared_ptr<grpc::ServerCredentials> creds;
+    {
+        // 优先使用应用配置（默认启用 TLS）
+        bool enable_tls = true;
+        std::string ca, cert, key;
+        bool require_client_cert = true;
+        if (app) {
+            const auto& tlscfg = app->appConfig().control_plane.tls;
+            enable_tls = tlscfg.enabled;
+            ca = tlscfg.root_cert_file;
+            cert = tlscfg.server_cert_file;
+            key = tlscfg.server_key_file;
+            require_client_cert = tlscfg.require_client_cert;
+        }
+        if (enable_tls) {
+            grpc::SslServerCredentialsOptions opts;
+            try { if (!ca.empty()) opts.pem_root_certs = read_all(ca); } catch (...) {}
+            try { grpc::SslServerCredentialsOptions::PemKeyCertPair pkc{ read_all(key), read_all(cert) }; opts.pem_key_cert_pairs.push_back(pkc); } catch (...) {}
+            opts.client_certificate_request = require_client_cert
+                ? GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY
+                : GRPC_SSL_DONT_REQUEST_CLIENT_CERTIFICATE;
+            creds = grpc::SslServerCredentials(opts);
+        } else {
+            creds = grpc::InsecureServerCredentials();
+        }
+    }
+    b.AddListeningPort(addr, creds);
     b.RegisterService(svc);
     b.RegisterService(whep);
     std::unique_ptr<grpc::Server> server = b.BuildAndStart();

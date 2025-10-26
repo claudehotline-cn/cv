@@ -3,6 +3,63 @@
 namespace va::server {
 
 void RestServer::Impl::registerRoutes() {
+#if defined(VA_DISABLE_HTTP_PUBLIC)
+    // Public HTTP routes disabled: expose only Prometheus metrics and WHEP negotiation endpoints.
+    // Metrics endpoints
+    auto metricsHandler = [this](const HttpRequest& req) { return handleMetrics(req); };
+    server.addRoute("GET", "/metrics", metricsHandler);
+    server.addRoute("OPTIONS", "/metrics", [](const HttpRequest&) { HttpResponse r; r.status_code=204; return r; });
+    auto metricsCfgGet = [this](const HttpRequest& req) { return handleMetricsConfigGet(req); };
+    auto metricsCfgSet = [this](const HttpRequest& req) { return handleMetricsConfigSet(req); };
+    server.addRoute("GET", "/api/metrics", metricsCfgGet);
+    server.addRoute("POST", "/api/metrics/set", metricsCfgSet);
+
+    // WHEP negotiation (create/patch/delete) + CORS
+    auto whepCreateHandler = [this](const HttpRequest& req) { return handleWhepCreate(req); };
+    auto whepPatchHandler  = [this](const HttpRequest& req) { return handleWhepPatch(req); };
+    auto whepDeleteHandler = [this](const HttpRequest& req) { return handleWhepDelete(req); };
+    auto whepCorsHandler   = [this](const HttpRequest& req) { return handleWhepCors(req); };
+    server.addRoute("POST",   "/whep", whepCreateHandler);
+    server.addRoute("PATCH",  "/whep/sessions/:sid", whepPatchHandler);
+    server.addRoute("DELETE", "/whep/sessions/:sid", whepDeleteHandler);
+    server.addRoute("OPTIONS", "/whep", whepCorsHandler);
+    server.addRoute("OPTIONS", "/whep/sessions/:sid", whepCorsHandler);
+
+#if defined(VA_REST_DEPRECATED_410)
+    // Deprecated VA REST endpoints placeholders (410 Gone), to guide callers to Controlplane
+    auto gone = [](const HttpRequest&) {
+        HttpResponse resp; resp.status_code = 410;
+        resp.headers["Access-Control-Allow-Origin"] = "*";
+        resp.headers["Access-Control-Expose-Headers"] = "Location";
+        resp.headers["Location"] = "/";
+        resp.body = "{\"code\":\"GONE\",\"msg\":\"moved to controlplane\"}";
+        return resp;
+    };
+    // Subscriptions
+    server.addRoute("POST",  "/api/subscriptions", gone);
+    server.addRoute("GET",   "/api/subscriptions/:id", gone);
+    server.addRoute("DELETE","/api/subscriptions/:id", gone);
+    server.addRoute("GET",   "/api/subscriptions/:id/events", gone);
+    // Sources
+    server.addRoute("GET",   "/api/sources", gone);
+    server.addRoute("GET",   "/api/sources/watch", gone);
+    server.addRoute("GET",   "/api/sources/watch_sse", gone);
+    // Control API
+    server.addRoute("POST",  "/api/control/apply_pipeline", gone);
+    server.addRoute("POST",  "/api/control/apply_pipelines", gone);
+    server.addRoute("POST",  "/api/control/hotswap", gone);
+    server.addRoute("DELETE","/api/control/pipeline", gone);
+    server.addRoute("GET",   "/api/control/status", gone);
+    server.addRoute("POST",  "/api/control/drain", gone);
+    // Orchestration
+    server.addRoute("POST",  "/api/orch/attach_apply", gone);
+    server.addRoute("POST",  "/api/orch/detach_remove", gone);
+    server.addRoute("GET",   "/api/orch/health", gone);
+    // System
+    server.addRoute("GET",   "/api/system/info", gone);
+#endif // VA_REST_DEPRECATED_410
+    return;
+#else
     server.addRoute("POST", "/api/subscriptions", [this](const HttpRequest& req) {
         return handleSubscriptionCreate(req);
     });
@@ -216,6 +273,7 @@ void RestServer::Impl::registerRoutes() {
     server.addRoute("DELETE", "/whep/sessions/:sid", whepDeleteHandler);
     server.addRoute("OPTIONS", "/whep", whepCorsHandler);
     server.addRoute("OPTIONS", "/whep/sessions/:sid", whepCorsHandler);
+#endif // VA_DISABLE_HTTP_PUBLIC
 }
 
 } // namespace va::server

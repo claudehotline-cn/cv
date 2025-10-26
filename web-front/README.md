@@ -4,7 +4,7 @@
 
 - 启动：
   - `npm i`
-  - `npm run dev`（默认代理 `/api` 和 `/metrics` 到 `VITE_API_BASE`，开发默认 `http://127.0.0.1:8082`）
+  - `npm run dev`（默认代理 `/api` 和 `/metrics` 到 `VITE_API_BASE`，开发默认 `http://127.0.0.1:18080` 指向 Controlplane）
 - 主要能力：
   - Pipelines 列表、退订、切换模型
   - Sources 订阅/退订
@@ -23,7 +23,7 @@
   - 操作：下载 Prometheus 告警规则、可选跳转 Grafana
 
 - 环境变量（开发模式，建议新建 web-front/.env.development）：
-  - VITE_API_BASE=http://127.0.0.1:8082（VA 后端地址，用于代理 /api 与 /metrics）
+  - VITE_API_BASE=http://127.0.0.1:18080（CP 基地址，用于代理 /api 与 /metrics）
   - VITE_GRAFANA_BASE=http://127.0.0.1:3000（可选，用于 Admin 页“打开 Grafana”按钮）
 
 - 告警规则下载：

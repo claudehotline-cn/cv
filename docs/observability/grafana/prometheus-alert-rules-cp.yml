@@ -1,0 +1,38 @@
+groups:
+  - name: cp-controlplane
+    rules:
+      - alert: CPHighErrorRate
+        expr: sum(rate(cp_request_total{code=~"5..|499|504"}[5m])) / clamp_min(sum(rate(cp_request_total[5m])), 1) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CP 5xx/499/504 比例过高 (>1%)"
+          description: "错误占比={{ $value | printf \"%.2f\" }}"
+
+      - alert: CPP95LatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(cp_request_duration_ms_bucket[5m]))) > 750
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CP 请求 P95 时延高 (>750ms)"
+          description: "当前 P95={{ $value | printf \"%.0f\" }}ms"
+
+      - alert: CPSSEConnectionsZero
+        expr: cp_sse_connections == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CP SSE 连接为 0（持续 5m）"
+          description: "可能的后端不可用或前端断连"
+
+      - alert: CPBackendErrorsSpiking
+        expr: sum by (service,method) (rate(cp_backend_errors_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CP 后端 gRPC 错误速率上升 (>0.1/s)"
+          description: "按 service/method 维度聚合；请检查 VA/VSM 可用性与 TLS 配置"

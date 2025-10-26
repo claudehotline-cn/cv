@@ -1,5 +1,7 @@
 #include "app/rpc/grpc_server.h"
 #include "app/controller/source_controller.h"
+#include <fstream>
+#include <cstdlib>
 
 #if defined(USE_GRPC)
 #include <grpcpp/grpcpp.h>
@@ -108,7 +110,30 @@ GrpcServer::~GrpcServer() { Stop(); }
 bool GrpcServer::Start() {
 #if defined(USE_GRPC)
   impl_->service = new Impl::ServiceImpl(impl_->ctl);
-  grpc::ServerBuilder b; b.AddListeningPort(impl_->addr, grpc::InsecureServerCredentials());
+  grpc::ServerBuilder b;
+  auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
+  std::shared_ptr<grpc::ServerCredentials> creds;
+  // 默认启用 TLS；如设置了环境变量 VSM_TLS_ENABLED 则允许覆盖（向后兼容）
+  const char* en = std::getenv("VSM_TLS_ENABLED");
+  bool enable_tls = true;
+  if (en) {
+    std::string v(en); for (auto& c: v) c = (char)std::tolower((unsigned char)c);
+    enable_tls = (v=="1"||v=="true");
+  }
+  if (enable_tls) {
+    // 使用绝对路径作为默认，避免工作目录差异导致解析失败；不回退到明文。
+    std::string ca = std::getenv("VSM_TLS_CA")? std::getenv("VSM_TLS_CA") : std::string("D:/Projects/ai/cv/controlplane/config/certs/ca.pem");
+    std::string cert = std::getenv("VSM_TLS_CERT")? std::getenv("VSM_TLS_CERT") : std::string("D:/Projects/ai/cv/controlplane/config/certs/vsm_server.crt");
+    std::string key = std::getenv("VSM_TLS_KEY")? std::getenv("VSM_TLS_KEY") : std::string("D:/Projects/ai/cv/controlplane/config/certs/vsm_server.key");
+    grpc::SslServerCredentialsOptions opts;
+    try { if (!ca.empty()) opts.pem_root_certs = read_all(ca); } catch (...) {}
+    try { grpc::SslServerCredentialsOptions::PemKeyCertPair pkc{ read_all(key), read_all(cert) }; opts.pem_key_cert_pairs.push_back(pkc); } catch (...) {}
+    opts.client_certificate_request = GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY;
+    creds = grpc::SslServerCredentials(opts);
+  } else {
+    creds = grpc::InsecureServerCredentials();
+  }
+  b.AddListeningPort(impl_->addr, creds);
   b.RegisterService(impl_->service); impl_->server = b.BuildAndStart();
   bool ok = (bool)impl_->server;
   if (ok) {

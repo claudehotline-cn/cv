@@ -11,11 +11,18 @@
 #include "source_control.grpc.pb.h"
 
 #include "controlplane/grpc_clients.hpp"
+#include "controlplane/metrics.hpp"
+#include "controlplane/circuit_breaker.hpp"
 
 namespace controlplane {
 
 static std::shared_ptr<grpc::ChannelCredentials> g_va_creds;
 static std::shared_ptr<grpc::ChannelCredentials> g_vsm_creds;
+static thread_local int g_last_grpc_code = -1;
+static int g_va_timeout_ms = 8000;
+static int g_vsm_timeout_ms = 8000;
+static int g_va_retries = 0;
+static int g_vsm_retries = 0;
 static std::shared_ptr<grpc::Channel> make_channel(const std::string& addr, bool is_va) {
   grpc::ChannelArguments args;
   args.SetMaxReceiveMessageSize(-1);
@@ -37,17 +44,63 @@ void init_grpc_tls_from_config(const AppConfig& cfg) {
   };
   g_va_creds = build(cfg.va_tls);
   g_vsm_creds = build(cfg.vsm_tls);
+  // capture timeouts and retry knobs
+  g_va_timeout_ms = cfg.va_timeout_ms > 0 ? cfg.va_timeout_ms : 8000;
+  g_vsm_timeout_ms = cfg.vsm_timeout_ms > 0 ? cfg.vsm_timeout_ms : 8000;
+  g_va_retries = cfg.va_retries > 0 ? cfg.va_retries : 0;
+  g_vsm_retries = cfg.vsm_retries > 0 ? cfg.vsm_retries : 0;
+}
+
+int last_grpc_status_code() { return g_last_grpc_code; }
+void set_last_grpc_status_code(int code) { g_last_grpc_code = code; }
+
+template <typename F>
+static grpc::Status call_with_retry(F&& fn, bool is_va, int extra_timeout_ms = 0, const char* op = "unknown") {
+  using namespace std::chrono;
+  grpc::Status st;
+  int retries = is_va ? g_va_retries : g_vsm_retries;
+  int base_to = is_va ? g_va_timeout_ms : g_vsm_timeout_ms;
+  const char* svc = is_va?"va":"vsm";
+  if (!controlplane::cb::allow(svc)) {
+    st = grpc::Status(grpc::StatusCode::UNAVAILABLE, "circuit open");
+    g_last_grpc_code = st.error_code();
+    try { controlplane::metrics::inc_backend_error(svc, op, static_cast<int>(st.error_code())); } catch (...) {}
+    return st;
+  }
+  for (int attempt = 0; attempt <= retries; ++attempt) {
+    grpc::ClientContext ctx;
+    ctx.set_deadline(system_clock::now() + milliseconds(base_to + extra_timeout_ms));
+    st = fn(ctx);
+    g_last_grpc_code = st.error_code();
+    if (st.ok()) {
+      try { controlplane::cb::on_success(svc); } catch (...) {}
+      break;
+    }
+    try { controlplane::cb::on_failure(svc); } catch (...) {}
+    if (attempt < retries) std::this_thread::sleep_for(milliseconds(200 * (attempt + 1)));
+  }
+  if (!st.ok()) {
+    try { controlplane::metrics::inc_backend_error(is_va?"va":"vsm", op, static_cast<int>(st.error_code())); } catch (...) {}
+  }
+  return st;
+}
+
+std::unique_ptr<va::v1::AnalyzerControl::Stub> make_va_stub(const std::string& addr) {
+  auto ch = make_channel(addr, true);
+  return va::v1::AnalyzerControl::NewStub(ch);
+}
+
+std::unique_ptr<vsm::v1::SourceControl::Stub> make_vsm_stub(const std::string& addr) {
+  auto ch = make_channel(addr, false);
+  return vsm::v1::SourceControl::NewStub(ch);
 }
 
 bool quick_probe_va(const std::string& addr) {
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(1500));
-    va::v1::QueryRuntimeRequest req;
-    va::v1::QueryRuntimeReply  rep;
-    auto status = stub->QueryRuntime(&ctx, req, &rep);
+    va::v1::QueryRuntimeRequest req; va::v1::QueryRuntimeReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->QueryRuntime(&ctx, req, &rep); }, true, - (g_va_timeout_ms - 1500), "QueryRuntime" );
     if (!status.ok()) {
       std::cerr << "[controlplane] VA probe failed: code=" << status.error_code() << " msg=" << status.error_message() << std::endl;
       return false;
@@ -67,11 +120,8 @@ bool quick_probe_vsm(const std::string& addr) {
   try {
     auto ch = make_channel(addr, false);
     auto stub = vsm::v1::SourceControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(1500));
-    vsm::v1::GetHealthRequest req;
-    vsm::v1::GetHealthReply  rep;
-    auto status = stub->GetHealth(&ctx, req, &rep);
+    vsm::v1::GetHealthRequest req; vsm::v1::GetHealthReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->GetHealth(&ctx, req, &rep); }, false, - (g_vsm_timeout_ms - 1500), "GetHealth");
     if (!status.ok()) {
       std::cerr << "[controlplane] VSM probe failed: code=" << status.error_code() << " msg=" << status.error_message() << std::endl;
       return false;
@@ -95,15 +145,19 @@ bool va_subscribe(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(5000));
     va::v1::SubscribePipelineRequest req;
     req.set_stream_id(stream_id);
     req.set_profile(profile);
     req.set_source_uri(source_uri);
     if (!model_id.empty()) req.set_model_id(model_id);
     va::v1::SubscribePipelineReply rep;
-    auto status = stub->SubscribePipeline(&ctx, req, &rep);
+    // Use a shorter deadline for subscribe to fail-fast on invalid inputs
+    auto status = call_with_retry(
+      [&](grpc::ClientContext& ctx){ return stub->SubscribePipeline(&ctx, req, &rep); },
+      true,
+      - (g_va_timeout_ms - 1500),
+      "SubscribePipeline"
+    );
     if (!status.ok() || !rep.ok()) {
       if (err) *err = status.ok()? rep.msg() : status.error_message();
       return false;
@@ -124,13 +178,11 @@ bool va_unsubscribe(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(5000));
     va::v1::UnsubscribePipelineRequest req;
     req.set_stream_id(stream_id);
     req.set_profile(profile);
     va::v1::UnsubscribePipelineReply rep;
-    auto status = stub->UnsubscribePipeline(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->UnsubscribePipeline(&ctx, req, &rep); }, true, 0, "UnsubscribePipeline");
     if (!status.ok() || !rep.ok()) {
       if (err) *err = status.ok()? rep.msg() : status.error_message();
       return false;
@@ -148,15 +200,13 @@ bool vsm_set_enabled(const std::string& addr,
                      bool enabled,
                      std::string* err) {
   try {
-    auto ch = make_channel(addr, true);
+    auto ch = make_channel(addr, false);
     auto stub = vsm::v1::SourceControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(5000));
     vsm::v1::UpdateRequest req;
     req.set_attach_id(attach_id);
     (*req.mutable_options())["enabled"] = enabled ? "true" : "false";
     vsm::v1::UpdateReply rep;
-    auto status = stub->Update(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->Update(&ctx, req, &rep); }, false, 0, "Update");
     if (!status.ok() || !rep.ok()) {
       if (err) *err = status.ok()? rep.msg() : status.error_message();
       return false;
@@ -180,8 +230,6 @@ bool va_apply_pipeline(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
     va::v1::ApplyPipelineRequest req;
     req.set_pipeline_name(pipeline_name);
     if (!revision.empty()) req.set_revision(revision);
@@ -193,7 +241,7 @@ bool va_apply_pipeline(const std::string& addr,
     if (!graph_id.empty()) spec->set_graph_id(graph_id);
     if (!yaml_path.empty()) spec->set_yaml_path(yaml_path);
     va::v1::ApplyPipelineReply rep;
-    auto status = stub->ApplyPipeline(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->ApplyPipeline(&ctx, req, &rep); }, true, 0, "ApplyPipeline");
     if (!status.ok() || !rep.accepted()) {
       if (err) *err = status.ok()? rep.msg() : status.error_message();
       return false;
@@ -212,12 +260,10 @@ bool va_remove_pipeline(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
     va::v1::RemovePipelineRequest req;
     req.set_pipeline_name(pipeline_name);
     va::v1::RemovePipelineReply rep;
-    auto status = stub->RemovePipeline(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RemovePipeline(&ctx, req, &rep); }, true, 0, "RemovePipeline");
     if (!status.ok() || !rep.removed()) {
       if (err) *err = status.ok()? rep.msg() : status.error_message();
       return false;
@@ -238,8 +284,6 @@ bool va_apply_pipelines(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(15000));
     va::v1::ApplyPipelinesRequest req;
     for (const auto& it : items) {
       auto* bi = req.add_items();
@@ -251,7 +295,7 @@ bool va_apply_pipelines(const std::string& addr,
       if (!it.yaml_path.empty()) spec->set_yaml_path(it.yaml_path);
     }
     va::v1::ApplyPipelinesReply rep;
-    auto status = stub->ApplyPipelines(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->ApplyPipelines(&ctx, req, &rep); }, true, 0, "ApplyPipelines");
     if (!status.ok()) { if (err) *err = status.error_message(); return false; }
     if (accepted) *accepted = rep.accepted();
     if (errors) {
@@ -274,14 +318,12 @@ bool va_hotswap_model(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
     va::v1::HotSwapModelRequest req;
     req.set_pipeline_name(pipeline_name);
     req.set_node(node);
     req.set_model_uri(model_uri);
     va::v1::HotSwapModelReply rep;
-    auto status = stub->HotSwapModel(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->HotSwapModel(&ctx, req, &rep); }, true, 0, "HotSwapModel");
     if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
     return true;
   } catch (const std::exception& e) {
@@ -299,11 +341,9 @@ bool va_get_status(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000));
     va::v1::GetStatusRequest req; req.set_pipeline_name(pipeline_name);
     va::v1::GetStatusReply rep;
-    auto status = stub->GetStatus(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->GetStatus(&ctx, req, &rep); }, true, 0, "GetStatus");
     if (!status.ok()) { if (err) *err = status.error_message(); return false; }
     if (phase) *phase = rep.phase();
     if (metrics_json) *metrics_json = rep.metrics_json();
@@ -323,11 +363,9 @@ bool va_drain(const std::string& addr,
   try {
     auto ch = make_channel(addr, true);
     auto stub = va::v1::AnalyzerControl::NewStub(ch);
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(8000 + timeout_sec*1000));
     va::v1::DrainRequest req; req.set_pipeline_name(pipeline_name); if (timeout_sec>0) req.set_timeout_sec(timeout_sec);
     va::v1::DrainReply rep;
-    auto status = stub->Drain(&ctx, req, &rep);
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->Drain(&ctx, req, &rep); }, true, timeout_sec*1000, "Drain");
     if (!status.ok()) { if (err) *err = status.error_message(); return false; }
     if (drained) *drained = rep.drained();
     return true;

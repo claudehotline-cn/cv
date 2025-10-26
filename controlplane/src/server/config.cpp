@@ -24,6 +24,7 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
     if (root["vsm"]) {
       auto v = root["vsm"]; if (v["grpc_addr"]) out->vsm_addr = v["grpc_addr"].as<std::string>();
       if (v["timeout_ms"]) out->vsm_timeout_ms = v["timeout_ms"].as<int>();
+      if (v["retries"]) out->vsm_retries = v["retries"].as<int>(0);
       if (v["tls"]) {
         auto t = v["tls"]; if (t["enabled"]) out->vsm_tls.enabled = t["enabled"].as<bool>(false);
         if (t["root_cert_file"]) out->vsm_tls.root_cert_file = t["root_cert_file"].as<std::string>("");
@@ -33,6 +34,14 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
     }
     if (root["restream"]) {
       auto r = root["restream"]; if (r["rtsp_base"]) out->restream_rtsp_base = r["rtsp_base"].as<std::string>();
+    }
+    if (root["sse"]) {
+      auto s = root["sse"];
+      if (s["keepalive_ms"]) out->sse.keepalive_ms = s["keepalive_ms"].as<int>(out->sse.keepalive_ms);
+      if (s["idle_close_ms"]) out->sse.idle_close_ms = s["idle_close_ms"].as<int>(out->sse.idle_close_ms);
+      if (s["sources"]) {
+        auto so = s["sources"]; if (so["interval_ms"]) out->sse.sources_interval_ms = so["interval_ms"].as<int>(out->sse.sources_interval_ms);
+      }
     }
     if (root["security"]) {
       auto s = root["security"];
