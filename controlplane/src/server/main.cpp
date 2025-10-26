@@ -622,6 +622,8 @@ int main(int argc, char** argv) {
         std::unique_ptr< grpc::ClientReader<vsm::v1::WatchStateReply> > reader(stub->WatchState(&ctx, req));
         if (!reader) throw std::runtime_error("VSM WatchState reader null");
         controlplane::sse::write_headers(writer);
+        // Count request as accepted immediately (SSE opened)
+        controlplane::metrics::inc_request("/api/sources/watch_sse", method, 200);
         // Emit an initial empty state to avoid client-side timeouts when there are no items yet
         controlplane::sse::write_event(writer, "state", "{\\\"items\\\":[]}");
         vsm::v1::WatchStateReply rep;
@@ -647,13 +649,12 @@ int main(int argc, char** argv) {
         if (nowms() - last_keep > 5000) controlplane::sse::write_comment(writer, "keepalive");
         controlplane::sse::close(writer);
         try { reader->Finish(); } catch (...) {}
-        controlplane::metrics::inc_request("/api/sources/watch_sse", method, 200);
         return true;
       } catch (...) {
         controlplane::sse::write_headers(writer);
+        controlplane::metrics::inc_request("/api/sources/watch_sse", method, 200);
         controlplane::sse::write_event(writer, "state", "{\\\"items\\\":[],\\\"error\\\":\\\"VSM_WATCH_UNAVAILABLE\\\"}");
         controlplane::sse::close(writer);
-        controlplane::metrics::inc_request("/api/sources/watch_sse", method, 200);
         return true;
       }
     }

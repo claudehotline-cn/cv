@@ -1,0 +1,47 @@
+name: Controlplane Smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: pip install requests
+
+      - name: Setup vcpkg
+        uses: microsoft/setup-vcpkg@v1
+        with:
+          vcpkgTriplet: x64-windows
+          appendEnv: true
+
+      - name: Ensure Ninja
+        run: choco install ninja -y
+
+      - name: Run smoke (Min mode)
+        shell: pwsh
+        env:
+          CP_SMOKE_MIN: '1'
+          CP_TEST_WATCH: '0'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'cp_smoke.log'
+          tools/run_cp_smoke.ps1 *>&1 | Tee-Object -FilePath $log
+          echo "Saved log: $log"
+
+      - name: Upload log artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cp-smoke-log
+          path: ${{ runner.temp }}/cp_smoke.log
+
