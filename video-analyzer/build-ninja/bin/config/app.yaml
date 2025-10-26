@@ -39,7 +39,7 @@ defaults:
     height: 720
     fps: 30
     bitrate_kbps: 3500
-    # gop: 30
+    gop: 30
     bframes: 0
     preset: veryfast
     tune_zerolatency: true
