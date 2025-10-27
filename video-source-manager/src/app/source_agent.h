@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <mutex>
+#include "app/config.hpp"
 
 namespace vsm { class SourceController; }
 namespace vsm::rpc { class GrpcServer; }
@@ -16,11 +17,17 @@ public:
   SourceAgent();
   ~SourceAgent();
   bool Start(const std::string& grpc_addr);
+  // 配置驱动启动（推荐）：从 AppConfig 注入 TLS 与监听地址
+  bool Start(const vsm::app::AppConfig& cfg);
   void Stop();
 private:
   std::unique_ptr<SourceController> controller_;
   std::unique_ptr<rpc::GrpcServer> grpc_;
   std::unique_ptr<metrics::MetricsExporter> metrics_;
+  bool has_tls_cfg_ {false};
+  vsm::app::TlsConfig tls_cfg_;
+  bool has_va_client_cfg_ {false};
+  vsm::app::VaClientConfig va_client_cfg_;
   // REST metrics (per-path counters and duration histogram)
   std::mutex rest_mu_;
   std::unordered_map<std::string, std::unordered_map<std::string, unsigned long long>> rest_totals_by_code_; // path -> code -> total

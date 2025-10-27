@@ -36,6 +36,8 @@ bool NodeModel::open(NodeContext& ctx) {
     int device_id = 0;
     bool stage_device_outputs = false;
     bool device_output_views = false;
+    bool allow_cpu_fallback = true;
+    bool use_io_binding_opt = false;
     if (ctx.engine_registry) {
         try {
             auto* em = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry);
@@ -60,6 +62,8 @@ bool NodeModel::open(NodeContext& ctx) {
             };
             stage_device_outputs = findBool("stage_device_outputs", false);
             device_output_views = findBool("device_output_views", false);
+            allow_cpu_fallback = findBool("allow_cpu_fallback", false);
+            use_io_binding_opt = findBool("use_io_binding", prefer_gpu);
         } catch (...) {
             opt.provider = prefer_gpu ? std::string("cuda") : std::string("cpu");
         }
@@ -67,9 +71,9 @@ bool NodeModel::open(NodeContext& ctx) {
         opt.provider = "cpu";
     }
     opt.device_id = device_id;
-    opt.use_io_binding = prefer_gpu;           // enable IoBinding for device input/output
+    opt.use_io_binding = use_io_binding_opt;   // enable IoBinding when configured (defaults to GPU preference)
     opt.prefer_pinned_memory = prefer_gpu;     // prefer pinned when staging
-    opt.allow_cpu_fallback = true;
+    opt.allow_cpu_fallback = allow_cpu_fallback;
     opt.stage_device_outputs = stage_device_outputs;
     opt.device_output_views = device_output_views;
     s->setOptions(opt);

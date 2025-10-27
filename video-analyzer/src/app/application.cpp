@@ -429,6 +429,9 @@ void Application::startVsmWatchIfConfigured() {
                 args.SetInt("grpc.keepalive_time_ms", ka_time);
                 args.SetInt("grpc.keepalive_timeout_ms", ka_timeout);
                 args.SetInt("grpc.keepalive_permit_without_calls", ka_permit);
+                // Ensure SNI/authority matches certificate SAN during dev
+                args.SetString("grpc.ssl_target_name_override", "localhost");
+                args.SetString("grpc.default_authority", "localhost");
                 // Use TLS to match VSM server default (self-signed CA). Fallback to insecure only if TLS files missing.
                 auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
                 std::shared_ptr<grpc::ChannelCredentials> creds;
@@ -437,6 +440,42 @@ void Application::startVsmWatchIfConfigured() {
                     if (!ca.empty()) {
                         grpc::SslCredentialsOptions ssl;
                         try { ssl.pem_root_certs = read_all(ca); } catch (...) {}
+                        // Prefer VA's own client cert/key if configured
+                        try {
+                            const auto& tlscfg = app_config_.control_plane.tls;
+                            std::string ccrt = tlscfg.client_cert_file;
+                            std::string ckey = tlscfg.client_key_file;
+                            bool loaded = false;
+                            if (!ccrt.empty() && !ckey.empty()) {
+                                std::ifstream fcrt(ccrt, std::ios::binary); std::ifstream fkey(ckey, std::ios::binary);
+                                if (fcrt.good() && fkey.good()) {
+                                    ssl.pem_cert_chain.assign((std::istreambuf_iterator<char>(fcrt)), std::istreambuf_iterator<char>());
+                                    ssl.pem_private_key.assign((std::istreambuf_iterator<char>(fkey)), std::istreambuf_iterator<char>());
+                                    loaded = true;
+                                }
+                            }
+                            // Fallback to cp_client.* in same dir as CA if not configured or files missing (dev only)
+                            if (!loaded) {
+                                std::string dir; auto pos = ca.find_last_of("/\\"); if (pos != std::string::npos) dir = ca.substr(0, pos);
+                                if (!dir.empty()) {
+                                    std::string f1 = dir + "/va_client.crt"; std::string f2 = dir + "/va_client.key";
+                                    std::ifstream a1(f1, std::ios::binary); std::ifstream a2(f2, std::ios::binary);
+                                    if (a1.good() && a2.good()) {
+                                        ssl.pem_cert_chain.assign((std::istreambuf_iterator<char>(a1)), std::istreambuf_iterator<char>());
+                                        ssl.pem_private_key.assign((std::istreambuf_iterator<char>(a2)), std::istreambuf_iterator<char>());
+                                        loaded = true;
+                                    } else {
+                                        std::string c1 = dir + "/cp_client.crt"; std::string c2 = dir + "/cp_client.key";
+                                        std::ifstream b1(c1, std::ios::binary); std::ifstream b2(c2, std::ios::binary);
+                                        if (b1.good() && b2.good()) {
+                                            ssl.pem_cert_chain.assign((std::istreambuf_iterator<char>(b1)), std::istreambuf_iterator<char>());
+                                            ssl.pem_private_key.assign((std::istreambuf_iterator<char>(b2)), std::istreambuf_iterator<char>());
+                                            loaded = true;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (...) { /* optional */ }
                         creds = grpc::SslCredentials(ssl);
                     }
                 } catch (...) {}

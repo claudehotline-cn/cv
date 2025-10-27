@@ -3,6 +3,12 @@
 
 namespace controlplane {
 
+static inline std::string make_abs(const std::string& dir, const std::string& p) {
+  if (p.empty()) return p;
+  if (p.size() > 1 && (p[1] == ':' || p[0] == '/' || p[0] == '\\')) return p;
+  return dir + "/" + p;
+}
+
 bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
   try {
     auto path = dir + "/app.yaml";
@@ -16,9 +22,9 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
       if (v["retries"]) out->va_retries = v["retries"].as<int>();
       if (v["tls"]) {
         auto t = v["tls"]; if (t["enabled"]) out->va_tls.enabled = t["enabled"].as<bool>(false);
-        if (t["root_cert_file"]) out->va_tls.root_cert_file = t["root_cert_file"].as<std::string>("");
-        if (t["client_cert_file"]) out->va_tls.client_cert_file = t["client_cert_file"].as<std::string>("");
-        if (t["client_key_file"]) out->va_tls.client_key_file = t["client_key_file"].as<std::string>("");
+        if (t["root_cert_file"]) out->va_tls.root_cert_file = make_abs(dir, t["root_cert_file"].as<std::string>(""));
+        if (t["client_cert_file"]) out->va_tls.client_cert_file = make_abs(dir, t["client_cert_file"].as<std::string>(""));
+        if (t["client_key_file"]) out->va_tls.client_key_file = make_abs(dir, t["client_key_file"].as<std::string>(""));
       }
     }
     if (root["vsm"]) {
@@ -27,9 +33,9 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
       if (v["retries"]) out->vsm_retries = v["retries"].as<int>(0);
       if (v["tls"]) {
         auto t = v["tls"]; if (t["enabled"]) out->vsm_tls.enabled = t["enabled"].as<bool>(false);
-        if (t["root_cert_file"]) out->vsm_tls.root_cert_file = t["root_cert_file"].as<std::string>("");
-        if (t["client_cert_file"]) out->vsm_tls.client_cert_file = t["client_cert_file"].as<std::string>("");
-        if (t["client_key_file"]) out->vsm_tls.client_key_file = t["client_key_file"].as<std::string>("");
+        if (t["root_cert_file"]) out->vsm_tls.root_cert_file = make_abs(dir, t["root_cert_file"].as<std::string>(""));
+        if (t["client_cert_file"]) out->vsm_tls.client_cert_file = make_abs(dir, t["client_cert_file"].as<std::string>(""));
+        if (t["client_key_file"]) out->vsm_tls.client_key_file = make_abs(dir, t["client_key_file"].as<std::string>(""));
       }
     }
     if (root["restream"]) {

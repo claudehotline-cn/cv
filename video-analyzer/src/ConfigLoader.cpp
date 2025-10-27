@@ -180,7 +180,7 @@ AnalyzerParamsEntry parseAnalyzerParamsEntry(const YAML::Node& v) {
     return entry;
 }
 
-AppConfigPayload parseAppConfig(const YAML::Node& v) {
+AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_dir) {
     AppConfigPayload payload;
     const auto engine_node = v["engine"];
     if (engine_node && engine_node.IsMap()) {
@@ -425,22 +425,48 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
     }
 
     // control_plane
-    if (v["control_plane"]) {
-        const auto cp = v["control_plane"];
-        if (cp && cp.IsMap()) {
-            payload.control_plane.enabled = cp["enabled"].as<bool>(payload.control_plane.enabled);
-            payload.control_plane.grpc_addr = cp["grpc_addr"].as<std::string>(payload.control_plane.grpc_addr);
-            payload.control_plane.vsm_addr = cp["vsm_addr"].as<std::string>(payload.control_plane.vsm_addr);
-            // TLS server settings
-            if (cp["tls"] && cp["tls"].IsMap()) {
-                const auto t = cp["tls"];
-                payload.control_plane.tls.enabled = t["enabled"].as<bool>(payload.control_plane.tls.enabled);
-                payload.control_plane.tls.root_cert_file = t["root_cert_file"].as<std::string>(payload.control_plane.tls.root_cert_file);
-                // Support aliases cert_file/key_file
-                payload.control_plane.tls.server_cert_file = t["server_cert_file"].as<std::string>(t["cert_file"].as<std::string>(payload.control_plane.tls.server_cert_file));
-                payload.control_plane.tls.server_key_file = t["server_key_file"].as<std::string>(t["key_file"].as<std::string>(payload.control_plane.tls.server_key_file));
-                payload.control_plane.tls.require_client_cert = t["require_client_cert"].as<bool>(payload.control_plane.tls.require_client_cert);
-            }
+        if (v["control_plane"]) {
+            const auto cp = v["control_plane"];
+            if (cp && cp.IsMap()) {
+                payload.control_plane.enabled = cp["enabled"].as<bool>(payload.control_plane.enabled);
+                payload.control_plane.grpc_addr = cp["grpc_addr"].as<std::string>(payload.control_plane.grpc_addr);
+                payload.control_plane.vsm_addr = cp["vsm_addr"].as<std::string>(payload.control_plane.vsm_addr);
+                // TLS server settings
+                if (cp["tls"] && cp["tls"].IsMap()) {
+                    const auto t = cp["tls"];
+                    payload.control_plane.tls.enabled = t["enabled"].as<bool>(payload.control_plane.tls.enabled);
+                    {
+                        std::string p = t["root_cert_file"].as<std::string>(payload.control_plane.tls.root_cert_file);
+                        if (!p.empty()) {
+                            // make relative to config_dir
+                            if (!(p.size() > 1 && (p[1] == ':' || p[0] == '/' || p[0] == '\\'))) p = makePath(config_dir, p);
+                        }
+                        payload.control_plane.tls.root_cert_file = p;
+                    }
+                    // Support aliases cert_file/key_file
+                    {
+                        std::string p = t["server_cert_file"].as<std::string>(t["cert_file"].as<std::string>(payload.control_plane.tls.server_cert_file));
+                        if (!p.empty()) { if (!(p.size()>1 && (p[1]==':' || p[0]=='/' || p[0]=='\\'))) p = makePath(config_dir, p); }
+                        payload.control_plane.tls.server_cert_file = p;
+                    }
+                    {
+                        std::string p = t["server_key_file"].as<std::string>(t["key_file"].as<std::string>(payload.control_plane.tls.server_key_file));
+                        if (!p.empty()) { if (!(p.size()>1 && (p[1]==':' || p[0]=='/' || p[0]=='\\'))) p = makePath(config_dir, p); }
+                        payload.control_plane.tls.server_key_file = p;
+                    }
+                    // Optional client cert/key for outbound mTLS (e.g., VA -> VSM)
+                    if (t["client_cert_file"]) {
+                        std::string p = t["client_cert_file"].as<std::string>("");
+                        if (!p.empty()) { if (!(p.size()>1 && (p[1]==':' || p[0]=='/' || p[0]=='\\'))) p = makePath(config_dir, p); }
+                        payload.control_plane.tls.client_cert_file = p;
+                    }
+                    if (t["client_key_file"]) {
+                        std::string p = t["client_key_file"].as<std::string>("");
+                        if (!p.empty()) { if (!(p.size()>1 && (p[1]==':' || p[0]=='/' || p[0]=='\\'))) p = makePath(config_dir, p); }
+                        payload.control_plane.tls.client_key_file = p;
+                    }
+                    payload.control_plane.tls.require_client_cert = t["require_client_cert"].as<bool>(payload.control_plane.tls.require_client_cert);
+                }
             // Optional tunables
             payload.control_plane.watch_interval_ms = cp["watch_interval_ms"].as<int>(payload.control_plane.watch_interval_ms);
             payload.control_plane.debounce_ms = cp["debounce_ms"].as<int>(payload.control_plane.debounce_ms);
@@ -542,7 +568,7 @@ std::vector<ProfileEntry> ConfigLoader::loadProfiles(const std::string& config_d
 
 AppConfigPayload ConfigLoader::loadAppConfig(const std::string& config_dir) {
     YAML::Node root = loadYamlFile(makePath(config_dir, "app.yaml"));
-    return parseAppConfig(root);
+    return parseAppConfig(root, config_dir);
 }
 
 std::map<std::string, AnalyzerParamsEntry> ConfigLoader::loadAnalyzerParams(const std::string& config_dir) {

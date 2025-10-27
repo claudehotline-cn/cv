@@ -1,10 +1,17 @@
 #include "app/source_agent.h"
 #include "app/controller/source_controller.h"
+#include "app/config.hpp"
 #include "app/rpc/grpc_server.h"
+#if defined(USE_GRPC)
+#include <grpcpp/grpcpp.h>
+#include "analyzer_control.grpc.pb.h"
+#endif
 #include "app/metrics/metrics_exporter.h"
 #include "app/rest/rest_server.h"
 #include "app/errors/error_codes.h"
 #include <sstream>
+#include <fstream>
+#include <iterator>
 #include <algorithm>
 #include <string>
 #include <chrono>
@@ -54,7 +61,11 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
   controller_->SetRegistryPath(reg_path);
   // Try load existing registry and auto-attach
   controller_->LoadRegistry(nullptr);
-  grpc_ = std::make_unique<rpc::GrpcServer>(*controller_, grpc_addr);
+  if (has_tls_cfg_) {
+    grpc_ = std::make_unique<rpc::GrpcServer>(*controller_, grpc_addr, tls_cfg_);
+  } else {
+    grpc_ = std::make_unique<rpc::GrpcServer>(*controller_, grpc_addr);
+  }
   // Metrics exporter builds /metrics on demand from controller stats
   metrics_ = std::make_unique<metrics::MetricsExporter>(9101, [this]() {
     std::ostringstream out;
@@ -239,28 +250,75 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
       // Attach locally
       std::unordered_map<std::string,std::string> opt; std::string prof=get("profile"); if(!prof.empty()) opt["profile"]=prof; std::string mdl=get("model_id"); if(!mdl.empty()) opt["model_id"]=mdl;
       std::string e; if (!controller_->Attach(id, uri, "", opt, &e)) return err(vsm::errors::map_message(e), std::string("attach failed: ")+e);
-      // Apply on VA
-      std::string host = (std::getenv("VA_REST_HOST")? std::getenv("VA_REST_HOST") : "127.0.0.1");
-      int va_port = 8082; if (const char* p = std::getenv("VA_REST_PORT")) { try { int v=std::stoi(p); if (v>0&&v<65536) va_port=v; } catch(...){} }
-      std::ostringstream pay; pay << "{\"pipeline_name\":\""<< vsm::rest::jsonEscape(pipeline) <<"\"";
-      if (!yaml.empty()) pay << ",\"yaml_path\":\""<< vsm::rest::jsonEscape(yaml) <<"\"";
-      if (!gid.empty()) pay << ",\"graph_id\":\""<< vsm::rest::jsonEscape(gid) <<"\"";
-      if (!tpl.empty()) pay << ",\"template_id\":\""<< vsm::rest::jsonEscape(tpl) <<"\"";
-      pay << "}";
-      int st=0; std::string resp; bool okc = http_call_retry(host, va_port, "POST", "/api/control/apply_pipeline", pay.str(), 8000, 1, &st, &resp);
-      if (!okc || st != 200) return err(vsm::errors::map_message("apply failed"), std::string("va apply failed status=")+std::to_string(st));
+      // Apply on VA via gRPC (AnalyzerControl), not REST
+      try {
+        auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
+        std::string addr = has_va_client_cfg_ ? va_client_cfg_.addr : std::string("127.0.0.1:50051");
+        std::unique_ptr<va::v1::AnalyzerControl::Stub> stub;
+        std::shared_ptr<grpc::Channel> ch;
+        if (has_va_client_cfg_ && va_client_cfg_.tls.enabled) {
+          grpc::SslCredentialsOptions ssl;
+          try { if (!va_client_cfg_.tls.root_cert_file.empty()) ssl.pem_root_certs = read_all(va_client_cfg_.tls.root_cert_file); } catch (...) {}
+          try { if (!va_client_cfg_.tls.client_cert_file.empty()) ssl.pem_cert_chain = read_all(va_client_cfg_.tls.client_cert_file); } catch (...) {}
+          try { if (!va_client_cfg_.tls.client_key_file.empty()) ssl.pem_private_key = read_all(va_client_cfg_.tls.client_key_file); } catch (...) {}
+          grpc::ChannelArguments args; 
+          args.SetString("grpc.ssl_target_name_override", va_client_cfg_.tls.server_name.empty()? "localhost" : va_client_cfg_.tls.server_name);
+          args.SetString("grpc.default_authority", va_client_cfg_.tls.server_name.empty()? "localhost" : va_client_cfg_.tls.server_name);
+          ch = grpc::CreateCustomChannel(addr, grpc::SslCredentials(ssl), args);
+        } else {
+          ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+        }
+        stub = va::v1::AnalyzerControl::NewStub(ch);
+        va::v1::ApplyPipelineRequest req; va::v1::ApplyPipelineReply rep; grpc::ClientContext ctx;
+        req.set_pipeline_name(pipeline);
+        if (!gid.empty()) req.mutable_spec()->set_graph_id(gid);
+        if (!yaml.empty()) req.mutable_spec()->set_yaml_path(yaml);
+        if (!tpl.empty()) req.mutable_spec()->set_template_id(tpl);
+        auto status = stub->ApplyPipeline(&ctx, req, &rep);
+        if (!status.ok() || !rep.accepted()) {
+          return err(vsm::errors::ErrorCode::INTERNAL, std::string("va apply failed: ") + (status.ok()? rep.msg() : status.error_message()));
+        }
+      } catch (const std::exception& ex) {
+        return err(vsm::errors::ErrorCode::INTERNAL, std::string("grpc apply exception: ")+ex.what());
+      } catch (...) {
+        return err(vsm::errors::ErrorCode::INTERNAL, std::string("grpc apply unknown exception"));
+      }
       return ok("{}");
     }
-    // Orchestration: Detach + VA Remove
+    // Orchestration: Detach + VA Remove via gRPC
     if (method=="POST" && path=="/api/orch/detach_remove") {
       auto get = [&](const char* k)->std::string{ auto it=query.find(k); if(it!=query.end()) return it->second; auto jt=jbody.find(k); return jt!=jbody.end()? jt->second : std::string(); };
       std::string id = get("id"), pipeline = get("pipeline_name"); if (id.empty()||pipeline.empty()) return err(vsm::errors::ErrorCode::INVALID_ARG, "missing id/pipeline_name");
       std::string e; if (!controller_->Detach(id, &e)) return err(vsm::errors::map_message(e), std::string("detach failed: ")+e);
-      std::string host = (std::getenv("VA_REST_HOST")? std::getenv("VA_REST_HOST") : "127.0.0.1");
-      int va_port = 8082; if (const char* p = std::getenv("VA_REST_PORT")) { try { int v=std::stoi(p); if (v>0&&v<65536) va_port=v; } catch(...){} }
-      std::ostringstream pathq; pathq << "/api/control/pipeline?name=" << pipeline;
-      int st=0; std::string resp; bool okc = http_call_retry(host, va_port, "DELETE", pathq.str(), std::string(), 8000, 2, &st, &resp);
-      if (!okc || st != 200) return err(vsm::errors::map_message("remove failed"), std::string("va remove failed status=")+std::to_string(st));
+      try {
+        auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
+        std::string addr = has_va_client_cfg_ ? va_client_cfg_.addr : std::string("127.0.0.1:50051");
+        std::unique_ptr<va::v1::AnalyzerControl::Stub> stub;
+        std::shared_ptr<grpc::Channel> ch;
+        if (has_va_client_cfg_ && va_client_cfg_.tls.enabled) {
+          grpc::SslCredentialsOptions ssl;
+          try { if (!va_client_cfg_.tls.root_cert_file.empty()) ssl.pem_root_certs = read_all(va_client_cfg_.tls.root_cert_file); } catch (...) {}
+          try { if (!va_client_cfg_.tls.client_cert_file.empty()) ssl.pem_cert_chain = read_all(va_client_cfg_.tls.client_cert_file); } catch (...) {}
+          try { if (!va_client_cfg_.tls.client_key_file.empty()) ssl.pem_private_key = read_all(va_client_cfg_.tls.client_key_file); } catch (...) {}
+          grpc::ChannelArguments args; 
+          args.SetString("grpc.ssl_target_name_override", va_client_cfg_.tls.server_name.empty()? "localhost" : va_client_cfg_.tls.server_name);
+          args.SetString("grpc.default_authority", va_client_cfg_.tls.server_name.empty()? "localhost" : va_client_cfg_.tls.server_name);
+          ch = grpc::CreateCustomChannel(addr, grpc::SslCredentials(ssl), args);
+        } else {
+          ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+        }
+        stub = va::v1::AnalyzerControl::NewStub(ch);
+        va::v1::RemovePipelineRequest req; va::v1::RemovePipelineReply rep; grpc::ClientContext ctx;
+        req.set_pipeline_name(pipeline);
+        auto status = stub->RemovePipeline(&ctx, req, &rep);
+        if (!status.ok() || !rep.removed()) {
+          return err(vsm::errors::ErrorCode::INTERNAL, std::string("va remove failed: ") + (status.ok()? rep.msg() : status.error_message()));
+        }
+      } catch (const std::exception& ex) {
+        return err(vsm::errors::ErrorCode::INTERNAL, std::string("grpc remove exception: ")+ex.what());
+      } catch (...) {
+        return err(vsm::errors::ErrorCode::INTERNAL, std::string("grpc remove unknown exception"));
+      }
       return ok("{}");
     }
     // Orchestration: Health snapshot (VSM + VA)
@@ -458,6 +516,12 @@ bool SourceAgent::Start(const std::string& grpc_addr) {
   });
   rest_server->Start();
   return grpc_->Start();
+}
+
+bool SourceAgent::Start(const vsm::app::AppConfig& cfg) {
+  tls_cfg_ = cfg.tls; has_tls_cfg_ = true;
+  va_client_cfg_ = cfg.va; has_va_client_cfg_ = true;
+  return Start(cfg.grpc_listen);
 }
 
 void SourceAgent::Stop() {

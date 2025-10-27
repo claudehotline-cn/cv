@@ -9,6 +9,7 @@ engine:
     use_nvenc: true
     use_multistage: true
     use_io_binding: true
+    allow_cpu_fallback: false
     device_output_views: true
     stage_device_outputs: false
     use_cuda_nms: true
@@ -93,10 +94,13 @@ control_plane:
   vsm_addr: "127.0.0.1:7070"
   tls:
     enabled: true
-    # 建议使用绝对路径以避免工作目录差异
-    root_cert_file: "D:\\Projects\\ai\\cv\\controlplane\\config\\certs\\ca.pem"
-    server_cert_file: "D:\\Projects\\ai\\cv\\controlplane\\config\\certs\\va_server.crt"
-    server_key_file: "D:\\Projects\\ai\\cv\\controlplane\\config\\certs\\va_server.key"
+    # 使用相对配置目录的路径（由加载器转换为绝对路径）
+    # 证书相对路径将以该配置目录为基准转为绝对路径
+    root_cert_file: "certs/ca.pem"
+    client_cert_file: "certs/va_client.crt"
+    client_key_file: "certs/va_client.key"
+    server_cert_file: "certs/va_server.crt"
+    server_key_file: "certs/va_server.key"
     require_client_cert: true
   metrics_enabled: true
 subscriptions:
@@ -132,3 +136,4 @@ quotas:
   #     observe_only: true
   #   - key: "vip-canary"
   #     enforce_percent: 50   # 对该 key 仅 50% 请求执行拦截
+

@@ -1,39 +1,39 @@
 # 路线图总览
 
-- 里程碑 M0｜TLS/mTLS 与编排基线
-  - 目标：TLS 一键启动；mTLS 正/负通过；编排正/负纳入冒烟并稳定；前端可经 CP 访问基础 API。
-  - 验收：start_stack_tls 成功；test_mtls_* 通过；run_cp_smoke（非 Min）通过，归档日志齐备。
-- 里程碑 M1｜观测与联调稳定
-  - 目标：方法维度指标校验；Grafana/告警口径统一；SSE Soak 稳定（2–10 分钟）；前端分析页可发起订阅并看到起播。
-  - 验收：metrics method 增量用例通过；面板/告警命中示例；Soak 无异常；分析页出现 /whep 201 并显示画面。
-- 里程碑 M2｜端到端体验与 CI 完备
-  - 目标：VA 公共 REST 完成收口（410 置灰可选）；CI 含 full（VA/VSM）流；文档与一键化完成；取证流程标准化。
-  - 验收：VA 仅保留 /metrics 与 /whep；cp_full 成功并归档 logs/**；README/指南完整。
+- 里程碑 M0：TLS/mTLS 全链路打通（开发环境）
+  - 目标：三后端默认启用 TLS/mTLS；证书路径配置化并转绝对；SNI=localhost；前端不使用 WHEP fallback。
+  - 验收：start_stack_tls 成功；test_mtls_* 通过；订阅 API 正常；最小证据（截图/网络清单）归档。
+- 里程碑 M1：稳定编排与可观测
+  - 目标：VSM→VA 完整 gRPC 编排（attach/remove/subscribe）；指标齐备（by service,method,code）；前端能稳定观看。
+  - 验收：持续 2 小时无 5xx/UNAVAILABLE 尖峰；WHEP 201 且 readyState≥2；Grafana 面板稳定。
+- 里程碑 M2：零拷贝与 CI 验证
+  - 目标：VA 零拷贝路径稳定（gpu_active=1，io_binding=1）；CI 覆盖 TLS/编排基本回归用例。
+  - 验收：模型推理与 NMS 正常、FPS 达标；CI 绿灯并产生日志/证据工件。
 
 # 分阶段计划（表格）
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| P0 | TLS/mTLS 可用 | VA/VSM TLS；CP TLS 客户端；一键脚本 | 证书缺失→启动前校验 | mTLS 正/负 100% 通过 |
-| P1 | 编排正/负稳定 | attach→status→drain→delete | 启停时序→延迟重试 | 连续3轮无 5xx/UNAVAILABLE |
-| P1.5 | 指标与告警 | method 维度；Grafana/规则 | 口径不一→统一 by(service,method,code) | 指标/告警可复现 |
-| P2 | SSE Soak | 2–10 分钟稳定 | 抖动→keepalive/重连 | 无异常断流/FD 增长 |
-| P3 | 前端分析起播 | 订阅→WHEP→播放 | 订阅 400→参数兜底 | 出现 /whep 201 且可见画面 |
-| P4 | CI Full | 构建 VA/VSM+非 Min | 缺依赖→vcpkg 缓存 | CI 全绿，上传 logs/** |
+| P0 | TLS/mTLS 打通 | 证书配置化；路径绝对化；SNI=localhost | 证书缺失/路径错 → 启动前校验 | 100% gRPC 握手成功 |
+| P1 | gRPC 编排 | VSM→VA Apply/Remove/Subscribe | 兼容性问题 → 明确 proto 与超时 | attach 成功率≥99% |
+| P1.5 | 可观测完善 | by(service,method,code) 指标；日志采样 | 日志噪声 → 限速与分级 | 关键接口 P50/P95 公开 |
+| P2 | 前端取证 | WHEP 201；视频可播放 | 跨域/证书 → 预置受信 CA | readyState≥2/10s 内 |
+| P3 | 零拷贝稳定 | ORT CUDA IoBinding；NMS CUDA | CUDA 环境缺失 → 禁回退显错 | GPU 活跃+IoBinding=1 |
+| P4 | 基线 CI | TLS 连通与编排回归 | 构建依赖 → 缓存与镜像 | CI 绿灯/证据工件 |
 
 # 依赖矩阵
 - 内部依赖：
-  - controlplane（REST/SSE/编排/指标/告警）
-  - video-analyzer（gRPC 被控端 + WHEP + metrics）
-  - video-source-manager（源控制 gRPC）
-  - web-front（路由到 CP；WHEP 直连 VA）
+  - CP 配置加载与 gRPC 客户端（SNI 覆盖）
+  - VA ConfigLoader/NodeModel（allow_cpu_fallback/use_io_binding）
+  - VSM YAML 配置与 VA gRPC 客户端（mTLS）
 - 外部依赖（库/服务/硬件）：
-  - gRPC/Protobuf、OpenSSL、vcpkg、CMake/VC++、Node.js
-  - RTSP 源：`rtsp://127.0.0.1:8554/camera_01`
-  - GPU（可选，保留 CPU 回退）
+  - gRPC/Protobuf、OpenSSL、ONNX Runtime（含 CUDA EP）
+  - vcpkg、CMake/MSVC、Node.js（前端 dev）
+  - NVIDIA 驱动/CUDA 运行时、RTSP 源（摄像头/推流器）
 
 # 风险清单（Top-5）
-- 证书/路径不一致 → 启动握手失败 → /metrics 不通、gRPC UNAVAILABLE → 启动前校验 + 统一脚本注入
-- 文件锁与链接失败 → 进程未停干净 → LNK1104 → 构建前 stop/kill 流程
-- 订阅 400/超时 → 参数缺失/后端未 ready → /api/subscriptions 400、无 /whep → 前端兜底参数 + 先跑编排正向
-- 指标口径不一致 → 面板/告警偏差 → method 缺失/聚合不当 → 固化 sum by (service,method,code) 并回归
-- Soak 漏洞 → 长连/重连压力 → FD/内存缓升 → 2–10 分钟 Soak 与周期性重启演练
+- 证书/路径不一致 → 启动/握手失败 → 启动前自检（文件存在+绝对路径） → 阻断启动并打印修复建议
+- SNI 不匹配 → wrong version number → 客户端统一覆盖为 localhost → 证书 SAN 要含 DNS 与 IP
+- CUDA 环境缺失 → CPU 回退或推理失败 → 禁用回退暴露根因；补齐 CUDA/ORT 动态库 → 观察 RuntimeSummary
+- 模型输出与 NMS 偏差 → NMS 失败 → 核对 graph 配置、模型输出名/形状 → 增加形状/阈值日志
+- 前端 WHEP 播放异常 → 跨域/证书/网络 → DevTools MCP 最小取证（网络≤10、截图落盘） → 快速定位与回滚
+

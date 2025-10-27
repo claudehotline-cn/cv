@@ -1,0 +1,20 @@
+server:
+  grpc_listen: "0.0.0.0:7070"
+tls:
+  enabled: true
+  # 证书路径相对于该配置目录，将会转为绝对路径
+  root_cert_file: "certs/ca.pem"
+  server_cert_file: "certs/vsm_server.crt"
+  server_key_file: "certs/vsm_server.key"
+  require_client_cert: true
+
+# Outbound to VideoAnalyzer (AnalyzerControl gRPC)
+va:
+  addr: "127.0.0.1:50051"
+  tls:
+    enabled: true
+    root_cert_file: "certs/ca.pem"
+    # 指向 VA 目录下生成的专用客户端证书（绝对路径，避免相对路径歧义）
+    client_cert_file: "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/config/certs/va_client.crt"
+    client_key_file: "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/config/certs/va_client.key"
+    server_name: "localhost"                   # SNI/authority，需与 VA 证书 SAN 匹配

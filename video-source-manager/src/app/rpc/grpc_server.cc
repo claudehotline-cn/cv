@@ -1,5 +1,6 @@
 #include "app/rpc/grpc_server.h"
 #include "app/controller/source_controller.h"
+#include "app/config.hpp"
 #include <fstream>
 #include <cstdlib>
 
@@ -14,6 +15,7 @@ namespace vsm::rpc {
 struct GrpcServer::Impl {
   vsm::SourceController& ctl;
   std::string addr;
+  vsm::app::TlsConfig tls;
 #if defined(USE_GRPC)
   class ServiceImpl final : public vsm::v1::SourceControl::Service {
   public:
@@ -101,10 +103,14 @@ struct GrpcServer::Impl {
   ServiceImpl* service {nullptr};
 #endif
   explicit Impl(vsm::SourceController& c, std::string a) : ctl(c), addr(std::move(a)) {}
+  explicit Impl(vsm::SourceController& c, std::string a, const vsm::app::TlsConfig& t)
+    : ctl(c), addr(std::move(a)), tls(t) {}
 };
 
 GrpcServer::GrpcServer(vsm::SourceController& ctl, std::string addr)
   : impl_(std::make_unique<Impl>(ctl, std::move(addr))) {}
+GrpcServer::GrpcServer(vsm::SourceController& ctl, std::string addr, const vsm::app::TlsConfig& tls)
+  : impl_(std::make_unique<Impl>(ctl, std::move(addr), tls)) {}
 GrpcServer::~GrpcServer() { Stop(); }
 
 bool GrpcServer::Start() {
@@ -113,6 +119,16 @@ bool GrpcServer::Start() {
   grpc::ServerBuilder b;
   auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
   std::shared_ptr<grpc::ServerCredentials> creds;
+  // Prefer config-driven TLS. If provided, skip env path entirely.
+  if (impl_->tls.enabled && (!impl_->tls.server_cert_file.empty() && !impl_->tls.server_key_file.empty())) {
+    grpc::SslServerCredentialsOptions opts;
+    try { if (!impl_->tls.root_cert_file.empty()) opts.pem_root_certs = read_all(impl_->tls.root_cert_file); } catch (...) {}
+    try { grpc::SslServerCredentialsOptions::PemKeyCertPair pkc{ read_all(impl_->tls.server_key_file), read_all(impl_->tls.server_cert_file) }; opts.pem_key_cert_pairs.push_back(pkc); } catch (...) {}
+    opts.client_certificate_request = impl_->tls.require_client_cert
+      ? GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY
+      : GRPC_SSL_DONT_REQUEST_CLIENT_CERTIFICATE;
+    creds = grpc::SslServerCredentials(opts);
+  }
   // 默认启用 TLS；如设置了环境变量 VSM_TLS_ENABLED 则允许覆盖（向后兼容）
   const char* en = std::getenv("VSM_TLS_ENABLED");
   bool enable_tls = true;
@@ -120,7 +136,7 @@ bool GrpcServer::Start() {
     std::string v(en); for (auto& c: v) c = (char)std::tolower((unsigned char)c);
     enable_tls = (v=="1"||v=="true");
   }
-  if (enable_tls) {
+  if (!creds && enable_tls) {
     // 使用绝对路径作为默认，避免工作目录差异导致解析失败；不回退到明文。
     std::string ca = std::getenv("VSM_TLS_CA")? std::getenv("VSM_TLS_CA") : std::string("D:/Projects/ai/cv/controlplane/config/certs/ca.pem");
     std::string cert = std::getenv("VSM_TLS_CERT")? std::getenv("VSM_TLS_CERT") : std::string("D:/Projects/ai/cv/controlplane/config/certs/vsm_server.crt");
@@ -130,7 +146,7 @@ bool GrpcServer::Start() {
     try { grpc::SslServerCredentialsOptions::PemKeyCertPair pkc{ read_all(key), read_all(cert) }; opts.pem_key_cert_pairs.push_back(pkc); } catch (...) {}
     opts.client_certificate_request = GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY;
     creds = grpc::SslServerCredentials(opts);
-  } else {
+  } else if (!creds) {
     creds = grpc::InsecureServerCredentials();
   }
   b.AddListeningPort(impl_->addr, creds);

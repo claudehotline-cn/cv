@@ -179,6 +179,8 @@ struct AppConfigPayload {
             // 服务端证书/私钥
             std::string server_cert_file;
             std::string server_key_file;
+            std::string client_cert_file;
+            std::string client_key_file;
             // 是否要求并校验客户端证书（mTLS）
             bool require_client_cert { true };
         } tls;

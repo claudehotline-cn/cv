@@ -140,6 +140,8 @@ void RestServer::Impl::registerRoutes() {
     server.addRoute("POST", "/api/control/apply_pipeline", [this, cpApplyHandler](const HttpRequest& req) {
         auto t0 = std::chrono::steady_clock::now();
         auto resp = cpApplyHandler(req);
+        // For compatibility with VSM HTTP client expecting 200, map 202->200 during test phase
+        if (resp.status_code == 202) resp.status_code = 200;
         recordCpMetric("apply", resp.status_code, t0);
         return resp;
     });

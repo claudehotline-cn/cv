@@ -24,6 +24,7 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 
 set(SRC
     src/main.cpp
+    src/app/config.cpp
     src/app/source_agent.cc
     src/app/controller/source_controller.cc
     src/app/rpc/grpc_server.cc
@@ -31,6 +32,7 @@ set(SRC
     src/app/rest/rest_server.cc
     src/adapters/inputs/ffmpeg_rtsp_reader.cc)
 set(HDR
+    src/app/config.hpp
     src/app/source_agent.h
     src/app/controller/source_controller.h
     src/app/rpc/grpc_server.h
@@ -70,6 +72,25 @@ endif()
 target_link_libraries(vsm_source_control_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
 target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE vsm_source_control_proto)
+
+# Add VA AnalyzerControl proto for gRPC client calls from VSM (attach_apply via gRPC)
+set(VA_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../video-analyzer/proto")
+set(va_pb_cc  ${_GEN_DIR}/analyzer_control.pb.cc)
+set(va_pb_h   ${_GEN_DIR}/analyzer_control.pb.h)
+set(va_grpc_cc ${_GEN_DIR}/analyzer_control.grpc.pb.cc)
+set(va_grpc_h  ${_GEN_DIR}/analyzer_control.grpc.pb.h)
+if (EXISTS "${VA_PROTO_DIR}/analyzer_control.proto")
+  add_custom_command(OUTPUT ${va_pb_cc} ${va_pb_h}
+      COMMAND protobuf::protoc ARGS --cpp_out ${_GEN_DIR} -I ${VA_PROTO_DIR} ${VA_PROTO_DIR}/analyzer_control.proto
+      DEPENDS ${VA_PROTO_DIR}/analyzer_control.proto)
+  add_custom_command(OUTPUT ${va_grpc_cc} ${va_grpc_h}
+      COMMAND protobuf::protoc ARGS --grpc_out ${_GEN_DIR} --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin> -I ${VA_PROTO_DIR} ${VA_PROTO_DIR}/analyzer_control.proto
+      DEPENDS ${VA_PROTO_DIR}/analyzer_control.proto)
+  add_library(va_analyzer_control_proto ${va_pb_cc} ${va_grpc_cc})
+  target_include_directories(va_analyzer_control_proto PUBLIC ${_GEN_DIR})
+  target_link_libraries(va_analyzer_control_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+  target_link_libraries(${PROJECT_NAME} PRIVATE va_analyzer_control_proto)
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${OpenCV_LIBS})
 if (WIN32)

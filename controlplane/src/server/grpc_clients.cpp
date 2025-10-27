@@ -26,6 +26,9 @@ static int g_vsm_retries = 0;
 static std::shared_ptr<grpc::Channel> make_channel(const std::string& addr, bool is_va) {
   grpc::ChannelArguments args;
   args.SetMaxReceiveMessageSize(-1);
+  // Force authority/SNI to localhost to match dev certificates SAN
+  args.SetString("grpc.ssl_target_name_override", "localhost");
+  args.SetString("grpc.default_authority", "localhost");
   auto creds = is_va ? g_va_creds : g_vsm_creds;
   if (!creds) creds = grpc::InsecureChannelCredentials();
   return grpc::CreateCustomChannel(addr, creds, args);

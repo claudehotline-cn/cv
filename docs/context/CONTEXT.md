@@ -1,52 +1,54 @@
-# 项目上下文（最新）
+# 上下文梳理与 TLS/mTLS 统一（最新）
 
-## 架构与通信
-- 组件：Controlplane（CP，HTTP+gRPC 中枢）、Video Analyzer（VA，推理与媒体）、Video Source Manager（VSM，源管理）、web-front（前端）。
-- 通信：前端只连 CP（REST/SSE）；CP 通过 gRPC（TLS/mTLS）调用 VA/VSM；媒体（WHEP）由前端直连 VA（不经 CP 代理）。
+本文整理当前对话与实现：统一 CP/VA/VSM 的 TLS/mTLS 配置来源与证书路径，修复 “wrong version number/UNAVAILABLE/peer did not return a certificate” 等握手问题；完成 VSM→VA 的编排改造（改为 gRPC + mTLS）；并记录 VA 零拷贝路径调试要点与最小化取证流程。
 
-## 关键改动与现状
-1) TLS/mTLS 全链路
-- VA/VSM gRPC 服务器支持 TLS（VA_TLS_*/VSM_TLS_* 环境变量）；CP 客户端凭据从 `controlplane/config/app.yaml` 读取。
-- 脚本：`tools/start_stack_tls.ps1`（一键启动）/`tools/stop_stack.ps1`；mTLS 连通性：`tools/test_mtls_connectivity.ps1`、`tools/test_mtls_negative.ps1`。
+## 架构与职责
+- Controlplane（CP）：对外 REST/SSE；作为 VA/VSM 的 gRPC 客户端；默认启用 TLS/mTLS。
+- Video Analyzer（VA）：RTSP→预处理→推理→后处理→WebRTC/HLS；gRPC Server 默认 TLS/mTLS；前端通过 WHEP（禁止 fallback）。
+- Video Source Manager（VSM）：管理 RTSP 源；gRPC Server 默认 TLS/mTLS；对 VA 进行编排（已由 REST 改为 gRPC）。
+- Web-front：仅与 CP 交互；WHEP 直连 VA 观看流与叠加层。
 
-2) 编排能力（CP 负责）
-- 正向流程（attach_apply → status → drain → delete）与负路径（无效 spec/图）已纳入 `tools/run_cp_smoke.ps1`，默认执行负用例。
-- 独立正向用例：`controlplane/test/scripts/smoke_orch_positive_flow.ps1`。
+## TLS/mTLS 统一方案
+- 全部使用各自 `config/app.yaml`，不再依赖环境变量；相对路径基于“配置目录”解析为绝对路径。
+- 证书放置规范（均在 `config/certs/`）：
+  - CA：`ca.pem`
+  - VA：`va_server.crt`/`va_server.key`，可选 `va_client.crt`/`va_client.key`
+  - VSM：`vsm_server.crt`/`vsm_server.key`
+  - CP 客户端：`cp_client.crt`/`cp_client.key`
+- SNI/Authority：所有 gRPC 客户端设置 `grpc.ssl_target_name_override=localhost` 与 `grpc.default_authority=localhost`，匹配证书 SAN（DNS:localhost, IP:127.0.0.1）。
+- 代码落实：
+  - CP：`controlplane/src/server/config.cpp` 绝对化 `va.tls`/`vsm.tls`；`grpc_clients.cpp` 设置 SNI。
+  - VA：`src/ConfigLoader.cpp` 在 `control_plane.tls` 下绝对化证书路径；gRPC Server 从应用配置读取；VA 可用 `va_client` 证书进行出站 mTLS。
+  - VSM：新增 `src/app/config.{hpp,cpp}`（支持 `server.grpc_listen`、`tls.*` 与 `va.{addr,tls.*}`）；`main` 支持传入配置目录；`source_agent.cc` 改为调用 VA gRPC（mTLS），彻底移除 env fallback。
 
-3) 指标与告警
-- 新增 `cp_backend_errors_total{service,method,code}`，并在 smoke 中验证 method 维度增量（触发一次 VA ApplyPipeline 失败后断言增量）。
-- Grafana/Prometheus：面板与告警聚合口径统一为按 (service,method,code) 维度统计；规则已更新。
+## 关键问题与解决
+- 错误 `wrong version number`：常见于一端非 TLS 或 SNI 不匹配；统一改为配置驱动 + SNI=localhost。
+- 错误 `peer did not return a certificate`：对端未配置/未发送客户端证书；开启 mTLS，并在 `require_client_cert` 下核对客户端证书路径。
+- `unexpected eof while reading`：使用 openssl 直连 gRPC 端口的常见现象，非握手失败；以 gRPC 客户端状态与服务日志为准。
+- VA 零拷贝：
+  - 现象：`[RuntimeSummary][post-open] provider=cpu`、`post.yolo.nms` 失败。
+  - 处置：`NodeModel` 读取引擎 `allow_cpu_fallback/use_io_binding`，默认禁用 CPU 回退；确保 GPU IoBinding、生效后在日志中应见 `gpu_active=1, io_binding=1`。
 
-4) VA REST 迁移与收口
-- 默认禁用 VA 公共 REST：`VA_DISABLE_HTTP_PUBLIC=ON`，仅保留 `/metrics` 与 WHEP `/whep*`。
-- 可选“置灰”开关：`VA_REST_DEPRECATED_410=ON` 时，旧 REST 路由返回 410 Gone（引导迁移至 CP）。
-- 已删除/禁用的 VA REST：subscriptions/sources/system/control/orch/admin 等；仅保留排障必要实现。
+## 配置与启动
+- VA：`video-analyzer/build-ninja/bin/VideoAnalyzer.exe video-analyzer/build-ninja/bin/config`
+- VSM：`video-source-manager/build/bin/VideoSourceManager.exe video-source-manager/config`
+- CP：`controlplane/build/bin/controlplane.exe controlplane/config`
+说明：修改 TLS 配置后需重启三后端；不要清理构建目录。
 
-5) 前端联调（分析页）
-- 修复 dev 代理：`/whep` → VA:8082。
-- 预检兼容：CP 无 `/api/preflight`，前端在非 mock 环境直接 ok:true。
-- 订阅参数补全：创建订阅时在查询串附带 `stream_id/profile/source_uri` 或 `source_id`，CP 侧可据此回填；`.env` 新增 `VITE_DEFAULT_SOURCE_ID=camera_01` 用于兜底。
-- 取证方式：使用 Chrome DevTools MCP 抓取 /api 与 /whep 关键请求和页面截图。
+## 编排与测试
+- VSM → VA：
+  - `POST /api/orch/attach_apply` → VA gRPC `ApplyPipeline`（mTLS）。
+  - `POST /api/orch/detach_remove` → VA gRPC `RemovePipeline`（mTLS）。
+- 前端联调：Chrome DevTools MCP 最小取证（清单≤10条，结构化 JSON），截图落盘；WHEP 201，video `readyState≥2`。
+- 健康度：
+  - 端口监听/HTTP 可达；VA `/metrics`；CP 后端错误分布 by(service,method,code) 有数据。
 
-6) 稳定性与 CI
-- SSE Soak：2 分钟基准（`tools/run_cp_sse_soak_tls.ps1`），日志归档于 `logs/soak_cp_sse_watch_*.txt`。
-- CI：`cp_smoke.yml`（Min，TLS）；`cp_full.yml`（手动，构建 VA/VSM 并跑非 Min 流程，归档 logs/**）。
+## 待办与风险提示
+- 重建并重启三后端以落地上述改动。
+- 校验模型输出名/形状与 multistage graph（`analyzer_multistage_example.yaml`）一致，避免 NMS 失败。
+- 如 CUDA EP 环境不完整，禁用 CPU 回退会让问题显性化，便于定位（缺少 CUDA DLL/驱动、ONNXRuntime CUDA 构建等）。
 
-## 路径与命令
-- CP（TLS 配置）：`controlplane/config/app.yaml`；启动：`controlplane/build/bin/controlplane.exe controlplane/config`。
-- VA：`video-analyzer/build-ninja/bin/VideoAnalyzer.exe video-analyzer/build-ninja/bin/config`。
-- VSM：`video-source-manager/build/bin/VideoSourceManager.exe 127.0.0.1:7070`。
-- 冒烟（TLS）：`pwsh tools/run_cp_smoke.ps1 -BaseUrl http://127.0.0.1:18080 -CfgDir controlplane/config`。
-- mTLS：`pwsh tools/test_mtls_connectivity.ps1`、`pwsh tools/test_mtls_negative.ps1`。
-- SSE Soak：`pwsh tools/run_cp_sse_soak_tls.ps1 -Sec 120`。
+## 参考
+- 开发证书脚本：`tools/gen_dev_certs.ps1`（含 SAN: localhost/127.0.0.1）。
+- 测试 RTSP 源：`rtsp://127.0.0.1:8554/camera_01`。
 
-## 约束与注意
-- C++ 禁止链接 Anaconda；Windows 构建前终止同名进程以免 LNK1104；不要随意清理构建目录。
-- 前端 dev 联调需重启 `npm run dev` 使代理与 .env 生效；分析页至少需选择来源/管线。
-
-## 已知问题与规避
-- 订阅 400：检查是否缺少 `stream_id/profile/source_uri`（或 `source_id`）；前端已补齐兜底，但首次需确认来源存在。
-- 媒体未起播：未见 /whep 201 时，先执行编排正向用例，待 VA 管线 ready 再刷新。
-
-## 结论
-- 现已具备：TLS/mTLS、编排正/负、方法维度指标、SSE Soak（2 分钟）、VA REST 收口、前端联调修复与 CI 入口。后续可扩展更长 Soak 与更多 UI 校验。
