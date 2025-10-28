@@ -81,6 +81,7 @@ inline bool ensureCudaCapacity(void*& pointer, size_t& capacity_bytes, size_t re
 }
 #endif
 #include "core/cuda_tls.hpp"
+#include "core/cuda_tls.hpp"
 } // namespace
 
 namespace {
@@ -150,6 +151,13 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     }
 
     std::scoped_lock lock(impl_->mutex);
+
+#if VA_HAS_CUDA_RUNTIME
+    // Ensure calling thread has a properly initialized CUDA runtime before attaching GPU provider
+    if (use_gpu || toLower(impl_->options.provider) == std::string("cuda") || toLower(impl_->options.provider) == std::string("gpu") || toLower(impl_->options.provider) == std::string("tensorrt")) {
+        va::core::ensure_cuda_ready(impl_->options.device_id);
+    }
+#endif
 
     if (!impl_->env) {
         impl_->env = acquire_shared_env();
@@ -445,6 +453,10 @@ core::TensorView makeTensorView(Ort::Value& value, bool on_gpu) {
 }
 
 bool OrtModelSession::run(const core::TensorView& input, std::vector<core::TensorView>& outputs) {
+    // Route A: make sure this thread has CUDA runtime ready before any GPU/IoBinding work
+#if VA_HAS_CUDA_RUNTIME
+    if (impl_) { va::core::ensure_cuda_ready(impl_->options.device_id); }
+#endif
     if (!loaded_ || !impl_ || !impl_->session) {
         return false;
     }
@@ -733,6 +745,10 @@ bool OrtModelSession::loadModel(const std::string&, bool) {
 }
 
 bool OrtModelSession::run(const core::TensorView&, std::vector<core::TensorView>& outputs) {
+    // Route A: ensure runtime init for threads entering the simplified run path
+#if VA_HAS_CUDA_RUNTIME
+    if (impl_) { va::core::ensure_cuda_ready(impl_->options.device_id); }
+#endif
     outputs.clear();
     return loaded_;
 }

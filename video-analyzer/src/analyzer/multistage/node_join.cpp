@@ -1,6 +1,7 @@
 #include "analyzer/multistage/node_join.hpp"
 #include "analyzer/multistage/nodes_common.hpp"
 #include "core/logger.hpp"
+#include "core/cuda_tls.hpp"
 #ifdef USE_CUDA
 #  if defined(__has_include)
 #    if __has_include(<cuda_runtime.h>)
@@ -33,6 +34,10 @@ static inline size_t product_except(const std::vector<int64_t>& dims, int start,
     size_t v=1; for (int i=start;i<end;++i) v *= (size_t)(dims[i]>0?dims[i]:1); return v; }
 
 bool NodeJoin::process(Packet& p, NodeContext& ctx) {
+    // Ensure CUDA runtime is initialized for device-to-device copies when joining on GPU
+#if VA_MS_JOIN_HAS_CUDA
+    va::core::ensure_cuda_ready();
+#endif
     if (ins_.empty()) return true;
     std::vector<const va::core::TensorView*> tvs;
     tvs.reserve(ins_.size());
