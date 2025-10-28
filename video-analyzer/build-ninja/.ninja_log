@@ -198,7 +198,3 @@
 118	1220	7833609821830446	CMakeFiles/VideoAnalyzer.dir/src/analyzer/multistage/node_join.cpp.obj	469f56bcf2e56076
 128	1252	7833609821930513	CMakeFiles/VideoAnalyzer.dir/src/media/encoder_h264_ffmpeg.cpp.obj	feedc24a35e77479
 1252	9931	7833609833163432	bin/VideoAnalyzer.exe	cdea875becf34fc9
-8	62	7833613762606916	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
-73	581	7833613763263152	CMakeFiles/VideoAnalyzer.dir/src/analyzer/ort_session.cpp.obj	cfd461ddfa15157f
-8	59	7833613929408811	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
-70	2026	7833613930027701	bin/VideoAnalyzer.exe	cdea875becf34fc9
