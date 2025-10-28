@@ -191,3 +191,5 @@
 1662	10766	7833581041756840	bin/VideoAnalyzer.exe	cdea875becf34fc9
 7	54	7833595206598871	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
 63	822	7833595207157362	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	a0497e047769fa3d
+7	49	7833596262089653	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+58	1986	7833596262615035	bin/VideoAnalyzer.exe	cdea875becf34fc9
