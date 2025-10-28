@@ -6,6 +6,7 @@
 #include <numeric>
 #include <vector>
 #include "core/logger.hpp"
+#include "core/cuda_tls.hpp"
 
 namespace {
 
@@ -255,6 +256,10 @@ namespace va::analyzer {
 bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& raw_outputs,
                                          const core::LetterboxMeta& meta,
                                          core::ModelOutput& output) {
+    // Route A: ensure the calling thread has initialized CUDA runtime before using any device ops
+#if VA_HAS_CUDA_RUNTIME
+    va::core::ensure_cuda_ready();
+#endif
     // If no outputs or not a tensor-like shape, fallback
     if (raw_outputs.empty()) {
         return false;
