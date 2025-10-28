@@ -3,6 +3,7 @@
 #include "core/logger.hpp"
 #include "core/buffer_pool.hpp"
 #include "core/gpu_buffer_pool.hpp"
+#include "exec/stream_pool.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -139,6 +140,8 @@ struct OrtModelSession::Impl {
     void* io_input_device_buffer {nullptr};
     size_t io_input_capacity_bytes {0};
     std::unique_ptr<va::core::GpuBufferPool> device_pool;
+    // ORT 计算流（与预处理 TLS 流一致）
+    cudaStream_t ort_stream {nullptr};
 #endif
     std::string resolved_provider {"cpu"};
     bool io_binding_enabled {false};
@@ -157,6 +160,8 @@ OrtModelSession::~OrtModelSession() {
         std::scoped_lock lock(impl_->mutex);
         releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
         impl_->device_pool.reset();
+        // 注意：StreamPool 持有 TLS 流的生命周期；此处不销毁 TLS 流
+        impl_->ort_stream = nullptr;
     }
 #endif
 }
@@ -281,21 +286,50 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
 #if defined(USE_CUDA)
             // Make sure the current thread has CUDA primary context bound
             va::utils::ensure_cuda_ready(impl_->options.device_id);
-            OrtCUDAProviderOptions cuda_opts{};
-            cuda_opts.device_id = impl_->options.device_id;
-            cuda_opts.gpu_mem_limit = SIZE_MAX;
-            cuda_opts.arena_extend_strategy = 1;
-            cuda_opts.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
-            cuda_opts.do_copy_in_default_stream = 1;
+            // 统一 ORT 计算流：使用 CUDA EP V2，并设置 user_compute_stream 为当前 TLS 流
+            const OrtApi& api = Ort::GetApi();
+            OrtCUDAProviderOptionsV2* cuda_v2 = nullptr;
             try {
-                impl_->session_options->AppendExecutionProvider_CUDA(cuda_opts);
+                Ort::ThrowOnError(api.CreateCUDAProviderOptions(&cuda_v2));
+                // 获取 TLS 流（由预处理/内核共用）
+                impl_->ort_stream = va::exec::StreamPool::instance().tls();
+                std::vector<std::string> opt_storage; opt_storage.reserve(8);
+                std::vector<const char*> keys;   keys.reserve(8);
+                std::vector<const char*> values; values.reserve(8);
+                opt_storage.emplace_back(std::to_string(impl_->options.device_id));
+                keys.emplace_back("device_id"); values.emplace_back(opt_storage.back().c_str());
+                // 不在默认流复制，改用用户计算流
+                opt_storage.emplace_back("0"); keys.emplace_back("do_copy_in_default_stream"); values.emplace_back(opt_storage.back().c_str());
+                // 传入用户计算流指针
+                opt_storage.emplace_back(std::to_string(reinterpret_cast<uintptr_t>(impl_->ort_stream)));
+                keys.emplace_back("user_compute_stream"); values.emplace_back(opt_storage.back().c_str());
+                Ort::ThrowOnError(api.UpdateCUDAProviderOptions(cuda_v2, keys.data(), values.data(), keys.size()));
+                Ort::ThrowOnError(api.SessionOptionsAppendExecutionProvider_CUDA_V2(*impl_->session_options, cuda_v2));
+                provider_appended = true;
+                impl_->use_gpu = true;
+                provider = "cuda";
                 VA_LOG_C(::va::core::LogLevel::Info, "analyzer.ort")
-                    << "CUDA EP appended device=" << impl_->options.device_id
-                    << " do_copy_in_default_stream=1";
-            } catch (const std::exception& ex) {
-                VA_LOG_WARN() << "AppendExecutionProvider_CUDA failed: " << ex.what();
+                    << "CUDA EP(V2) appended device=" << impl_->options.device_id
+                    << " user_stream=0x" << std::hex << reinterpret_cast<uintptr_t>(impl_->ort_stream) << std::dec;
+            } catch (const Ort::Exception& ex) {
+                VA_LOG_WARN() << "Append CUDA EP(V2) failed: " << ex.what() << "; fallback to legacy EP.";
+                if (cuda_v2) api.ReleaseCUDAProviderOptions(cuda_v2);
+                // 退回旧 API
+                OrtCUDAProviderOptions cuda_opts{};
+                cuda_opts.device_id = impl_->options.device_id;
+                cuda_opts.gpu_mem_limit = SIZE_MAX;
+                cuda_opts.arena_extend_strategy = 1;
+                cuda_opts.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
+                cuda_opts.do_copy_in_default_stream = 1;
+                impl_->session_options->AppendExecutionProvider_CUDA(cuda_opts);
+                provider_appended = true;
+                impl_->use_gpu = true;
+                provider = "cuda";
+            } catch (...) {
+                if (cuda_v2) api.ReleaseCUDAProviderOptions(cuda_v2);
                 throw;
             }
+            if (cuda_v2) api.ReleaseCUDAProviderOptions(cuda_v2);
             provider_appended = true;
             impl_->use_gpu = true;
             provider = "cuda";
@@ -558,7 +592,9 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
                     }
 #if VA_HAS_CUDA_RUNTIME
                     if (dev_ptr) {
-                        cudaError_t err = cudaMemcpy(dev_ptr, input.data, bytes, cudaMemcpyHostToDevice);
+                        // 使用 ORT 计算流进行 H2D，保证与推理同一 stream 顺序一致
+                        cudaError_t err = cudaMemcpyAsync(dev_ptr, input.data, bytes, cudaMemcpyHostToDevice,
+                                                          impl_->ort_stream ? impl_->ort_stream : 0);
                         if (err == cudaSuccess) {
                             VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.bind", 1000)
                                 << "path=iob H2D bytes=" << bytes;
@@ -576,17 +612,33 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
                     }
 #endif
                 } else {
-                    // Caller-provided device pointer (best-effort)
-                    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.bind", 1000)
-                        << "path=iob dev_input bytes=" << bytes;
-                    Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
-                    input_holders.emplace_back(Ort::Value::CreateTensor<float>(
-                        input_mem_dev,
-                        static_cast<float*>(input.data),
-                        element_count,
-                        const_cast<int64_t*>(input.shape.data()),
-                        input.shape.size()));
-                    bound_device_input = true;
+                    // 输入已在 GPU：进行 D2D 拷贝至会话缓冲，使用 ORT 计算流保证可见性
+                    void* dev_ptr = nullptr;
+                    if (impl_->device_pool) {
+                        pooled_input_mem = impl_->device_pool->acquire(bytes);
+                        dev_ptr = pooled_input_mem.ptr;
+                    }
+                    if (!dev_ptr) {
+                        if (ensureCudaCapacity(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes, bytes)) {
+                            dev_ptr = impl_->io_input_device_buffer;
+                        }
+                    }
+                    if (dev_ptr) {
+                        cudaError_t err = cudaMemcpyAsync(dev_ptr, input.data, bytes, cudaMemcpyDeviceToDevice,
+                                                          impl_->ort_stream ? impl_->ort_stream : 0);
+                        if (err == cudaSuccess) {
+                            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.bind", 1000)
+                                << "path=iob D2D bytes=" << bytes;
+                            Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
+                            input_holders.emplace_back(Ort::Value::CreateTensor<float>(
+                                input_mem_dev,
+                                static_cast<float*>(dev_ptr),
+                                element_count,
+                                const_cast<int64_t*>(input.shape.data()),
+                                input.shape.size()));
+                            bound_device_input = true;
+                        }
+                    }
                 }
             }
 #endif
