@@ -184,3 +184,8 @@
 54	1472	7832899720086529	CMakeFiles/va_cuda_kernels.dir/src/analyzer/cuda/overlay_nv12_kernels.cu.obj	47aa61a9dc5db2bd
 1472	1526	7832899734270592	va_cuda_kernels.lib	e572b18f41d33a1a
 1526	3599	7832899734810970	bin/VideoAnalyzer.exe	cdea875becf34fc9
+402	459	7833581029159098	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+477	1522	7833581029905042	CMakeFiles/VideoAnalyzer.dir/src/analyzer/ort_session.cpp.obj	cfd461ddfa15157f
+653	1610	7833581031668470	CMakeFiles/VideoAnalyzer.dir/src/analyzer/preproc_letterbox_cuda.cpp.obj	7f66f2a017feaa1c
+658	1662	7833581031718490	CMakeFiles/VideoAnalyzer.dir/src/analyzer/renderer_overlay_cuda.cpp.obj	65794b68275e52a
+1662	10766	7833581041756840	bin/VideoAnalyzer.exe	cdea875becf34fc9

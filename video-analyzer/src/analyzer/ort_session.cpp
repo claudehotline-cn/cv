@@ -80,6 +80,7 @@ inline bool ensureCudaCapacity(void*& pointer, size_t& capacity_bytes, size_t re
     return true;
 }
 #endif
+#include "core/cuda_tls.hpp"
 } // namespace
 
 namespace {
@@ -479,6 +480,10 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
 
 #if VA_HAS_CUDA_RUNTIME
             if (impl_->use_gpu && impl_->options.use_io_binding) {
+#if VA_HAS_CUDA_RUNTIME
+                // Route A: ensure per-thread CUDA runtime is initialized for IoBinding path
+                va::core::ensure_cuda_ready(impl_->options.device_id);
+#endif
                 // Stage host F32 tensor to device buffer if needed
                 const size_t bytes = element_count * sizeof(float);
                 if (!input.on_gpu) {

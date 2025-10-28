@@ -2,6 +2,7 @@
 #include "analyzer/preproc_letterbox_cpu.hpp"
 #include "core/logger.hpp"
 #include "core/gpu_buffer_pool.hpp"
+#include "core/cuda_tls.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #if defined(VA_HAS_CUDA_KERNELS)
@@ -125,6 +126,9 @@ void LetterboxPreprocessorCUDA::releaseInput() {
 }
 
 bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out, core::LetterboxMeta& meta) {
+#if VA_HAS_CUDA_RUNTIME
+    va::core::ensure_cuda_ready();
+#endif
     if (in.width <= 0 || in.height <= 0 || (in.bgr.empty() && !in.has_device_surface)) {
         return false;
     }
