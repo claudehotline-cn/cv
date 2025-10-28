@@ -5,6 +5,7 @@
 #include "media/encoder.hpp"
 #include "media/transport.hpp"
 #include "core/logger.hpp"
+#include "utils/cuda_ctx_guard.hpp"
 
 #include <chrono>
 #include <thread>
@@ -145,6 +146,8 @@ va::media::ITransport::Stats Pipeline::transportStats() const {
 }
 
 void Pipeline::run() {
+    // Ensure this worker thread is CUDA-ready if GPU will be used downstream.
+    va::utils::ensure_cuda_ready(0);
     while (running_.load()) {
         try {
             core::Frame frame;

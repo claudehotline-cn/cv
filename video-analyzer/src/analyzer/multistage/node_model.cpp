@@ -80,6 +80,15 @@ bool NodeModel::open(NodeContext& ctx) {
 #endif
 
     if (!model_path_.empty()) {
+#ifdef USE_ONNXRUNTIME
+        VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model")
+            << "open: model_path='" << model_path_ << "' provider_opt='" << opt.provider
+            << "' device_id=" << opt.device_id
+            << " use_io_binding=" << std::boolalpha << opt.use_io_binding
+            << " allow_cpu_fallback=" << opt.allow_cpu_fallback
+            << " device_output_views=" << opt.device_output_views
+            << " stage_device_outputs=" << opt.stage_device_outputs;
+#endif
         if (!s->loadModel(model_path_, /*use_gpu*/false /*opt controls EP*/)) {
             VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "failed to load model: " << model_path_;
             return false;
@@ -102,6 +111,11 @@ bool NodeModel::open(NodeContext& ctx) {
                     << " device_binding=" << ri.device_binding_active;
             } catch (...) { /* best-effort */ }
         }
+        // 输出名统计
+        try {
+            auto names = s->outputNames();
+            VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model") << "outputs_declared=" << names.size();
+        } catch (...) {}
     }
     session_ = std::move(s);
     return true;
@@ -110,6 +124,12 @@ bool NodeModel::open(NodeContext& ctx) {
 bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
     auto it = p.tensors.find(in_key_);
     if (it == p.tensors.end()) return false;
+    // 输入张量形状/设备日志（Info，节流由上层频率控制）
+    {
+        std::string shp; for (size_t i=0;i<it->second.shape.size();++i){ shp += (i?"x":""); shp += std::to_string(it->second.shape[i]); }
+        VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model")
+            << "infer: in_key='" << in_key_ << "' shape=" << shp << " on_gpu=" << std::boolalpha << it->second.on_gpu;
+    }
     std::vector<va::core::TensorView> outs;
     if (!session_ || !session_->run(it->second, outs)) { infer_fail_count_.fetch_add(1, std::memory_order_relaxed); return false; }
     // Map outputs to keys (support multiple outputs and auto keys)

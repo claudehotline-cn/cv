@@ -136,7 +136,21 @@ bool Graph::run(Packet& p, NodeContext& ctx) {
             continue; // skip this node for this packet
         }
         if (!nodes_[id].node->process(p, ctx)) {
-            VA_LOG_C(::va::core::LogLevel::Error, "composition") << "Graph node failed: name='" << nodes_[id].name << "' type='" << nodes_[id].type << "'";
+            // 补充上下文：当前可用张量键与形状（最多3项），辅助定位问题
+            int shown = 0;
+            std::ostringstream os; os << "Graph node failed: name='" << nodes_[id].name << "' type='" << nodes_[id].type << "'";
+            if (!p.tensors.empty()) {
+                os << " tensors=[";
+                for (const auto& kv : p.tensors) {
+                    if (shown++ >= 3) { os << "..."; break; }
+                    os << kv.first << ":";
+                    const auto& tv = kv.second;
+                    for (size_t i=0;i<tv.shape.size();++i){ os << (i?"x":""); os << tv.shape[i]; }
+                    os << (tv.on_gpu?"(gpu)":"(cpu)") << ",";
+                }
+                os << "]";
+            }
+            VA_LOG_C(::va::core::LogLevel::Error, "composition") << os.str();
             return false;
         }
     }

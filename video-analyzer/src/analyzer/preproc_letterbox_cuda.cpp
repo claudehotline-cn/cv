@@ -10,6 +10,7 @@
 
 #include <vector>
 #include <cmath>
+#include "exec/stream_pool.hpp"
 
 #if defined(USE_CUDA)
 #if defined(__has_include)
@@ -160,7 +161,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
                 static_cast<float*>(device_ptr_),
                 scale, pad_x, pad_y,
                 true,
-                nullptr);
+                va::exec::StreamPool::instance().tls());
             if (err == cudaSuccess) {
                 out.data = device_ptr_;
                 out.shape = {1, 3, out_h, out_w};
@@ -324,7 +325,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
         static_cast<float*>(device_ptr_),
         scale, pad_x, pad_y,
         true,
-        nullptr);
+        va::exec::StreamPool::instance().tls());
     if (err != cudaSuccess)
     #endif
     {

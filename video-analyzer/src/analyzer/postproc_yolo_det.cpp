@@ -6,6 +6,8 @@
 #include <numeric>
 #include <vector>
 #include "core/logger.hpp"
+#include "exec/stream_pool.hpp"
+#include "analyzer/logging_util.hpp"
 
 namespace {
 
@@ -111,31 +113,32 @@ namespace va::analyzer {
 bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_outputs,
                                      const core::LetterboxMeta& meta,
                                      core::ModelOutput& output) {
+    auto lvl = va::analyzer::logutil::log_level_for_tag("pp.yolo");
+    auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("pp.yolo");
     output.boxes.clear();
     output.masks.clear();
 
-    if (raw_outputs.empty()) {
-        return false;
-    }
+    if (raw_outputs.empty()) { VA_LOG_THROTTLED(lvl, "pp.yolo", thr) << "no raw outputs"; return false; }
 
     const core::TensorView& tensor = raw_outputs.front();
-    if (!tensor.data || tensor.shape.size() < 3) {
-        return false;
-    }
+    if (!tensor.data || tensor.shape.size() < 3) { VA_LOG_THROTTLED(lvl, "pp.yolo", thr) << "invalid tensor data=" << (tensor.data?"1":"0") << " dims=" << tensor.shape.size(); return false; }
 
     const float* data = static_cast<const float*>(tensor.data);
     int64_t dim0 = tensor.shape[0];
     int64_t dim1 = tensor.shape[1];
     int64_t dim2 = tensor.shape[2];
 
-    if (dim0 != 1) {
-        return false;
-    }
+    if (dim0 != 1) { VA_LOG_THROTTLED(lvl, "pp.yolo", thr) << "unexpected dim0=" << dim0; return false; }
 
     int64_t num_det = 0;
     int64_t num_attrs = 0;
     bool channels_first = false; // layout [C, N] when true
 
+    // 输入形状日志（一次/节流间隔）
+    {
+        std::string shp; for (size_t i=0;i<tensor.shape.size();++i){ shp += (i?"x":""); shp += std::to_string(tensor.shape[i]); }
+        VA_LOG_THROTTLED(lvl, "pp.yolo", thr) << "in_shape=" << shp << " conf_thr=" << getScoreThreshold() << " nms_thr=" << getNmsThreshold() << " on_gpu=" << std::boolalpha << tensor.on_gpu;
+    }
     // Robust layout detection for YOLO outputs: prefer the dimension that looks like num_attrs (<=256)
     auto looks_like_attrs = [](int64_t v){ return v >= 5 && v <= 256; };
     // Candidate A: [N, C]
@@ -312,7 +315,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     auto err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
                         num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
                         getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
-                        d_boxes, d_scores, d_classes, d_count, nullptr);
+                        d_boxes, d_scores, d_classes, d_count, va::exec::StreamPool::instance().tls());
                     if (err_decode == cudaSuccess) {
                         int h_count = 0;
                         if (cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess) {
@@ -338,7 +341,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                                         cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice) == cudaSuccess &&
                                         cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice) == cudaSuccess &&
                                         cudaMalloc(&d_keep, static_cast<size_t>(h_count)*sizeof(int)) == cudaSuccess &&
-                                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, h_count, getNmsThreshold(), d_keep, nullptr, nullptr) == cudaSuccess) {
+                                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, h_count, getNmsThreshold(), d_keep, nullptr, va::exec::StreamPool::instance().tls()) == cudaSuccess) {
                                         std::vector<int> h_keep(h_count, 0);
                                         if (cudaMemcpy(h_keep.data(), d_keep, static_cast<size_t>(h_count)*sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess) {
                                             output.boxes.clear(); output.masks.clear();
@@ -463,7 +466,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     if (cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemset(d_kept, 0, sizeof(int))!=cudaSuccess) goto CLEAN5;
-    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, getNmsThreshold(), d_keep, d_kept, nullptr)!=cudaSuccess) goto CLEAN5;
+    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, getNmsThreshold(), d_keep, d_kept, va::exec::StreamPool::instance().tls())!=cudaSuccess) goto CLEAN5;
     {
         std::vector<int> h_keep(N);
         if (cudaMemcpy(h_keep.data(), d_keep, N*sizeof(int), cudaMemcpyDeviceToHost)!=cudaSuccess) goto CLEAN5;

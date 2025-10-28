@@ -11,6 +11,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include "utils/cuda_ctx_guard.hpp"
 
 #ifdef USE_ONNXRUNTIME
 #include <onnxruntime_c_api.h>
@@ -37,6 +38,31 @@ namespace va::analyzer {
 #ifdef USE_ONNXRUNTIME
 
 namespace {
+inline const char* elemTypeToStr(ONNXTensorElementDataType t) {
+    switch (t) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: return "f32";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8: return "u8";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8: return "i8";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16: return "u16";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16: return "i16";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32: return "i32";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64: return "i64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING: return "str";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL: return "bool";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: return "f16";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE: return "f64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32: return "u32";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64: return "u64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64: return "c64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128: return "c128";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16: return "bf16";
+    default: return "unk";
+    }
+}
+
+inline std::string shapeToStr(const std::vector<int64_t>& s) {
+    std::string r; for (size_t i=0;i<s.size();++i){ r += (i?"x":""); r += std::to_string((long long)s[i]); } return r;
+}
 inline std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -253,13 +279,23 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
 
         if (!provider_appended && (impl_->use_gpu || provider == "cuda")) {
 #if defined(USE_CUDA)
+            // Make sure the current thread has CUDA primary context bound
+            va::utils::ensure_cuda_ready(impl_->options.device_id);
             OrtCUDAProviderOptions cuda_opts{};
             cuda_opts.device_id = impl_->options.device_id;
             cuda_opts.gpu_mem_limit = SIZE_MAX;
             cuda_opts.arena_extend_strategy = 1;
             cuda_opts.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
             cuda_opts.do_copy_in_default_stream = 1;
-            impl_->session_options->AppendExecutionProvider_CUDA(cuda_opts);
+            try {
+                impl_->session_options->AppendExecutionProvider_CUDA(cuda_opts);
+                VA_LOG_C(::va::core::LogLevel::Info, "analyzer.ort")
+                    << "CUDA EP appended device=" << impl_->options.device_id
+                    << " do_copy_in_default_stream=1";
+            } catch (const std::exception& ex) {
+                VA_LOG_WARN() << "AppendExecutionProvider_CUDA failed: " << ex.what();
+                throw;
+            }
             provider_appended = true;
             impl_->use_gpu = true;
             provider = "cuda";
@@ -324,6 +360,24 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
 
     impl_->resolved_provider = provider_appended ? provider : std::string{"cpu"};
     impl_->cpu_fallback = gpu_requested && !provider_appended;
+
+    // Summarize model IO after load
+    try {
+        size_t in0_rank = 0; std::vector<int64_t> in0_shape; const char* in0_dtype = "?";
+        if (input_count > 0) {
+            Ort::TypeInfo ti = impl_->session->GetInputTypeInfo(0);
+            auto tt = ti.GetTensorTypeAndShapeInfo();
+            in0_rank = tt.GetShape().size();
+            in0_shape = tt.GetShape();
+            in0_dtype = elemTypeToStr(tt.GetElementType());
+        }
+        VA_LOG_C(::va::core::LogLevel::Info, "analyzer.ort")
+            << "load: provider_req='" << provider << "' resolved='" << impl_->resolved_provider
+            << "' gpu_req=" << std::boolalpha << gpu_requested
+            << " cpu_fallback=" << impl_->cpu_fallback
+            << " inputs=" << input_count << " outputs=" << output_count
+            << " in0_dtype=" << in0_dtype << " in0_shape=" << shapeToStr(in0_shape);
+    } catch (...) { /* best-effort */ }
 
     // Lightweight warmup: run N inference passes with a zero tensor on CPU memory.
     // Initializes EP kernels/graphs to reduce the first-frame latency.
@@ -465,6 +519,14 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
     }
 
     try {
+        // Pre-run summary (once per throttle window)
+        try {
+            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.in", 1000)
+                << "in_shape=" << shapeToStr(input.shape)
+                << " on_gpu=" << std::boolalpha << input.on_gpu
+                << " provider=" << (impl_->resolved_provider.empty()?"cpu":impl_->resolved_provider)
+                << " use_iob=" << (impl_->io_binding!=nullptr);
+        } catch (...) { /* ignore */ }
         if (impl_->io_binding) {
             impl_->io_binding->ClearBoundInputs();
             impl_->io_binding->ClearBoundOutputs();
@@ -498,6 +560,8 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
                     if (dev_ptr) {
                         cudaError_t err = cudaMemcpy(dev_ptr, input.data, bytes, cudaMemcpyHostToDevice);
                         if (err == cudaSuccess) {
+                            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.bind", 1000)
+                                << "path=iob H2D bytes=" << bytes;
                             Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
                             input_holders.emplace_back(Ort::Value::CreateTensor<float>(
                                 input_mem_dev,
@@ -513,6 +577,8 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
 #endif
                 } else {
                     // Caller-provided device pointer (best-effort)
+                    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.bind", 1000)
+                        << "path=iob dev_input bytes=" << bytes;
                     Ort::MemoryInfo input_mem_dev("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
                     input_holders.emplace_back(Ort::Value::CreateTensor<float>(
                         input_mem_dev,
@@ -545,6 +611,10 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             impl_->io_binding->BindInput(input_name, input_holders.front());
 
             const bool bind_outputs_to_device = impl_->options.use_io_binding && impl_->use_gpu && (impl_->options.stage_device_outputs || impl_->options.device_output_views);
+            VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.bind", 1000)
+                << "bind_outputs_to_device=" << std::boolalpha << bind_outputs_to_device
+                << " stage_outputs=" << impl_->options.stage_device_outputs
+                << " device_views=" << impl_->options.device_output_views;
             for (const char* output_name : impl_->output_names) {
                 if (bind_outputs_to_device) {
 #if VA_HAS_CUDA_RUNTIME
@@ -569,6 +639,27 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             outputs.clear();
             outputs.reserve(impl_->last_outputs.size());
             impl_->staged_outputs.clear();
+
+            // 运行时输出形状日志（节流）
+            try {
+                auto lvl = ::va::core::LogLevel::Debug; // default
+                auto n = impl_->last_outputs.size();
+                if (n > 0) {
+                    std::string shapes;
+                    for (size_t i=0;i<n && i<3;i++) {
+                        auto& v = impl_->last_outputs[i];
+                        if (!v.IsTensor()) { shapes += (i? ",":""); shapes += "non-tensor"; continue; }
+                        auto info = v.GetTensorTypeAndShapeInfo(); auto s = info.GetShape();
+                        if (i) shapes += ","; for (size_t k=0;k<s.size();++k){ shapes += (k?"x":""); shapes += std::to_string((long long)s[k]); }
+                    }
+                    VA_LOG_THROTTLED(lvl, "ort.run", 1000) << "outputs=" << n << " out0..2_shapes=" << shapes
+                        << " provider=" << (impl_->resolved_provider.empty()?"cpu":impl_->resolved_provider)
+                        << " io_bind=" << std::boolalpha << impl_->io_binding_enabled
+                        << " dev_bind=" << impl_->device_binding_active;
+                } else {
+                    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run", 1000) << "outputs=0";
+                }
+            } catch (...) { /* best-effort */ }
 
             const bool prefer_device_views = impl_->options.device_output_views && impl_->use_gpu && impl_->options.use_io_binding && bind_outputs_to_device;
             const bool stage_outputs = impl_->options.stage_device_outputs && impl_->use_gpu && impl_->options.use_io_binding && !prefer_device_views;
@@ -653,10 +744,30 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             }
 #endif
         } else {
+            // Non-IoBinding path. If input is on GPU, stage to host before creating CPU tensor.
+            std::vector<float> host_input; // keep alive until after Run()
+            const void* input_data_ptr = input.data;
+#if VA_HAS_CUDA_RUNTIME
+            if (input.on_gpu && input.data && element_count > 0) {
+                try {
+                    host_input.resize(element_count);
+                    cudaError_t err = cudaMemcpy(host_input.data(), input.data, element_count*sizeof(float), cudaMemcpyDeviceToHost);
+                    if (err == cudaSuccess) {
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.bind", 1000)
+                            << "path=non-iob D2H bytes=" << (element_count*sizeof(float));
+                        input_data_ptr = host_input.data();
+                    } else {
+                        VA_LOG_WARN() << "Non-IOB path: cudaMemcpy D2H failed, falling back to original pointer (may be invalid for CPU)";
+                    }
+                } catch (...) {
+                    // If allocation failed, continue with original pointer (may fail in ORT)
+                }
+            }
+#endif
             Ort::MemoryInfo input_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
             Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
                 input_mem,
-                static_cast<float*>(input.data),
+                const_cast<float*>(static_cast<const float*>(input_data_ptr)),
                 element_count,
                 const_cast<int64_t*>(input.shape.data()),
                 input.shape.size());
@@ -672,6 +783,25 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             for (auto& value : impl_->last_outputs) {
                 outputs.emplace_back(makeTensorView(value, false));
             }
+            // Log outputs (non-IoBinding)
+            try {
+                auto n = impl_->last_outputs.size();
+                if (n > 0) {
+                    std::string shapes;
+                    for (size_t i=0;i<n && i<3;i++) {
+                        auto& v = impl_->last_outputs[i];
+                        if (!v.IsTensor()) { shapes += (i? ",":""); shapes += "non-tensor"; continue; }
+                        auto info = v.GetTensorTypeAndShapeInfo(); auto s = info.GetShape();
+                        if (i) shapes += ","; for (size_t k=0;k<s.size();++k){ shapes += (k?"x":""); shapes += std::to_string((long long)s[k]); }
+                    }
+                    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run", 1000) << "outputs=" << n << " out0..2_shapes=" << shapes
+                        << " provider=" << (impl_->resolved_provider.empty()?"cpu":impl_->resolved_provider)
+                        << " io_bind=" << std::boolalpha << impl_->io_binding_enabled
+                        << " dev_bind=" << impl_->device_binding_active;
+                } else {
+                    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run", 1000) << "outputs=0 (non-IOB)";
+                }
+            } catch (...) { /* ignore */ }
         }
         if (!impl_->io_binding) {
             impl_->device_binding_active = false;

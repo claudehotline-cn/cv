@@ -20,6 +20,13 @@ NodeNmsYolo::NodeNmsYolo(const std::unordered_map<std::string,std::string>& cfg)
 bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     auto it = p.tensors.find(in_key_);
     if (it == p.tensors.end()) return false;
+    {
+        // 输入形状与cuda偏好日志
+        std::string shp; for (size_t i=0;i<it->second.shape.size();++i){ shp += (i?"x":""); shp += std::to_string(it->second.shape[i]); }
+        auto lvl = va::analyzer::logutil::log_level_for_tag("ms.nms");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms");
+        VA_LOG_THROTTLED(lvl, "ms.nms", thr) << "in_key='" << in_key_ << "' shape=" << shp << " on_gpu=" << std::boolalpha << it->second.on_gpu << " prefer_cuda=" << prefer_cuda_;
+    }
     std::vector<va::core::TensorView> raw{it->second};
     va::core::ModelOutput mo;
     // Bridge graph-level thresholds到后处理（通过环境变量，避免大范围改动接口）
@@ -56,6 +63,8 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
 #ifdef USE_CUDA
         va::analyzer::YoloDetectionPostprocessorCUDA gpu_pp;
         if (!gpu_pp.run(raw, p.letterbox, mo)) {
+            auto lvl = va::analyzer::logutil::log_level_for_tag("ms.nms"); auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms");
+            VA_LOG_THROTTLED(lvl, "ms.nms", thr) << "gpu_nms_run=false -> fallback cpu";
             // Fallback to CPU postproc if CUDA path fails (keep pipeline alive)
             va::analyzer::YoloDetectionPostprocessor cpu_pp;
             if (!cpu_pp.run(raw, p.letterbox, mo)) return false;

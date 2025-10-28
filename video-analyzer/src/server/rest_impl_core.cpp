@@ -1,6 +1,8 @@
 #include "server/rest_impl.hpp"
 #include "analyzer/model_registry.hpp"
 #include "core/wal.hpp"
+#include "utils/cuda_ctx_guard.hpp"
+#include "exec/gpu_executor.hpp"
 
 namespace va::server {
 
@@ -102,7 +104,32 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
                     if (sx.isMember("model_id") && sx["model_id"].isString()) {
                         std::string mid = sx["model_id"].asString();
                         if (!mid.empty()) {
-                            if (!app.loadModel(mid)) { op->reason = normalize_reason(app.lastError(), "load_model_failed"); throw std::runtime_error("load_model_failed"); }
+                            // Dispatch to GPU HookedExecutor to ensure CUDA context is initialized on worker threads.
+                            std::exception_ptr ep;
+                            std::promise<void> done;
+                            bool submitted = va::exec::gpu_executor().trySubmit([&]{
+                                try {
+                                    if (!app.loadModel(mid)) {
+                                        throw std::runtime_error("load_model_failed");
+                                    }
+                                } catch (...) {
+                                    ep = std::current_exception();
+                                }
+                                try { done.set_value(); } catch (...) {}
+                            });
+                            if (!submitted) {
+                                // fallback to synchronous execution on current thread with CUDA ensure
+                                va::utils::ensure_cuda_ready(0);
+                                if (!app.loadModel(mid)) { op->reason = normalize_reason(app.lastError(), "load_model_failed"); throw std::runtime_error("load_model_failed"); }
+                            } else {
+                                auto future = done.get_future();
+                                future.wait();
+                                if (ep) { std::rethrow_exception(ep); }
+                            }
+                            if (!app.isModelActive(mid)) {
+                                op->reason = normalize_reason(app.lastError(), "load_model_failed");
+                                throw std::runtime_error("load_model_failed");
+                            }
                         }
                     }
                 } catch (...) { if (op->phase != "failed") { op->status.store(lro::Status::Failed, std::memory_order_relaxed); op->phase = "failed"; } throw; }
