@@ -3,7 +3,6 @@
 #include "core/logger.hpp"
 #include "analyzer/logging_util.hpp"
 #include "core/global_metrics.hpp"
-#include "core/cuda_tls.hpp"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/core.hpp>
 #include <vector>
@@ -20,9 +19,6 @@
 namespace va::analyzer {
 
 bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& output, core::Frame& out) {
-#ifdef USE_CUDA
-    va::core::ensure_cuda_ready();
-#endif
     auto log_once = [&](const char* path, size_t boxes, bool kernels, int thick, float alpha, const core::Frame& f){
         if (!debug_printed_) {
             auto lvl = va::analyzer::logutil::log_level_for_tag("overlay.cuda");
