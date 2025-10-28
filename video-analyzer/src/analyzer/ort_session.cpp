@@ -283,8 +283,8 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
         impl_->use_gpu = false;
     }
 
-    // If GPU was requested (use_gpu flag) but provider append failed and CPU fallback is disabled, fail fast
-    if (!provider_appended && !impl_->options.allow_cpu_fallback && impl_->use_gpu) {
+    // If GPU was requested but provider append failed and CPU fallback is disabled, fail fast
+    if (!provider_appended && !impl_->options.allow_cpu_fallback && gpu_requested) {
         VA_LOG_ERROR() << "Execution provider configuration failed and CPU fallback disabled.";
         loaded_ = false;
         return false;
