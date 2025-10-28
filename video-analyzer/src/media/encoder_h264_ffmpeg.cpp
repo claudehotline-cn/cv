@@ -7,7 +7,6 @@
 #include <opencv2/core.hpp>
 #include "core/logger.hpp"
 #include "core/global_metrics.hpp"
-#include "core/cuda_tls.hpp"
 #if defined(USE_CUDA)
 #  if defined(__has_include)
 #    if __has_include(<cuda_runtime.h>)
@@ -53,10 +52,6 @@ FfmpegH264Encoder::~FfmpegH264Encoder() = default;
 
 bool FfmpegH264Encoder::open(const Settings& settings) {
 #ifdef USE_FFMPEG
-    // Ensure CUDA runtime is initialized for threads that will interact with NVENC hwframes
-#if VA_HAS_CUDA_RUNTIME
-    va::core::ensure_cuda_ready();
-#endif
     close();
 
     std::string codec_name = settings.codec;
@@ -328,10 +323,6 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
 
 bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet) {
 #ifdef USE_FFMPEG
-    // Ensure runtime ready before any potential device memory operations
-#if VA_HAS_CUDA_RUNTIME
-    va::core::ensure_cuda_ready();
-#endif
     if (!opened_ || !codec_ctx_ || !frame_) {
         if (!use_jpeg_) {
             return false;
