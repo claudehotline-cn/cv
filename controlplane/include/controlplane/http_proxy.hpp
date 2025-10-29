@@ -1,12 +1,15 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include "controlplane/http_server.hpp"
 
 namespace controlplane {
 
-// Very small HTTP 1.1 proxy helper for POST/PATCH/DELETE to VA REST (WHEP).
-// Connects to host:port, forwards method/path/body with minimal headers,
-// parses status/content-type/Location and body. Returns true on success.
+// HTTP/1.1 proxy helper for WHEP (POST/PATCH/DELETE).
+// - Forwards essential headers (Authorization/Accept/Content-Type/If-Match)
+// - Forces Accept-Encoding: identity, Connection: close
+// - Handles Transfer-Encoding: chunked (de-chunk)
+// - Parses and rewrites Location to CP-relative
+// Returns true on success and fills out response/body/contentType/status.
 bool proxy_http_simple(const std::string& host,
                        int port,
                        const std::string& method,
@@ -17,4 +20,3 @@ bool proxy_http_simple(const std::string& host,
                        std::string* out_location);
 
 } // namespace controlplane
-

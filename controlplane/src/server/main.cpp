@@ -380,7 +380,7 @@ int main(int argc, char** argv) {
         r.status = 200; r.body = "";
         r.extraHeaders += "Access-Control-Allow-Origin: *\r\n";
         r.extraHeaders += "Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n";
-        r.extraHeaders += "Access-Control-Allow-Headers: Content-Type, Accept\r\n";
+        r.extraHeaders += "Access-Control-Allow-Headers: Content-Type, Accept, Authorization, If-Match\r\n";
         r.extraHeaders += "Access-Control-Max-Age: 86400\r\n";
         emit("/whep", r.status); return r;
       }
@@ -403,8 +403,9 @@ int main(int argc, char** argv) {
         r.status = 502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/whep", r.status); return r;
       }
       r = std::move(proxied);
-      // CORS allow
+      // CORS allow + expose Location/ETag/Accept-Patch to JS
       r.extraHeaders += "Access-Control-Allow-Origin: *\r\n";
+      r.extraHeaders += "Access-Control-Expose-Headers: Location, ETag, Accept-Patch\r\n";
       // Rewrite Location to CP-relative when present (keep path only)
       if (!out_loc.empty()) {
         try {
