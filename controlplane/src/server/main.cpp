@@ -285,10 +285,31 @@ int main(int argc, char** argv) {
         }
         r.extraHeaders += std::string("ETag: ") + etag + "\r\nAccess-Control-Expose-Headers: ETag,Location\r\n";
         if (not_modified) { r.status = 304; r.body = ""; emit("/api/subscriptions/{id}", r.status); return r; }
+
+        // Derive live phase from VA pipelines when possible
+        std::string phase = rec->last.phase;
+        std::string reason = rec->last.reason;
+        if (!rec->va_subscription_id.empty()) {
+          try {
+            auto stub = controlplane::make_va_stub(cfg.va_addr);
+            grpc::ClientContext ctx; ctx.set_deadline(std::chrono::system_clock::now()+std::chrono::milliseconds(1500));
+            va::v1::ListPipelinesRequest preq; va::v1::ListPipelinesReply prep;
+            auto s = stub->ListPipelines(&ctx, preq, &prep);
+            if (s.ok()) {
+              for (const auto& it : prep.items()) {
+                if (it.key() == rec->va_subscription_id) {
+                  if (it.running()) { phase = "ready"; reason.clear(); }
+                  break;
+                }
+              }
+            }
+          } catch (...) {}
+        }
+
         std::ostringstream os;
         os << "{\"code\":\"OK\",\"data\":{\"id\":\"" << rec->cp_id
-           << "\",\"phase\":\"" << rec->last.phase << "\"";
-        if (!rec->last.reason.empty()) os << ",\"reason\":\"" << rec->last.reason << "\"";
+           << "\",\"phase\":\"" << phase << "\"";
+        if (!reason.empty()) os << ",\"reason\":\"" << reason << "\"";
         os << ",\"pipeline_key\":\"" << rec->va_subscription_id << "\"}}";
         r.status = 200; r.body = os.str(); emit("/api/subscriptions/{id}", r.status); return r;
       }
