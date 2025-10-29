@@ -50,13 +50,16 @@ export function getSubscriptionWithTimeline(id: string) {
   return http.get<any>(`/api/subscriptions/${encodeURIComponent(id)}?include=timeline`)
 }
 export function cancelSubscription(id: string) {
-  return fetch((http as any).url?.(`/api/subscriptions/${encodeURIComponent(id)}`) || ((import.meta as any).env?.VITE_API_BASE || '') + `/api/subscriptions/${encodeURIComponent(id)}`, {
-    method: 'DELETE', headers: { 'Content-Type': 'application/json' }
-  }).then(r => { if (!r.ok) throw new Error('cancelSubscription failed'); return r.json() })
+  const path = `/api/subscriptions/${encodeURIComponent(id)}`
+  const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+  const url = (http as any).url?.(path) || (base + path)
+  return fetch(url, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } })
+    .then(r => { if (!r.ok) throw new Error('cancelSubscription failed'); return r.json() })
 }
 export function subscriptionEventsUrl(id: string) {
-  const base = (((import.meta as any).env?.VITE_API_BASE || '') as string).toString().replace(/\/+$/, '')
-  return `${base}/api/subscriptions/${encodeURIComponent(id)}/events`
+  const path = `/api/subscriptions/${encodeURIComponent(id)}/events`
+  const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+  return `${base}${path}`
 }
 
 // Control-plane apply（保留旧接口别名）

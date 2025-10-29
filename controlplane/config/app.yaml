@@ -19,7 +19,7 @@ vsm:
     client_key_file: certs/cp_client.key
 restream:
   rtsp_base: rtsp://127.0.0.1:8554/
-## 可选：SSE 参数
+## 可选：SSE 配置
 # sse:
 #   keepalive_ms: 10000
 #   idle_close_ms: 300000
@@ -32,4 +32,16 @@ security:
     bearer_token: ""
   rate_limit:
     rps: 0
+
+
+# DB classic (MySQL Connector/C++)
+db:
+  driver: mysql
+  host: 127.0.0.1
+  port: 13306
+  user: root
+  password: 123456
+  schema: cv_cp
+  timeout_ms: 1000
+  # odbc_driver: 'MySQL ODBC 8.4 Unicode Driver'  # 可选：若启用 ODBC 路径可显式指定
 

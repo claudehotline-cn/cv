@@ -13,6 +13,8 @@ export const isMock = !!(import.meta as any).env?.VITE_USE_MOCK
 function delay<T>(data: T, ms = 300): Promise<T> { return new Promise(res => setTimeout(() => res(data), ms)) }
 
 function apiBase() {
+  const isDev = !!((import.meta as any).env?.DEV)
+  if (isDev) return '' // use Vite dev proxy
   const raw = (((import.meta as any).env?.VITE_API_BASE) || '/').toString()
   return raw.trim().replace(/\/+$/, '')
 }

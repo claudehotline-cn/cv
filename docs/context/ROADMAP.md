@@ -1,39 +1,33 @@
 # 路线图总览
 
-- 里程碑 M0：TLS/mTLS 全链路打通（开发环境）
-  - 目标：三后端默认启用 TLS/mTLS；证书路径配置化并转绝对；SNI=localhost；前端不使用 WHEP fallback。
-  - 验收：start_stack_tls 成功；test_mtls_* 通过；订阅 API 正常；最小证据（截图/网络清单）归档。
-- 里程碑 M1：稳定编排与可观测
-  - 目标：VSM→VA 完整 gRPC 编排（attach/remove/subscribe）；指标齐备（by service,method,code）；前端能稳定观看。
-  - 验收：持续 2 小时无 5xx/UNAVAILABLE 尖峰；WHEP 201 且 readyState≥2；Grafana 面板稳定。
-- 里程碑 M2：零拷贝与 CI 验证
-  - 目标：VA 零拷贝路径稳定（gpu_active=1，io_binding=1）；CI 覆盖 TLS/编排基本回归用例。
-  - 验收：模型推理与 NMS 正常、FPS 达标；CI 绿灯并产生日志/证据工件。
+- 里程碑 M0：打通只读接口与基本播放
+  - 目标：`/api/models|/pipelines|/graphs` 返回数据库数据；分析页通过 WHEP 正常播放。
+  - 验收：接口 200 且 data 非空；SSE phase=ready；<video> 10s 内 playing。
+- 里程碑 M1：稳定化与可观测
+  - 目标：CP⇄DB 稳定（P95<80ms），WHEP 201/ICE 成功率提升；日志与指标接入。
+  - 验收：DB 查询错误率 <1%；WHEP 建连成功率 ≥95%；关键指标入库。
+- 里程碑 M2：性能与CI守护
+  - 目标：VA GPU 路径可控（保留 CPU 回退）；端到端回归在 CI 自动验证。
+  - 验收：GPU on/off 开关可测；CI 绿灯；回放 FPS 与检测量稳定。
 
 # 分阶段计划（表格）
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| P0 | TLS/mTLS 打通 | 证书配置化；路径绝对化；SNI=localhost | 证书缺失/路径错 → 启动前校验 | 100% gRPC 握手成功 |
-| P1 | gRPC 编排 | VSM→VA Apply/Remove/Subscribe | 兼容性问题 → 明确 proto 与超时 | attach 成功率≥99% |
-| P1.5 | 可观测完善 | by(service,method,code) 指标；日志采样 | 日志噪声 → 限速与分级 | 关键接口 P50/P95 公开 |
-| P2 | 前端取证 | WHEP 201；视频可播放 | 跨域/证书 → 预置受信 CA | readyState≥2/10s 内 |
-| P3 | 零拷贝稳定 | ORT CUDA IoBinding；NMS CUDA | CUDA 环境缺失 → 禁回退显错 | GPU 活跃+IoBinding=1 |
-| P4 | 基线 CI | TLS 连通与编排回归 | 构建依赖 → 缓存与镜像 | CI 绿灯/证据工件 |
+| P0 | 三接口打通 | Classic Connector/C++；DLL 就位；SQL 映射 | 认证/依赖缺失→日志+调试路由 | 200 且 data 非空 |
+| P1 | WHEP 播放可靠 | SSE 就绪→WHEP POST/ICE；前端事件校验 | NAT/证书问题→代理与证据采集 | 10s 内 playing |
+| P1.5 | 可观测增强 | 指标/日志字段标准化；错误聚合 | 噪声→采样与阈值治理 | P95<80ms，错误<1% |
+| P2 | GPU 路径与CI | IoBinding 开关；CPU 回退；回归用例 | 驱动/依赖差异→回退保护 | CI 全绿 |
 
 # 依赖矩阵
 - 内部依赖：
-  - CP 配置加载与 gRPC 客户端（SNI 覆盖）
-  - VA ConfigLoader/NodeModel（allow_cpu_fallback/use_io_binding）
-  - VSM YAML 配置与 VA gRPC 客户端（mTLS）
+  - CP 路由/DB 模块；VA WHEP/Watch；前端分析页与 Vite 代理；VSM 源管理。
 - 外部依赖（库/服务/硬件）：
-  - gRPC/Protobuf、OpenSSL、ONNX Runtime（含 CUDA EP）
-  - vcpkg、CMake/MSVC、Node.js（前端 dev）
-  - NVIDIA 驱动/CUDA 运行时、RTSP 源（摄像头/推流器）
+  - MySQL 8（端口 13306）；Connector/C++ 9.4；可选 ODBC/MySQL X。
+  - OpenSSL；ONNX Runtime（GPU 可选 CUDA）；Node.js；NVIDIA 驱动（如启用 GPU）。
 
 # 风险清单（Top-5）
-- 证书/路径不一致 → 启动/握手失败 → 启动前自检（文件存在+绝对路径） → 阻断启动并打印修复建议
-- SNI 不匹配 → wrong version number → 客户端统一覆盖为 localhost → 证书 SAN 要含 DNS 与 IP
-- CUDA 环境缺失 → CPU 回退或推理失败 → 禁用回退暴露根因；补齐 CUDA/ORT 动态库 → 观察 RuntimeSummary
-- 模型输出与 NMS 偏差 → NMS 失败 → 核对 graph 配置、模型输出名/形状 → 增加形状/阈值日志
-- 前端 WHEP 播放异常 → 跨域/证书/网络 → DevTools MCP 最小取证（网络≤10、截图落盘） → 快速定位与回滚
-
+- Classic 认证失败 → 缺 RSA/插件不匹配 → 接口 data 为空 → 增加异常明文与调试路由，允许 ODBC/X 旁路
+- 运行期 DLL 缺失 → 加载失败 → 事件日志含 “module not found” → 从 VA 产物拷贝 DLL 并随 CP 发布
+- WHEP 建连异常 → NAT/证书/端口 → DevTools 无 playing → 代理到本机、校验证书、保存取证截图
+- SQL 映射不一致 → 字段缺失/类型错 → JSON 结构异常 → 增加列到字段的映射测试与回退
+- 性能波动 → P95 升高 → 指标抖动与超时 → 加索引/连接池与重试，压测后再放量

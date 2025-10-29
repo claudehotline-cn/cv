@@ -1,4 +1,5 @@
 #include <iostream>
+#include "controlplane/db.hpp"
 #include <string>
 #include <thread>
 #include <chrono>
@@ -17,6 +18,8 @@
 #include "controlplane/metrics.hpp"
 #include "controlplane/cache.hpp"
 #include "controlplane/logging.hpp"
+#include "controlplane/http_proxy.hpp"
+#include "controlplane/db.hpp"
 
 #include <grpcpp/grpcpp.h>
 #include "analyzer_control.grpc.pb.h"
@@ -175,6 +178,8 @@ int main(int argc, char** argv) {
       os << "{\"code\":\"OK\",\"data\":{";
       // CP restream config
       os << "\"restream\":{\"rtsp_base\":\"" << cfg.restream_rtsp_base << "\",\"source\":\"config\"},";
+      // SFU/WHEP endpoint (VA REST). Front uses this for WHEP negotiation.
+      os << "\"sfu\":{\"whep_base\":\"http://127.0.0.1:8082\"},";
       // VA runtime
       os << "\"runtime\":{\"provider\":\""<<provider<<"\",\"gpu_active\":"<<(gpu?"true":"false")<<",\"io_binding\":"<<(iob?"true":"false")<<"},";
       // VSM summary
@@ -184,6 +189,48 @@ int main(int argc, char** argv) {
       controlplane::cache::SimpleCache::instance().put("system_info", r.body);
       emit("/api/system/info", r.status);
       return r;
+    }
+    // Minimal list endpoints for front-end optional lists
+    if (path == "/api/models" && method == "GET") {
+      std::string arr;
+      if (controlplane::db::list_models_json(cfg, &arr)) {
+        r.status = 200; r.body = std::string("{\"code\":\"OK\",\"data\":") + arr + "}";
+      } else {
+        r.status = 200; r.body = "{\"code\":\"OK\",\"data\":[]}";
+      }
+      emit("/api/models", r.status); return r;
+    }
+    if (path == "/api/pipelines" && method == "GET") {
+      std::string arr;
+      if (controlplane::db::list_pipelines_json(cfg, &arr)) {
+        r.status = 200; r.body = std::string("{\"code\":\"OK\",\"data\":") + arr + "}";
+      } else {
+        r.status = 200; r.body = "{\"code\":\"OK\",\"data\":[]}";
+      }
+      emit("/api/pipelines", r.status); return r;
+    }
+    if (path == "/api/graphs" && method == "GET") {
+      std::string arr;
+      if (controlplane::db::list_graphs_json(cfg, &arr)) {
+        r.status = 200; r.body = std::string("{\"code\":\"OK\",\"data\":") + arr + "}";
+      } else {
+        r.status = 200; r.body = "{\"code\":\"OK\",\"data\":[]}";
+      }
+      emit("/api/graphs", r.status); return r;
+    }
+    if (path == "/api/_debug/db" && method == "GET") {
+      nlohmann::json j; controlplane::db::db_error_snapshot(&j);
+      nlohmann::json info;
+      info["driver"] = cfg.db.driver;
+      info["mysqlx_uri"] = cfg.db.mysqlx_uri;
+      info["host"] = cfg.db.host;
+      info["port"] = cfg.db.port;
+      info["user"] = cfg.db.user;
+      info["schema"] = cfg.db.schema;
+      nlohmann::json out;
+      out["code"] = "OK";
+      out["data"] = { {"errors", j}, {"cfg", info} };
+      r.status = 200; r.body = out.dump(); emit("/api/_debug/db", r.status); return r;
     }
     if (path.rfind("/api/subscriptions", 0) == 0) {
       auto pos = std::string::npos;
@@ -325,6 +372,55 @@ int main(int argc, char** argv) {
         r.status = 202; r.body = "{\"code\":\"ACCEPTED\"}"; emit("/api/subscriptions/{id}", r.status); return r;
       }
       r.status = 404; r.body = "{}"; return r;
+    }
+    // WHEP reverse proxy: CP -> VA REST (default 127.0.0.1:8082)
+    if (path.rfind("/whep", 0) == 0) {
+      // CORS preflight
+      if (method == "OPTIONS") {
+        r.status = 200; r.body = "";
+        r.extraHeaders += "Access-Control-Allow-Origin: *\r\n";
+        r.extraHeaders += "Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n";
+        r.extraHeaders += "Access-Control-Allow-Headers: Content-Type, Accept\r\n";
+        r.extraHeaders += "Access-Control-Max-Age: 86400\r\n";
+        emit("/whep", r.status); return r;
+      }
+      // Resolve VA REST host:port
+      std::string va_host = "127.0.0.1"; int va_port = 8082;
+      try {
+        const char* env = std::getenv("VA_REST_BASE");
+        if (env) {
+          std::string base(env);
+          // accept http://host:port or host:port
+          auto pos = base.find("://"); if (pos != std::string::npos) base = base.substr(pos+3);
+          auto colon = base.find(':');
+          if (colon != std::string::npos) { va_host = base.substr(0, colon); va_port = std::stoi(base.substr(colon+1)); }
+          else { va_host = base; }
+        }
+      } catch (...) {}
+      std::string out_loc;
+      HttpResponse proxied;
+      if (!controlplane::proxy_http_simple(va_host, va_port, method, path, headers, body, &proxied, &out_loc)) {
+        r.status = 502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/whep", r.status); return r;
+      }
+      r = std::move(proxied);
+      // CORS allow
+      r.extraHeaders += "Access-Control-Allow-Origin: *\r\n";
+      // Rewrite Location to CP-relative when present (keep path only)
+      if (!out_loc.empty()) {
+        try {
+          std::string rel = out_loc;
+          auto scheme = rel.find("://");
+          if (scheme != std::string::npos) {
+            auto slash2 = rel.find('/', scheme+3);
+            if (slash2 != std::string::npos) rel = rel.substr(slash2);
+          }
+          if (rel.rfind("/whep", 0) != 0) { // ensure prefix
+            auto p = rel.find("/whep"); if (p != std::string::npos) rel = rel.substr(p);
+          }
+          if (!rel.empty()) r.extraHeaders += std::string("Location: ") + rel + "\r\n";
+        } catch (...) {}
+      }
+      emit("/whep", r.status); return r;
     }
   if (path == "/metrics") {
       r.contentType = "text/plain; version=0.0.4; charset=utf-8";

@@ -23,6 +23,21 @@ struct SseOptions {
   int sources_interval_ms{1000}; // VSM WatchState request interval
 };
 
+struct DbConfig {
+  // driver: "mysqlx" (X DevAPI). Empty disables DB access.
+  std::string driver;            
+  // X DevAPI URI (when driver=="mysqlx"), e.g., mysqlx://root:123456@127.0.0.1:33060/cv_cp?ssl-mode=disabled
+  std::string mysqlx_uri;        
+  // Classic (ODBC) fields (when driver=="mysql" or "odbc")
+  std::string host;
+  int port{0};
+  std::string user;
+  std::string password;
+  std::string schema; // database name
+  std::string odbc_driver; // optional explicit ODBC driver name
+  int timeout_ms{1000};
+};
+
 struct AppConfig {
   std::string http_listen{"0.0.0.0:8080"};
   std::string va_addr{"127.0.0.1:50051"};
@@ -37,6 +52,7 @@ struct AppConfig {
   TlsOptions va_tls{};
   TlsOptions vsm_tls{};
   SseOptions sse{};
+  DbConfig db{};
 };
 
 bool load_config(const std::string& dir, AppConfig* out, std::string* err);

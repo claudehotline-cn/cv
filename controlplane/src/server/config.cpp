@@ -49,6 +49,18 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
         auto so = s["sources"]; if (so["interval_ms"]) out->sse.sources_interval_ms = so["interval_ms"].as<int>(out->sse.sources_interval_ms);
       }
     }
+    if (root["db"]) {
+      auto d = root["db"];
+      if (d["driver"]) out->db.driver = d["driver"].as<std::string>(out->db.driver);
+      if (d["mysqlx_uri"]) out->db.mysqlx_uri = d["mysqlx_uri"].as<std::string>(out->db.mysqlx_uri);
+      if (d["host"]) out->db.host = d["host"].as<std::string>(out->db.host);
+      if (d["port"]) out->db.port = d["port"].as<int>(out->db.port);
+      if (d["user"]) out->db.user = d["user"].as<std::string>(out->db.user);
+      if (d["password"]) out->db.password = d["password"].as<std::string>(out->db.password);
+      if (d["schema"]) out->db.schema = d["schema"].as<std::string>(out->db.schema);
+      if (d["odbc_driver"]) out->db.odbc_driver = d["odbc_driver"].as<std::string>(out->db.odbc_driver);
+      if (d["timeout_ms"]) out->db.timeout_ms = d["timeout_ms"].as<int>(out->db.timeout_ms);
+    }
     if (root["security"]) {
       auto s = root["security"];
       if (s["cors"]) {

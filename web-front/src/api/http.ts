@@ -5,6 +5,11 @@ export interface HttpOptions {
 
 // Sanitize base URL: trim whitespace and remove trailing slashes
 const defaultBase = (() => {
+  const isDev = !!((import.meta as any).env?.DEV)
+  if (isDev) {
+    // In dev, use Vite proxy (vite.config.ts) by keeping base empty.
+    return ''
+  }
   const raw = ((import.meta as any).env?.VITE_API_BASE || '/').toString()
   return raw.trim().replace(/\/+$/, '') || '/'
 })()
