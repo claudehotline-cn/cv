@@ -154,11 +154,12 @@ bool va_subscribe(const std::string& addr,
     req.set_source_uri(source_uri);
     if (!model_id.empty()) req.set_model_id(model_id);
     va::v1::SubscribePipelineReply rep;
-    // Use a shorter deadline for subscribe to fail-fast on invalid inputs
+    // Use configured VA timeout for Subscribe; creating pipelines may take >1.5s under load.
+    // Keep retries behavior controlled by config (default 0).
     auto status = call_with_retry(
       [&](grpc::ClientContext& ctx){ return stub->SubscribePipeline(&ctx, req, &rep); },
       true,
-      - (g_va_timeout_ms - 1500),
+      0,
       "SubscribePipeline"
     );
     if (!status.ok() || !rep.ok()) {
