@@ -41,7 +41,8 @@ export async function createSubscription(stream_id: string, profile: string, sou
   if (!body.source_uri && opts?.source_id) q.set('source_id', opts.source_id)
   const qp = q.toString() ? ('?' + q.toString()) : ''
   const r: any = await http.post('/api/subscriptions' + qp, body)
-  return r?.data?.id || ''
+  // 兼容后端不同分支的返回格式：优先 data.id，其次顶层 id
+  return (r?.data?.id || r?.id || '')
 }
 export function getSubscription(id: string) {
   return http.get<any>(`/api/subscriptions/${encodeURIComponent(id)}`)
