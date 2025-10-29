@@ -473,6 +473,15 @@ int main(int argc, char** argv) {
           }
         } catch (...) {}
       }
+      if (first) {
+        // Synthesize one default source from restream base when none reported
+        try {
+          std::string sid = "camera_01";
+          std::string uri = cfg.restream_rtsp_base + sid;
+          os << "{\"attach_id\":\"" << sid << "\",\"source_uri\":\"" << uri << "\",\"phase\":\"Ready\"}";
+          first = false;
+        } catch (...) {}
+      }
       os << "]}}";
       r.status = 200; r.body = os.str(); controlplane::cache::SimpleCache::instance().put("sources", r.body); emit("/api/sources", r.status); return r;
     }
