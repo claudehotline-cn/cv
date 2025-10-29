@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 
 const base = process.env.E2E_BASE_URL || 'http://127.0.0.1:4173'
-const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:8082'
+const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:18080'
 const outDir = path.resolve(process.cwd(), 'tests', 'artifacts')
 
 test.beforeAll(async () => {
@@ -40,4 +40,3 @@ test('analysis timeline visible and screenshot saved', async ({ page, request })
   const cancelBtn = page.locator('.toolbar .el-button.el-button--danger')
   if (await cancelBtn.count()) await cancelBtn.first().click()
 })
-

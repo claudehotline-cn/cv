@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 // 验证异步订阅接口的关键响应头：Location / ETag / 304 命中
 // 若后端不可达则跳过
 
-const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:8082'
+const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:18080'
 
 test('POST returns Location; GET supports ETag/304', async ({ request }) => {
   // 1) POST /api/subscriptions
@@ -45,4 +45,3 @@ test('POST returns Location; GET supports ETag/304', async ({ request }) => {
   })
   expect([200, 304]).toContain(get2.status())
 })
-

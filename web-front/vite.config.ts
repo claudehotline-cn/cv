@@ -14,18 +14,18 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        // Default to CP in dev
-        target: process.env.VITE_API_BASE || 'http://127.0.0.1:18080',
+        // Always proxy API to Controlplane in dev
+        target: 'http://127.0.0.1:18080',
         changeOrigin: true
       },
       '/metrics': {
-        target: process.env.VITE_API_BASE || 'http://127.0.0.1:8082',
+        // Controlplane metrics endpoint
+        target: 'http://127.0.0.1:18080',
         changeOrigin: true
       },
-      // VA WHEP negotiation (media path stays on VA; CP does not proxy it)
+      // WHEP negotiation must go via Controlplane proxy
       '/whep': {
-        // Route WHEP via CP proxy by default
-        target: process.env.VITE_VA_BASE || 'http://127.0.0.1:18080',
+        target: 'http://127.0.0.1:18080',
         changeOrigin: true
       }
     }

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 const base = process.env.E2E_BASE_URL || 'http://127.0.0.1:4173'
-const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:8082'
+const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:18080'
 
 test('observability page shows subscriptions source', async ({ page, request }) => {
   // 预览服务不可达则跳过

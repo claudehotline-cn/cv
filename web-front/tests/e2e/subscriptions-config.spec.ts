@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 // 该用例验证 /api/system/info 回显 subscriptions（含 source 字段）
 // 若后端未运行，则自动跳过（保持 CI 可运行）
 
-const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:8082'
+const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:18080'
 
 test('system info exposes subscriptions with source', async ({ request }) => {
   const url = `${apiBase}/api/system/info`
@@ -35,4 +35,3 @@ test('system info exposes subscriptions with source', async ({ request }) => {
   expect(typeof subs.source.max_queue).toBe('string')
   expect(typeof subs.source.ttl_seconds).toBe('string')
 })
-
