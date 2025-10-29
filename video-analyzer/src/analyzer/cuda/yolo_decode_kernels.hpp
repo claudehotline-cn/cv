@@ -8,6 +8,11 @@
 typedef void* cudaStream_t;
 #endif
 
+// Forward declare CUDA half type in global namespace when CUDA headers are not included by host compilers
+#if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(USE_CUDA)
+struct __half;
+#endif
+
 namespace va::analyzer::cudaops {
 
 // Decodes YOLO output tensor (1 x N x (4+K) or 1 x (4+K) x N) into per-detection arrays on device.
@@ -25,6 +30,25 @@ namespace va::analyzer::cudaops {
 // Returns cudaError_t
 cudaError_t yolo_decode_to_yxyx(
     const float* d_out,
+    int num_det,
+    int num_attrs,
+    int num_classes,
+    int channels_first,
+    float conf_thr,
+    float scale,
+    int pad_x,
+    int pad_y,
+    int orig_w,
+    int orig_h,
+    float* d_boxes,
+    float* d_scores,
+    int32_t* d_classes,
+    int* d_count,
+    cudaStream_t stream);
+
+// FP16 输入版本（__half），其余参数一致（仅在 CUDA 可用时声明）
+cudaError_t yolo_decode_to_yxyx_fp16(
+    const __half* d_out,
     int num_det,
     int num_attrs,
     int num_classes,

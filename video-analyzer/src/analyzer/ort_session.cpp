@@ -716,14 +716,21 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             const bool prefer_device_views = impl_->options.device_output_views && impl_->use_gpu && impl_->options.use_io_binding && bind_outputs_to_device;
             const bool stage_outputs = impl_->options.stage_device_outputs && impl_->use_gpu && impl_->options.use_io_binding && !prefer_device_views;
             if (prefer_device_views) {
-                // Expose device-backed outputs without staging
+                // Expose device-backed outputs without staging; preserve true dtype
                 for (auto& value : impl_->last_outputs) {
                     if (!value.IsTensor()) { outputs.emplace_back(makeTensorView(value, false)); continue; }
                     Ort::TensorTypeAndShapeInfo info = value.GetTensorTypeAndShapeInfo();
                     core::TensorView view;
                     view.data = const_cast<void*>(value.GetTensorRawData());
                     view.shape = info.GetShape();
-                    view.dtype = core::DType::F32;
+                    switch (info.GetElementType()) {
+                        case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+                            view.dtype = core::DType::F32; break;
+                        case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+                            view.dtype = core::DType::F16; break;
+                        default:
+                            view.dtype = core::DType::F32; break;
+                    }
                     view.on_gpu = true;
                     outputs.emplace_back(std::move(view));
                 }

@@ -1,0 +1,67 @@
+   1 #pragma once
+   2 
+   3 #include <cstdint>
+   4 
+   5 #if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(USE_CUDA)
+   6 #include <cuda_runtime.h>
+   7 #else
+   8 typedef void* cudaStream_t;
+   9 #endif
+  10 
+  11 namespace va::analyzer::cudaops {
+  12 
+  13 // Decodes YOLO output tensor (1 x N x (4+K) or 1 x (4+K) x N) into per-detection arrays on device.
+  14 // Inputs:
+  15 //   d_out: device pointer to model output float tensor (assumed contiguous)
+  16 //   num_det, num_attrs, num_classes: tensor layout params
+  17 //   channels_first: if true, layout is [C,N], else [N,C]
+  18 //   conf_thr: score threshold
+  19 //   letterbox meta: scale/pad and original size for mapping back
+  20 // Outputs:
+  21 //   d_boxes: device float array [M,4] (yxyx) (pre-allocated for num_det)
+  22 //   d_scores: device float array [M]
+  23 //   d_classes: device int32 array [M]
+  24 //   d_count: device int, number of written detections (<= num_det)
+  25 // Returns cudaError_t
+  26 cudaError_t yolo_decode_to_yxyx(
+  27     const float* d_out,
+  28     int num_det,
+  29     int num_attrs,
+  30     int num_classes,
+  31     int channels_first,
+  32     float conf_thr,
+  33     float scale,
+  34     int pad_x,
+  35     int pad_y,
+  36     int orig_w,
+  37     int orig_h,
+  38     float* d_boxes,
+  39     float* d_scores,
+  40     int32_t* d_classes,
+  41     int* d_count,
+  42     cudaStream_t stream);
+  43 
+  44 // FP16 输入版本（__half），其余参数一致
+  45 #if defined(USE_CUDA)
+  46 #include <cuda_fp16.h>
+  47 cudaError_t yolo_decode_to_yxyx_fp16(
+  48     const __half* d_out,
+  49     int num_det,
+  50     int num_attrs,
+  51     int num_classes,
+  52     int channels_first,
+  53     float conf_thr,
+  54     float scale,
+  55     int pad_x,
+  56     int pad_y,
+  57     int orig_w,
+  58     int orig_h,
+  59     float* d_boxes,
+  60     float* d_scores,
+  61     int32_t* d_classes,
+  62     int* d_count,
+  63     cudaStream_t stream);
+  64 #endif
+  65 
+  66 }
+  67 

@@ -238,6 +238,7 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 #if defined(__has_include)
 #  if __has_include(<cuda_runtime.h>)
 #    include <cuda_runtime.h>
+#    include <cuda_fp16.h>
 #    define VA_HAS_CUDA_RUNTIME 1
 #  else
 #    define VA_HAS_CUDA_RUNTIME 0
@@ -312,10 +313,18 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     float scale = meta.scale == 0.0f ? 1.0f : meta.scale;
                     int orig_w = meta.original_width > 0 ? meta.original_width : meta.input_width;
                     int orig_h = meta.original_height > 0 ? meta.original_height : meta.input_height;
-                    auto err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
-                        num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
-                        getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
-                        d_boxes, d_scores, d_classes, d_count, va::exec::StreamPool::instance().tls());
+                    cudaError_t err_decode = cudaSuccess;
+                    if (t.dtype == core::DType::F16) {
+                        // 暂未启用 GPU FP16 解码：回退 CPU 后处理以确保几何正确
+                        YoloDetectionPostprocessor cpu;
+                        cudaFree(d_classes); cudaFree(d_scores); cudaFree(d_boxes); cudaFree(d_count);
+                        return cpu.run(raw_outputs, meta, output);
+                    } else {
+                        err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
+                            num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
+                            getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+                            d_boxes, d_scores, d_classes, d_count, va::exec::StreamPool::instance().tls());
+                    }
                     if (err_decode == cudaSuccess) {
                         int h_count = 0;
                         if (cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess) {
