@@ -14,7 +14,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_BASE || 'http://127.0.0.1:8082',
+        // Default to CP in dev
+        target: process.env.VITE_API_BASE || 'http://127.0.0.1:18080',
         changeOrigin: true
       },
       '/metrics': {
@@ -23,7 +24,8 @@ export default defineConfig({
       },
       // VA WHEP negotiation (media path stays on VA; CP does not proxy it)
       '/whep': {
-        target: process.env.VITE_VA_BASE || 'http://127.0.0.1:8082',
+        // Route WHEP via CP proxy by default
+        target: process.env.VITE_VA_BASE || 'http://127.0.0.1:18080',
         changeOrigin: true
       }
     }

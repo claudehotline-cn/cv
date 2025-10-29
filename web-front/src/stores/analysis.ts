@@ -98,7 +98,9 @@ export const useAnalysisStore = defineStore('analysis', {
           this.setSource((run?.id) || this.sources[0].id)
         }
         if (this.pipelines.length) {
-          this.currentPipeline = this.pipelines[0].name
+          const prefer = ['det_720p', 'seg_720p', 'default']
+          const found = prefer.find((n) => this.pipelines.some((p:any) => p.name === n))
+          this.currentPipeline = found || this.pipelines[0].name
         } else {
           this.currentPipeline = 'det_720p'
         }

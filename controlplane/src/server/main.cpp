@@ -178,8 +178,8 @@ int main(int argc, char** argv) {
       os << "{\"code\":\"OK\",\"data\":{";
       // CP restream config
       os << "\"restream\":{\"rtsp_base\":\"" << cfg.restream_rtsp_base << "\",\"source\":\"config\"},";
-      // SFU/WHEP endpoint (VA REST). Front uses this for WHEP negotiation.
-      os << "\"sfu\":{\"whep_base\":\"http://127.0.0.1:8082\"},";
+      // SFU/WHEP endpoint for negotiation. Leave empty to let front use same-origin proxy in dev.
+      os << "\"sfu\":{\"whep_base\":\"\"},";
       // VA runtime
       os << "\"runtime\":{\"provider\":\""<<provider<<"\",\"gpu_active\":"<<(gpu?"true":"false")<<",\"io_binding\":"<<(iob?"true":"false")<<"},";
       // VSM summary
