@@ -316,10 +316,33 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     cudaError_t err_decode = cudaSuccess;
                     auto st = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
                     if (t.dtype == core::DType::F16) {
-                        // 暂未启用 GPU FP16 解码：回退 CPU 后处理以确保几何正确
-                        YoloDetectionPostprocessor cpu;
-                        cudaFree(d_classes); cudaFree(d_scores); cudaFree(d_boxes); cudaFree(d_count);
-                        return cpu.run(raw_outputs, meta, output);
+                        // 将 FP16 模型输出转换为 FP32 后复用现有解码核
+                        int64_t total = num_det * num_attrs;
+                        // Host-side convert FP16 -> FP32, then upload to device
+                        std::vector<__half> h_half(static_cast<size_t>(total));
+                        if (cudaMemcpy(h_half.data(), t.data, static_cast<size_t>(total) * sizeof(__half), cudaMemcpyDeviceToHost) == cudaSuccess) {
+                            std::vector<float> h_float(static_cast<size_t>(total));
+                            for (int64_t i=0;i<total;++i) {
+                                h_float[static_cast<size_t>(i)] = __half2float(h_half[static_cast<size_t>(i)]);
+                            }
+                            float* d_tmp = nullptr;
+                            if (cudaMalloc(&d_tmp, static_cast<size_t>(total) * sizeof(float)) == cudaSuccess) {
+                                if (cudaMemcpy(d_tmp, h_float.data(), static_cast<size_t>(total) * sizeof(float), cudaMemcpyHostToDevice) == cudaSuccess) {
+                                    err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(
+                                        d_tmp,
+                                        num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
+                                        getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+                                        d_boxes, d_scores, d_classes, d_count, st);
+                                } else {
+                                    err_decode = cudaErrorInvalidValue;
+                                }
+                                cudaFree(d_tmp);
+                            } else {
+                                err_decode = cudaErrorMemoryAllocation;
+                            }
+                        } else {
+                            err_decode = cudaErrorInvalidValue;
+                        }
                     } else {
                         err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
                             num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
@@ -351,7 +374,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                                         cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice) == cudaSuccess &&
                                         cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice) == cudaSuccess &&
                                         cudaMalloc(&d_keep, static_cast<size_t>(h_count)*sizeof(int)) == cudaSuccess &&
-                                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, h_count, getNmsThreshold(), d_keep, nullptr, va::exec::StreamPool::instance().tls()) == cudaSuccess) {
+                                        va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, h_count, getNmsThreshold(), d_keep, nullptr, st) == cudaSuccess) {
                                         std::vector<int> h_keep(h_count, 0);
                                         if (cudaMemcpy(h_keep.data(), d_keep, static_cast<size_t>(h_count)*sizeof(int), cudaMemcpyDeviceToHost) == cudaSuccess) {
                                             output.boxes.clear(); output.masks.clear();

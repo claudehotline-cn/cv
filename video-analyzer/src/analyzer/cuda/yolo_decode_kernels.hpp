@@ -65,5 +65,8 @@ cudaError_t yolo_decode_to_yxyx_fp16(
     int* d_count,
     cudaStream_t stream);
 
+// Utility: convert device half array to float array (length n)
+cudaError_t half_to_float(const __half* d_in, float* d_out, int n, cudaStream_t stream);
+
 }
 

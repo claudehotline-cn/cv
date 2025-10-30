@@ -111,6 +111,18 @@ cudaError_t yolo_decode_to_yxyx_fp16(
         scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
     return cudaGetLastError();
 }
+
+__global__ void k_half_to_float(const __half* in, float* out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = __half2float(in[i]);
+}
+
+cudaError_t half_to_float(const __half* d_in, float* d_out, int n, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    k_half_to_float<<<blocks, threads, 0, stream>>>(d_in, d_out, n);
+    return cudaGetLastError();
+}
 #endif
 
 }

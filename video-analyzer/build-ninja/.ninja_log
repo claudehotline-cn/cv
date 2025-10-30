@@ -338,3 +338,14 @@
 57	1362	7835464211279590	CMakeFiles/va_cuda_kernels.dir/src/analyzer/cuda/overlay_nv12_kernels.cu.obj	30b4bebf8cb5db1e
 1362	1626	7835464224328021	va_cuda_kernels.lib	e572b18f41d33a1a
 1626	3534	7835464226967459	bin/VideoAnalyzer.exe	78db405934ba280e
+5	51	7835467126456349	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+61	447	7835467127010675	CMakeFiles/VideoAnalyzer.dir/src/analyzer/multistage/node_preproc_letterbox.cpp.obj	990531a66254b9cc
+65	880	7835467127050789	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	ef191da0f60c9e08
+5	46	7835468943740075	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+65	895	7835468944336157	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	ef191da0f60c9e08
+69	1213	7835468944372796	CMakeFiles/VideoAnalyzer.dir/src/analyzer/cuda/yolo_decode_kernels.cu.obj	4fdf1ee111f0eb8
+56	1214	7835468944245889	CMakeFiles/va_cuda_kernels.dir/src/analyzer/cuda/yolo_decode_kernels.cu.obj	db18d4df326e28e4
+1214	1568	7835468955815906	va_cuda_kernels.lib	e572b18f41d33a1a
+6	46	7835469512590151	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+56	887	7835469513091900	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	ef191da0f60c9e08
+887	2401	7835469521394769	bin/VideoAnalyzer.exe	78db405934ba280e

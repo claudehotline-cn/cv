@@ -13,7 +13,7 @@ NodePreprocLetterbox::NodePreprocLetterbox(const std::unordered_map<std::string,
     prefer_cuda_ = get_or_int(cfg, "use_cuda", 1) != 0;
 }
 
-bool NodePreprocLetterbox::process(Packet& p, NodeContext& /*ctx*/) {
+bool NodePreprocLetterbox::process(Packet& p, NodeContext& ctx) {
     // Choose CUDA when possible; fallback to CPU
     va::core::TensorView t;
     va::core::LetterboxMeta meta;
@@ -21,6 +21,7 @@ bool NodePreprocLetterbox::process(Packet& p, NodeContext& /*ctx*/) {
     if (prefer_cuda_) {
         static std::unique_ptr<va::analyzer::LetterboxPreprocessorCUDA> pre;
         if (!pre) pre = std::make_unique<va::analyzer::LetterboxPreprocessorCUDA>(out_w_, out_h_);
+        pre->setStream(ctx.stream);
         if (!pre->run(p.frame, t, meta)) { return false; }
         p.letterbox = meta;
         p.tensors["tensor:det_input"] = t;
