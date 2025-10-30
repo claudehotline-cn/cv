@@ -5,6 +5,11 @@
 #endif
 
 #include <cstdint>
+#if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(USE_CUDA)
+#include <cuda_runtime.h>
+#else
+typedef void* cudaStream_t;
+#endif
 
 namespace va { namespace analyzer { namespace cudaops_nv12 {
 
@@ -25,7 +30,8 @@ int draw_rects_nv12_inplace(uint8_t* y, int pitchY,
                             const float* boxes_xyxy,
                             const int* classes,
                             int count,
-                            int thickness);
+                            int thickness,
+                            cudaStream_t stream = 0);
 
 // Optional: filled rectangles with alpha; blends Y and UV (NV12 4:2:0 sampling)
 int fill_rects_nv12_inplace(uint8_t* y, int pitchY,
@@ -34,6 +40,7 @@ int fill_rects_nv12_inplace(uint8_t* y, int pitchY,
                             const float* boxes_xyxy,
                             const int* classes,
                             int count,
-                            float alpha /*0..1*/);
+                            float alpha /*0..1*/,
+                            cudaStream_t stream = 0);
 
 } } } // namespace

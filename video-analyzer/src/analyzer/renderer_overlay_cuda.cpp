@@ -83,16 +83,17 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
                     int thick = 2; float alpha = 0.0f;
                     if (const char* t = std::getenv("VA_OVERLAY_THICKNESS")) { try { thick = std::stoi(t); } catch (...) {} }
                     if (const char* a = std::getenv("VA_OVERLAY_ALPHA")) { try { alpha = std::stof(a); } catch (...) {} }
+                    auto st_nv = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
                     if (alpha > 0.0f) {
                         (void)va::analyzer::cudaops_nv12::fill_rects_nv12_inplace(
                             static_cast<uint8_t*>(in.device.data0), in.device.pitch0,
                             static_cast<uint8_t*>(in.device.data1), in.device.pitch1,
-                            w, h, d_boxes, d_cls, N, alpha);
+                            w, h, d_boxes, d_cls, N, alpha, st_nv);
                     }
                     if (va::analyzer::cudaops_nv12::draw_rects_nv12_inplace(
                             static_cast<uint8_t*>(in.device.data0), in.device.pitch0,
                             static_cast<uint8_t*>(in.device.data1), in.device.pitch1,
-                            w, h, d_boxes, d_cls, N, thick) == 0) {
+                            w, h, d_boxes, d_cls, N, thick, st_nv) == 0) {
                         log_once("nv12-kernel", output.boxes.size(), true, thick, alpha, in);
                         // metrics: NV12 kernel draw hit
                         va::core::GlobalMetrics::overlay_nv12_kernel_hits.fetch_add(1, std::memory_order_relaxed);

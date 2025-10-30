@@ -271,15 +271,15 @@ int draw_rects_nv12_inplace(uint8_t* y, int pitchY,
                             const float* boxes_xyxy,
                             const int* classes,
                             int count,
-                            int thickness)
+                            int thickness, cudaStream_t stream)
 {
     if (!y || !uv || !boxes_xyxy || count <= 0 || width<=0 || height<=0) return cudaErrorInvalidValue;
     dim3 blk(32, 8);
     dim3 grdY((width + blk.x - 1)/blk.x, (height + blk.y - 1)/blk.y);
-    k_stroke_Y_nv12<<<grdY, blk>>>(y, pitchY, width, height, boxes_xyxy, classes, count, thickness);
+    k_stroke_Y_nv12<<<grdY, blk, 0, stream>>>(y, pitchY, width, height, boxes_xyxy, classes, count, thickness);
     cudaError_t e1 = cudaGetLastError();
     dim3 grdUV(((width/2) + blk.x - 1)/blk.x, ((height/2) + blk.y - 1)/blk.y);
-    k_stroke_UV_nv12<<<grdUV, blk>>>(uv, pitchUV, width, height, boxes_xyxy, classes, count, thickness);
+    k_stroke_UV_nv12<<<grdUV, blk, 0, stream>>>(uv, pitchUV, width, height, boxes_xyxy, classes, count, thickness);
     cudaError_t e2 = cudaGetLastError();
     return (int)(e1 != cudaSuccess ? e1 : e2);
 }
@@ -318,15 +318,15 @@ int fill_rects_nv12_inplace(uint8_t* y, int pitchY,
                             const float* boxes_xyxy,
                             const int* classes,
                             int count,
-                            float alpha)
+                            float alpha, cudaStream_t stream)
 {
     if (!y || !uv || !boxes_xyxy || count <= 0 || width<=0 || height<=0) return cudaErrorInvalidValue;
     dim3 blk(32, 8);
     dim3 grdY((width + blk.x - 1)/blk.x, (height + blk.y - 1)/blk.y);
-    k_fill_Y_nv12<<<grdY, blk>>>(y, pitchY, width, height, boxes_xyxy, classes, count, alpha);
+    k_fill_Y_nv12<<<grdY, blk, 0, stream>>>(y, pitchY, width, height, boxes_xyxy, classes, count, alpha);
     cudaError_t e1 = cudaGetLastError();
     dim3 grdUV(((width/2) + blk.x - 1)/blk.x, ((height/2) + blk.y - 1)/blk.y);
-    k_fill_UV_nv12<<<grdUV, blk>>>(uv, pitchUV, width, height, boxes_xyxy, classes, count, alpha);
+    k_fill_UV_nv12<<<grdUV, blk, 0, stream>>>(uv, pitchUV, width, height, boxes_xyxy, classes, count, alpha);
     cudaError_t e2 = cudaGetLastError();
     return (int)(e1 != cudaSuccess ? e1 : e2);
 }
