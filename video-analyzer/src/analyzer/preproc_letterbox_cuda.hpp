@@ -11,6 +11,8 @@ public:
     ~LetterboxPreprocessorCUDA() override;
 
     bool run(const core::Frame& in, core::TensorView& out, core::LetterboxMeta& meta) override;
+    // 设置外部统一 CUDA 流（void* 以避免头文件依赖）
+    void setStream(void* s) { stream_ = s; }
 
 private:
     bool ensureDeviceCapacity(std::size_t bytes);
@@ -30,6 +32,7 @@ private:
     std::size_t capacity_bytes_ {0};
     void* input_device_ptr_ {nullptr};
     std::size_t input_capacity_bytes_ {0};
+    void* stream_ {nullptr};
 };
 
 } // namespace va::analyzer

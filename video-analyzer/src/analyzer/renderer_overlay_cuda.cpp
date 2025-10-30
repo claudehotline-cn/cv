@@ -215,9 +215,11 @@ bool OverlayRendererCUDA::draw(const core::Frame& in, const core::ModelOutput& o
             if (const char* a = std::getenv("VA_OVERLAY_ALPHA")) { try { alpha = std::stof(a); } catch (...) {} }
             if (const char* t = std::getenv("VA_OVERLAY_THICKNESS")) { try { thick = std::stoi(t); } catch (...) {} }
                     if (alpha > 0.0f) {
-                        (void)va::analyzer::cudaops::fill_rects_bgr_inplace(d_img, w, h, d_boxes, d_cls, N, alpha, va::exec::StreamPool::instance().tls());
+                        auto st = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
+                        (void)va::analyzer::cudaops::fill_rects_bgr_inplace(d_img, w, h, d_boxes, d_cls, N, alpha, st);
                     }
-                    if (va::analyzer::cudaops::draw_rects_bgr_inplace(d_img, w, h, d_boxes, d_cls, N, thick, va::exec::StreamPool::instance().tls()) != cudaSuccess) goto CLEAN_CLS;
+                    auto st2 = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
+                    if (va::analyzer::cudaops::draw_rects_bgr_inplace(d_img, w, h, d_boxes, d_cls, N, thick, st2) != cudaSuccess) goto CLEAN_CLS;
         }
         if (d_img && cudaMemcpy(out.bgr.data(), d_img, bytes, cudaMemcpyDeviceToHost) == cudaSuccess) {
             if (d_cls) cudaFree(d_cls);

@@ -314,6 +314,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     int orig_w = meta.original_width > 0 ? meta.original_width : meta.input_width;
                     int orig_h = meta.original_height > 0 ? meta.original_height : meta.input_height;
                     cudaError_t err_decode = cudaSuccess;
+                    auto st = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
                     if (t.dtype == core::DType::F16) {
                         // 暂未启用 GPU FP16 解码：回退 CPU 后处理以确保几何正确
                         YoloDetectionPostprocessor cpu;
@@ -323,7 +324,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                         err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
                             num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
                             getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
-                            d_boxes, d_scores, d_classes, d_count, va::exec::StreamPool::instance().tls());
+                            d_boxes, d_scores, d_classes, d_count, st);
                     }
                     if (err_decode == cudaSuccess) {
                         int h_count = 0;
@@ -475,7 +476,8 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     if (cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemset(d_kept, 0, sizeof(int))!=cudaSuccess) goto CLEAN5;
-    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, getNmsThreshold(), d_keep, d_kept, va::exec::StreamPool::instance().tls())!=cudaSuccess) goto CLEAN5;
+        auto st2 = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
+        if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, getNmsThreshold(), d_keep, d_kept, st2)!=cudaSuccess) goto CLEAN5;
     {
         std::vector<int> h_keep(N);
         if (cudaMemcpy(h_keep.data(), d_keep, N*sizeof(int), cudaMemcpyDeviceToHost)!=cudaSuccess) goto CLEAN5;

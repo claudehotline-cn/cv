@@ -62,6 +62,7 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     if (use_cuda_nms) {
 #ifdef USE_CUDA
         va::analyzer::YoloDetectionPostprocessorCUDA gpu_pp;
+        gpu_pp.setStream(ctx.stream);
         if (!gpu_pp.run(raw, p.letterbox, mo)) {
             auto lvl = va::analyzer::logutil::log_level_for_tag("ms.nms"); auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms");
             VA_LOG_THROTTLED(lvl, "ms.nms", thr) << "gpu_nms_run=false -> fallback cpu";

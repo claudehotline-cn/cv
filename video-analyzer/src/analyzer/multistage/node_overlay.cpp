@@ -18,12 +18,16 @@ bool NodeOverlay::open(NodeContext& /*ctx*/) {
     return true;
 }
 
-bool NodeOverlay::process(Packet& p, NodeContext& /*ctx*/) {
+bool NodeOverlay::process(Packet& p, NodeContext& ctx) {
     auto it = p.rois.find(rois_key_);
     va::core::ModelOutput mo;
     if (it != p.rois.end()) mo.boxes = it->second;
     va::core::Frame out;
     const size_t n = mo.boxes.size();
+    if (auto gpu = std::dynamic_pointer_cast<va::analyzer::OverlayRendererCUDA>(renderer_)) {
+        // 将统一流传入 CUDA 渲染器
+        gpu->setStream(ctx.stream);
+    }
     if (!renderer_->draw(p.frame, mo, out)) return false;
     auto lvl = va::analyzer::logutil::log_level_for_tag("ms.overlay");
     auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.overlay");

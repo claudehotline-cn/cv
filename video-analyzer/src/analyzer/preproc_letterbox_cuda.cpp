@@ -153,6 +153,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
         const std::size_t out_elements = static_cast<std::size_t>(1) * 3ull * static_cast<std::size_t>(out_h) * static_cast<std::size_t>(out_w);
         const std::size_t out_bytes = out_elements * sizeof(float);
         if (ensureDeviceCapacity(out_bytes)) {
+            auto stream = (stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls());
             auto err = va::analyzer::cudaops::letterbox_nv12_to_nchw_fp32(
                 static_cast<const uint8_t*>(in.device.data0), in.device.pitch0,
                 static_cast<const uint8_t*>(in.device.data1), in.device.pitch1,
@@ -161,7 +162,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
                 static_cast<float*>(device_ptr_),
                 scale, pad_x, pad_y,
                 true,
-                va::exec::StreamPool::instance().tls());
+                stream);
             if (err == cudaSuccess) {
                 out.data = device_ptr_;
                 out.shape = {1, 3, out_h, out_w};
@@ -318,6 +319,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
 
     // 启动 CUDA kernel（使用最近邻采样，后续可升级为双线性）
     #if defined(VA_HAS_CUDA_KERNELS)
+    auto stream2 = (stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls());
     err = va::analyzer::cudaops::letterbox_bgr_to_nchw_fp32(
         static_cast<const uint8_t*>(input_device_ptr_),
         in.width, in.height,
@@ -325,7 +327,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
         static_cast<float*>(device_ptr_),
         scale, pad_x, pad_y,
         true,
-        va::exec::StreamPool::instance().tls());
+        stream2);
     if (err != cudaSuccess)
     #endif
     {
