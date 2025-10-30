@@ -76,6 +76,8 @@ bool NodeModel::open(NodeContext& ctx) {
     opt.allow_cpu_fallback = allow_cpu_fallback;
     opt.stage_device_outputs = stage_device_outputs;
     opt.device_output_views = device_output_views;
+    // Bind unified CUDA stream from pipeline context when available
+    opt.user_stream = ctx.stream;
     s->setOptions(opt);
 #endif
 

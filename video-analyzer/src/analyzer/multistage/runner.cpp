@@ -1,5 +1,6 @@
 #include "analyzer/multistage/runner.hpp"
 
+#include "exec/stream_pool.hpp"
 #if defined(USE_CUDA)
 #  if defined(__has_include)
 #    if __has_include(<cuda_runtime.h>)
@@ -19,23 +20,17 @@
 namespace va { namespace analyzer { namespace multistage {
 
 AnalyzerMultistageAdapter::AnalyzerMultistageAdapter() {
-#if VA_MS_HAS_CUDA_RUNTIME
-    // Create a dedicated stream for this pipeline (best-effort)
-    cudaStream_t s = nullptr;
-    if (cudaStreamCreate(&s) == cudaSuccess) {
-        ctx_.stream = reinterpret_cast<void*>(s);
-    }
-#endif
+    #if VA_MS_HAS_CUDA_RUNTIME
+    // Use the global unified stream from StreamPool to ensure cross-stage consistency
+    ctx_.stream = reinterpret_cast<void*>(va::exec::StreamPool::instance().tls());
+    #endif
 }
 
 AnalyzerMultistageAdapter::~AnalyzerMultistageAdapter() {
     // Ensure nodes are closed with the correct context
     graph_.close_all(ctx_);
 #if VA_MS_HAS_CUDA_RUNTIME
-    if (ctx_.stream) {
-        cudaStreamDestroy(reinterpret_cast<cudaStream_t>(ctx_.stream));
-        ctx_.stream = nullptr;
-    }
+    // Do not destroy the global stream; it's owned by StreamPool
 #endif
 }
 

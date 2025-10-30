@@ -309,3 +309,14 @@
 11	68	7834667543507733	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
 87	1222	7834667544262921	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	ef191da0f60c9e08
 1223	3132	7834667555618496	bin/VideoAnalyzer.exe	78db405934ba280e
+34	398	7835455657208443	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+442	2085	7835455661287100	CMakeFiles/VideoAnalyzer.dir/src/analyzer/multistage/node_model.cpp.obj	465026d730ccb529
+534	2091	7835455662206823	CMakeFiles/VideoAnalyzer.dir/src/analyzer/preproc_letterbox_cuda.cpp.obj	b02603eb76f0076a
+538	2092	7835455662251905	CMakeFiles/VideoAnalyzer.dir/src/analyzer/renderer_overlay_cuda.cpp.obj	62bcac5e6b70930e
+529	2093	7835455662156588	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	ef191da0f60c9e08
+543	2847	7835455662300102	CMakeFiles/VideoAnalyzer.dir/src/composition_root.cpp.obj	30ad7d808f65aa1c
+523	2877	7835455662096538	CMakeFiles/VideoAnalyzer.dir/src/analyzer/ort_session.cpp.obj	abf99a9a94b72ee1
+2877	12027	7835455685640669	bin/VideoAnalyzer.exe	78db405934ba280e
+9	61	7835456271771645	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+74	652	7835456272421035	CMakeFiles/VideoAnalyzer.dir/src/analyzer/multistage/runner.cpp.obj	db2de2e30fbec5d
+652	2501	7835456278205419	bin/VideoAnalyzer.exe	78db405934ba280e

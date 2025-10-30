@@ -291,8 +291,12 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
             OrtCUDAProviderOptionsV2* cuda_v2 = nullptr;
             try {
                 Ort::ThrowOnError(api.CreateCUDAProviderOptions(&cuda_v2));
-                // 获取 TLS 流（由预处理/内核共用）
-                impl_->ort_stream = va::exec::StreamPool::instance().tls();
+                // 统一 ORT 计算流：优先使用外部传入的 user_stream，否则回退到全局 TLS 流
+                if (impl_->options.user_stream) {
+                    impl_->ort_stream = reinterpret_cast<cudaStream_t>(impl_->options.user_stream);
+                } else {
+                    impl_->ort_stream = va::exec::StreamPool::instance().tls();
+                }
                 std::vector<std::string> opt_storage; opt_storage.reserve(8);
                 std::vector<const char*> keys;   keys.reserve(8);
                 std::vector<const char*> values; values.reserve(8);

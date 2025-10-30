@@ -33,12 +33,11 @@ public:
     cudaStream_t tls() {
 #if VA_EXEC_HAS_CUDA
         std::lock_guard<std::mutex> lk(mu_);
-        auto tid = std::this_thread::get_id();
-        auto& s = map_[tid];
-        if (!s) {
-            (void)cudaStreamCreate(&s);
+        // Use a single global non-blocking stream to avoid cross-thread TLS mismatches
+        if (!global_) {
+            (void)cudaStreamCreateWithFlags(&global_, cudaStreamNonBlocking);
         }
-        return s;
+        return global_;
 #else
         return nullptr;
 #endif
@@ -51,7 +50,7 @@ private:
     StreamPool& operator=(const StreamPool&) = delete;
 
     std::mutex mu_;
-    std::unordered_map<std::thread::id, cudaStream_t> map_;
+    cudaStream_t global_ { nullptr };
 };
 
 } } // namespace va::exec

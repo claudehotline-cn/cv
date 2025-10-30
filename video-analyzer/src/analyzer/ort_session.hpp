@@ -15,6 +15,8 @@ public:
     struct Options {
         std::string provider {"cpu"};
         int device_id {0};
+        // Optional user-provided CUDA stream (void* to avoid CUDA headers)
+        void* user_stream {nullptr};
         bool use_io_binding {false};
         bool prefer_pinned_memory {true};
         bool allow_cpu_fallback {true};
