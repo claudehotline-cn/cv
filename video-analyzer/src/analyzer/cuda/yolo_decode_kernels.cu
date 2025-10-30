@@ -1,16 +1,21 @@
 #include "analyzer/cuda/yolo_decode_kernels.hpp"
+#if defined(__CUDACC__) || defined(USE_CUDA)
+#include <cuda_fp16.h>
+#endif
 
 namespace va::analyzer::cudaops {
+// NOTE: ensure this TU always compiles fp16 helpers; minor edit to force rebuild
 
 __global__ void k_yolo_decode(
     const float* out, int N, int A, int K, int ch_first, float conf_thr,
+    float pre_sx, float pre_sy,
     float scale, int pad_x, int pad_y, int ow, int oh,
     float* boxes, float* scores, int32_t* classes, int* count)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= N) return;
     auto at = [&](int attr)->float { return ch_first ? out[attr * N + i] : out[i * A + attr]; };
-    float cx = at(0), cy = at(1), w = at(2), h = at(3);
+    float cx = at(0) * pre_sx, cy = at(1) * pre_sy, w = at(2) * pre_sx, h = at(3) * pre_sy;
     float best=0.0f; int bc=-1;
     for (int c=0;c<K;++c){ float s=at(4+c); if (s>best){ best=s; bc=c; } }
     if (bc<0 || best<conf_thr) return;
@@ -37,6 +42,8 @@ cudaError_t yolo_decode_to_yxyx(
     int num_classes,
     int channels_first,
     float conf_thr,
+    float pre_sx,
+    float pre_sy,
     float scale,
     int pad_x,
     int pad_y,
@@ -51,23 +58,22 @@ cudaError_t yolo_decode_to_yxyx(
     int threads = 256;
     int blocks = (num_det + threads - 1) / threads;
     k_yolo_decode<<<blocks, threads, 0, stream>>>(d_out, num_det, num_attrs, num_classes, channels_first, conf_thr,
-        scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
+        pre_sx, pre_sy, scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
     return cudaGetLastError();
 }
 
 #if defined(__CUDACC__) || defined(USE_CUDA)
-#include <cuda_fp16.h>
-
 // FP16 输入（__half）版本：逻辑与 float 版本一致，仅将读取转为 __half2float
 __global__ void k_yolo_decode_fp16(
     const __half* out, int N, int A, int K, int ch_first, float conf_thr,
+    float pre_sx, float pre_sy,
     float scale, int pad_x, int pad_y, int ow, int oh,
     float* boxes, float* scores, int32_t* classes, int* count)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= N) return;
     auto at = [&](int attr)->float { __half h = (ch_first ? out[attr * N + i] : out[i * A + attr]); return __half2float(h); };
-    float cx = at(0), cy = at(1), w = at(2), h = at(3);
+    float cx = at(0) * pre_sx, cy = at(1) * pre_sy, w = at(2) * pre_sx, h = at(3) * pre_sy;
     float best=0.0f; int bc=-1;
     for (int c=0;c<K;++c){ float s=at(4+c); if (s>best){ best=s; bc=c; } }
     if (bc<0 || best<conf_thr) return;
@@ -94,6 +100,8 @@ cudaError_t yolo_decode_to_yxyx_fp16(
     int num_classes,
     int channels_first,
     float conf_thr,
+    float pre_sx,
+    float pre_sy,
     float scale,
     int pad_x,
     int pad_y,
@@ -108,7 +116,7 @@ cudaError_t yolo_decode_to_yxyx_fp16(
     int threads = 256;
     int blocks = (num_det + threads - 1) / threads;
     k_yolo_decode_fp16<<<blocks, threads, 0, stream>>>(d_out, num_det, num_attrs, num_classes, channels_first, conf_thr,
-        scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
+        pre_sx, pre_sy, scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
     return cudaGetLastError();
 }
 

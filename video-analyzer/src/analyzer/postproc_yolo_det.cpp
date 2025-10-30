@@ -35,6 +35,34 @@ inline float getNmsThreshold() {
     return thr;
 }
 
+// 读取是否将 YOLO 模型输出视为归一化坐标（[0,1]）；
+// 支持通过环境变量强制打开：VA_YOLO_OUT_NORMALIZED=1
+inline bool getOutputsNormalizedFlag() {
+    if (const char* e = std::getenv("VA_YOLO_OUT_NORMALIZED")) {
+        std::string v = e; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+        return (v=="1"||v=="true"||v=="yes"||v=="on");
+    }
+    return false;
+}
+
+// 启发式判断是否为归一化坐标：抽样若干 (cx,cy,w,h)，若最大值 ≤ 1.2 则视为归一化
+inline bool detectNormalizedHeuristically(const float* data,
+                                          int64_t num_det,
+                                          int64_t num_attrs,
+                                          bool channels_first) {
+    const int64_t sample = std::min<int64_t>(num_det, 1024);
+    float mx = 0.0f;
+    for (int64_t i = 0; i < sample; ++i) {
+        auto at = [&](int64_t attr)->float {
+            return channels_first ? data[attr * num_det + i] : data[i * num_attrs + attr];
+        };
+        float cx = at(0), cy = at(1), w = at(2), h = at(3);
+        mx = std::max(mx, std::max(std::max(cx, cy), std::max(w, h)));
+        if (mx > 2.0f) break; // 过早退出
+    }
+    return mx <= 1.2f;
+}
+
 float clamp(float v, float lo, float hi) {
     return std::max(lo, std::min(v, hi));
 }
@@ -165,6 +193,12 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
     std::vector<core::Box> boxes;
     boxes.reserve(static_cast<size_t>(num_det));
 
+    // 检测是否为归一化坐标
+    const bool force_normalized = getOutputsNormalizedFlag();
+    bool normalized = force_normalized || detectNormalizedHeuristically(data, num_det, num_attrs, channels_first);
+    const float pre_sx = normalized ? static_cast<float>(meta.input_width)  : 1.0f;
+    const float pre_sy = normalized ? static_cast<float>(meta.input_height) : 1.0f;
+
     for (int64_t i = 0; i < num_det; ++i) {
         auto value_at = [&](int64_t attr) -> float {
             if (channels_first) { // [C, N]
@@ -174,10 +208,11 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
             }
         };
 
-        const float cx = value_at(0);
-        const float cy = value_at(1);
-        const float w = value_at(2);
-        const float h = value_at(3);
+        // 若为归一化坐标，先乘以输入尺寸再进行反 letterbox
+        const float cx = value_at(0) * pre_sx;
+        const float cy = value_at(1) * pre_sy;
+        const float w = value_at(2) * pre_sx;
+        const float h = value_at(3) * pre_sy;
 
         float best_score = 0.0f;
         int best_class = -1;
@@ -304,6 +339,10 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                 << "layout cf=" << (channels_first?1:0)
                 << " num_det=" << num_det << " num_attrs=" << num_attrs;
             if (num_attrs >= 5 && num_det > 0) {
+                // 归一化预缩放因子（内核支持 pre-scale）
+                const bool normalized = getOutputsNormalizedFlag();
+                const float pre_sx = normalized ? static_cast<float>(meta.input_width)  : 1.0f;
+                const float pre_sy = normalized ? static_cast<float>(meta.input_height) : 1.0f;
                 float *d_boxes=nullptr, *d_scores=nullptr; int32_t* d_classes=nullptr; int* d_count=nullptr; int* d_keep=nullptr;
                 if (cudaMalloc(&d_boxes, static_cast<size_t>(num_det)*4*sizeof(float)) == cudaSuccess &&
                     cudaMalloc(&d_scores, static_cast<size_t>(num_det)*sizeof(float)) == cudaSuccess &&
@@ -316,37 +355,27 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     cudaError_t err_decode = cudaSuccess;
                     auto st = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
                     if (t.dtype == core::DType::F16) {
-                        // 将 FP16 模型输出转换为 FP32 后复用现有解码核
-                        int64_t total = num_det * num_attrs;
-                        // Host-side convert FP16 -> FP32, then upload to device
-                        std::vector<__half> h_half(static_cast<size_t>(total));
-                        if (cudaMemcpy(h_half.data(), t.data, static_cast<size_t>(total) * sizeof(__half), cudaMemcpyDeviceToHost) == cudaSuccess) {
-                            std::vector<float> h_float(static_cast<size_t>(total));
-                            for (int64_t i=0;i<total;++i) {
-                                h_float[static_cast<size_t>(i)] = __half2float(h_half[static_cast<size_t>(i)]);
-                            }
-                            float* d_tmp = nullptr;
-                            if (cudaMalloc(&d_tmp, static_cast<size_t>(total) * sizeof(float)) == cudaSuccess) {
-                                if (cudaMemcpy(d_tmp, h_float.data(), static_cast<size_t>(total) * sizeof(float), cudaMemcpyHostToDevice) == cudaSuccess) {
-                                    err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(
-                                        d_tmp,
-                                        num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
-                                        getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
-                                        d_boxes, d_scores, d_classes, d_count, st);
-                                } else {
-                                    err_decode = cudaErrorInvalidValue;
-                                }
-                                cudaFree(d_tmp);
+                        // 纯设备路径：先在设备侧将 FP16 → FP32（half_to_float），再调用 float 解码核
+                        int64_t total = static_cast<int64_t>(num_det) * static_cast<int64_t>(num_attrs);
+                        float* d_tmp = nullptr;
+                        if (cudaMalloc(&d_tmp, static_cast<size_t>(total) * sizeof(float)) == cudaSuccess) {
+                            if (va::analyzer::cudaops::half_to_float(reinterpret_cast<const __half*>(t.data), d_tmp, static_cast<int>(total), st) == cudaSuccess) {
+                                err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(
+                                    d_tmp,
+                                    num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
+                                    getScoreThreshold(), pre_sx, pre_sy, scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+                                    d_boxes, d_scores, d_classes, d_count, st);
                             } else {
-                                err_decode = cudaErrorMemoryAllocation;
+                                err_decode = cudaErrorInvalidValue;
                             }
+                            cudaFree(d_tmp);
                         } else {
-                            err_decode = cudaErrorInvalidValue;
+                            err_decode = cudaErrorMemoryAllocation;
                         }
                     } else {
                         err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(static_cast<const float*>(t.data),
                             num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
-                            getScoreThreshold(), scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+                            getScoreThreshold(), pre_sx, pre_sy, scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
                             d_boxes, d_scores, d_classes, d_count, st);
                     }
                     if (err_decode == cudaSuccess) {
@@ -426,9 +455,18 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     for (auto d : t.shape) { count *= static_cast<size_t>(d > 0 ? d : 1); }
     if (count == 0) { VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: empty tensor (count=0)"; return false; }
     std::vector<float> host(count);
-    if (cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
-        VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: cudaMemcpy D2H failed";
-        return false;
+    if (t.dtype == core::DType::F16) {
+        std::vector<__half> host_h(count);
+        if (cudaMemcpy(host_h.data(), t.data, count * sizeof(__half), cudaMemcpyDeviceToHost) != cudaSuccess) {
+            VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: D2H half memcpy failed";
+            return false;
+        }
+        for (size_t i=0;i<count;++i) host[i] = __half2float(host_h[i]);
+    } else {
+        if (cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
+            VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: cudaMemcpy D2H failed";
+            return false;
+        }
     }
 
     // Interpret layout like CPU path with robust detection
@@ -455,8 +493,13 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     std::vector<Cand> cands;
     cands.reserve(static_cast<size_t>(num_det));
     const float score_thr2 = getScoreThreshold();
+    // 归一化启发式与开关（同 CPU 实现）
+    bool normalized = getOutputsNormalizedFlag() || detectNormalizedHeuristically(host.data(), num_det, num_attrs, channels_first);
+    float pre_sx = normalized ? static_cast<float>(meta.input_width)  : 1.0f;
+    float pre_sy = normalized ? static_cast<float>(meta.input_height) : 1.0f;
+
     for (int64_t i = 0; i < num_det; ++i) {
-        float cx = value_at(i,0), cy = value_at(i,1), w = value_at(i,2), h = value_at(i,3);
+        float cx = value_at(i,0) * pre_sx, cy = value_at(i,1) * pre_sy, w = value_at(i,2) * pre_sx, h = value_at(i,3) * pre_sy;
         // best class score
         float best=0.0f; int best_c=-1;
         for (int c=0;c<num_classes;++c){ float s=value_at(i,4+c); if (s>best){ best=s; best_c=c; }}

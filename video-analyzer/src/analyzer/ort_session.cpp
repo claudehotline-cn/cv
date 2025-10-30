@@ -761,7 +761,7 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
                     auto shape = info.GetShape();
                     size_t count = 1;
                     for (auto d : shape) count *= static_cast<size_t>(d > 0 ? d : 1);
-                    size_t bytes = count * sizeof(float);
+                    size_t bytes = count * sizeof(float); // host float buffer size
 
                     auto mem = impl_->host_pool->acquire(bytes);
                     if (!mem.ptr || mem.bytes < bytes) {
@@ -771,18 +771,76 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
 #if VA_HAS_CUDA_RUNTIME
                     if (bind_outputs_to_device) {
                         const void* src_dev = value.GetTensorRawData();
-                        cudaError_t err = cudaMemcpy(mem.ptr, src_dev, bytes, cudaMemcpyDeviceToHost);
-                        if (err != cudaSuccess) {
+                        auto et = info.GetElementType();
+                        if (et == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                            cudaError_t err = cudaMemcpy(mem.ptr, src_dev, bytes, cudaMemcpyDeviceToHost);
+                            if (err != cudaSuccess) { outputs.emplace_back(makeTensorView(value, false)); continue; }
+                        } else if (et == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                            // Copy as IEEE754 binary16 to host then convert to float
+                            std::vector<uint16_t> host_half(count);
+                            size_t half_bytes = count * sizeof(uint16_t);
+                            cudaError_t err = cudaMemcpy(host_half.data(), src_dev, half_bytes, cudaMemcpyDeviceToHost);
+                            if (err != cudaSuccess) { outputs.emplace_back(makeTensorView(value, false)); continue; }
+                            auto h2f = [](uint16_t h)->float {
+                                uint32_t s = (h & 0x8000u) << 16;
+                                uint32_t e = (h & 0x7C00u) >> 10;
+                                uint32_t f = (h & 0x03FFu);
+                                uint32_t out_e, out_f;
+                                if (e == 0) {
+                                    if (f == 0) { out_e = 0; out_f = 0; }
+                                    else {
+                                        // subnormal
+                                        e = 1; while ((f & 0x0400u) == 0) { f <<= 1; e--; }
+                                        f &= 0x03FFu;
+                                        out_e = e + (127 - 15);
+                                        out_f = f << 13;
+                                    }
+                                } else if (e == 31) { // Inf/NaN
+                                    out_e = 255; out_f = f ? (f << 13) : 0;
+                                } else {
+                                    out_e = e + (127 - 15);
+                                    out_f = f << 13;
+                                }
+                                uint32_t bits = s | (out_e << 23) | out_f;
+                                float result; std::memcpy(&result, &bits, sizeof(result)); return result;
+                            };
+                            float* dst = reinterpret_cast<float*>(mem.ptr);
+                            for (size_t i=0;i<count;++i) dst[i] = h2f(host_half[i]);
+                        } else {
+                            // Unsupported dtype: fallback to raw view construction
                             outputs.emplace_back(makeTensorView(value, false));
                             continue;
                         }
                     } else
 #endif
                     {
-                        const float* src = nullptr;
-                        try { src = value.GetTensorData<float>(); } catch (...) { src = nullptr; }
-                        if (!src) { outputs.emplace_back(makeTensorView(value, false)); continue; }
-                        std::memcpy(mem.ptr, src, bytes);
+                        auto et = info.GetElementType();
+                        if (et == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                            const float* src = nullptr;
+                            try { src = value.GetTensorData<float>(); } catch (...) { src = nullptr; }
+                            if (!src) { outputs.emplace_back(makeTensorView(value, false)); continue; }
+                            std::memcpy(mem.ptr, src, bytes);
+                        } else if (et == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                            const uint16_t* src = reinterpret_cast<const uint16_t*>(value.GetTensorRawData());
+                            if (!src) { outputs.emplace_back(makeTensorView(value, false)); continue; }
+                            auto h2f = [](uint16_t h)->float {
+                                uint32_t s = (h & 0x8000u) << 16;
+                                uint32_t e = (h & 0x7C00u) >> 10;
+                                uint32_t f = (h & 0x03FFu);
+                                uint32_t out_e, out_f;
+                                if (e == 0) {
+                                    if (f == 0) { out_e = 0; out_f = 0; }
+                                    else { e = 1; while ((f & 0x0400u) == 0) { f <<= 1; e--; } f &= 0x03FFu; out_e = e + (127 - 15); out_f = f << 13; }
+                                } else if (e == 31) { out_e = 255; out_f = f ? (f << 13) : 0; }
+                                else { out_e = e + (127 - 15); out_f = f << 13; }
+                                uint32_t bits = s | (out_e << 23) | out_f; float r; std::memcpy(&r, &bits, sizeof(r)); return r;
+                            };
+                            float* dst = reinterpret_cast<float*>(mem.ptr);
+                            for (size_t i=0;i<count;++i) dst[i] = h2f(src[i]);
+                        } else {
+                            outputs.emplace_back(makeTensorView(value, false));
+                            continue;
+                        }
                     }
 
                     core::TensorView view;
