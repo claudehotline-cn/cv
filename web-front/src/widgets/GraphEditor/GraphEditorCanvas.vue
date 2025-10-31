@@ -47,16 +47,19 @@ onMounted(()=>{
       router: 'manhattan',
       connector: { name:'rounded', args:{ radius:6 } },
       allowBlank: false, allowLoop: false, allowMulti: false, snap: true,
-      // 允许从节点主体发起连线，需要将节点的 body 设为 magnet
-      validateMagnet({ cell }) {
-        const t = (cell?.getData() as any)?.type
-        // 不允许从 sink 节点发起连接
-        if (t === 'sink') return false
-        return true
+      highlight: true,
+      // 仅允许从“out”端口开始连线，避免拖拽节点与连线冲突
+      validateMagnet({ magnet }) {
+        const g = (magnet && (magnet as any).getAttribute) ? (magnet as any).getAttribute('port-group') : ''
+        return g === 'out'
       },
       createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2 } } }) },
-      validateConnection({ sourceCell, targetCell }) {
-        if (!sourceCell || !targetCell) return false
+      // 仅允许 out -> in
+      validateConnection({ sourceCell, targetCell, sourceMagnet, targetMagnet }) {
+        if (!sourceCell || !targetCell || !sourceMagnet || !targetMagnet) return false
+        const sg = (sourceMagnet as any).getAttribute && (sourceMagnet as any).getAttribute('port-group')
+        const tg = (targetMagnet as any).getAttribute && (targetMagnet as any).getAttribute('port-group')
+        if (sg !== 'out' || tg !== 'in') return false
         const st = (sourceCell.getData() as any)?.type
         const tt = (targetCell.getData() as any)?.type
         if (st==='sink') return false
@@ -78,12 +81,24 @@ onMounted(()=>{
 
 onBeforeUnmount(()=> graph?.dispose())
 
+function nodePorts(kind: string){
+  const groups: any = {
+    in: { position: 'left',  attrs: { circle: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' } } },
+    out:{ position: 'right', attrs: { circle: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' } } }
+  }
+  const items: any[] = []
+  if (kind !== 'source') items.push({ group: 'in' })
+  if (kind !== 'sink')   items.push({ group: 'out' })
+  return { groups, items }
+}
+
 function addNode(kind: string) {
   const labelMap: Record<string,string> = { source:'Source', preprocess:'Preprocess', model:'Model', nms:'NMS', overlay:'Overlay', sink:'Sink' }
   const x = 100 + Math.random()*300, y = 80 + Math.random()*240
   graph.addNode({
     x, y, width: 140, height: 44,
-    attrs: { body: { stroke: 'rgba(255,255,255,.1)', fill: '#141822', rx: 8, ry: 8, magnet: true }, label: { text: labelMap[kind] || kind, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
+    attrs: { body: { stroke: 'rgba(255,255,255,.1)', fill: '#141822', rx: 8, ry: 8 }, label: { text: labelMap[kind] || kind, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
+    ports: nodePorts(kind),
     data: { type: kind, name: `${kind}-${Date.now()%10000}`, params: {} }
   })
   emit('update:modelValue', toJSON())
@@ -97,10 +112,12 @@ function fromJSON(json:any){
   graph.clearCells();
   const id2node: Record<string, any> = {};
   json.nodes?.forEach((n:any)=>{
+    const kind = n.type || 'node'
     id2node[n.id] = graph.addNode({
       id: n.id,
       x: (n.position?.x ?? 100), y: (n.position?.y ?? 100), width: 140, height:44,
-      attrs: { body:{ stroke:'rgba(255,255,255,.1)', fill:'#141822', rx:8, ry:8, magnet: true }, label:{ text: n.name || n.type, fill:'#e5edf6', fontSize:13, fontWeight:600 } },
+      attrs: { body:{ stroke:'rgba(255,255,255,.1)', fill:'#141822', rx:8, ry:8 }, label:{ text: n.name || n.type, fill:'#e5edf6', fontSize:13, fontWeight:600 } },
+      ports: nodePorts(kind),
       data: { type:n.type, name:n.name, params:n.params||{} }
     })
   });
