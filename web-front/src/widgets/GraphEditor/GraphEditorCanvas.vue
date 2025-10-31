@@ -4,25 +4,25 @@
     <div class="palette">
       <div class="pal-group">
         <div class="pal-title pre">预处理</div>
-        <div class="pal-card" @mousedown="startDnd('preprocess','preproc.letterbox', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('preprocess','preproc.letterbox', $event)">
           <div class="pal-name">Letterbox</div>
           <div class="pal-sub">preproc.letterbox</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title model">模型</div>
-        <div class="pal-card" @mousedown="startDnd('model','model.ort', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('model','model.ort', $event)">
           <div class="pal-name">ONNX Runtime</div>
           <div class="pal-sub">model.ort</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title post">后处理</div>
-        <div class="pal-card" @mousedown="startDnd('nms','post.yolo.nms', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('nms','post.yolo.nms', $event)">
           <div class="pal-name">YOLO NMS</div>
           <div class="pal-sub">post.yolo.nms</div>
         </div>
-        <div class="pal-card" @mousedown="startDnd('overlay','overlay.cuda', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('overlay','overlay.cuda', $event)">
           <div class="pal-name">Overlay(CUDA)</div>
           <div class="pal-sub">overlay.cuda</div>
         </div>
@@ -189,7 +189,14 @@ function setupGraph(el: HTMLDivElement) {
     emit('update:selection', first ? toNodeModel(first) : null)
   })
 
-  dnd = new Dnd({ target: graph, scaled: false, animation: true })
+  dnd = new Dnd({
+    target: graph,
+    scaled: false,
+    animation: true,
+    draggingContainer: document.body,
+    getDragNode(node){ return node.clone() },
+    getDropNode(node){ return node.clone() },
+  })
 }
 
 function toNodeModel(cell: any): any | null {
@@ -250,6 +257,7 @@ function clearHighlight() {
 
 function startDnd(kind: 'preprocess'|'model'|'nms'|'overlay', yamlType: string, evt: MouseEvent) {
   if (!graph || !dnd) return
+  try { evt.preventDefault(); evt.stopPropagation(); } catch {}
   const node = graph.createNode(makeNodeConfig({ type: kind, yamlType }))
   dnd.start(node, evt)
 }
