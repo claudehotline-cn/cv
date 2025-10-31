@@ -8,6 +8,8 @@
 #include <cctype>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
+#include <fstream>
+#include <filesystem>
 
 #include "controlplane/config.hpp"
 #include "controlplane/http_server.hpp"
@@ -915,6 +917,37 @@ int main(int argc, char** argv) {
       os << "]}}"; r.status = ok?200:200; r.body=os.str(); emit("/api/orch/health", r.status); return r;
     }
     if (path.rfind("/api/control", 0) == 0) {
+      // Minimal apply endpoints for pipeline specs
+      auto write_file = [](const std::string& file, const std::string& content) {
+        try {
+          std::filesystem::create_directories(std::filesystem::path(file).parent_path());
+          std::ofstream ofs(file, std::ios::binary);
+          ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
+          return ofs.good();
+        } catch (...) { return false; }
+      };
+      auto nowms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(); };
+
+      if (method == "POST" && path == "/api/control/apply_pipeline") {
+        // Persist a single pipeline spec for auditing; noop for runtime
+        std::string name = "pipeline-from-ui";
+        try {
+          auto j = nlohmann::json::parse(body);
+          if (j.contains("name") && j["name"].is_string()) name = j["name"].get<std::string>();
+        } catch (...) {}
+        std::ostringstream fn; fn << "controlplane/state/pipelines/" << name << "-" << nowms() << ".json";
+        bool ok = write_file(fn.str(), body);
+        nlohmann::json out; out["code"] = ok?"OK":"ERROR"; if (!ok) out["msg"] = "persist failed"; else out["data"] = { {"file", fn.str()} };
+        r.status = ok?200:500; r.body = out.dump(); emit("/api/control/apply_pipeline", r.status); return r;
+      }
+      if (method == "POST" && path == "/api/control/apply_pipelines") {
+        // Persist batch specs
+        std::string all = body;
+        std::ostringstream fn; fn << "controlplane/state/pipelines/batch-" << nowms() << ".json";
+        bool ok = write_file(fn.str(), all);
+        nlohmann::json out; out["code"] = ok?"OK":"ERROR"; if (!ok) out["msg"] = "persist failed"; else out["data"] = { {"file", fn.str()} };
+        r.status = ok?200:500; r.body = out.dump(); emit("/api/control/apply_pipelines", r.status); return r;
+      }
       std::ostringstream os; os << "{\"code\":\"NOT_FOUND\",\"path\":\"" << path << "\"}";
       r.status = 404; r.body = os.str(); return r;
     }

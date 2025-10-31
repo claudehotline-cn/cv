@@ -4,6 +4,22 @@
       <GraphEditorCanvas v-model="graphJson" @update:selection="onSelect" @export="onExport" ref="canvasRef" />
     </el-col>
     <el-col :span="8">
+      <el-card shadow="never" style="margin-bottom:12px">
+        <template #header>Graph & Apply</template>
+        <el-form label-width="88px">
+          <el-form-item label="Graph">
+            <el-select v-model="graphId" placeholder="select graph_id" filterable style="width:100%">
+              <el-option v-for="g in graphs" :key="g.graph_id" :label="g.name || g.graph_id" :value="g.graph_id"/>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Pipeline">
+            <el-input v-model="pipelineName" placeholder="e.g. det_720p" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="success" @click="applyToCp">Apply to CP</el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
       <NodePropsForm :model="selected" :errors="selectedErrors" @update="onUpdateNode" />
       <el-card shadow="never" style="margin-top:12px">
         <el-space>
@@ -35,12 +51,27 @@ import GraphEditorCanvas from '@/widgets/GraphEditor/GraphEditorCanvas.vue'
 import NodePropsForm from '@/widgets/GraphEditor/NodePropsForm.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { toDagSpec, toLinearSpec, validateGraph, GraphValidateResult } from '@/utils/graph'
+import { applyPipeline as cpApply } from '@/api/cp'
+import { dataProvider } from '@/api/dataProvider'
 
 const route = useRoute()
 const graphJson = ref<any>({ nodes: [], edges: [] })
 const selected = ref<any | null>(null)
 const canvasRef = ref<any>(null)
 const vr = ref<GraphValidateResult | null>(null)
+const graphs = ref<any[]>([])
+const graphId = ref<string>('')
+const pipelineName = ref<string>('')
+
+async function applyToCp(){
+  try{
+    if (!graphId.value) { ElMessage.error('please select graph_id'); return }
+    const name = (pipelineName.value || String(route.query.name || '') || 'from_ui').toString()
+    await ElMessageBox.confirm(`Apply graph '${graphId.value}' as pipeline '${name}'?`, 'Confirm', { type:'warning' })
+    await cpApply({ pipeline_name: name, spec: { graph_id: graphId.value } })
+    ElMessage.success('Apply submitted')
+  } catch(e:any){ if (e !== 'cancel') ElMessage.error(e?.message || 'Apply failed') }
+}
 
 const selectedErrors = computed(() => {
   if (!selected.value || !vr.value) return []
@@ -169,6 +200,8 @@ onMounted(() => {
       canvasRef.value?.fromJSON && canvasRef.value.fromJSON(graphJson.value)
     }
   } catch {}
+  // load graphs for selection (via CP)
+  ;(async()=>{ try{ const resp:any = await (dataProvider as any).listGraphs?.(); const raw = ((resp?.data?.items) ?? resp?.data ?? resp?.items ?? []) as any[]; graphs.value = Array.isArray(raw)? raw: [] } catch{} })()
   runValidation()
 })
 
