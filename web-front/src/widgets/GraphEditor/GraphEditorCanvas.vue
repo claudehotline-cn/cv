@@ -1,5 +1,37 @@
 <template>
+</style>
+:deep(.x6-port:hover) circle{ r: 6px !important; stroke-width: 2px !important; }
+
+function groupForType(t: string): string {
+  if (!t) return 'other'
+  if (t.startsWith('preproc.')) return 'preprocess'
+  if (t.startsWith('model.')) return 'model'
+  if (t.startsWith('post.')) return t.includes('nms') ? 'nms' : 'post'
+  if (t.startsWith('overlay')) return 'overlay'
+  return 'other'
+}
+
+</style>
+<template>
   <div class="ge">
+    <div class="palette">
+      <el-card shadow="never" class="pal-card">
+        <template #header><span>节点库</span></template>
+        <div class="pal-section">
+          <div class="pal-title">预处理</div>
+          <el-button size="small" class="pal-item" @click="addNodeFromPalette('preproc.letterbox','preprocess','Letterbox',{ out_w:'640', out_h:'640', use_cuda:'1' })">Letterbox</el-button>
+        </div>
+        <div class="pal-section">
+          <div class="pal-title">模型</div>
+          <el-button size="small" class="pal-item" @click="addNodeFromPalette('model.ort','model','ONNX Runtime',{ in:'tensor:det_input', outs:'tensor:det_raw', model_path:'' })">ONNX Runtime</el-button>
+        </div>
+        <div class="pal-section">
+          <div class="pal-title">后处理</div>
+          <el-button size="small" class="pal-item" @click="addNodeFromPalette('post.yolo.nms','nms','YOLO NMS',{ conf:'0.65', iou:'0.45' })">YOLO NMS</el-button>
+          <el-button size="small" class="pal-item" @click="addNodeFromPalette('overlay.cuda','overlay','CUDA Overlay',{ alpha:'0.2', thickness:'3' })">Overlay</el-button>
+        </div>
+      </el-card>
+    </div>
     <div class="toolbar">
       <el-button-group>
         <el-button size="small" @click="addNode('source')">源</el-button>
@@ -169,6 +201,16 @@ function styleFor(kind: string){
   }
 }
 
+
+function groupForType(t: string): string {
+  if (!t) return 'other'
+  if (t.startsWith('preproc.')) return 'preprocess'
+  if (t.startsWith('model.')) return 'model'
+  if (t.startsWith('post.')) return t.includes('nms') ? 'nms' : 'post'
+  if (t.startsWith('overlay')) return 'overlay'
+  return 'other'
+}
+
 function nodePorts(kind: string){
   const groups: any = {
     in: {
@@ -224,7 +266,7 @@ function fromJSON(json:any){
   graph.clearCells();
   const id2node: Record<string, any> = {};
   json.nodes?.forEach((n:any)=>{
-    const kind = n.type || 'node'
+    const kind = (n.group || groupForType(n.type)) || 'node'
     id2node[n.id] = graph.addNode({
       id: n.id,
       x: (n.position?.x ?? 100), y: (n.position?.y ?? 100), width: 140, height:44,
@@ -251,6 +293,20 @@ function highlightInvalid(ids: string[]){
 
 function clearHighlight(){ graph.getNodes().forEach(n => n.setAttrs({ body: { stroke: 'rgba(255,255,255,.1)', strokeWidth: 1 } })) }
 
+
+function addNodeFromPalette(type: string, group: string, display: string, defaults: any = {}) {
+  const x = 140 + Math.random()*260, y = 100 + Math.random()*240
+  const label = display
+  const g = group || (typeof groupForType==='function'? groupForType(type) : 'other')
+  graph.addNode({
+    x, y, width: 160, height: 48,
+    attrs: { body: { stroke: styleFor(g).stroke, fill: styleFor(g).fill, rx: 8, ry: 8 }, label: { text: label, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
+    ports: nodePorts(g),
+    data: { type, group: g, name: ${display}-, params: { ...defaults } }
+  })
+  emit('update:modelValue', toJSON())
+}
+
 defineExpose({ toJSON, fromJSON, autoLayout, highlightInvalid, clearHighlight })
 </script>
 
@@ -259,6 +315,14 @@ defineExpose({ toJSON, fromJSON, autoLayout, highlightInvalid, clearHighlight })
 .toolbar{ display:flex; align-items:center; gap:8px; padding:6px 6px 6px 0; }
 .canvas{ flex:1; border:1px solid rgba(255,255,255,.08); border-radius:10px; overflow:hidden; min-height: 420px; }
 /* 端口 hover 的轻量动画（通过深度选择器作用于 x6 内部 SVG） */
+:deep(.x6-port) circle{ transition: all .12s ease; }
+:deep(.x6-port:hover) circle{ r: 6px !important; stroke-width: 2px !important; }
+.ge{ position:relative; }
+.palette{ position:absolute; left:8px; top:8px; z-index:2; width: 200px; }
+.pal-card{ background: rgba(20,24,34,.9); border-color: rgba(255,255,255,.08); }
+.pal-section{ margin-bottom:10px; }
+.pal-title{ font-size:12px; color:#9bb1d6; margin:4px 0 6px; }
+.pal-item{ width:100%; justify-content:flex-start; }
 :deep(.x6-port) circle{ transition: all .12s ease; }
 :deep(.x6-port:hover) circle{ r: 6px !important; stroke-width: 2px !important; }
 </style>
