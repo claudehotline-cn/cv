@@ -167,7 +167,8 @@ watch(graphJson, () => runValidation(), { deep: true })
 </script>
 
 <style scoped>
-.page{ height: calc(100vh - 64px - 36px - 16px*2); }
+.page{ height: calc(100vh - 64px); }
+.page :deep(.el-col){ height: 100%; }
 .errs{ font-size:12px; color:#ffb4b4; line-height:1.6; }
 .err-node{ margin-top:6px; padding-top:6px; border-top:1px dashed rgba(255,255,255,.12); }
 .nid{ color:#ffd479; font-weight:600; }
