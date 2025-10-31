@@ -343,6 +343,11 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                 const bool normalized = getOutputsNormalizedFlag();
                 const float pre_sx = normalized ? static_cast<float>(meta.input_width)  : 1.0f;
                 const float pre_sy = normalized ? static_cast<float>(meta.input_height) : 1.0f;
+                {
+                    auto lvlN = va::analyzer::logutil::log_level_for_tag("analyzer.yolo");
+                    auto thrN = va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo");
+                    VA_LOG_THROTTLED(lvlN, "analyzer.yolo", thrN) << "normalized=" << (normalized?1:0) << " pre_sx=" << pre_sx << " pre_sy=" << pre_sy;
+                }
                 float *d_boxes=nullptr, *d_scores=nullptr; int32_t* d_classes=nullptr; int* d_count=nullptr; int* d_keep=nullptr;
                 if (cudaMalloc(&d_boxes, static_cast<size_t>(num_det)*4*sizeof(float)) == cudaSuccess &&
                     cudaMalloc(&d_scores, static_cast<size_t>(num_det)*sizeof(float)) == cudaSuccess &&
@@ -355,17 +360,12 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     cudaError_t err_decode = cudaSuccess;
                     auto st = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
                     if (t.dtype == core::DType::F16) {
-                        // 纯设备路径：先在设备侧将 FP16 → FP32（half_to_float），再调用 float 解码核
-                        int64_t total = static_cast<int64_t>(num_det) * static_cast<int64_t>(num_attrs);
-                        float* d_tmp = nullptr;
-                        if (cudaMalloc(&d_tmp, static_cast<size_t>(total) * sizeof(float)) == cudaSuccess) {
-                            if (va::analyzer::cudaops::half_to_float(reinterpret_cast<const __half*>(t.data), d_tmp, static_cast<int>(total), st) == cudaSuccess) {
-                                err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx(
-                                    d_tmp,
-                                    num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
-                                    getScoreThreshold(), pre_sx, pre_sy, scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
-                                    d_boxes, d_scores, d_classes, d_count, st);
-                            } else {
+    err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx_fp16(
+        reinterpret_cast<const __half*>(t.data),
+        num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
+        getScoreThreshold(), pre_sx, pre_sy, scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+        d_boxes, d_scores, d_classes, d_count, st);
+} else {
                                 err_decode = cudaErrorInvalidValue;
                             }
                             cudaFree(d_tmp);
@@ -456,13 +456,12 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     if (count == 0) { VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: empty tensor (count=0)"; return false; }
     std::vector<float> host(count);
     if (t.dtype == core::DType::F16) {
-        std::vector<__half> host_h(count);
-        if (cudaMemcpy(host_h.data(), t.data, count * sizeof(__half), cudaMemcpyDeviceToHost) != cudaSuccess) {
-            VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: D2H half memcpy failed";
-            return false;
-        }
-        for (size_t i=0;i<count;++i) host[i] = __half2float(host_h[i]);
-    } else {
+    err_decode = va::analyzer::cudaops::yolo_decode_to_yxyx_fp16(
+        reinterpret_cast<const __half*>(t.data),
+        num_det, num_attrs, num_attrs - 4, channels_first ? 1 : 0,
+        getScoreThreshold(), pre_sx, pre_sy, scale, meta.pad_x, meta.pad_y, orig_w, orig_h,
+        d_boxes, d_scores, d_classes, d_count, st);
+} else {
         if (cudaMemcpy(host.data(), t.data, count * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
             VA_LOG_THROTTLED(va::analyzer::logutil::log_level_for_tag("analyzer.yolo"), "analyzer.yolo", va::analyzer::logutil::log_throttle_ms_for_tag("analyzer.yolo")) << "host decode: cudaMemcpy D2H failed";
             return false;
@@ -585,3 +584,4 @@ CPU_NMS:
 #include "analyzer/cuda/postproc_yolo_nms_kernels.hpp"
 #include "analyzer/cuda/yolo_decode_kernels.hpp"
 #endif
+

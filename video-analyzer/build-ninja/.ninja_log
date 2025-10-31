@@ -399,3 +399,13 @@
 6	54	7836150275366141	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
 63	650	7836150275939411	CMakeFiles/VideoAnalyzer.dir/src/analyzer/multistage/runner.cpp.obj	db2de2e30fbec5d
 650	2178	7836150281816211	bin/VideoAnalyzer.exe	78db405934ba280e
+39	91	7836178952675273	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+7	59	7836179974945887	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+8	59	7836180524482374	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+8	60	7836181373579554	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+71	1226	7836181374210728	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	ef191da0f60c9e08
+1227	10740	7836181385757501	bin/VideoAnalyzer.exe	78db405934ba280e
+8	62	7836183517649720	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
+75	1203	7836183518315014	CMakeFiles/VideoAnalyzer.dir/src/analyzer/postproc_yolo_det.cpp.obj	ef191da0f60c9e08
+1204	3572	7836183529606979	bin/VideoAnalyzer.exe	78db405934ba280e
+7	59	7836183966814021	D:/Projects/ai/cv/video-analyzer/build-ninja/CMakeFiles/cmake.verify_globs	5cbf3702c2ed3f08
