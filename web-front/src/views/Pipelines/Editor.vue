@@ -3,9 +3,23 @@
     <el-col :span="16">
       <GraphEditorCanvas v-model="graphJson" @update:selection="onSelect" @edge-connected="onEdgeConnected" @connect-error="onConnectError" @export="onExport" ref="canvasRef" />
     </el-col>
-    <el-col :span="8">
+    <el-col :span="8" v-if="false">
       <el-card shadow="never" style="margin-bottom:12px">
-        <template #header>Graph & Apply</template>
+        <template #header>Graph & Apply<el-drawer v-model="showProps" title="节点属性" size="360px" :with-header="true">
+  <NodePropsForm :model="selected" :errors="selectedErrors" @update="onUpdateNode" />
+</el-drawer>
+<el-drawer v-model="showApply" title="Graph & Apply" size="420px" :with-header="true">
+  <el-form label-width=\"88px\">
+    <el-form-item label=\"Graph\"><el-select v-model=\"graphId\" placeholder=\"select graph_id\" filterable style=\"width:100%\"><el-option v-for=\"g in graphs\" :key=\"g.graph_id\" :label=\"g.name || g.graph_id\" :value=\"g.graph_id\"/></el-select></el-form-item>
+    <el-form-item label=\"Pipeline\"><el-input v-model=\"pipelineName\" placeholder=\"e.g. det_720p\" /></el-form-item>
+    <el-form-item><el-button type=\"success\" @click=\"applyToCp\">Apply to CP</el-button></el-form-item>
+  </el-form>
+  <el-divider />
+  <el-space>
+    <el-button size=\"small\" @click=\"exportYaml()\">导出 YAML</el-button>
+  </el-space>
+</el-drawer>
+</template>
         <el-form label-width="88px">
           <el-form-item label="Graph">
             <el-select v-model="graphId" placeholder="select graph_id" filterable style="width:100%">
@@ -31,7 +45,21 @@
         </el-space>
       </el-card>
       <el-card v-if="vr && !vr.ok" shadow="never" style="margin-top:12px">
-        <template #header>校验结果</template>
+        <template #header>校验结果<el-drawer v-model="showProps" title="节点属性" size="360px" :with-header="true">
+  <NodePropsForm :model="selected" :errors="selectedErrors" @update="onUpdateNode" />
+</el-drawer>
+<el-drawer v-model="showApply" title="Graph & Apply" size="420px" :with-header="true">
+  <el-form label-width=\"88px\">
+    <el-form-item label=\"Graph\"><el-select v-model=\"graphId\" placeholder=\"select graph_id\" filterable style=\"width:100%\"><el-option v-for=\"g in graphs\" :key=\"g.graph_id\" :label=\"g.name || g.graph_id\" :value=\"g.graph_id\"/></el-select></el-form-item>
+    <el-form-item label=\"Pipeline\"><el-input v-model=\"pipelineName\" placeholder=\"e.g. det_720p\" /></el-form-item>
+    <el-form-item><el-button type=\"success\" @click=\"applyToCp\">Apply to CP</el-button></el-form-item>
+  </el-form>
+  <el-divider />
+  <el-space>
+    <el-button size=\"small\" @click=\"exportYaml()\">导出 YAML</el-button>
+  </el-space>
+</el-drawer>
+</template>
         <div class="errs">
           <div v-for="(msg, idx) in (vr?.errors||[])" :key="`g-${idx}`" class="err">- {{ msg }}</div>
           <div v-for="(errs, nid) in (vr?.nodeErrors||{})" :key="nid" class="err-node">
@@ -42,6 +70,20 @@
       </el-card>
     </el-col>
   </el-row>
+<el-drawer v-model="showProps" title="节点属性" size="360px" :with-header="true">
+  <NodePropsForm :model="selected" :errors="selectedErrors" @update="onUpdateNode" />
+</el-drawer>
+<el-drawer v-model="showApply" title="Graph & Apply" size="420px" :with-header="true">
+  <el-form label-width=\"88px\">
+    <el-form-item label=\"Graph\"><el-select v-model=\"graphId\" placeholder=\"select graph_id\" filterable style=\"width:100%\"><el-option v-for=\"g in graphs\" :key=\"g.graph_id\" :label=\"g.name || g.graph_id\" :value=\"g.graph_id\"/></el-select></el-form-item>
+    <el-form-item label=\"Pipeline\"><el-input v-model=\"pipelineName\" placeholder=\"e.g. det_720p\" /></el-form-item>
+    <el-form-item><el-button type=\"success\" @click=\"applyToCp\">Apply to CP</el-button></el-form-item>
+  </el-form>
+  <el-divider />
+  <el-space>
+    <el-button size=\"small\" @click=\"exportYaml()\">导出 YAML</el-button>
+  </el-space>
+</el-drawer>
 </template>
 
 <script setup lang="ts">
@@ -226,5 +268,6 @@ watch(graphJson, () => runValidation(), { deep: true })
 .errs{ font-size:12px; color:#ffb4b4; line-height:1.6; }
 .err-node{ margin-top:6px; padding-top:6px; border-top:1px dashed rgba(255,255,255,.12); }
 .nid{ color:#ffd479; font-weight:600; }
+.editor-fabs{ position: fixed; right: 18px; top: 98px; z-index: 5; }
 </style>
 
