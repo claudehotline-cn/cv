@@ -32,7 +32,13 @@ import { Dnd } from '@antv/x6-plugin-dnd'
 import sample from './samples/demo.json'
 
 const props = defineProps<{ modelValue?: any }>()
-const emit = defineEmits<{ (e:'update:selection', data:any):void; (e:'export', json:any):void; (e:'update:modelValue', v:any):void; (e:'edge-connected', payload:{ source:string, target:string }):void }>()
+const emit = defineEmits<{
+  (e:'update:selection', data:any):void;
+  (e:'export', json:any):void;
+  (e:'update:modelValue', v:any):void;
+  (e:'edge-connected', payload:{ source:string, target:string }):void;
+  (e:'connect-error', payload:{ msg:string }):void;
+}>()
 
 const containerRef = ref<HTMLDivElement|null>(null)
 let graph: Graph
@@ -67,7 +73,7 @@ onMounted(()=>{
         if (g !== 'out') { warnOnce('只能从输出端口(out)发起连线'); return false }
         return true
       },
-      createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2, targetMarker: { name: 'classic', size: 8 } } } }) },
+      createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2, strokeOpacity:.95, targetMarker: { name: 'classic', size: 10 } } } }) },
       // 仅允许 out -> in
       validateConnection({ sourceCell, targetCell, sourceMagnet, targetMagnet }) {
         if (!sourceCell || !targetCell || !sourceMagnet || !targetMagnet) return false
@@ -93,6 +99,8 @@ onMounted(()=>{
     try { emit('edge-connected', { source: edge.getSourceCellId(), target: edge.getTargetCellId() }) } catch {}
     emit('update:modelValue', toJSON())
   })
+  graph.on('edge:mouseenter', ({ edge }) => { try { edge.attr('line', { stroke:'#7db3ff', strokeWidth:3 }) } catch {} })
+  graph.on('edge:mouseleave', ({ edge }) => { try { edge.attr('line', { stroke:'#4b7fd1', strokeWidth:2 }) } catch {} })
 
   if (props.modelValue) fromJSON(props.modelValue)
 })
@@ -113,8 +121,32 @@ function styleFor(kind: string){
 
 function nodePorts(kind: string){
   const groups: any = {
-    in: { position: 'left',  markup: [{ tagName:'circle', selector:'portBody' }, { tagName:'title', selector:'portTip' }], attrs: { portBody: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' }, portTip: { text: 'in' } } },
-    out:{ position: 'right', markup: [{ tagName:'circle', selector:'portBody' }, { tagName:'title', selector:'portTip' }], attrs: { portBody: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' }, portTip: { text: 'out' } } }
+    in: {
+      position: 'left',
+      markup: [
+        { tagName:'circle', selector:'portBody' },
+        { tagName:'text', selector:'portLabel' },
+        { tagName:'title', selector:'portTip' }
+      ],
+      attrs: {
+        portBody:  { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' },
+        portLabel: { text:'in', ref:'portBody', refX:-8, refY:0, fontSize:9, fill:'#9bb1d6', textAnchor:'end', dominantBaseline:'middle', opacity:.85, pointerEvents:'none' },
+        portTip:   { text: 'in' }
+      }
+    },
+    out: {
+      position: 'right',
+      markup: [
+        { tagName:'circle', selector:'portBody' },
+        { tagName:'text', selector:'portLabel' },
+        { tagName:'title', selector:'portTip' }
+      ],
+      attrs: {
+        portBody:  { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' },
+        portLabel: { text:'out', ref:'portBody', refX:8, refY:0, fontSize:9, fill:'#9bb1d6', textAnchor:'start', dominantBaseline:'middle', opacity:.85, pointerEvents:'none' },
+        portTip:   { text: 'out' }
+      }
+    }
   }
   const items: any[] = []
   if (kind !== 'source') items.push({ group: 'in' })
