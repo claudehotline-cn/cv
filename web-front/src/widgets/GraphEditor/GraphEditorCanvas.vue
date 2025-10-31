@@ -47,6 +47,13 @@ onMounted(()=>{
       router: 'manhattan',
       connector: { name:'rounded', args:{ radius:6 } },
       allowBlank: false, allowLoop: false, allowMulti: false, snap: true,
+      // 允许从节点主体发起连线，需要将节点的 body 设为 magnet
+      validateMagnet({ cell }) {
+        const t = (cell?.getData() as any)?.type
+        // 不允许从 sink 节点发起连接
+        if (t === 'sink') return false
+        return true
+      },
       createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2 } } }) },
       validateConnection({ sourceCell, targetCell }) {
         if (!sourceCell || !targetCell) return false
@@ -76,7 +83,7 @@ function addNode(kind: string) {
   const x = 100 + Math.random()*300, y = 80 + Math.random()*240
   graph.addNode({
     x, y, width: 140, height: 44,
-    attrs: { body: { stroke: 'rgba(255,255,255,.1)', fill: '#141822', rx: 8, ry: 8 }, label: { text: labelMap[kind] || kind, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
+    attrs: { body: { stroke: 'rgba(255,255,255,.1)', fill: '#141822', rx: 8, ry: 8, magnet: true }, label: { text: labelMap[kind] || kind, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
     data: { type: kind, name: `${kind}-${Date.now()%10000}`, params: {} }
   })
   emit('update:modelValue', toJSON())
@@ -86,7 +93,19 @@ function removeSelected(){ const cells = graph.getSelectedCells(); graph.removeC
 
 function toNodeData(cell:any){ if (!cell || cell.isEdge()) return null; const { id } = cell; const data = cell.getData(); return { id, ...(data||{}) } }
 function toJSON(){ const nodes = graph.getNodes().map(n => { const d = n.getData() || {}; return { id: n.id, name: d.name, type: d.type, params: d.params, position: n.getPosition() } }); const edges = graph.getEdges().map(e => ({ source: e.getSourceCellId(), target: e.getTargetCellId() })); return { nodes, edges } }
-function fromJSON(json:any){ graph.clearCells(); const id2node: Record<string, any> = {}; json.nodes?.forEach((n:any)=>{ id2node[n.id] = graph.addNode({ id: n.id, x: (n.position?.x ?? 100), y: (n.position?.y ?? 100), width: 140, height:44, attrs: { body:{ stroke:'rgba(255,255,255,.1)', fill:'#141822', rx:8, ry:8 }, label:{ text: n.name || n.type, fill:'#e5edf6', fontSize:13, fontWeight:600 } }, data: { type:n.type, name:n.name, params:n.params||{} } }) }); json.edges?.forEach((e:any)=>{ if (id2node[e.source] && id2node[e.target]){ graph.addEdge({ source: e.source, target: e.target, attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2 } } }) } }) }
+function fromJSON(json:any){
+  graph.clearCells();
+  const id2node: Record<string, any> = {};
+  json.nodes?.forEach((n:any)=>{
+    id2node[n.id] = graph.addNode({
+      id: n.id,
+      x: (n.position?.x ?? 100), y: (n.position?.y ?? 100), width: 140, height:44,
+      attrs: { body:{ stroke:'rgba(255,255,255,.1)', fill:'#141822', rx:8, ry:8, magnet: true }, label:{ text: n.name || n.type, fill:'#e5edf6', fontSize:13, fontWeight:600 } },
+      data: { type:n.type, name:n.name, params:n.params||{} }
+    })
+  });
+  json.edges?.forEach((e:any)=>{ if (id2node[e.source] && id2node[e.target]){ graph.addEdge({ source: e.source, target: e.target, attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2 } } }) } })
+}
 function onImport(file:any){ try{ const fr = new FileReader(); fr.onload = () => { const json = JSON.parse(String(fr.result)); fromJSON(json); emit('update:modelValue', toJSON()) }; fr.readAsText(file.raw) }catch{} }
 function autoLayout(){ const layers = ['source','preprocess','model','nms','overlay','sink']; const groups: Record<string, any[]> = {}; graph.getNodes().forEach(n=>{ const t = (n.getData() as any)?.type || 'other'; (groups[t]||(groups[t]=[])).push(n) }); const colW = 200; const baseX = 80; const baseY = 80; const rowH = 70; layers.forEach((t,idx)=>{ (groups[t]||[]).forEach((n,i)=> n.position({ x: baseX + idx*colW, y: baseY + i*rowH })) }); emit('update:modelValue', toJSON()) }
 
