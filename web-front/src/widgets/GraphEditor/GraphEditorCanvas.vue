@@ -64,6 +64,39 @@ function warnOnce(msg: string) {
   try { (emit as any)('connect-error', { msg }) } catch {}
 }
 
+function setPortEmphasis(node: any, portId: string, on: boolean) {
+  try {
+    const color = on ? '#52c41a' : '#4b7fd1'
+    const r = on ? 5 : 4
+    node.setPortProp(portId, 'attrs/portBody/stroke', color)
+    node.setPortProp(portId, 'attrs/portBody/r', r)
+    node.setPortProp(portId, 'attrs/portLabel/fill', on ? '#b7eb8f' : '#9bb1d6')
+    node.setPortProp(portId, 'attrs/portLabel/fontWeight', on ? 700 : 400)
+  } catch {}
+}
+
+function showLegalTargets(sourceCell: any) {
+  try {
+    const sid = sourceCell?.id
+    graph.getNodes().forEach((n:any) => {
+      if (n.id === sid) return
+      const t = (n.getData() as any)?.type
+      if (t === 'source') return
+      // 强调目标节点的 in 端口（若存在）
+      setPortEmphasis(n, 'in', true)
+    })
+  } catch {}
+}
+
+function clearLegalTargets() {
+  try {
+    graph.getNodes().forEach((n:any) => {
+      setPortEmphasis(n, 'in', false)
+      setPortEmphasis(n, 'out', false)
+    })
+  } catch {}
+}
+
 onMounted(()=>{
   graph = new Graph({
     container: containerRef.value!,
@@ -80,9 +113,11 @@ onMounted(()=>{
         magnetAdsorbed:  { name: 'stroke', args: { padding: 4, attrs: { stroke: '#faad14', strokeWidth: 2 } } }
       },
       // 仅允许从“out”端口开始连线，避免拖拽节点与连线冲突
-      validateMagnet({ magnet }) {
-        const g = getPortGroup(magnet)
+      validateMagnet(args: any) {
+        const g = getPortGroup(args?.magnet)
         if (g !== 'out') { warnOnce('只能从输出端口(out)发起连线'); return false }
+        // 高亮所有合法目标（in 端口）
+        try { showLegalTargets(args?.cell) } catch {}
         return true
       },
       createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2, strokeOpacity:.95, targetMarker: { name: 'classic', size: 10 } } } }) },
@@ -110,9 +145,12 @@ onMounted(()=>{
   graph.on('edge:connected', ({ edge }) => {
     try { emit('edge-connected', { source: edge.getSourceCellId(), target: edge.getTargetCellId() }) } catch {}
     emit('update:modelValue', toJSON())
+    clearLegalTargets()
   })
   graph.on('edge:mouseenter', ({ edge }) => { try { edge.attr('line', { stroke:'#7db3ff', strokeWidth:3 }) } catch {} })
   graph.on('edge:mouseleave', ({ edge }) => { try { edge.attr('line', { stroke:'#4b7fd1', strokeWidth:2 }) } catch {} })
+  graph.on('blank:mouseup', () => clearLegalTargets())
+  graph.on('node:mouseup', () => clearLegalTargets())
 
   if (props.modelValue) fromJSON(props.modelValue)
 })
