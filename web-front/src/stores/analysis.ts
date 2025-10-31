@@ -183,7 +183,7 @@ export const useAnalysisStore = defineStore('analysis', {
     },
     updateWhepUrl() {
       // 优先使用后端回传的 whep_base；为空时退回到 API 基址
-      const apiBase = ((import.meta as any).env?.VITE_API_BASE || '').toString()
+      const apiBase = '' // force relative base in dev to go through Vite proxy
       const base = (this.whepBase || apiBase || '').replace(/\/+$/, '')
       // 归一化为绝对 URL，兼容相对配置
       const absBase = ((): string => { try { return new URL(base, window.location.origin).toString().replace(/\/+$/, '') } catch { return base } })()

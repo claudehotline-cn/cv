@@ -84,6 +84,26 @@ int main(int argc, char** argv) {
       auto dt = duration_cast<milliseconds>(steady_clock::now()-t0).count();
       try { controlplane::metrics::inc_request_with_ms(route, method, code, static_cast<double>(dt)); } catch (...) {}
     };
+    // Debug echo: return observed path (for troubleshooting routing)
+    if (path.rfind("/api/_debug/echo", 0) == 0) {
+      nlohmann::json out;
+      out["code"] = "OK";
+      out["data"] = { {"path", path} };
+      r.status = 200; r.body = out.dump(); emit("/api/_debug/echo", r.status); return r;
+    }
+    if (path.rfind("/api/_debug/sub/get", 0) == 0) {
+      // parse id from query string: /api/_debug/sub/get?id=cp-...
+      auto q = path.find('?'); std::string id;
+      if (q != std::string::npos) {
+        auto qs = path.substr(q+1);
+        auto k = std::string("id="); auto p = qs.find(k);
+        if (p != std::string::npos) { p += k.size(); auto e = qs.find('&', p); id = qs.substr(p, e==std::string::npos? std::string::npos : e-p); }
+      }
+      nlohmann::json out; out["code"] = "OK"; nlohmann::json d; d["id"] = id;
+      auto rec = controlplane::Store::instance().get(id);
+      d["found"] = (bool)rec.has_value();
+      out["data"] = d; r.status = 200; r.body = out.dump(); emit("/api/_debug/sub/get", r.status); return r;
+    }
     // Helpers: extract header value by key (case-sensitive minimal)
     auto get_header = [&](const std::string& key)->std::string{
       auto p = headers.find(key);
@@ -232,6 +252,54 @@ int main(int argc, char** argv) {
       out["data"] = { {"errors", j}, {"cfg", info} };
       r.status = 200; r.body = out.dump(); emit("/api/_debug/db", r.status); return r;
     }
+    // Fast-path: resource GET /api/subscriptions/{id}[?include=...]
+    if (method == "GET" && path.rfind("/api/subscriptions/", 0) == 0 && path.find("/events") == std::string::npos) {
+      std::string raw_path = path;
+      auto qmark = raw_path.find('?');
+      const std::string prefix = "/api/subscriptions/";
+      size_t start = prefix.size();
+      size_t end = (qmark==std::string::npos) ? raw_path.size() : qmark;
+      if (start >= end) { r.status = 404; r.body = "{}"; emit("/api/subscriptions/{id}", r.status); return r; }
+      auto cp_id = raw_path.substr(start, end - start);
+      // Truncate if encoded '?' is present in path (e.g. "%3Finclude=...")
+      {
+        std::string low = cp_id; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+        auto p3f = low.find("%3f"); if (p3f != std::string::npos) cp_id = cp_id.substr(0, p3f);
+      }
+      auto rec = Store::instance().get(cp_id);
+      if (!rec) { r.status = 404; r.body = "{\"code\":\"NOT_FOUND\"}"; emit("/api/subscriptions/{id}", r.status); return r; }
+      auto etag = Store::make_etag(*rec);
+      r.extraHeaders += std::string("ETag: ") + etag + "\r\nAccess-Control-Expose-Headers: ETag,Location\r\n";
+      // phase (best-effort refresh from VA)
+      std::string phase = rec->last.phase;
+      std::string reason = rec->last.reason;
+      try {
+        if (!rec->va_subscription_id.empty()) {
+          auto stub = controlplane::make_va_stub(cfg.va_addr);
+          grpc::ClientContext ctx; ctx.set_deadline(std::chrono::system_clock::now()+std::chrono::milliseconds(1500));
+          va::v1::ListPipelinesRequest preq; va::v1::ListPipelinesReply prep;
+          auto s = stub->ListPipelines(&ctx, preq, &prep);
+          if (s.ok()) {
+            for (const auto& it : prep.items()) {
+              if (it.key() == rec->va_subscription_id) { if (it.running()) { phase = "ready"; reason.clear(); } break; }
+            }
+          }
+        }
+      } catch (...) {}
+      bool want_timeline = false;
+      if (qmark != std::string::npos) { auto qs = raw_path.substr(qmark+1); if (qs.find("include=timeline") != std::string::npos) want_timeline = true; }
+      nlohmann::json data;
+      data["id"] = rec->cp_id;
+      data["phase"] = phase;
+      if (!reason.empty()) data["reason"] = reason;
+      data["created_at"] = rec->last.ts_ms;
+      data["pipeline_key"] = rec->va_subscription_id;
+      if (want_timeline) {
+        nlohmann::json t; t["phase"] = rec->last.phase; t["ts_ms"] = rec->last.ts_ms; if (!rec->last.reason.empty()) t["reason"] = rec->last.reason; data["timeline"] = nlohmann::json::array({t});
+      }
+      nlohmann::json out; out["code"] = "OK"; out["data"] = data;
+      r.status = 200; r.body = out.dump(); emit("/api/subscriptions/{id}", r.status); return r;
+    }
     if (path.rfind("/api/subscriptions", 0) == 0) {
       auto pos = std::string::npos;
       if (method == "POST" && path.rfind("/api/subscriptions",0)==0) {
@@ -329,8 +397,17 @@ int main(int argc, char** argv) {
         emit("/api/subscriptions/{id}/events", r.status);
         return r;
       }
-      if (method == "GET" && (pos = path.find_last_of('/')) != std::string::npos && pos+1 < path.size()) {
-        auto cp_id = path.substr(pos+1);
+      if (method == "GET") {
+        // Support query string (e.g. /api/subscriptions/{id}?include=timeline)
+        std::string raw_path = path;
+        auto qmark = raw_path.find('?');
+        const std::string prefix = "/api/subscriptions/";
+        auto pfx = raw_path.find(prefix);
+        if (pfx != 0) { r.status = 404; r.body = "{}"; return r; }
+        size_t start = pfx + prefix.size();
+        size_t end = (qmark==std::string::npos) ? raw_path.size() : qmark;
+        if (start >= end) { r.status = 404; r.body = "{}"; return r; }
+        auto cp_id = raw_path.substr(start, end - start);
         auto rec = Store::instance().get(cp_id);
         if (!rec) { r.status = 404; r.body = "{\"code\":\"NOT_FOUND\"}"; return r; }
         auto etag = Store::make_etag(*rec);
@@ -366,11 +443,28 @@ int main(int argc, char** argv) {
           } catch (...) {}
         }
 
+        // Optional: include=timeline
+        bool want_timeline = false;
+        if (qmark != std::string::npos) {
+          auto qs = raw_path.substr(qmark+1);
+          auto has_inc = qs.find("include=");
+          if (has_inc != std::string::npos) {
+            // very small check for 'timeline' token
+            want_timeline = (qs.find("timeline", has_inc) != std::string::npos);
+          }
+        }
         std::ostringstream os;
         os << "{\"code\":\"OK\",\"data\":{\"id\":\"" << rec->cp_id
            << "\",\"phase\":\"" << phase << "\"";
         if (!reason.empty()) os << ",\"reason\":\"" << reason << "\"";
-        os << ",\"pipeline_key\":\"" << rec->va_subscription_id << "\"}}";
+        os << ",\"created_at\":" << rec->last.ts_ms;
+        os << ",\"pipeline_key\":\"" << rec->va_subscription_id << "\"";
+        if (want_timeline) {
+          os << ",\"timeline\":[{\"phase\":\"" << rec->last.phase << "\",\"ts_ms\":" << rec->last.ts_ms;
+          if (!rec->last.reason.empty()) os << ",\"reason\":\"" << rec->last.reason << "\"";
+          os << "}]";
+        }
+        os << "}}";
         r.status = 200; r.body = os.str(); emit("/api/subscriptions/{id}", r.status); return r;
       }
       if (method == "DELETE" && (pos = path.find_last_of('/')) != std::string::npos && pos+1 < path.size()) {
