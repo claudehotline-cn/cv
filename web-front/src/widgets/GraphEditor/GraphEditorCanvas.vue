@@ -194,8 +194,9 @@ function setupGraph(el: HTMLDivElement) {
     scaled: false,
     animation: true,
     draggingContainer: document.body,
+    // 仅预览克隆，落点使用同一个实例，避免双添加
     getDragNode(node){ return node.clone() },
-    getDropNode(node){ return node.clone() },
+    getDropNode(node){ return node },
   })
 }
 
