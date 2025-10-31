@@ -196,9 +196,9 @@ function setupGraph(el: HTMLDivElement) {
     scaled: false,
     animation: true,
     draggingContainer: document.body,
-    // 仅预览克隆；落点返回同一实例，避免重复添加
+    // 预览与落点均使用克隆，可靠落入画布
     getDragNode(node){ return node.clone() },
-    getDropNode(node){ return node },
+    getDropNode(node){ return node.clone() },
   })
 }
 
@@ -261,6 +261,11 @@ function clearHighlight() {
 function startDnd(kind: 'preprocess'|'model'|'nms'|'overlay', yamlType: string, evt: MouseEvent) {
   if (!graph || !dnd) return
   try { evt.preventDefault(); evt.stopPropagation(); } catch {}
+  try {
+    document.body.classList.add('ge-dragging')
+    const onUp = () => { document.body.classList.remove('ge-dragging'); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mouseup', onUp, { once: true })
+  } catch {}
   const node = graph.createNode(makeNodeConfig({ type: kind, yamlType }))
   dnd.start(node, evt)
 }
@@ -310,4 +315,7 @@ defineExpose({ toJSON: snapshot, fromJSON, highlightInvalid, clearHighlight, add
 /* X6 端口 hover 动效 */
 :deep(.x6-port) circle{ transition: transform .12s ease; }
 :deep(.x6-port:hover) circle{ transform: scale(1.35); }
+
+/* 正在拖拽时，禁用工具条命中，确保事件传递给画布容器 */
+:global(body.ge-dragging) .palette{ pointer-events: none !important; }
 </style>
