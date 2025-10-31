@@ -5,21 +5,7 @@
     </el-col>
     <el-col :span="8" v-if="false">
       <el-card shadow="never" style="margin-bottom:12px">
-        <template #header>Graph & Apply<el-drawer v-model="showProps" title="节点属性" size="360px" :with-header="true">
-  <NodePropsForm :model="selected" :errors="selectedErrors" @update="onUpdateNode" />
-</el-drawer>
-<el-drawer v-model="showApply" title="Graph & Apply" size="420px" :with-header="true">
-  <el-form label-width=\"88px\">
-    <el-form-item label=\"Graph\"><el-select v-model=\"graphId\" placeholder=\"select graph_id\" filterable style=\"width:100%\"><el-option v-for=\"g in graphs\" :key=\"g.graph_id\" :label=\"g.name || g.graph_id\" :value=\"g.graph_id\"/></el-select></el-form-item>
-    <el-form-item label=\"Pipeline\"><el-input v-model=\"pipelineName\" placeholder=\"e.g. det_720p\" /></el-form-item>
-    <el-form-item><el-button type=\"success\" @click=\"applyToCp\">Apply to CP</el-button></el-form-item>
-  </el-form>
-  <el-divider />
-  <el-space>
-    <el-button size=\"small\" @click=\"exportYaml()\">导出 YAML</el-button>
-  </el-space>
-</el-drawer>
-</template>
+        <template #header>Graph & Apply</template>
         <el-form label-width="88px">
           <el-form-item label="Graph">
             <el-select v-model="graphId" placeholder="select graph_id" filterable style="width:100%">
@@ -49,42 +35,19 @@
   <NodePropsForm :model="selected" :errors="selectedErrors" @update="onUpdateNode" />
 </el-drawer>
 <el-drawer v-model="showApply" title="Graph & Apply" size="420px" :with-header="true">
-  <el-form label-width=\"88px\">
-    <el-form-item label=\"Graph\"><el-select v-model=\"graphId\" placeholder=\"select graph_id\" filterable style=\"width:100%\"><el-option v-for=\"g in graphs\" :key=\"g.graph_id\" :label=\"g.name || g.graph_id\" :value=\"g.graph_id\"/></el-select></el-form-item>
-    <el-form-item label=\"Pipeline\"><el-input v-model=\"pipelineName\" placeholder=\"e.g. det_720p\" /></el-form-item>
-    <el-form-item><el-button type=\"success\" @click=\"applyToCp\">Apply to CP</el-button></el-form-item>
+  <el-form label-width="88px">
+    <el-form-item label="Graph"><el-select v-model="graphId" placeholder="select graph_id" filterable style="width:100%"><el-option v-for="g in graphs" :key="g.graph_id" :label="g.name || g.graph_id" :value="g.graph_id"/></el-select></el-form-item>
+    <el-form-item label="Pipeline"><el-input v-model="pipelineName" placeholder="e.g. det_720p" /></el-form-item>
+    <el-form-item><el-button type="success" @click="applyToCp">Apply to CP</el-button></el-form-item>
   </el-form>
   <el-divider />
   <el-space>
-    <el-button size=\"small\" @click=\"exportYaml()\">导出 YAML</el-button>
+    <el-button size="small" @click="exportYaml()">导出 YAML</el-button>
   </el-space>
 </el-drawer>
-</template>
-        <div class="errs">
-          <div v-for="(msg, idx) in (vr?.errors||[])" :key="`g-${idx}`" class="err">- {{ msg }}</div>
-          <div v-for="(errs, nid) in (vr?.nodeErrors||{})" :key="nid" class="err-node">
-            <div class="nid">{{ nid }}</div>
-            <div v-for="(e, i) in errs" :key="i" class="err">• {{ e }}</div>
-          </div>
-        </div>
-      </el-card>
-    </el-col>
-  </el-row>
-<el-drawer v-model="showProps" title="节点属性" size="360px" :with-header="true">
-  <NodePropsForm :model="selected" :errors="selectedErrors" @update="onUpdateNode" />
-</el-drawer>
-<el-drawer v-model="showApply" title="Graph & Apply" size="420px" :with-header="true">
-  <el-form label-width=\"88px\">
-    <el-form-item label=\"Graph\"><el-select v-model=\"graphId\" placeholder=\"select graph_id\" filterable style=\"width:100%\"><el-option v-for=\"g in graphs\" :key=\"g.graph_id\" :label=\"g.name || g.graph_id\" :value=\"g.graph_id\"/></el-select></el-form-item>
-    <el-form-item label=\"Pipeline\"><el-input v-model=\"pipelineName\" placeholder=\"e.g. det_720p\" /></el-form-item>
-    <el-form-item><el-button type=\"success\" @click=\"applyToCp\">Apply to CP</el-button></el-form-item>
-  </el-form>
-  <el-divider />
-  <el-space>
-    <el-button size=\"small\" @click=\"exportYaml()\">导出 YAML</el-button>
-  </el-space>
-</el-drawer>
-</template>
+  <el-form label-width="88px">
+    <el-form-item label="Graph"><el-select v-model="graphId" placeholder="select graph_id" filterable style="width:100%"><el-option v-for="g in graphs" :key="g.graph_id" :label="g.name || g.graph_id" :value="g.graph_id"/></el-select></el-form-item>
+    <el-form-item label="Pipeline"><el-input v-model="pipelineName" placeholder="e.g. det_720p" /></el-form-item>
 
 <script setup lang="ts">
 import { computed, ref, onMounted, watch } from 'vue'
@@ -270,4 +233,5 @@ watch(graphJson, () => runValidation(), { deep: true })
 .nid{ color:#ffd479; font-weight:600; }
 .editor-fabs{ position: fixed; right: 18px; top: 98px; z-index: 5; }
 </style>
+
 
