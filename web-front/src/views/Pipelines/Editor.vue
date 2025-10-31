@@ -1,7 +1,7 @@
 <template>
   <el-row :gutter="12" class="page">
     <el-col :span="16">
-      <GraphEditorCanvas v-model="graphJson" @update:selection="onSelect" @export="onExport" ref="canvasRef" />
+      <GraphEditorCanvas v-model="graphJson" @update:selection="onSelect" @edge-connected="onEdgeConnected" @export="onExport" ref="canvasRef" />
     </el-col>
     <el-col :span="8">
       <el-card shadow="never" style="margin-bottom:12px">
@@ -99,6 +99,15 @@ function onUpdateNode(n: any) {
     target.params = n.params
   }
   runValidation()
+}
+
+function onEdgeConnected(ev: { source: string, target: string }) {
+  // 连线后：自动校验并联动到目标节点属性
+  runValidation(true)
+  try {
+    const tgt = (graphJson.value.nodes || []).find((x:any)=> x.id === ev.target)
+    if (tgt) selected.value = tgt
+  } catch {}
 }
 
 function onExport(json: any) {

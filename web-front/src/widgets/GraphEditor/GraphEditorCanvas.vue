@@ -32,7 +32,7 @@ import { Dnd } from '@antv/x6-plugin-dnd'
 import sample from './samples/demo.json'
 
 const props = defineProps<{ modelValue?: any }>()
-const emit = defineEmits<{ (e:'update:selection', data:any):void; (e:'export', json:any):void; (e:'update:modelValue', v:any):void }>()
+const emit = defineEmits<{ (e:'update:selection', data:any):void; (e:'export', json:any):void; (e:'update:modelValue', v:any):void; (e:'edge-connected', payload:{ source:string, target:string }):void }>()
 
 const containerRef = ref<HTMLDivElement|null>(null)
 let graph: Graph
@@ -48,12 +48,17 @@ onMounted(()=>{
       connector: { name:'rounded', args:{ radius:6 } },
       allowBlank: false, allowLoop: false, allowMulti: false, snap: true,
       highlight: true,
+      // 高亮可连接端口/吸附端口
+      highlighting: {
+        magnetAvailable: { name: 'stroke', args: { padding: 4, attrs: { stroke: '#52c41a', strokeWidth: 2 } } },
+        magnetAdsorbed:  { name: 'stroke', args: { padding: 4, attrs: { stroke: '#faad14', strokeWidth: 2 } } }
+      },
       // 仅允许从“out”端口开始连线，避免拖拽节点与连线冲突
       validateMagnet({ magnet }) {
         const g = (magnet && (magnet as any).getAttribute) ? (magnet as any).getAttribute('port-group') : ''
         return g === 'out'
       },
-      createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2 } } }) },
+      createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2, targetMarker: { name: 'classic', size: 8 } } } }) },
       // 仅允许 out -> in
       validateConnection({ sourceCell, targetCell, sourceMagnet, targetMagnet }) {
         if (!sourceCell || !targetCell || !sourceMagnet || !targetMagnet) return false
@@ -74,12 +79,27 @@ onMounted(()=>{
 
   graph.on('cell:selected', ({ cell }) => emit('update:selection', toNodeData(cell)))
   graph.on('cell:changed', () => emit('update:modelValue', toJSON()))
-  graph.on('edge:connected', () => emit('update:modelValue', toJSON()))
+  graph.on('edge:connected', ({ edge }) => {
+    try { emit('edge-connected', { source: edge.getSourceCellId(), target: edge.getTargetCellId() }) } catch {}
+    emit('update:modelValue', toJSON())
+  })
 
   if (props.modelValue) fromJSON(props.modelValue)
 })
 
 onBeforeUnmount(()=> graph?.dispose())
+
+function styleFor(kind: string){
+  switch(kind){
+    case 'source':   return { fill:'#113a8f', stroke:'#3a78ff' }
+    case 'preprocess': return { fill:'#2a1152', stroke:'#a855f7' }
+    case 'model':    return { fill:'#0f3b3a', stroke:'#10b981' }
+    case 'nms':      return { fill:'#3f1f00', stroke:'#fa8c16' }
+    case 'overlay':  return { fill:'#103f14', stroke:'#52c41a' }
+    case 'sink':     return { fill:'#3d0d10', stroke:'#ff4d4f' }
+    default:         return { fill:'#141822', stroke:'rgba(255,255,255,.1)' }
+  }
+}
 
 function nodePorts(kind: string){
   const groups: any = {
@@ -97,7 +117,7 @@ function addNode(kind: string) {
   const x = 100 + Math.random()*300, y = 80 + Math.random()*240
   graph.addNode({
     x, y, width: 140, height: 44,
-    attrs: { body: { stroke: 'rgba(255,255,255,.1)', fill: '#141822', rx: 8, ry: 8 }, label: { text: labelMap[kind] || kind, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
+    attrs: { body: { stroke: styleFor(kind).stroke, fill: styleFor(kind).fill, rx: 8, ry: 8 }, label: { text: labelMap[kind] || kind, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
     ports: nodePorts(kind),
     data: { type: kind, name: `${kind}-${Date.now()%10000}`, params: {} }
   })
@@ -116,7 +136,7 @@ function fromJSON(json:any){
     id2node[n.id] = graph.addNode({
       id: n.id,
       x: (n.position?.x ?? 100), y: (n.position?.y ?? 100), width: 140, height:44,
-      attrs: { body:{ stroke:'rgba(255,255,255,.1)', fill:'#141822', rx:8, ry:8 }, label:{ text: n.name || n.type, fill:'#e5edf6', fontSize:13, fontWeight:600 } },
+      attrs: { body:{ stroke: styleFor(kind).stroke, fill: styleFor(kind).fill, rx:8, ry:8 }, label:{ text: n.name || n.type, fill:'#e5edf6', fontSize:13, fontWeight:600 } },
       ports: nodePorts(kind),
       data: { type:n.type, name:n.name, params:n.params||{} }
     })
