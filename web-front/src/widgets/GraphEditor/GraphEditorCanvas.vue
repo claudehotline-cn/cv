@@ -4,25 +4,25 @@
     <div class="palette">
       <div class="pal-group">
         <div class="pal-title pre">预处理</div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('preprocess','preproc.letterbox', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('preprocess','preproc.letterbox', $event)" @dblclick.stop.prevent="addNodeQuick('preprocess','preproc.letterbox')">
           <div class="pal-name">Letterbox</div>
           <div class="pal-sub">preproc.letterbox</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title model">模型</div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('model','model.ort', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('model','model.ort', $event)" @dblclick.stop.prevent="addNodeQuick('model','model.ort')">
           <div class="pal-name">ONNX Runtime</div>
           <div class="pal-sub">model.ort</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title post">后处理</div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('nms','post.yolo.nms', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('nms','post.yolo.nms', $event)" @dblclick.stop.prevent="addNodeQuick('nms','post.yolo.nms')">
           <div class="pal-name">YOLO NMS</div>
           <div class="pal-sub">post.yolo.nms</div>
         </div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('overlay','overlay.cuda', $event)">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('overlay','overlay.cuda', $event)" @dblclick.stop.prevent="addNodeQuick('overlay','overlay.cuda')">
           <div class="pal-name">Overlay(CUDA)</div>
           <div class="pal-sub">overlay.cuda</div>
         </div>
@@ -194,9 +194,9 @@ function setupGraph(el: HTMLDivElement) {
     scaled: false,
     animation: true,
     draggingContainer: document.body,
-    // 仅预览克隆，落点使用同一个实例，避免双添加
+    // 预览用克隆；落点也使用克隆，避免与预览/原始实例指针冲突
     getDragNode(node){ return node.clone() },
-    getDropNode(node){ return node },
+    getDropNode(node){ return node.clone() },
   })
 }
 
@@ -261,6 +261,16 @@ function startDnd(kind: 'preprocess'|'model'|'nms'|'overlay', yamlType: string, 
   try { evt.preventDefault(); evt.stopPropagation(); } catch {}
   const node = graph.createNode(makeNodeConfig({ type: kind, yamlType }))
   dnd.start(node, evt)
+}
+
+function addNodeQuick(kind: 'preprocess'|'model'|'nms'|'overlay', yamlType: string){
+  if (!graph) return
+  const el = containerRef.value as HTMLDivElement
+  const cx = Math.max(40, (el?.clientWidth||800)/2)
+  const cy = Math.max(40, (el?.clientHeight||600)/2)
+  const cell = graph.addNode({ ...makeNodeConfig({ type: kind, yamlType }), x: cx, y: cy })
+  emit('update:modelValue', snapshot())
+  return cell
 }
 
 onMounted(() => {
