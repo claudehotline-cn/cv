@@ -4,25 +4,25 @@
     <div class="palette">
       <div class="pal-group">
         <div class="pal-title pre">预处理</div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('preprocess','preproc.letterbox', $event)" @dblclick.stop.prevent="addNodeQuick('preprocess','preproc.letterbox')">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('preprocess','preproc.letterbox', $event)">
           <div class="pal-name">Letterbox</div>
           <div class="pal-sub">preproc.letterbox</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title model">模型</div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('model','model.ort', $event)" @dblclick.stop.prevent="addNodeQuick('model','model.ort')">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('model','model.ort', $event)">
           <div class="pal-name">ONNX Runtime</div>
           <div class="pal-sub">model.ort</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title post">后处理</div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('nms','post.yolo.nms', $event)" @dblclick.stop.prevent="addNodeQuick('nms','post.yolo.nms')">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('nms','post.yolo.nms', $event)">
           <div class="pal-name">YOLO NMS</div>
           <div class="pal-sub">post.yolo.nms</div>
         </div>
-        <div class="pal-card" draggable="false" @mousedown="startDnd('overlay','overlay.cuda', $event)" @dblclick.stop.prevent="addNodeQuick('overlay','overlay.cuda')">
+        <div class="pal-card" draggable="false" @mousedown="startDnd('overlay','overlay.cuda', $event)">
           <div class="pal-name">Overlay(CUDA)</div>
           <div class="pal-sub">overlay.cuda</div>
         </div>
@@ -58,6 +58,7 @@ const emit  = defineEmits<{
 const containerRef = ref<HTMLDivElement | null>(null)
 let graph: Graph | null = null
 let dnd: Dnd | null = null
+let suppressWatch = false
 
 // 统一的端口样式与分组：仅允许 out->in
 const basePorts = {
@@ -175,11 +176,12 @@ function setupGraph(el: HTMLDivElement) {
     } catch {}
   })
 
-  graph.on('edge:added', () => emit('update:modelValue', snapshot()))
-  graph.on('edge:removed', () => emit('update:modelValue', snapshot()))
-  graph.on('node:added', () => emit('update:modelValue', snapshot()))
-  graph.on('node:removed', () => emit('update:modelValue', snapshot()))
-  graph.on('node:moved', () => emit('update:modelValue', snapshot()))
+  const sync = () => { suppressWatch = true; emit('update:modelValue', snapshot()); Promise.resolve().then(()=> suppressWatch=false) }
+  graph.on('edge:added', sync)
+  graph.on('edge:removed', sync)
+  graph.on('node:added', sync)
+  graph.on('node:removed', sync)
+  graph.on('node:moved', sync)
 
   graph.on('cell:selected', ({ cell }) => {
     emit('update:selection', toNodeModel(cell))
@@ -194,9 +196,9 @@ function setupGraph(el: HTMLDivElement) {
     scaled: false,
     animation: true,
     draggingContainer: document.body,
-    // 预览用克隆；落点也使用克隆，避免与预览/原始实例指针冲突
+    // 仅预览克隆；落点返回同一实例，避免重复添加
     getDragNode(node){ return node.clone() },
-    getDropNode(node){ return node.clone() },
+    getDropNode(node){ return node },
   })
 }
 
@@ -282,8 +284,8 @@ onMounted(() => {
 onBeforeUnmount(() => { graph?.dispose(); graph = null; dnd = null })
 
 watch(() => props.modelValue, (nv) => {
-  // 外部变更时刷新画布
-  if (!graph) return
+  // 外部变更时刷新画布；忽略自身触发的同步，避免拖拽落点过程的重复添加
+  if (!graph || suppressWatch) return
   fromJSON(nv || { nodes: [], edges: [] })
 })
 
