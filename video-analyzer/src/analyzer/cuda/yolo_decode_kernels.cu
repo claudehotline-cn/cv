@@ -63,7 +63,7 @@ cudaError_t yolo_decode_to_yxyx(
 }
 
 #if defined(__CUDACC__) || defined(USE_CUDA)
-// FP16 输入（__half）版本：逻辑与 float 版本一致，仅将读取转为 __half2float
+// FP16 杈撳叆锛坃_half锛夌増鏈細閫昏緫涓?float 鐗堟湰涓€鑷达紝浠呭皢璇诲彇杞负 __half2float
 __global__ void k_yolo_decode_fp16(
     const __half* out, int N, int A, int K, int ch_first, float conf_thr,
     float pre_sx, float pre_sy,

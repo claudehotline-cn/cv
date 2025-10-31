@@ -48,7 +48,7 @@ cudaError_t yolo_decode_to_yxyx(
     int* d_count,
     cudaStream_t stream);
 
-// FP16 输入版本（__half），其余参数一致（仅在 CUDA 可用时声明）
+// FP16 杈撳叆鐗堟湰锛坃_half锛夛紝鍏朵綑鍙傛暟涓€鑷达紙浠呭湪 CUDA 鍙敤鏃跺０鏄庯級
 cudaError_t yolo_decode_to_yxyx_fp16(
     const __half* d_out,
     int num_det,
