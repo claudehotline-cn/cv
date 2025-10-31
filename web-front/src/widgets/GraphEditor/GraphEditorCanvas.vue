@@ -45,6 +45,18 @@ let graph: Graph
 let dnd: Dnd
 let lastWarnAt = 0
 
+function getPortGroup(magnet: any): string {
+  try {
+    let el: any = magnet
+    while (el && el.getAttribute) {
+      const g = el.getAttribute('port-group')
+      if (g) return g
+      el = el.parentElement
+    }
+  } catch {}
+  return ''
+}
+
 function warnOnce(msg: string) {
   const now = Date.now()
   if (now - lastWarnAt < 1000) return
@@ -69,7 +81,7 @@ onMounted(()=>{
       },
       // 仅允许从“out”端口开始连线，避免拖拽节点与连线冲突
       validateMagnet({ magnet }) {
-        const g = (magnet && (magnet as any).getAttribute) ? (magnet as any).getAttribute('port-group') : ''
+        const g = getPortGroup(magnet)
         if (g !== 'out') { warnOnce('只能从输出端口(out)发起连线'); return false }
         return true
       },
@@ -77,8 +89,8 @@ onMounted(()=>{
       // 仅允许 out -> in
       validateConnection({ sourceCell, targetCell, sourceMagnet, targetMagnet }) {
         if (!sourceCell || !targetCell || !sourceMagnet || !targetMagnet) return false
-        const sg = (sourceMagnet as any).getAttribute && (sourceMagnet as any).getAttribute('port-group')
-        const tg = (targetMagnet as any).getAttribute && (targetMagnet as any).getAttribute('port-group')
+        const sg = getPortGroup(sourceMagnet as any)
+        const tg = getPortGroup(targetMagnet as any)
         if (sg !== 'out') { warnOnce('起点必须为输出端口(out)'); return false }
         if (tg !== 'in')  { warnOnce('终点必须为输入端口(in)'); return false }
         const st = (sourceCell.getData() as any)?.type
