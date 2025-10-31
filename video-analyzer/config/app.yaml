@@ -10,8 +10,9 @@ engine:
     use_multistage: true
     use_io_binding: true
     allow_cpu_fallback: false
-    device_output_views: true
-    stage_device_outputs: false
+    # 按“检测框问题修复.md”止血建议：暂时关闭 device 直出视图，改为主机暂存
+    device_output_views: false
+    stage_device_outputs: true
     use_cuda_nms: true
     render_passthrough: false
     render_cuda: true
