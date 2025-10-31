@@ -291,7 +291,7 @@ onBeforeUnmount(() => { graph?.dispose(); graph = null; dnd = null })
 watch(() => props.modelValue, (nv) => {
   // 外部变更时刷新画布；忽略自身触发的同步，避免拖拽落点过程的重复添加
   if (!graph || suppressWatch) return
-  fromJSON(nv || { nodes: [], edges: [] })
+  return // disabled auto fromJSON
 })
 
 defineExpose({ toJSON: snapshot, fromJSON, highlightInvalid, clearHighlight, addNodeFromPalette })
@@ -319,3 +319,5 @@ defineExpose({ toJSON: snapshot, fromJSON, highlightInvalid, clearHighlight, add
 /* 正在拖拽时，禁用工具条命中，确保事件传递给画布容器 */
 :global(body.ge-dragging) .palette{ pointer-events: none !important; }
 </style>
+
+
