@@ -1,5 +1,5 @@
 <template>
-  <el-row :gutter="12" class="page">
+  <el-row :gutter="0" class="page">
     <el-col :span="24">
       <GraphEditorCanvas
         v-model="graphJson"
@@ -167,8 +167,9 @@ watch(graphJson, () => runValidation(), { deep: true })
 </script>
 
 <style scoped>
-.page{ height: calc(100vh - 64px); }
+.page{ height: calc(100vh - 64px); margin-left:0 !important; margin-right:0 !important; }
 .page :deep(.el-col){ height: 100%; }
+.page :deep(.el-col){ padding-left:0 !important; padding-right:0 !important; }
 .errs{ font-size:12px; color:#ffb4b4; line-height:1.6; }
 .err-node{ margin-top:6px; padding-top:6px; border-top:1px dashed rgba(255,255,255,.12); }
 .nid{ color:#ffd479; font-weight:600; }

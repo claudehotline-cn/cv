@@ -272,9 +272,9 @@ defineExpose({ toJSON: snapshot, fromJSON, highlightInvalid, clearHighlight, add
 </script>
 
 <style scoped>
-.ge{ position: relative; height: 100%; min-height: calc(100vh - 64px); background: #0b121a; border-radius: 8px; overflow: hidden; }
+.ge{ position: relative; height: 100%; min-height: calc(100vh - 64px); background: #0b121a; border-radius: 0; overflow: hidden; }
 .canvas{ position:absolute; inset:0 0 0 0; }
-.palette{ position:absolute; left:12px; top:12px; width: 220px; display:flex; flex-direction:column; gap:12px; z-index:2; }
+.palette{ position:absolute; left:8px; top:8px; width: 220px; display:flex; flex-direction:column; gap:12px; z-index:2; }
 .pal-group{ background: rgba(22,27,34,.85); border:1px solid rgba(99,110,123,.25); border-radius:8px; padding:10px; backdrop-filter: blur(4px); }
 .pal-title{ font-weight:600; font-size:12px; letter-spacing:.5px; margin-bottom:8px; color:#e6edf3; }
 .pal-title.pre{ color:#58a6ff; }
