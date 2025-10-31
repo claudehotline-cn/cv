@@ -83,7 +83,7 @@ function exportYaml(){
   lines.push('    nodes:')
   for (const n of (g.nodes||[])){
     const nm = n.name || n.id
-    const tp = n.type || (n.data?.type) || ''
+    const tp = n.yamlType || n.type || (n.data?.yamlType) || (n.data?.type) || ''
     lines.push(`      - name: ${nm}`)
     lines.push(`        type: ${tp}`)
     if (n.params && Object.keys(n.params).length){ lines.push(`        params: ${toParamsInline(n.params)}`) }
