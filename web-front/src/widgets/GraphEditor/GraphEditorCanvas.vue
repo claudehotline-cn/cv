@@ -199,8 +199,8 @@ function nodePorts(kind: string){
     }
   }
   const items: any[] = []
-  if (kind !== 'source') items.push({ group: 'in' })
-  if (kind !== 'sink')   items.push({ group: 'out' })
+  if (kind !== 'source') items.push({ id:'in', group: 'in' })
+  if (kind !== 'sink')   items.push({ id:'out', group: 'out' })
   return { groups, items }
 }
 
