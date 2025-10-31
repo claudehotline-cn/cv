@@ -37,6 +37,14 @@ const emit = defineEmits<{ (e:'update:selection', data:any):void; (e:'export', j
 const containerRef = ref<HTMLDivElement|null>(null)
 let graph: Graph
 let dnd: Dnd
+let lastWarnAt = 0
+
+function warnOnce(msg: string) {
+  const now = Date.now()
+  if (now - lastWarnAt < 1000) return
+  lastWarnAt = now
+  try { (emit as any)('connect-error', { msg }) } catch {}
+}
 
 onMounted(()=>{
   graph = new Graph({
@@ -56,7 +64,8 @@ onMounted(()=>{
       // 仅允许从“out”端口开始连线，避免拖拽节点与连线冲突
       validateMagnet({ magnet }) {
         const g = (magnet && (magnet as any).getAttribute) ? (magnet as any).getAttribute('port-group') : ''
-        return g === 'out'
+        if (g !== 'out') { warnOnce('只能从输出端口(out)发起连线'); return false }
+        return true
       },
       createEdge() { return graph.createEdge({ shape:'edge', attrs:{ line:{ stroke:'#4b7fd1', strokeWidth:2, targetMarker: { name: 'classic', size: 8 } } } }) },
       // 仅允许 out -> in
@@ -64,11 +73,12 @@ onMounted(()=>{
         if (!sourceCell || !targetCell || !sourceMagnet || !targetMagnet) return false
         const sg = (sourceMagnet as any).getAttribute && (sourceMagnet as any).getAttribute('port-group')
         const tg = (targetMagnet as any).getAttribute && (targetMagnet as any).getAttribute('port-group')
-        if (sg !== 'out' || tg !== 'in') return false
+        if (sg !== 'out') { warnOnce('起点必须为输出端口(out)'); return false }
+        if (tg !== 'in')  { warnOnce('终点必须为输入端口(in)'); return false }
         const st = (sourceCell.getData() as any)?.type
         const tt = (targetCell.getData() as any)?.type
-        if (st==='sink') return false
-        if (tt==='source') return false
+        if (st==='sink') { warnOnce('Sink 节点不允许作为起点'); return false }
+        if (tt==='source') { warnOnce('Source 节点不允许作为终点'); return false }
         return true
       }
     }
@@ -103,8 +113,8 @@ function styleFor(kind: string){
 
 function nodePorts(kind: string){
   const groups: any = {
-    in: { position: 'left',  attrs: { circle: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' } } },
-    out:{ position: 'right', attrs: { circle: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' } } }
+    in: { position: 'left',  markup: [{ tagName:'circle', selector:'portBody' }, { tagName:'title', selector:'portTip' }], attrs: { portBody: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' }, portTip: { text: 'in' } } },
+    out:{ position: 'right', markup: [{ tagName:'circle', selector:'portBody' }, { tagName:'title', selector:'portTip' }], attrs: { portBody: { r: 4, magnet: true, stroke: '#4b7fd1', fill: '#0b0e14' }, portTip: { text: 'out' } } }
   }
   const items: any[] = []
   if (kind !== 'source') items.push({ group: 'in' })
@@ -113,7 +123,7 @@ function nodePorts(kind: string){
 }
 
 function addNode(kind: string) {
-  const labelMap: Record<string,string> = { source:'Source', preprocess:'Preprocess', model:'Model', nms:'NMS', overlay:'Overlay', sink:'Sink' }
+  const labelMap: Record<string,string> = { source:'⏺ Source', preprocess:'⚙️ Preprocess', model:'🤖 Model', nms:'🪄 NMS', overlay:'🖼 Overlay', sink:'⏬ Sink' }
   const x = 100 + Math.random()*300, y = 80 + Math.random()*240
   graph.addNode({
     x, y, width: 140, height: 44,

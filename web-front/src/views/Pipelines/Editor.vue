@@ -1,7 +1,7 @@
 <template>
   <el-row :gutter="12" class="page">
     <el-col :span="16">
-      <GraphEditorCanvas v-model="graphJson" @update:selection="onSelect" @edge-connected="onEdgeConnected" @export="onExport" ref="canvasRef" />
+      <GraphEditorCanvas v-model="graphJson" @update:selection="onSelect" @edge-connected="onEdgeConnected" @connect-error="onConnectError" @export="onExport" ref="canvasRef" />
     </el-col>
     <el-col :span="8">
       <el-card shadow="never" style="margin-bottom:12px">
@@ -108,6 +108,10 @@ function onEdgeConnected(ev: { source: string, target: string }) {
     const tgt = (graphJson.value.nodes || []).find((x:any)=> x.id === ev.target)
     if (tgt) selected.value = tgt
   } catch {}
+}
+
+function onConnectError(e: { msg: string }) {
+  try { ElMessage.warning(e?.msg || '连接无效') } catch {}
 }
 
 function onExport(json: any) {
