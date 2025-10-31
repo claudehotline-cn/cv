@@ -1,5 +1,5 @@
 <template>
-  <el-row :gutter="0" class="page">
+  <el-row :gutter="0" :class="['page', { fullscreen: isFullscreen }]">
     <el-col :span="24">
       <GraphEditorCanvas
         v-model="graphJson"
@@ -15,6 +15,9 @@
           <el-button type="success" plain size="small" @click="showApply = true">Apply</el-button>
           <el-button type="warning" plain size="small" @click="exportYaml()">导出YAML</el-button>
         </el-space>
+      </div>
+      <div class="editor-fabs-2">
+        <el-button :type="isFullscreen ? 'danger' : 'info'" plain size="small" @click="toggleFullscreen()">{{ isFullscreen ? '退出全屏' : '全屏' }}</el-button>
       </div>
     </el-col>
   </el-row>
@@ -45,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import GraphEditorCanvas from '@/widgets/GraphEditor/GraphEditorCanvas.vue'
 import NodePropsForm from '@/widgets/GraphEditor/NodePropsForm.vue'
@@ -53,6 +56,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { validateGraph, GraphValidateResult } from '@/utils/graph'
 import { applyPipeline as cpApply } from '@/api/cp'
 import { dataProvider } from '@/api/dataProvider'
+import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
 const graphJson = ref<any>({ nodes: [], edges: [] })
@@ -64,6 +68,9 @@ const graphId = ref<string>('')
 const pipelineName = ref<string>('')
 const showProps = ref(false)
 const showApply = ref(false)
+const app = useAppStore()
+const isFullscreen = computed(() => app.fullscreenEditor)
+function toggleFullscreen(){ app.setFullscreenEditor(!app.fullscreenEditor) }
 
 function exportYaml(){
   const g:any = graphJson.value || { nodes: [], edges: [] }
@@ -163,15 +170,30 @@ onMounted(() => {
   runValidation()
 })
 
+onBeforeUnmount(()=>{ if (app.fullscreenEditor) app.setFullscreenEditor(false) })
+
 watch(graphJson, () => runValidation(), { deep: true })
 </script>
 
 <style scoped>
 .page{ height: calc(100vh - 64px); margin-left:0 !important; margin-right:0 !important; }
+.page.fullscreen{ height: 100vh; }
 .page :deep(.el-col){ height: 100%; }
 .page :deep(.el-col){ padding-left:0 !important; padding-right:0 !important; }
 .errs{ font-size:12px; color:#ffb4b4; line-height:1.6; }
 .err-node{ margin-top:6px; padding-top:6px; border-top:1px dashed rgba(255,255,255,.12); }
 .nid{ color:#ffd479; font-weight:600; }
 .editor-fabs{ position: fixed; right: 18px; top: 98px; z-index: 5; }
+.editor-fabs-2{ position: fixed; right: 18px; top: 212px; z-index: 5; }
+
+/* 减弱遮罩，营造半透明悬浮感（仅编辑器页生命周期内生效） */
+:deep(.el-overlay){ background: transparent !important; }
+:deep(.el-drawer){
+  background: rgba(20, 26, 33, 0.88);
+  backdrop-filter: blur(8px);
+  border-left: 1px solid rgba(148,163,184,.25);
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+}
+:deep(.el-drawer__header){ margin-bottom: 8px; }
+:deep(.el-drawer__body){ padding: 12px 14px; }
 </style>
