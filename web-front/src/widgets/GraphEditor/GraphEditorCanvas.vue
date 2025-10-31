@@ -190,6 +190,15 @@ onMounted(()=>{
 onBeforeUnmount(()=> graph?.dispose())
 
 function styleFor(kind: string){
+function groupForType(t: string): string {
+  if (!t) return 'other'
+  if (t.startsWith('preproc.')) return 'preprocess'
+  if (t.startsWith('model.')) return 'model'
+  if (t.startsWith('post.')) return t.includes('nms') ? 'nms' : 'post'
+  if (t.startsWith('overlay')) return 'overlay'
+  return 'other'
+}
+
   switch(kind){
     case 'source':   return { fill:'#113a8f', stroke:'#3a78ff' }
     case 'preprocess': return { fill:'#2a1152', stroke:'#a855f7' }
@@ -209,6 +218,20 @@ function groupForType(t: string): string {
   if (t.startsWith('post.')) return t.includes('nms') ? 'nms' : 'post'
   if (t.startsWith('overlay')) return 'overlay'
   return 'other'
+}
+
+
+function addNodeFromPalette(type: string, group: string, display: string, defaults: any = {}) {
+  const x = 140 + Math.random()*260, y = 100 + Math.random()*240
+  const label = display
+  const g = group || groupForType(type)
+  graph.addNode({
+    x, y, width: 160, height: 48,
+    attrs: { body: { stroke: styleFor(g).stroke, fill: styleFor(g).fill, rx: 8, ry: 8 }, label: { text: label, fill:'#e5edf6', fontSize: 13, fontWeight:600 } },
+    ports: nodePorts(g),
+    data: { type, group: g, name: ${display}-, params: { ...defaults } }
+  })
+  emit('update:modelValue', toJSON())
 }
 
 function nodePorts(kind: string){
