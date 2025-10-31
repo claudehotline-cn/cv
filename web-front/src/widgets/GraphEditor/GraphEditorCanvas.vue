@@ -4,25 +4,25 @@
     <div class="palette">
       <div class="pal-group">
         <div class="pal-title pre">预处理</div>
-        <div class="pal-card" @mousedown="startDnd('preprocess','preproc.letterbox')">
+        <div class="pal-card" @mousedown="startDnd('preprocess','preproc.letterbox', $event)">
           <div class="pal-name">Letterbox</div>
           <div class="pal-sub">preproc.letterbox</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title model">模型</div>
-        <div class="pal-card" @mousedown="startDnd('model','model.ort')">
+        <div class="pal-card" @mousedown="startDnd('model','model.ort', $event)">
           <div class="pal-name">ONNX Runtime</div>
           <div class="pal-sub">model.ort</div>
         </div>
       </div>
       <div class="pal-group">
         <div class="pal-title post">后处理</div>
-        <div class="pal-card" @mousedown="startDnd('nms','post.yolo.nms')">
+        <div class="pal-card" @mousedown="startDnd('nms','post.yolo.nms', $event)">
           <div class="pal-name">YOLO NMS</div>
           <div class="pal-sub">post.yolo.nms</div>
         </div>
-        <div class="pal-card" @mousedown="startDnd('overlay','overlay.cuda')">
+        <div class="pal-card" @mousedown="startDnd('overlay','overlay.cuda', $event)">
           <div class="pal-name">Overlay(CUDA)</div>
           <div class="pal-sub">overlay.cuda</div>
         </div>
@@ -248,10 +248,10 @@ function clearHighlight() {
   graph.getNodes().forEach(n => n.attr('body/stroke', '#88a'))
 }
 
-function startDnd(kind: 'preprocess'|'model'|'nms'|'overlay', yamlType: string) {
+function startDnd(kind: 'preprocess'|'model'|'nms'|'overlay', yamlType: string, evt: MouseEvent) {
   if (!graph || !dnd) return
   const node = graph.createNode(makeNodeConfig({ type: kind, yamlType }))
-  dnd.start(node, (containerRef.value as HTMLDivElement))
+  dnd.start(node, evt)
 }
 
 onMounted(() => {
