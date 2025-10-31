@@ -1,6 +1,7 @@
 #include "analyzer/multistage/runner.hpp"
 
 #include "exec/stream_pool.hpp"
+#include "core/logger.hpp"
 #if defined(USE_CUDA)
 #  if defined(__has_include)
 #    if __has_include(<cuda_runtime.h>)
@@ -23,6 +24,12 @@ AnalyzerMultistageAdapter::AnalyzerMultistageAdapter() {
     #if VA_MS_HAS_CUDA_RUNTIME
     // Use the global unified stream from StreamPool to ensure cross-stage consistency
     ctx_.stream = reinterpret_cast<void*>(va::exec::StreamPool::instance().tls());
+    // One-shot diagnostic: print unified stream pointer to verify end-to-end binding
+    static bool printed = false;
+    if (!printed) {
+        printed = true;
+        VA_LOG_INFO() << "[StreamDiag] unified cudaStream=" << ctx_.stream;
+    }
     #endif
 }
 
