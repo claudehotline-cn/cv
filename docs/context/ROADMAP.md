@@ -1,33 +1,32 @@
 # 路线图总览
 
-- 里程碑 M0：打通只读接口与基本播放
-  - 目标：`/api/models|/pipelines|/graphs` 返回数据库数据；分析页通过 WHEP 正常播放。
-  - 验收：接口 200 且 data 非空；SSE phase=ready；<video> 10s 内 playing。
-- 里程碑 M1：稳定化与可观测
-  - 目标：CP⇄DB 稳定（P95<80ms），WHEP 201/ICE 成功率提升；日志与指标接入。
-  - 验收：DB 查询错误率 <1%；WHEP 建连成功率 ≥95%；关键指标入库。
-- 里程碑 M2：性能与CI守护
-  - 目标：VA GPU 路径可控（保留 CPU 回退）；端到端回归在 CI 自动验证。
-  - 验收：GPU on/off 开关可测；CI 绿灯；回放 FPS 与检测量稳定。
+- M0「可播放链路打通」：CP 代理 WHEP 协商稳定，前端可播放。验收：订阅→SSE ready→WHEP 201→ICE PATCH→10s 内 <video> playing，错误率<1%。
+- M1「DB 列表与可观测」：/api/models|pipelines|graphs 稳定读库；/api/_debug/db 暴露异常；基础监控与日志齐备。验收：三接口TP99<50ms，异常可定位，前端页面数据非空。
+- M2「检测框正确与稳态」：GPU 零拷贝路径下检测框与CPU基线对齐；长稳跑不漂移。验收：50 帧 IOU≥0.95，像素中位误差≤1px；30min 稳定播放无 5xx。
 
-# 分阶段计划（表格）
+## 分阶段计划（表格）
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| P0 | 三接口打通 | Classic Connector/C++；DLL 就位；SQL 映射 | 认证/依赖缺失→日志+调试路由 | 200 且 data 非空 |
-| P1 | WHEP 播放可靠 | SSE 就绪→WHEP POST/ICE；前端事件校验 | NAT/证书问题→代理与证据采集 | 10s 内 playing |
-| P1.5 | 可观测增强 | 指标/日志字段标准化；错误聚合 | 噪声→采样与阈值治理 | P95<80ms，错误<1% |
-| P2 | GPU 路径与CI | IoBinding 开关；CPU 回退；回归用例 | 驱动/依赖差异→回退保护 | CI 全绿 |
+| A | CP WHEP 代理修复 | Accept=application/sdp；chunked 去分块；Location 重写；CORS 统一 | 代理细节不兼容→抓包与最小充分日志 | 播放首开≤10s，201/Location 正确 |
+| B | 订阅与 SSE | 返回 data.id；SSE 映射 VA Watch | SSE 断连→退避重连与心跳 | SSE 掉线率<2% |
+| C | DB 三接口 | Classic 优先，ODBC/X 兜底；/api/_debug/db | 认证/DLL 缺失→异常快照 | TP99<50ms，非空返回 |
+| D | 前端联调 | Vite 代理到 CP；移除直连 VA | 预检失败→统一 CORS 头 | 页面无 CORS 报错 |
+| E | 框对齐修复 | 统一 CUDA stream；FP16 处理与核函数参数对齐 | 并行度下降→后续每流水线独立流 | IOU≥0.95 |
+| F | 稳定性 & 观察 | 长稳运行观测、压测与报警 | 内存/句柄泄漏→基线巡检 | 30min 无 5xx |
 
-# 依赖矩阵
+## 依赖矩阵
 - 内部依赖：
-  - CP 路由/DB 模块；VA WHEP/Watch；前端分析页与 Vite 代理；VSM 源管理。
+  - VA（WHEP 端点、推理/后处理、Watch 事件）
+  - VSM（RTSP 源清单；为空时 CP 内置开发兜底）
+  - 前端（Vite 代理、订阅与 WHEP 调用序）
 - 外部依赖（库/服务/硬件）：
-  - MySQL 8（端口 13306）；Connector/C++ 9.4；可选 ODBC/MySQL X。
-  - OpenSSL；ONNX Runtime（GPU 可选 CUDA）；Node.js；NVIDIA 驱动（如启用 GPU）。
+  - MySQL 8.x（cv_cp）；ODBC 驱动（可选）；X Plugin（可选）
+  - MySQL Connector/C++ 9.4（Classic）运行时 DLL：mysqlcppconn-10-vs14、libssl-3、libcrypto-3
+  - GPU 驱动与 CUDA 12.x；ONNX Runtime CUDA EP
 
-# 风险清单（Top-5）
-- Classic 认证失败 → 缺 RSA/插件不匹配 → 接口 data 为空 → 增加异常明文与调试路由，允许 ODBC/X 旁路
-- 运行期 DLL 缺失 → 加载失败 → 事件日志含 “module not found” → 从 VA 产物拷贝 DLL 并随 CP 发布
-- WHEP 建连异常 → NAT/证书/端口 → DevTools 无 playing → 代理到本机、校验证书、保存取证截图
-- SQL 映射不一致 → 字段缺失/类型错 → JSON 结构异常 → 增加列到字段的映射测试与回退
-- 性能波动 → P95 升高 → 指标抖动与超时 → 加索引/连接池与重试，压测后再放量
+## 风险清单（Top-5）
+- DB 认证/依赖缺失 → 启用 caching_sha2/RSA/SSL 时 → 三接口返回空 → /api/_debug/db 暴露异常并切换 ODBC/X 或补齐 DLL
+- 代理兼容性 → 服务器期望 Accept/编码/Location → 协商 4xx/视频不播 → 强制 Accept=application/sdp、identity；重写 Location 并暴露响应头
+- SSE 稳定性 → 网络抖动/代理断流 → 事件缺失/状态不同步 → 心跳+指数退避重连；日志采样与报警
+- 框偏移/漂移 → 流不一致/FP16 误读 → 画框错位 → 统一 CUDA stream；确保 dtype 正确；必要时回退 CPU 路径校核
+- 并行度退化 → 全局单流串行化 → 多路并发帧率下降 → 稳定后改为“每流水线独立非阻塞流”，保持 ORT user_compute_stream 一致
