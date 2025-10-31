@@ -57,6 +57,7 @@ observability:
   module_levels: 
     transport.webrtc: debug                                                                
     encoder.ffmpeg: debug                                                                        
+    control: debug
   console: true
   file:
     path: D:\Projects\ai\cv\logs\video-analyzer-release.log
