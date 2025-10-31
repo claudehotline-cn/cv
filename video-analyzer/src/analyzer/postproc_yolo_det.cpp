@@ -8,11 +8,15 @@
 
 namespace {
 
-constexpr float kScoreThreshold = 0.25f;
-constexpr float kNMSThreshold = 0.45f;
+static inline float default_conf_thr() { return 0.25f; }
+static inline float default_nms_thr() { return 0.45f; }
 
 float clamp(float v, float lo, float hi) {
     return std::max(lo, std::min(v, hi));
+}
+
+inline float sigmoid(float x) {
+    return 1.0f / (1.0f + std::exp(-x));
 }
 
 float iou(const va::core::Box& a, const va::core::Box& b) {
@@ -31,7 +35,7 @@ float iou(const va::core::Box& a, const va::core::Box& b) {
     return inter / union_area;
 }
 
-void nonMaxSuppression(std::vector<va::core::Box>& boxes) {
+void nonMaxSuppression(std::vector<va::core::Box>& boxes, float nms_thr) {
     if (boxes.empty()) return;
     // Precompute areas
     std::vector<float> areas(boxes.size());
@@ -73,7 +77,7 @@ void nonMaxSuppression(std::vector<va::core::Box>& boxes) {
                 float inter = w * h;
                 float uni = areas[i] + areas[j] - inter;
                 float ov = uni > 0.0f ? inter / uni : 0.0f;
-                if (ov > kNMSThreshold) suppressed[j] = true;
+                if (ov > nms_thr) suppressed[j] = true;
             }
         }
     }
@@ -113,13 +117,15 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
     int64_t num_attrs = 0;
     bool channels_first = false; // indicates layout [C, N]
 
-    if (dim1 <= dim2) {
-        num_det = dim1;
-        num_attrs = dim2;
-    } else {
+    // 统一处理两种常见输出形状：1x84x8400 (C,N) 与 1x8400x84 (N,C)
+    if (dim1 < dim2) {
+        channels_first = true;  // [C, N]
         num_det = dim2;
         num_attrs = dim1;
-        channels_first = true;
+    } else {
+        channels_first = false; // [N, C]
+        num_det = dim1;
+        num_attrs = dim2;
     }
 
     if (num_attrs < 5) {
@@ -132,6 +138,39 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
     std::vector<core::Box> boxes;
     boxes.reserve(static_cast<size_t>(num_det));
 
+    // 自适应：探测类别分数是否为 logit（需 sigmoid），以免全部被 0.25 阈值过滤
+    bool need_sigmoid = false;
+    {
+        int64_t probe_i = 0;
+        auto value_at_probe = [&](int64_t attr)->float {
+            return channels_first ? data[attr * num_det + probe_i] : data[probe_i * num_attrs + attr];
+        };
+        float minv = 1e9f, maxv = -1e9f;
+        const int probe_classes = std::min(6, num_classes);
+        for (int c = 0; c < probe_classes; ++c) {
+            float v = value_at_probe(4 + c);
+            minv = std::min(minv, v);
+            maxv = std::max(maxv, v);
+        }
+        // 若落在 [0,1] 外，认为是 logit，需要 sigmoid
+        if (minv < -0.2f || maxv > 1.2f) need_sigmoid = true;
+    }
+
+    // CPU 路径：判定是否归一化并计算放缩系数
+    bool normalized_cpu = true;
+    {
+        // 采样前若干值估计是否为 [0,1]
+        auto v0 = [&](int64_t a)->float { return channels_first ? data[a * num_det + 0] : data[0 * num_attrs + a]; };
+        float mx = 0.0f; int sample = std::min<int64_t>(num_attrs, 6);
+        for (int j=0;j<sample;++j) mx = std::max(mx, std::abs(v0(j)));
+        normalized_cpu = (mx <= 1.2f);
+    }
+    const float pre_sx_cpu = normalized_cpu ? static_cast<float>(meta.input_width)  : 1.0f;
+    const float pre_sy_cpu = normalized_cpu ? static_cast<float>(meta.input_height) : 1.0f;
+
+    const float eff_conf = (conf_thr_ > 0.0f ? conf_thr_ : default_conf_thr());
+    const float eff_nms  = (nms_iou_thr_ > 0.0f ? nms_iou_thr_ : default_nms_thr());
+
     for (int64_t i = 0; i < num_det; ++i) {
         auto value_at = [&](int64_t attr) -> float {
             if (channels_first) {
@@ -140,22 +179,23 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
             return data[i * num_attrs + attr];
         };
 
-        const float cx = value_at(0);
-        const float cy = value_at(1);
-        const float w = value_at(2);
-        const float h = value_at(3);
+        const float cx = value_at(0) * pre_sx_cpu;
+        const float cy = value_at(1) * pre_sy_cpu;
+        const float w  = value_at(2) * pre_sx_cpu;
+        const float h  = value_at(3) * pre_sy_cpu;
 
         float best_score = 0.0f;
         int best_class = -1;
         for (int cls = 0; cls < num_classes; ++cls) {
-            const float cls_score = value_at(4 + cls);
+            float cls_score = value_at(4 + cls);
+            if (need_sigmoid) cls_score = sigmoid(cls_score);
             if (cls_score > best_score) {
                 best_score = cls_score;
                 best_class = cls;
             }
         }
 
-        if (best_class < 0 || best_score < kScoreThreshold) {
+        if (best_class < 0 || best_score < eff_conf) {
             continue;
         }
 
@@ -189,7 +229,7 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
         return true;
     }
 
-    nonMaxSuppression(boxes);
+    nonMaxSuppression(boxes, eff_nms);
     output.boxes = std::move(boxes);
     return true;
 }
@@ -198,6 +238,7 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 
 #ifdef USE_CUDA
 #include "analyzer/postproc_yolo_det.hpp"
+#include "analyzer/logging_util.hpp"
 
 #if defined(__has_include)
 #  if __has_include(<cuda_runtime.h>)
@@ -245,8 +286,8 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
         if (dim0 == 1) {
             bool channels_first = false;
             int num_det=0, num_attrs=0;
-            if (dim1 <= dim2) { num_det = static_cast<int>(dim1); num_attrs = static_cast<int>(dim2); }
-            else { num_det = static_cast<int>(dim2); num_attrs = static_cast<int>(dim1); channels_first = true; }
+            if (dim1 < dim2) { channels_first = true; num_det = static_cast<int>(dim2); num_attrs = static_cast<int>(dim1); }
+            else { channels_first = false; num_det = static_cast<int>(dim1); num_attrs = static_cast<int>(dim2); }
             if (num_attrs >= 5) {
                 // 规范化预缩放
                 bool normalized = true;
@@ -260,6 +301,8 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                 }
                 const float pre_sx = normalized ? static_cast<float>(meta.input_width)  : 1.0f;
                 const float pre_sy = normalized ? static_cast<float>(meta.input_height) : 1.0f;
+                const float eff_conf = (conf_thr_ > 0.0f ? conf_thr_ : default_conf_thr());
+                const float eff_nms  = (nms_iou_thr_ > 0.0f ? nms_iou_thr_ : default_nms_thr());
 
                 float *d_boxes=nullptr, *d_scores=nullptr; int32_t* d_classes=nullptr; int *d_count=nullptr;
                 cudaStream_t st = reinterpret_cast<cudaStream_t>(stream_);
@@ -268,12 +311,20 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     cudaMalloc(&d_classes,num_det * sizeof(int32_t))==cudaSuccess &&
                     cudaMalloc(&d_count, sizeof(int))==cudaSuccess) {
                     cudaMemsetAsync(d_count, 0, sizeof(int), st);
-                    const float conf_thr = kScoreThreshold;
+                    const float conf_thr = eff_conf;
                     const float scale = meta.scale;
                     const int pad_x = meta.pad_x, pad_y = meta.pad_y;
                     const int ow = (meta.original_width>0?meta.original_width:meta.input_width);
                     const int oh = (meta.original_height>0?meta.original_height:meta.input_height);
                     cudaError_t kerr = cudaSuccess;
+                    // 预解码诊断
+                    VA_LOG_C(::va::core::LogLevel::Debug, "ms.nms")
+                        << "gpu_decode.pre ch_first=" << (channels_first?1:0)
+                        << " num_det=" << num_det << " num_attrs=" << num_attrs
+                        << " dtype=" << (t.dtype==core::DType::F16?"F16":"F32")
+                        << " normalized=" << std::boolalpha << normalized
+                        << " pre_sx=" << pre_sx << " pre_sy=" << pre_sy
+                        << " thr=" << conf_thr;
                     if (t.dtype == core::DType::F16) {
                         kerr = va::analyzer::cudaops::yolo_decode_to_yxyx_fp16(
                             reinterpret_cast<const __half*>(t.data), num_det, num_attrs, num_attrs-4,
@@ -288,6 +339,18 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     if (kerr == cudaSuccess) {
                         int h_count=0; cudaMemcpyAsync(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost, st); cudaStreamSynchronize(st);
                         h_count = std::max(0, std::min(h_count, num_det));
+                        {
+                            auto lvl2 = va::analyzer::logutil::log_level_for_tag("ms.nms");
+                            auto thr2 = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms", 3000);
+                            VA_LOG_THROTTLED(lvl2, "ms.nms", thr2)
+                                << "gpu_decode candidates=" << h_count
+                                << " normalized=" << std::boolalpha << normalized
+                                << " pre_sx=" << pre_sx << " pre_sy=" << pre_sy
+                                << " thr=" << conf_thr
+                                << " dtype=" << (t.dtype==core::DType::F16?"F16":"F32")
+                                << " ch_first=" << (channels_first?1:0)
+                                << " num_det=" << num_det << " num_attrs=" << num_attrs;
+                        }
                         bool gpu_ok = false;
                         if (h_count > 0) {
                             int *d_keep=nullptr, *d_kept=nullptr;
@@ -295,7 +358,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                                 cudaMalloc(&d_kept, sizeof(int))==cudaSuccess &&
                                 cudaMemsetAsync(d_kept, 0, sizeof(int), st)==cudaSuccess) {
                                 if (va::analyzer::cudaops::nms_yxyx_per_class(
-                                        d_boxes, d_scores, d_classes, h_count, kNMSThreshold,
+                                        d_boxes, d_scores, d_classes, h_count, eff_nms,
                                         d_keep, d_kept, st) == cudaSuccess) {
                                     std::vector<float> h_boxes(h_count*4), h_scores(h_count);
                                     std::vector<int32_t> h_classes(h_count);
@@ -324,13 +387,15 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                             }
                             std::vector<core::Box> boxes; boxes.reserve(static_cast<size_t>(h_count));
                             for (int i=0;i<h_count;++i){ core::Box b; b.x1=h_boxes[i*4+0]; b.y1=h_boxes[i*4+1]; b.x2=h_boxes[i*4+2]; b.y2=h_boxes[i*4+3]; b.score=h_scores[i]; b.cls=h_classes[i]; boxes.emplace_back(b);}    
-                            if (!boxes.empty()) { nonMaxSuppression(boxes); }
+                            if (!boxes.empty()) { nonMaxSuppression(boxes, eff_nms); }
                             output.boxes = std::move(boxes); output.masks.clear();
                         }
                         // 释放并返回
                         if (d_boxes) cudaFree(d_boxes); if (d_scores) cudaFree(d_scores);
                         if (d_classes) cudaFree(d_classes); if (d_count) cudaFree(d_count);
                         return true;
+                    } else {
+                        VA_LOG_C(::va::core::LogLevel::Warn, "ms.nms") << "gpu_decode kernel error code=" << int(kerr);
                     }
                 }
                 if (d_boxes) cudaFree(d_boxes); if (d_scores) cudaFree(d_scores);
@@ -355,14 +420,23 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     int64_t dim2 = t.shape[2];
     bool channels_first = false;
     int64_t num_det, num_attrs;
-    if (dim1 <= dim2) { num_det = dim1; num_attrs = dim2; }
-    else { num_det = dim2; num_attrs = dim1; channels_first = true; }
+    if (dim1 < dim2) { channels_first = true; num_det = dim2; num_attrs = dim1; }
+    else { channels_first = false; num_det = dim1; num_attrs = dim2; }
     if (dim0 != 1 || num_attrs < 5) return false;
     const int num_classes = static_cast<int>(num_attrs - 4);
 
     auto value_at = [&](int64_t i, int64_t a)->float {
         return channels_first ? host[a * num_det + i] : host[i * num_attrs + a];
     };
+
+    // 自适应：判定是否需要对类别分数做 sigmoid
+    bool need_sigmoid = false;
+    {
+        float minv = 1e9f, maxv = -1e9f;
+        const int probe = std::min(6, num_classes);
+        for (int c=0;c<probe;++c){ float v = value_at(0, 4+c); minv = std::min(minv, v); maxv = std::max(maxv, v); }
+        if (minv < -0.2f || maxv > 1.2f) need_sigmoid = true;
+    }
 
     struct Cand { float x1,y1,x2,y2,score; int cls; };
     std::vector<Cand> cands;
@@ -371,8 +445,8 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
         float cx = value_at(i,0), cy = value_at(i,1), w = value_at(i,2), h = value_at(i,3);
         // best class score
         float best=0.0f; int best_c=-1;
-        for (int c=0;c<num_classes;++c){ float s=value_at(i,4+c); if (s>best){ best=s; best_c=c; }}
-        if (best_c<0 || best<0.25f) continue; // score threshold aligned with CPU path
+        for (int c=0;c<num_classes;++c){ float s=value_at(i,4+c); if (need_sigmoid) s = 1.0f/(1.0f+std::exp(-s)); if (s>best){ best=s; best_c=c; }}
+        if (best_c<0 || best<getScoreThreshold()) continue; // score threshold aligned with CPU path
         float x1 = cx - 0.5f*w, y1 = cy - 0.5f*h, x2 = cx + 0.5f*w, y2 = cy + 0.5f*h;
         float ox1 = (x1 - static_cast<float>(meta.pad_x)) / (meta.scale==0.0f?1.0f:meta.scale);
         float oy1 = (y1 - static_cast<float>(meta.pad_y)) / (meta.scale==0.0f?1.0f:meta.scale);
@@ -411,7 +485,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
     if (cudaMemcpy(d_scores, h_scores.data(), h_scores.size()*sizeof(float), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemcpy(d_classes, h_classes.data(), h_classes.size()*sizeof(int32_t), cudaMemcpyHostToDevice)!=cudaSuccess) goto CLEAN5;
     if (cudaMemset(d_kept, 0, sizeof(int))!=cudaSuccess) goto CLEAN5;
-    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, 0.45f, d_keep, d_kept, nullptr)!=cudaSuccess) goto CLEAN5;
+    if (va::analyzer::cudaops::nms_yxyx_per_class(d_boxes, d_scores, d_classes, N, eff_nms, d_keep, d_kept, nullptr)!=cudaSuccess) goto CLEAN5;
     {
         std::vector<int> h_keep(N);
         if (cudaMemcpy(h_keep.data(), d_keep, N*sizeof(int), cudaMemcpyDeviceToHost)!=cudaSuccess) goto CLEAN5;
@@ -437,7 +511,7 @@ CPU_NMS:
         };
         std::vector<bool> sup(cands.size(), false);
         output.boxes.clear(); output.masks.clear();
-        for (size_t i=0;i<cands.size();++i){ if (sup[i]) continue; const auto& ci=cands[i]; output.boxes.push_back({ci.x1,ci.y1,ci.x2,ci.y2,ci.score,ci.cls}); for (size_t j=i+1;j<cands.size();++j){ if (sup[j]) continue; if (cands[j].cls!=ci.cls) continue; if (iou(ci,cands[j])>0.45f) sup[j]=true; } }
+        for (size_t i=0;i<cands.size();++i){ if (sup[i]) continue; const auto& ci=cands[i]; output.boxes.push_back({ci.x1,ci.y1,ci.x2,ci.y2,ci.score,ci.cls}); for (size_t j=i+1;j<cands.size();++j){ if (sup[j]) continue; if (cands[j].cls!=ci.cls) continue; if (iou(ci,cands[j])>eff_nms) sup[j]=true; } }
         return true;
     }
 #else

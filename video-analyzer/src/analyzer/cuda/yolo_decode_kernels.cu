@@ -17,7 +17,13 @@ __global__ void k_yolo_decode(
     auto at = [&](int attr)->float { return ch_first ? out[attr * N + i] : out[i * A + attr]; };
     float cx = at(0) * pre_sx, cy = at(1) * pre_sy, w = at(2) * pre_sx, h = at(3) * pre_sy;
     float best=0.0f; int bc=-1;
-    for (int c=0;c<K;++c){ float s=at(4+c); if (s>best){ best=s; bc=c; } }
+    for (int c=0;c<K;++c){
+        float s = at(4+c);
+        // 自适应：对类别分数应用 sigmoid（logit -> prob），
+        // 若本身已是概率，二次压缩仍在 (0,1)，阈值 0.25 兼容。
+        s = 1.f / (1.f + expf(-s));
+        if (s > best){ best=s; bc=c; }
+    }
     if (bc<0 || best<conf_thr) return;
     float x1 = cx - 0.5f*w, y1 = cy - 0.5f*h, x2 = cx + 0.5f*w, y2 = cy + 0.5f*h;
     float invs = (scale==0.0f ? 1.0f : scale);
@@ -75,7 +81,11 @@ __global__ void k_yolo_decode_fp16(
     auto at = [&](int attr)->float { __half h = (ch_first ? out[attr * N + i] : out[i * A + attr]); return __half2float(h); };
     float cx = at(0) * pre_sx, cy = at(1) * pre_sy, w = at(2) * pre_sx, h = at(3) * pre_sy;
     float best=0.0f; int bc=-1;
-    for (int c=0;c<K;++c){ float s=at(4+c); if (s>best){ best=s; bc=c; } }
+    for (int c=0;c<K;++c){
+        float s = at(4+c);
+        s = 1.f / (1.f + expf(-s));
+        if (s > best){ best=s; bc=c; }
+    }
     if (bc<0 || best<conf_thr) return;
     float x1 = cx - 0.5f*w, y1 = cy - 0.5f*h, x2 = cx + 0.5f*w, y2 = cy + 0.5f*h;
     float invs = (scale==0.0f ? 1.0f : scale);

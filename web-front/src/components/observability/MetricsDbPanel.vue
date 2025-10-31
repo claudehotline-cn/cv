@@ -58,7 +58,11 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import ChartBase from '@/components/analytics/ChartBase.vue'
 
-function apiBase(){ const b = ((import.meta as any).env?.VITE_API_BASE) || '/'; return String(b).replace(/\/$/, '') }
+function apiBase(){
+  const dev = !!((import.meta as any).env?.DEV)
+  const b = dev ? '' : (((import.meta as any).env?.VITE_API_BASE) || '/')
+  return String(b).replace(/\/$/, '')
+}
 
 const pollMs = ref(5000)
 const win = ref<number>(120000)

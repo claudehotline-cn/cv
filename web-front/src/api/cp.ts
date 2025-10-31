@@ -68,7 +68,7 @@ export function applyPipeline(spec: any) { return http.post('/api/control/apply_
 export function applyPipelines(items: any[]) { return http.post('/api/control/apply_pipelines', { items }) }
 
 // 设计文档中的 CP 封装（基于 VITE_CP_BASE_URL）
-const CP_BASE = (import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || ''
+const CP_BASE = ((import.meta as any).env?.DEV ? '' : ((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || ''))
 export const cp = {
   async metricsQuery(params: { metric:string; from:number; to:number; stepSec:number; pipeline?:string }) {
     const q = new URLSearchParams({

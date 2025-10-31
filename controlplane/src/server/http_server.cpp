@@ -30,7 +30,24 @@ static int parse_port(const std::string& listen) {
 static std::string make_http_response(const HttpResponse& r) {
   std::ostringstream os;
   int code = r.status;
-  const char* msg = code==200?"OK":(code==202?"Accepted":(code==304?"Not Modified":(code==404?"Not Found":(code==501?"Not Implemented":"OK"))));
+  const char* msg = "OK";
+  switch (code) {
+    case 200: msg = "OK"; break;
+    case 201: msg = "Created"; break;
+    case 202: msg = "Accepted"; break;
+    case 204: msg = "No Content"; break;
+    case 304: msg = "Not Modified"; break;
+    case 400: msg = "Bad Request"; break;
+    case 401: msg = "Unauthorized"; break;
+    case 403: msg = "Forbidden"; break;
+    case 404: msg = "Not Found"; break;
+    case 409: msg = "Conflict"; break;
+    case 500: msg = "Internal Server Error"; break;
+    case 502: msg = "Bad Gateway"; break;
+    case 503: msg = "Service Unavailable"; break;
+    case 504: msg = "Gateway Timeout"; break;
+    default: msg = "OK"; break;
+  }
   os << "HTTP/1.1 " << code << " " << msg << "\r\n";
   os << "Content-Type: " << r.contentType << "\r\n";
   if (!r.extraHeaders.empty()) os << r.extraHeaders;
@@ -76,8 +93,7 @@ bool HttpServer::start(const std::string& listen_addr, RouteHandler handler) {
     while (impl->running.load()) {
       SOCKET cli = accept(srv, nullptr, nullptr);
       if (cli == INVALID_SOCKET) continue;
-      char buf[8192]; int n = recv(cli, buf, sizeof(buf)-1, 0); if (n<=0){ closesocket(cli); continue; }
-      buf[n]=0;
+      char buf[16384]; int n = recv(cli, buf, sizeof(buf), 0); if (n<=0){ closesocket(cli); continue; }
       std::string req(buf, n);
       // very small parser: first line METHOD PATH HTTP/1.1
       std::string method="GET", path="/", headers, body;
@@ -87,6 +103,28 @@ bool HttpServer::start(const std::string& listen_addr, RouteHandler handler) {
       }
       auto pos = req.find("\r\n\r\n");
       if (pos != std::string::npos) { headers = req.substr(0, pos); body = req.substr(pos+4); }
+      // Read remaining body by Content-Length if present
+      if (!headers.empty()) {
+        auto hlow = headers; for (auto& c : hlow) c = (char)tolower((unsigned char)c);
+        auto k = std::string("content-length:");
+        auto hp = hlow.find(k);
+        if (hp != std::string::npos) {
+          size_t valStart = hp + k.size();
+          while (valStart < headers.size() && (headers[valStart]==' '||headers[valStart]=='\t')) ++valStart;
+          size_t lineEnd = headers.find("\r\n", valStart);
+          std::string v = headers.substr(valStart, lineEnd==std::string::npos? std::string::npos : (lineEnd-valStart));
+          long long need = 0; try { need = std::stoll(v); } catch (...) { need = 0; }
+          if (need > 0 && (long long)body.size() < need) {
+            long long remain = need - (long long)body.size();
+            while (remain > 0) {
+              int got = recv(cli, buf, (int)std::min<long long>(sizeof(buf), remain), 0);
+              if (got <= 0) break;
+              body.append(buf, buf+got);
+              remain -= got;
+            }
+          }
+        }
+      }
       // Streaming SSE detection: subscription events (endswith /events) or sources watch endpoints
       bool isSse = (method == "GET" && (
         (path.size() >= 7 && path.rfind("/events") == path.size()-7) ||

@@ -35,7 +35,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 
-function apiBase(){ const b = ((import.meta as any).env?.VITE_API_BASE) || '/'; return String(b).replace(/\/$/, '') }
+function apiBase(){
+  const dev = !!((import.meta as any).env?.DEV)
+  const b = dev ? '' : (((import.meta as any).env?.VITE_API_BASE) || '/')
+  return String(b).replace(/\/$/, '')
+}
 
 const metrics = ref<Record<string, number>>({})
 const warnThreshold = Number((import.meta as any).env?.VITE_WRITER_WARN) || 100

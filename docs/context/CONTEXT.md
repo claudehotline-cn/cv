@@ -1,61 +1,54 @@
-# 项目上下文与关键信息（重建）
+# 项目关键上下文（重建版）— 2025-11-01
 
-本文整合当前对话与代码库现状，覆盖架构/路由、数据库、WHEP 代理、前端联调、GPU 零拷贝与检测框问题、构建运行与风险。时间：2025-10-31。
+本文件汇总当前对话期内的关键改动、现状、取证与后续方向，覆盖架构联调、WHEP 代理、订阅链路、数据库接口、前端代理、VA 推理与检测框修复（GPU/CPU）、以及阈值来源统一到图配置。
 
-## 1. 目标与范围
-- 目标
-  - 使用 Chrome DevTools 调试前端“分析”页，确保经 CP 代理 VA 的 WHEP 协商稳定可用并播放。
-  - 在 CP 实现并打通 DB 驱动的只读接口：`GET /api/models`、`GET /api/pipelines`、`GET /api/graphs`。
-- 模块与交互
-  - CP（controlplane）向前端提供 REST/代理；与 VA（video-analyzer）、VSM（video-source-manager）通过 gRPC/HTTP 协作；对外代理 WHEP。
-  - 前端（web-frontend）仅访问 CP；开发态使用 Vite 代理统一到 CP 以避免 CORS。
-  - VA 负责 RTSP 接入、推理、后处理与 WebRTC/HLS 输出；Watch 事件映射为 CP 的 SSE。
-  - VSM 负责 RTSP 源管理。
+## 1. 架构与链路
+- 前端仅连接 Controlplane（CP）；CP 通过 gRPC 调用 Video Analyzer（VA）与 VSM；CP 对外提供 REST 与 WHEP 反向代理。
+- 分析播放链路：
+  1) POST `/api/subscriptions` → 202 + Location + body.data.id
+  2) 前端发起 WHEP：POST `/whep`（经 CP 代理）→ 201 + Location；随后 ICE PATCH（204）；<video> 播放。
+- DEV 运行：前端 Vite 代理 `/api,/metrics,/whep → 127.0.0.1:18080`；VA(8082/50051)、VSM、CP(18080) 独立进程。
 
-## 2. 已完成与现状
-- CP 构建：`tools/build_controlplane_with_vcvars.cmd` 已可生成 `controlplane/build/bin/controlplane.exe`。
-- 路由与代理
-  - 列表接口：`/api/models|/pipelines|/graphs` 读取 MySQL（Classic 优先，ODBC/X 备选），失败时空数组兜底；提供 `/api/_debug/db` 返回最近一次 SQL 异常与配置快照用于排障。
-  - CORS/预检：统一处理 `OPTIONS`，暴露必要头。
-  - WHEP 代理：强制 `Accept: application/sdp`（仅 POST），`Accept-Encoding: identity`，透传 `Authorization/Content-Type/If-Match`；支持 chunked 去分块；重写 `Location` 到 CP 路径并 `Access-Control-Expose-Headers` 包含 `Location/ETag/Accept-Patch`。
-  - 订阅：`POST /api/subscriptions` 返回 `{ code:"ACCEPTED", data:{ id:"..." } }`，前端读取 `data.id`；SSE `GET /api/subscriptions/{id}/events` 映射 VA Watch（现已可用，仍需长期跑稳定性验证）。
-  - `/api/sources`：当 VSM 为空时可注入默认源 `camera_01` 的回退（开发态便利，生产可关闭）。
-- 前端联调：Vite 将 `/api,/metrics,/whep` 代理到 `http://127.0.0.1:18080`，已删除直连 VA 的开发配置，默认使用 `det_720p`。
+## 2. CP 改动与取证
+- 订阅：修复 `source_uri` 未 URL 解码导致 VA 打开 `rtsp%3A…`。
+- 响应：POST `/api/subscriptions` 统一 `{ code:"ACCEPTED", data:{ id } }` 并附 Location。
+- HTTP 服务器：完整读取 Content-Length；状态行映射补全 201/204。
+- WHEP 代理：强制 Accept=application/sdp；去分块；Location 暴露与重写；CORS 统一。
+- 取证：
+  - `/api/system/info` 200；`/api/models|/api/pipelines|/api/graphs` 均 200，长度 5/4/3。
+  - POST `/api/subscriptions?...` → 202 + `Location: /api/subscriptions/cp-…` + body.data.id。
+  - GET `/api/subscriptions/{id}/events` → 200 `text/event-stream`。
 
-## 3. 数据库与依赖
-- MySQL：`host=127.0.0.1 port=13306 user=root password=123456 db=cv_cp`（确认有数据：models=5/pipelines=4/graphs=3）。
-- 连接器优先级：Classic（third_party/mysql-connector-c++-9.4.0-winx64）→ ODBC（需安装驱动）→ X DevAPI（需启用 X Plugin）。
-- 运行时 DLL：`mysqlcppconn-10-vs14.dll`、`libssl-3-x64.dll`、`libcrypto-3-x64.dll` 等，如缺可从 `video-analyzer/build-ninja/bin` 复制至 CP 运行目录。
-- 常见问题：`caching_sha2_password`/RSA 公钥获取、SSL 模式、DLL 缺失；均会在 `/api/_debug/db` 中暴露最近异常文本。
+## 3. 前端改动与取证
+- 开发态统一走 CP（相对路径 → Vite 代理），清理对 8082 的直连；页面硬刷新后生效。
+- 分析页 WHEP：
+  - Console/Network 可见：POST `/whep` 201 + ICE connected + `<video>` loadedmetadata/playing（1280x720）。
 
-## 4. WHEP 时序与验证要点
-1) `POST /api/subscriptions` → 202 + `data.id`
-2) `GET /api/subscriptions/{id}/events` → `phase=ready`
-3) `POST /whep` → 201 + `Location`（CP 相对路径）
-4) `PATCH <Location>`（ICE）→ 204/2xx，随后 `<video>` 触发 `loadedmetadata/playing`
-注意：必须强制 `Accept: application/sdp` 与 `identity` 编码；请求体按 `Content-Length` 全量读取，避免截断。
+## 4. VA（推理/后处理/渲染）
+- WHEP：VA REST `/whep` 正常创建会话（201），Answer SDP 返回；ICE PATCH/DELETE 可用。
+- YOLO 后处理修复（GPU/CPU 一致）：
+  - 类别分数自适应 sigmoid（logit→prob）；
+  - 输出形状判定统一：`1x84x8400`→channels_first(C,N)，`1x8400x84`→(N,C)；
+  - 归一化坐标放缩：按 normalized 判定使用 `pre_sx/pre_sy` 与 letterbox `scale/pad` 还原至原图；
+  - CUDA 解码核与 CUDA NMS 使用相同阈值与放缩；
+  - 诊断日志（节流）输出候选数与 NMS 结果。
+- 阈值来源统一到图配置：
+  - 图：`config/graphs/analyzer_multistage_example.yaml` post.yolo.nms 节点 `conf/iou`；
+  - NodeNmsYolo 将阈值以方法参数注入后处理器（setThresholds），不再使用环境变量；
+  - 默认阈值回退：conf=0.25、iou=0.45。
+- 取证（示例）：
+  - `ms.nms gpu_decode.pre … thr=0.65 ch_first=1 num_det=8400 num_attrs=84`；
+  - `ms.nms gpu_decode candidates=118` → `ms.nms boxes=20` → `ms.overlay drawn boxes=20`。
 
-## 5. 检测框问题与 GPU 路径
-- 分支：`IOBinding`。为零拷贝路径统一 CUDA stream，修正 IoBinding dtype（F16/F32）与 FP16 主机转换兜底；CUDA 预处理/解码/NMS/叠加均接受同一 stream，避免跨线程 TLS 竞态导致框漂移。
-- 仍在推进：设备侧 `half_to_float` + 纯设备解码；可选恢复“每流水线独立非阻塞流”以提升并行度（先以稳定为先）。
-- 曾出现的日志与回退：删除 `infer: in_key='tensor:det_input' shape=1x3x640x640 on_gpu=true` 噪声日志；对 yolo 解码核的接口扩展如不匹配需局部回退，确保可编译可运行。
+## 5. 数据接口（DB）
+- `GET /api/models|/api/pipelines|/api/graphs`：已稳定从 MySQL 读取（classic connector）。
+- `_debug/db` 可用于捕获异常文本（开发辅助）。
 
-## 6. 构建、运行与测试
-- 构建前先停止正在运行的 CP/VA/VSM（可用 `tools/kill_running.ps1`）。
-- Windows 构建脚本：
-  - CP：`tools/build_controlplane_with_vcvars.cmd`
-  - VA：`tools/build_va_with_vcvars.cmd`（输出在 `video-analyzer/build-ninja`）
-  - VSM：`tools/build_vsm_with_vcvars.cmd`
-- 运行：
-  - VA：`video-analyzer/build-ninja/bin/VideoAnalyzer.exe .../config`
-  - VSM：`video-source-manager/build/bin/VideoSourceManager.exe`
-  - 前端：`web-front` 下 `npm run dev`
-- 验证：端口可达、3 个 DB 列表接口非空、订阅→SSE→WHEP 全链路、画框正确；测试源 `rtsp://127.0.0.1:8554/camera_01`。
+## 6. 当前状态与结论
+- 端到端（经 CP）播放稳定；订阅/WHEP/ICE 链路与日志齐全。
+- 检测框几何恢复：GPU/CPU 路径阈值一致、坐标放缩一致；阈值来源改为图配置；日志可见候选与绘制数量。
 
-## 7. 已知风险与对策
-- DB 认证/依赖缺失 → `/api/_debug/db` 快速暴露；按需切换 ODBC/X。
-- 代理细节（Accept/Location/Chunked） → CP 已内建兜底；保留最小充分日志。
-- SSE 长连稳定性 → 增加可靠性重试与限流；先以可观测为主。
-- GPU 设备侧 FP16 改造 → 分阶段上线，优先保证几何一致性；回退路径保留。
-- VSM 为空导致前端列表空 → 开发态默认源兜底，生产关闭。
+## 7. 后续建议
+- 将图配置阈值按业务场景回调（如 conf 0.25–0.35），观察 `boxes/drawn boxes` 与误报。
+- 如需更干净日志，可提高 `VA_MS_LOG_LEVEL` 或加大节流时间；发布构建前关闭调试日志。
 

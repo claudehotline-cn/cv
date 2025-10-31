@@ -262,6 +262,20 @@ int main(int argc, char** argv) {
           auto q = path.find('?');
           if (q != std::string::npos) {
             auto qs = path.substr(q+1);
+            auto url_decode = [&](const std::string& s){
+              std::string out; out.reserve(s.size());
+              for (size_t i=0; i<s.size(); ++i) {
+                char c = s[i];
+                if (c == '+') { out.push_back(' '); continue; }
+                if (c == '%' && i+2 < s.size()) {
+                  auto hex = s.substr(i+1,2);
+                  char* end=nullptr; long v = strtol(hex.c_str(), &end, 16);
+                  if (end && *end=='\0') { out.push_back(static_cast<char>(v)); i+=2; continue; }
+                }
+                out.push_back(c);
+              }
+              return out;
+            };
             auto getq = [&](const char* key){
               auto k = std::string(key) + "=";
               auto p = qs.find(k);
@@ -269,8 +283,7 @@ int main(int argc, char** argv) {
               p += k.size();
               auto e = qs.find('&', p);
               auto v = qs.substr(p, e==std::string::npos? std::string::npos : e-p);
-              // no url-decode for simplicity in smoke
-              return v;
+              return url_decode(v);
             };
             if (stream_id.empty()) stream_id = getq("stream_id");
             if (profile.empty()) profile = getq("profile");
@@ -304,7 +317,7 @@ int main(int argc, char** argv) {
         auto cp_id = st.create(stream_id, profile, source_uri, model_id, va_id);
         r.status = 202;
         r.extraHeaders = std::string("Location: /api/subscriptions/") + cp_id + "\r\nAccess-Control-Expose-Headers: Location,ETag\r\n";
-        r.body = std::string("{\"code\":\"ACCEPTED\",\"id\":\"") + cp_id + "\"}";
+        r.body = std::string("{\"code\":\"ACCEPTED\",\"data\":{\"id\":\"") + cp_id + "\"}}";
         emit("/api/subscriptions", r.status);
         return r;
       }

@@ -30,22 +30,7 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     std::vector<va::core::TensorView> raw{it->second};
     va::core::ModelOutput mo;
     // Bridge graph-level thresholds到后处理（通过环境变量，避免大范围改动接口）
-#ifdef _WIN32
-    {
-        char buf[32];
-        sprintf_s(buf, "%g", static_cast<double>(conf_));
-        _putenv_s("VA_CONF_THRESH", buf);
-        sprintf_s(buf, "%g", static_cast<double>(iou_));
-        _putenv_s("VA_NMS_THR", buf);
-    }
-#else
-    {
-        std::string sc = std::to_string(static_cast<double>(conf_));
-        setenv("VA_CONF_THRESH", sc.c_str(), 1);
-        std::string si = std::to_string(static_cast<double>(iou_));
-        setenv("VA_NMS_THR", si.c_str(), 1);
-    }
-#endif
+// thresholds injected via setThresholds(conf_, iou_)
     bool use_cuda_nms = prefer_cuda_;
     if (ctx.engine_registry) {
         try {
@@ -61,22 +46,18 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     // Decide code path. Prefer CUDA when requested; fallback to CPU on failure
     if (use_cuda_nms) {
 #ifdef USE_CUDA
-        va::analyzer::YoloDetectionPostprocessorCUDA gpu_pp;
-        gpu_pp.setStream(ctx.stream);
+        va::analyzer::YoloDetectionPostprocessorCUDA gpu_pp; gpu_pp.setStream(ctx.stream); gpu_pp.setThresholds(conf_, iou_);
         if (!gpu_pp.run(raw, p.letterbox, mo)) {
             auto lvl = va::analyzer::logutil::log_level_for_tag("ms.nms"); auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms");
             VA_LOG_THROTTLED(lvl, "ms.nms", thr) << "gpu_nms_run=false -> fallback cpu";
             // Fallback to CPU postproc if CUDA path fails (keep pipeline alive)
-            va::analyzer::YoloDetectionPostprocessor cpu_pp;
-            if (!cpu_pp.run(raw, p.letterbox, mo)) return false;
+            va::analyzer::YoloDetectionPostprocessor cpu_pp; cpu_pp.setThresholds(conf_, iou_); if (!cpu_pp.run(raw, p.letterbox, mo)) return false;
         }
 #else
-        va::analyzer::YoloDetectionPostprocessor cpu_pp;
-        if (!cpu_pp.run(raw, p.letterbox, mo)) return false;
+        va::analyzer::YoloDetectionPostprocessor cpu_pp; cpu_pp.setThresholds(conf_, iou_); if (!cpu_pp.run(raw, p.letterbox, mo)) return false;
 #endif
     } else {
-        va::analyzer::YoloDetectionPostprocessor cpu_pp;
-        if (!cpu_pp.run(raw, p.letterbox, mo)) return false;
+        va::analyzer::YoloDetectionPostprocessor cpu_pp; cpu_pp.setThresholds(conf_, iou_); if (!cpu_pp.run(raw, p.letterbox, mo)) return false;
     }
     // Export as rois
     p.rois["det"] = mo.boxes;
