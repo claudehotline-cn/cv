@@ -213,6 +213,7 @@ bool YoloDetectionPostprocessor::run(const std::vector<core::TensorView>& raw_ou
 
 // CUDA decode kernels（支持 pre_sx/pre_sy 与 FP16 输入）
 #include "analyzer/cuda/yolo_decode_kernels.hpp"
+#include "analyzer/cuda/postproc_yolo_nms_kernels.hpp"
 
 namespace va::analyzer {
 
@@ -287,16 +288,45 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     if (kerr == cudaSuccess) {
                         int h_count=0; cudaMemcpyAsync(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost, st); cudaStreamSynchronize(st);
                         h_count = std::max(0, std::min(h_count, num_det));
-                        std::vector<float> h_boxes(h_count*4), h_scores(h_count); std::vector<int32_t> h_classes(h_count);
-                        if (h_count>0) {
-                            cudaMemcpy(h_boxes.data(), d_boxes, h_boxes.size()*sizeof(float), cudaMemcpyDeviceToHost);
-                            cudaMemcpy(h_scores.data(), d_scores, h_scores.size()*sizeof(float), cudaMemcpyDeviceToHost);
-                            cudaMemcpy(h_classes.data(), d_classes, h_classes.size()*sizeof(int32_t), cudaMemcpyDeviceToHost);
+                        bool gpu_ok = false;
+                        if (h_count > 0) {
+                            int *d_keep=nullptr, *d_kept=nullptr;
+                            if (cudaMalloc(&d_keep, h_count*sizeof(int))==cudaSuccess &&
+                                cudaMalloc(&d_kept, sizeof(int))==cudaSuccess &&
+                                cudaMemsetAsync(d_kept, 0, sizeof(int), st)==cudaSuccess) {
+                                if (va::analyzer::cudaops::nms_yxyx_per_class(
+                                        d_boxes, d_scores, d_classes, h_count, kNMSThreshold,
+                                        d_keep, d_kept, st) == cudaSuccess) {
+                                    std::vector<float> h_boxes(h_count*4), h_scores(h_count);
+                                    std::vector<int32_t> h_classes(h_count);
+                                    std::vector<int> h_keep(h_count);
+                                    if (cudaMemcpy(h_boxes.data(), d_boxes, h_boxes.size()*sizeof(float), cudaMemcpyDeviceToHost)==cudaSuccess &&
+                                        cudaMemcpy(h_scores.data(), d_scores, h_scores.size()*sizeof(float), cudaMemcpyDeviceToHost)==cudaSuccess &&
+                                        cudaMemcpy(h_classes.data(), d_classes, h_classes.size()*sizeof(int32_t), cudaMemcpyDeviceToHost)==cudaSuccess &&
+                                        cudaMemcpy(h_keep.data(), d_keep, h_count*sizeof(int), cudaMemcpyDeviceToHost)==cudaSuccess) {
+                                        output.boxes.clear(); output.masks.clear();
+                                        for (int i=0;i<h_count;++i) if (h_keep[i]) {
+                                            core::Box b; b.x1=h_boxes[i*4+0]; b.y1=h_boxes[i*4+1]; b.x2=h_boxes[i*4+2]; b.y2=h_boxes[i*4+3];
+                                            b.score=h_scores[i]; b.cls=h_classes[i]; output.boxes.emplace_back(b);
+                                        }
+                                        gpu_ok = !output.boxes.empty();
+                                    }
+                                }
+                            }
+                            if (d_kept) cudaFree(d_kept); if (d_keep) cudaFree(d_keep);
                         }
-                        std::vector<core::Box> boxes; boxes.reserve(static_cast<size_t>(h_count));
-                        for (int i=0;i<h_count;++i){ core::Box b; b.x1=h_boxes[i*4+0]; b.y1=h_boxes[i*4+1]; b.x2=h_boxes[i*4+2]; b.y2=h_boxes[i*4+3]; b.score=h_scores[i]; b.cls=h_classes[i]; boxes.emplace_back(b);}    
-                        if (!boxes.empty()) { nonMaxSuppression(boxes); }
-                        output.boxes = std::move(boxes); output.masks.clear();
+                        if (!gpu_ok) {
+                            std::vector<float> h_boxes(h_count*4), h_scores(h_count); std::vector<int32_t> h_classes(h_count);
+                            if (h_count>0) {
+                                cudaMemcpy(h_boxes.data(), d_boxes, h_boxes.size()*sizeof(float), cudaMemcpyDeviceToHost);
+                                cudaMemcpy(h_scores.data(), d_scores, h_scores.size()*sizeof(float), cudaMemcpyDeviceToHost);
+                                cudaMemcpy(h_classes.data(), d_classes, h_classes.size()*sizeof(int32_t), cudaMemcpyDeviceToHost);
+                            }
+                            std::vector<core::Box> boxes; boxes.reserve(static_cast<size_t>(h_count));
+                            for (int i=0;i<h_count;++i){ core::Box b; b.x1=h_boxes[i*4+0]; b.y1=h_boxes[i*4+1]; b.x2=h_boxes[i*4+2]; b.y2=h_boxes[i*4+3]; b.score=h_scores[i]; b.cls=h_classes[i]; boxes.emplace_back(b);}    
+                            if (!boxes.empty()) { nonMaxSuppression(boxes); }
+                            output.boxes = std::move(boxes); output.masks.clear();
+                        }
                         // 释放并返回
                         if (d_boxes) cudaFree(d_boxes); if (d_scores) cudaFree(d_scores);
                         if (d_classes) cudaFree(d_classes); if (d_count) cudaFree(d_count);
