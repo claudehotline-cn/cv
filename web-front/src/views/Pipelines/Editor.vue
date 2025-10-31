@@ -1,6 +1,6 @@
 <template>
   <el-row :gutter="12" class="page">
-    <el-col :span="16">
+    <el-col :span="24">
       <GraphEditorCanvas
         v-model="graphJson"
         @update:selection="onSelect"
