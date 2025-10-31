@@ -335,7 +335,7 @@ defineExpose({ toJSON, fromJSON, autoLayout, highlightInvalid, clearHighlight })
 
 <style scoped>
 .ge{ display:flex; flex-direction:column; height:100%; }
-.toolbar{ display:flex; align-items:center; gap:8px; padding:6px 6px 6px 0; }
+.toolbar{ display:none; }
 .canvas{ flex:1; border:1px solid rgba(255,255,255,.08); border-radius:10px; overflow:hidden; min-height: 420px; }
 /* 端口 hover 的轻量动画（通过深度选择器作用于 x6 内部 SVG） */
 :deep(.x6-port) circle{ transition: all .12s ease; }
