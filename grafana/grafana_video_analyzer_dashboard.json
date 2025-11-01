@@ -34,7 +34,7 @@
       "type": "timeseries",
       "title": "Pipeline FPS",
       "gridPos": { "h": 7, "w": 8, "x": 0, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "fps" }, "overrides": [] },
       "targets": [
         { "refId": "A", "expr": "va_pipeline_fps{source_id=~\"$source\", path=~\"$path\"}" }
@@ -44,7 +44,7 @@
       "type": "timeseries",
       "title": "Processed FPS (rate)",
       "gridPos": { "h": 7, "w": 8, "x": 8, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "fps" }, "overrides": [] },
       "targets": [
         { "refId": "A", "expr": "sum by (source_id,path) (rate(va_frames_processed_total{source_id=~\"$source\", path=~\"$path\"}[1m]))" }
@@ -54,7 +54,7 @@
       "type": "timeseries",
       "title": "Dropped FPS by reason",
       "gridPos": { "h": 7, "w": 8, "x": 16, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "fps" }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "showLegend": true } },
       "targets": [
@@ -65,7 +65,7 @@
       "type": "stat",
       "title": "Drop Ratio (5m)",
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2 }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
       "targets": [
@@ -76,7 +76,7 @@
       "type": "timeseries",
       "title": "Latency P95 by stage (ms)",
       "gridPos": { "h": 10, "w": 18, "x": 6, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "showLegend": true } },
       "targets": [
@@ -87,7 +87,7 @@
       "type": "timeseries",
       "title": "Encoder Bitrate (bps)",
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "bps" }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "showLegend": true } },
       "targets": [
@@ -98,7 +98,7 @@
       "type": "timeseries",
       "title": "Encoder EAGAIN rate",
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "sum by (codec) (rate(va_encoder_eagain_total{source_id=~\"$source\", path=~\"$path\", codec=~\"$codec\"}[5m]))" }
       ]
@@ -107,7 +107,7 @@
       "type": "timeseries",
       "title": "Backpressure & Queue Overflow (rate)",
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 25 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "sum(rate(va_frames_dropped_total{source_id=~\"$source\", path=~\"$path\", reason=\"backpressure\"}[5m]))" },
         { "refId": "B", "expr": "sum(rate(va_frames_dropped_total{source_id=~\"$source\", path=~\"$path\", reason=\"queue_overflow\"}[5m]))" }
@@ -117,7 +117,7 @@
       "type": "timeseries",
       "title": "RTSP Reconnects (rate)",
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 25 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "rate(va_rtsp_source_reconnects_total{source_id=~\"$source\"}[10m])" }
       ]
@@ -126,7 +126,7 @@
       "type": "timeseries",
       "title": "NVDEC Recover & Await-IDR (rate)",
       "gridPos": { "h": 7, "w": 24, "x": 0, "y": 32 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "rate(va_nvdec_device_recover_total{source_id=~\"$source\"}[10m])" },
         { "refId": "B", "expr": "rate(va_nvdec_await_idr_total{source_id=~\"$source\"}[10m])" }
@@ -150,7 +150,7 @@
         "type": "query",
         "name": "source",
         "label": "source_id",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
         "query": "label_values(va_pipeline_fps, source_id)",
         "includeAll": true,
         "multi": true,
@@ -160,7 +160,7 @@
         "type": "query",
         "name": "path",
         "label": "path",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
         "query": "label_values(va_pipeline_fps{source_id=~\"$source\"}, path)",
         "includeAll": true,
         "multi": true,
@@ -170,8 +170,8 @@
         "type": "query",
         "name": "codec",
         "label": "codec",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(va_encoder_bytes_total{source_id=~\"$source\", path=~\"$path\"}, codec)",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(, encoder)",
         "includeAll": true,
         "multi": true,
         "refresh": 1

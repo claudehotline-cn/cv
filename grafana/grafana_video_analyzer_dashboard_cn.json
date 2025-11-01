@@ -21,53 +21,53 @@
   "panels": [
     { "type": "row", "title": "总览", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
     { "type": "timeseries", "title": "管道 FPS", "gridPos": { "h": 7, "w": 8, "x": 0, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "fps" } },
       "targets": [ { "refId": "A", "expr": "va_pipeline_fps{source_id=~\"$source\", path=~\"$path\"}" } ] },
 
     { "type": "timeseries", "title": "处理帧速率（1m）", "gridPos": { "h": 7, "w": 8, "x": 8, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "fps" } },
       "targets": [ { "refId": "A", "expr": "sum by (source_id,path) (rate(va_frames_processed_total{source_id=~\"$source\", path=~\"$path\"}[1m]))" } ] },
 
     { "type": "timeseries", "title": "掉帧速率（按原因）", "gridPos": { "h": 7, "w": 8, "x": 16, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "fps" } },
       "options": { "legend": { "displayMode": "list", "showLegend": true } },
       "targets": [ { "refId": "A", "expr": "sum by (reason) (rate(va_frames_dropped_total{source_id=~\"$source\", path=~\"$path\"}[1m]))" } ] },
 
     { "type": "stat", "title": "掉帧比例（5分钟）", "gridPos": { "h": 5, "w": 6, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2 } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
       "targets": [ { "refId": "A", "expr": "100 * (sum by (source_id,path) (rate(va_frames_dropped_total{source_id=~\"$source\", path=~\"$path\"}[5m])) / sum by (source_id,path) (rate(va_frames_processed_total{source_id=~\"$source\", path=~\"$path\"}[5m])))" } ] },
 
     { "type": "timeseries", "title": "分阶段时延 P95（毫秒）", "gridPos": { "h": 10, "w": 18, "x": 6, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ms" } },
       "options": { "legend": { "displayMode": "list", "showLegend": true } },
       "targets": [ { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le,stage) (rate(va_frame_latency_ms_bucket{source_id=~\"$source\", path=~\"$path\"}[5m])))" } ] },
 
     { "type": "row", "title": "编码与传输", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 } },
     { "type": "timeseries", "title": "编码码率（bps）", "gridPos": { "h": 7, "w": 12, "x": 0, "y": 19 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "bps" } },
       "targets": [ { "refId": "A", "expr": "8 * sum by (codec) (rate(va_encoder_bytes_total{source_id=~\"$source\", path=~\"$path\", codec=~\"$codec\"}[1m]))" } ] },
 
     { "type": "timeseries", "title": "编码 EAGAIN 速率（5m）", "gridPos": { "h": 7, "w": 12, "x": 12, "y": 19 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [ { "refId": "A", "expr": "sum by (codec) (rate(va_encoder_eagain_total{source_id=~\"$source\", path=~\"$path\", codec=~\"$codec\"}[5m]))" } ] },
 
     { "type": "row", "title": "稳定性", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 } },
     { "type": "timeseries", "title": "回压与队列溢出（速率）", "gridPos": { "h": 7, "w": 12, "x": 0, "y": 27 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "sum(rate(va_frames_dropped_total{source_id=~\"$source\", path=~\"$path\", reason=\"backpressure\"}[5m]))" },
         { "refId": "B", "expr": "sum(rate(va_frames_dropped_total{source_id=~\"$source\", path=~\"$path\", reason=\"queue_overflow\"}[5m]))" }
       ] },
 
     { "type": "timeseries", "title": "RTSP 重连与 NVDEC 事件（10m 速率）", "gridPos": { "h": 7, "w": 12, "x": 12, "y": 27 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "rate(va_rtsp_source_reconnects_total{source_id=~\"$source\"}[10m])" },
         { "refId": "B", "expr": "rate(va_nvdec_device_recover_total{source_id=~\"$source\"}[10m])" },
@@ -80,9 +80,9 @@
   "tags": [ "video-analyzer", "zh" ],
   "templating": { "list": [
     { "type": "datasource", "name": "DS_PROMETHEUS", "query": "prometheus", "label": "数据源" },
-    { "type": "query", "name": "source", "label": "源ID", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "query": "label_values(va_pipeline_fps, source_id)", "includeAll": true, "multi": true, "refresh": 1 },
-    { "type": "query", "name": "path", "label": "路径", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "query": "label_values(va_pipeline_fps{source_id=~\"$source\"}, path)", "includeAll": true, "multi": true, "refresh": 1 },
-    { "type": "query", "name": "codec", "label": "编码器", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "query": "label_values(va_encoder_bytes_total{source_id=~\"$source\", path=~\"$path\"}, codec)", "includeAll": true, "multi": true, "refresh": 1 }
+    { "type": "query", "name": "source", "label": "源ID", "datasource": { "type": "prometheus", "uid": "prometheus" }, "query": "label_values(va_pipeline_fps, source_id)", "includeAll": true, "multi": true, "refresh": 1 },
+    { "type": "query", "name": "path", "label": "路径", "datasource": { "type": "prometheus", "uid": "prometheus" }, "query": "label_values(va_pipeline_fps{source_id=~\"$source\"}, path)", "includeAll": true, "multi": true, "refresh": 1 },
+    { "type": "query", "name": "codec", "label": "编码器", "datasource": { "type": "prometheus", "uid": "prometheus" }, "query": "label_values(, encoder)", "includeAll": true, "multi": true, "refresh": 1 }
   ] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"] },
