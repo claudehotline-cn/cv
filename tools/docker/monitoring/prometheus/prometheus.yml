@@ -3,29 +3,31 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
-  - job_name: 'prometheus-self'
+  # Prometheus 自身
+  - job_name: prometheus
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ["localhost:9090"]
 
-  - job_name: 'controlplane'
-    metrics_path: '/metrics'
+  # Controlplane 指标
+  - job_name: controlplane
+    metrics_path: /metrics
     static_configs:
-      - targets: ['host.docker.internal:18080']
+      - targets: ["host.docker.internal:18080"]
         labels:
-          service: 'controlplane'
+          service: controlplane
 
-  - job_name: 'video-analyzer-http'
-    metrics_path: '/metrics'
+  # VideoAnalyzer 指标（HTTP 路由暴露 /metrics）
+  - job_name: video-analyzer-http
+    metrics_path: /metrics
     static_configs:
-      - targets: ['host.docker.internal:8082']
+      - targets: ["host.docker.internal:8082"]
         labels:
-          service: 'video-analyzer'
+          service: video-analyzer
 
-# 如果 VA 启用了独立 Prom endpoint，请改用下方配置并注释掉上面的 video-analyzer-http
-#  - job_name: 'video-analyzer-prom'
-#    metrics_path: '/metrics'
-#    static_configs:
-#      - targets: ['host.docker.internal:9090']
-#        labels:
-#          service: 'video-analyzer'
-
+  # 如果 VA 启用独立 9090 Prom endpoint，请改用此 job，并注释掉上面的 video-analyzer-http
+  # - job_name: video-analyzer-prom
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["host.docker.internal:9090"]
+  #       labels:
+  #         service: video-analyzer
