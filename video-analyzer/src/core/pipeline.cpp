@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <thread>
+#include <cstdlib>
 
 namespace va::core {
 
@@ -193,7 +194,47 @@ bool Pipeline::processFrame(const core::Frame& in) {
         return false;
     }
 
+    // Pause mode: bypass analysis/overlay, encode raw frame under SAME key (track_id_)
+    if (!analysis_enabled_.load(std::memory_order_relaxed)) {
+        if (encoder_ && transport_) {
+            va::media::IEncoder::Packet packet;
+            auto t0 = std::chrono::high_resolution_clock::now();
+            if (force_idr_next_.exchange(false)) {
+                VA_LOG_INFO() << "[Pipeline] force next frame IDR (mode switch) key='" << track_id_ << "'";
+                try { encoder_->requestKeyframe(); } catch (...) {}
+            }
+            if (encoder_->encode(in, packet)) {
+                auto t1 = std::chrono::high_resolution_clock::now();
+                auto ms = [](auto a, auto b){ return std::chrono::duration_cast<std::chrono::milliseconds>(b-a).count(); };
+                if (in.lat) in.lat->record_encode_ms(static_cast<double>(ms(t0, t1)));
+                if (!packet.data.empty()) {
+                    transport_->send(track_id_, packet.data.data(), packet.data.size());
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
     core::Frame analyzed;
+    // Optional: publish source-level raw frame (base key = stream_id_) before overlay
+    try {
+        const char* v = std::getenv("VA_PUBLISH_RAW_BASE");
+        bool publish_raw = false; // default off (single-key design)
+        if (v) {
+            std::string s(v); for (auto& c : s) c = (char)std::tolower(c);
+            publish_raw = (s=="1" || s=="true" || s=="yes" || s=="on");
+        }
+        if (publish_raw && encoder_ && transport_) {
+            va::media::IEncoder::Packet raw_packet;
+            if (encoder_->encode(in, raw_packet)) {
+                if (!raw_packet.data.empty()) {
+                    const std::string base_track = stream_id_;
+                    transport_->send(base_track, raw_packet.data.data(), raw_packet.data.size());
+                }
+            }
+        }
+    } catch (...) { /* best-effort */ }
     // Use virtual IFrameFilter::process to allow multistage adapter to take effect
     if (!analyzer_->process(in, analyzed)) {
         VA_LOG_DEBUG() << "[Pipeline] analyze() returned false";
@@ -206,6 +247,10 @@ bool Pipeline::processFrame(const core::Frame& in) {
     va::media::IEncoder::Packet packet;
     if (encoder_) {
         auto tenc0 = std::chrono::high_resolution_clock::now();
+        if (force_idr_next_.exchange(false)) {
+            VA_LOG_INFO() << "[Pipeline] force next frame IDR (mode switch) key='" << track_id_ << "'";
+            try { encoder_->requestKeyframe(); } catch (...) {}
+        }
         if (!encoder_->encode(analyzed, packet)) {
             VA_LOG_DEBUG() << "[Pipeline] encoder.encode returned false";
             return false;
@@ -218,6 +263,18 @@ bool Pipeline::processFrame(const core::Frame& in) {
         }
     }
     return true;
+}
+
+void Pipeline::setAnalysisEnabled(bool enabled) {
+    const bool prev = analysis_enabled_.exchange(enabled, std::memory_order_relaxed);
+    force_idr_next_.store(true, std::memory_order_relaxed);
+    if (prev != enabled) {
+        VA_LOG_INFO() << "[Pipeline] analysis mode -> " << (enabled ? "ON" : "OFF")
+                      << " key='" << track_id_ << "' stream='" << stream_id_ << "' profile='" << profile_id_ << "'";
+    } else {
+        VA_LOG_DEBUG() << "[Pipeline] analysis mode unchanged (" << (enabled?"ON":"OFF")
+                       << ") key='" << track_id_ << "'";
+    }
 }
 
 Pipeline::LatencySnapshot Pipeline::latencyHist() const {

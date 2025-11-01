@@ -1,4 +1,5 @@
 #include "server/rest_impl.hpp"
+#include "core/logger.hpp"
 
 namespace va::server {
 
@@ -24,6 +25,30 @@ void RestServer::Impl::registerRoutes() {
     server.addRoute("DELETE", "/whep/sessions/:sid", whepDeleteHandler);
     server.addRoute("OPTIONS", "/whep", whepCorsHandler);
     server.addRoute("OPTIONS", "/whep/sessions/:sid", whepCorsHandler);
+
+    // Control: set pipeline analysis mode (CP-only, minimal)
+    server.addRoute("POST", "/api/control/pipeline_mode", [this](const HttpRequest& req){
+        try {
+            Json::Value j = parseJson(req.body);
+            auto sid = getStringField(j, {"stream_id","stream"});
+            auto pid = getStringField(j, {"profile","pipeline","profile_id"});
+            bool enabled = true;
+            if (j.isMember("analysis_enabled")) enabled = j["analysis_enabled"].asBool();
+            if (!sid || !pid) { return errorResponse("missing stream/profile", 400); }
+            VA_LOG_INFO() << "[REST] /api/control/pipeline_mode recv stream='" << *sid
+                          << "' profile='" << *pid << "' enabled=" << (enabled?"true":"false");
+            bool ok = false;
+            try {
+                ok = app.trackManager()->setAnalysisEnabled(*sid, *pid, enabled);
+            } catch (...) { ok = false; }
+            if (!ok) return errorResponse("not found", 404);
+            VA_LOG_INFO() << "[REST] pipeline_mode applied OK stream='" << *sid << "' profile='" << *pid << "'";
+            HttpResponse r; r.status_code=200; r.body = "{\"code\":\"OK\"}"; return r;
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("invalid json: ")+ex.what(), 400);
+        }
+    });
+    server.addRoute("OPTIONS", "/api/control/pipeline_mode", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
 
 #if defined(VA_REST_DEPRECATED_410)
     // Deprecated VA REST endpoints placeholders (410 Gone), to guide callers to Controlplane
@@ -170,6 +195,30 @@ void RestServer::Impl::registerRoutes() {
         recordCpMetric("drain", resp.status_code, t0);
         return resp;
     });
+
+    // Control: set pipeline analysis mode (keep available when public HTTP is enabled)
+    server.addRoute("POST", "/api/control/pipeline_mode", [this](const HttpRequest& req){
+        try {
+            Json::Value j = parseJson(req.body);
+            auto sid = getStringField(j, {"stream_id","stream"});
+            auto pid = getStringField(j, {"profile","pipeline","profile_id"});
+            bool enabled = true;
+            if (j.isMember("analysis_enabled")) enabled = j["analysis_enabled"].asBool();
+            if (!sid || !pid) { return errorResponse("missing stream/profile", 400); }
+            VA_LOG_INFO() << "[REST] /api/control/pipeline_mode recv stream='" << *sid
+                          << "' profile='" << *pid << "' enabled=" << (enabled?"true":"false");
+            bool ok = false;
+            try {
+                ok = app.trackManager()->setAnalysisEnabled(*sid, *pid, enabled);
+            } catch (...) { ok = false; }
+            if (!ok) return errorResponse("not found", 404);
+            VA_LOG_INFO() << "[REST] pipeline_mode applied OK stream='" << *sid << "' profile='" << *pid << "'";
+            HttpResponse r; r.status_code=200; r.body = "{\"code\":\"OK\"}"; return r;
+        } catch (const std::exception& ex) {
+            return errorResponse(std::string("invalid json: ")+ex.what(), 400);
+        }
+    });
+    server.addRoute("OPTIONS", "/api/control/pipeline_mode", [](const HttpRequest&){ HttpResponse r; r.status_code=204; return r; });
 
     // Logging config: runtime set
     auto loggingSetHandler = [this](const HttpRequest& req) { return handleLoggingSet(req); };

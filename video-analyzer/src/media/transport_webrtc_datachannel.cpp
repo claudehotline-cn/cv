@@ -1162,9 +1162,10 @@ struct WebRTCDataChannelTransport::Impl {
             return false;
         }
 
-        // Compute both full and base keys. Some consumers (e.g., WHEP) index sessions by
-        // full stream key including profile ("cam01:det_720p"), while others use base id.
-        // Feed both to avoid mismatch leading to no inbound video.
+        // Compute stream key. To ensure variant separation:
+        // - Overlay frames (track_id like "cam01:det_720p") MUST feed only the full key.
+        // - Raw frames (track_id like "cam01") feed the base key (which equals full key here).
+        // Do NOT mirror overlay into base key, otherwise raw viewers would see overlaid boxes.
         const std::string fullKey = track_id;
         std::string key = track_id;
         auto pos = key.find(':');
@@ -1174,14 +1175,28 @@ struct WebRTCDataChannelTransport::Impl {
         std::vector<uint8_t> buffer(data, data + size);
         // Feed WHEP sessions first (copy inside manager), then move buffer to DataChannel streamer
         try {
-            // 1) full key (e.g., "cam01:det_720p")
+            // Always feed full key (overlay path or raw when no profile).
             va::media::WhepSessionManager::instance().feedFrame(fullKey, buffer);
-            // 2) base key (e.g., "cam01") for legacy/indexed-by-base consumers
-            if (hasProfile) {
+            // TEMP fallback: optionally mirror overlay frames to base key so paused/raw viewers
+            // can receive video even if there is no dedicated raw publisher.
+            // Controlled by env VA_MIRROR_OVERLAY_TO_BASE (default: on for compatibility)
+            bool mirrorToBase = false;
+            try {
+                const char* v = std::getenv("VA_MIRROR_OVERLAY_TO_BASE");
+                if (v) {
+                    std::string s(v); for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+                    mirrorToBase = (s=="1" || s=="true" || s=="yes" || s=="on");
+                } else {
+                    mirrorToBase = false; // default off
+                }
+            } catch (...) { mirrorToBase = false; }
+            if (mirrorToBase && hasProfile) {
                 va::media::WhepSessionManager::instance().feedFrame(key, buffer);
             }
         } catch (...) { /* best-effort */ }
         if (!kDisableDataChannel) {
+            // For DataChannel muxing, keep legacy behavior to push under base id for fanout.
+            // This does not affect WHEP variant routing.
             streamer_.PushEncodedFrame(key, std::move(buffer));
         }
 

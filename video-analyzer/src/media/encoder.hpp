@@ -33,6 +33,10 @@ public:
 
     virtual bool encode(const core::Frame& frame, Packet& out_packet) = 0;
     virtual void close() = 0;
+
+    // Optional: request next frame to be encoded as an IDR/keyframe.
+    // Default no-op; concrete encoders may override.
+    virtual void requestKeyframe() {}
 };
 
 } // namespace va::media

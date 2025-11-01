@@ -26,6 +26,7 @@ public:
     bool open(const Settings& settings) override;
     bool encode(const core::Frame& frame, Packet& out_packet) override;
     void close() override;
+    void requestKeyframe() override { force_idr_next_ = true; }
 
 #ifdef USE_FFMPEG
     // Optionally use an external CUDA hw device (e.g., NVDEC device) to build hwframes
@@ -54,6 +55,7 @@ private:
     std::vector<uint8_t> spspps_annexb_;
     bool spspps_ready_ {false};
 #endif
+    bool force_idr_next_ {false};
 };
 
 } // namespace va::media

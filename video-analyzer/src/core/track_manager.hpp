@@ -35,6 +35,11 @@ public:
                    const std::string& profile_id,
                    std::shared_ptr<va::analyzer::AnalyzerParams> params);
 
+    // Toggle per-pipeline analysis (true=analyze+overlay, false=raw passthrough)
+    bool setAnalysisEnabled(const std::string& stream_id,
+                            const std::string& profile_id,
+                            bool enabled);
+
     struct PipelineInfo {
         std::string key;
         std::string stream_id;

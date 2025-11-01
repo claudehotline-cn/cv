@@ -65,7 +65,10 @@ public:
     int deleteSession(const std::string& sid);
 
     // 向匹配 streamKey 的会话喂入一帧 H264（AnnexB/AVCC 自动兼容）。
-    void feedFrame(const std::string& streamKey, const std::vector<uint8_t>& h264);
+  void feedFrame(const std::string& streamKey, const std::vector<uint8_t>& h264);
+
+  // Query whether there is at least one active WHEP session subscribed to streamKey
+  bool hasActiveForKey(const std::string& streamKey);
 
 private:
     WhepSessionManager() = default;

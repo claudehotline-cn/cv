@@ -18,6 +18,7 @@ public:
     bool open(const Settings& settings) override;
     bool encode(const va::core::Frame& frame, Packet& out_packet) override;
     void close() override;
+    void requestKeyframe() override { inner_.requestKeyframe(); }
 
 private:
     FfmpegH264Encoder inner_;

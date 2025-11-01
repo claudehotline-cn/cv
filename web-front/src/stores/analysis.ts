@@ -125,8 +125,7 @@ export const useAnalysisStore = defineStore('analysis', {
               const phase = (st?.data?.phase || '').toString().toLowerCase()
               if (phase === 'ready') {
                 const w = st?.data?.whep_url || ''
-                if (w) this.whepUrl = w; else this.updateWhepUrl()
-                this.setAnalyzing(true)
+                if (this.analyzing) { if (w) this.whepUrl = w; else this.updateWhepUrl() } else { this.updateWhepUrl() }
               } else if (phase) {
                 try { this._subSSE?.close() } catch {}
                 const es = new EventSource(mod.subscriptionEventsUrl(this.currentSubId))
@@ -147,8 +146,12 @@ export const useAnalysisStore = defineStore('analysis', {
                     } catch {}
                     if (ph.toLowerCase() === 'ready') {
                       const w = (data.whep_url || '') as string
-                      if (w) this.whepUrl = w; else this.updateWhepUrl()
-                      this.setAnalyzing(true)
+                      if (this.analyzing) { if (w) this.whepUrl = w; else this.updateWhepUrl() } else { this.updateWhepUrl() }
+                      // 默认暂停：在就绪后显式通知后端进入 raw（不绘制overlay），不重建WHEP
+                      try {
+                        const mod2 = await import('@/api/cp')
+                        await (mod2 as any).setPipelineMode(this.currentSourceId, this.currentPipeline || 'det_720p', false)
+                      } catch {}
                       try { this._subSSE?.close() } catch {}
                       this._subSSE = null
                     }
@@ -192,9 +195,12 @@ export const useAnalysisStore = defineStore('analysis', {
       // 归一化为绝对 URL，兼容相对配置
       const absBase = ((): string => { try { return new URL(base, window.location.origin).toString().replace(/\/+$/, '') } catch { return base } })()
       if (absBase && this.currentSourceId && this.currentPipeline) {
-        const variant = this.analyzing ? 'overlay' : this.pausedVariant
+        // 保持同一 key（source:profile），后端按 analysis_enabled 决定是否叠加
+        const variant = 'overlay'
         const qs = `variant=${encodeURIComponent(variant)}`
-        this.whepUrl = `${absBase}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}&${qs}`
+        const streamKey = `${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}`
+        const next = `${absBase}/whep?stream=${streamKey}&${qs}`
+        if (this.whepUrl !== next) this.whepUrl = next
       } else {
         this.whepUrl = ''
       }
@@ -218,22 +224,18 @@ export const useAnalysisStore = defineStore('analysis', {
         const prevSub = this.currentSubId
         const prevProfile = this.currentPipeline
         // 选择 profile
-        const nextProfile = nextAnalyzing ? (this.currentPipeline || 'det_720p') : this.pausedProfileOf(this.currentPipeline || 'det_720p')
+        const nextProfile = this.currentPipeline || 'det_720p'
         if (!this.currentSourceId) {
           const s = this.sources[0]; if (s) this.currentSourceId = s.id; else this.currentSourceId = 'camera_01'
         }
         this.currentPipeline = nextProfile
         // 先取消旧订阅
-        if (prevSub) {
-          try { const mod = await import('@/api/cp'); await mod.cancelSubscription(prevSub).catch(()=>{}) } catch {}
-          this.currentSubId = ''
-        }
+        // 不重建订阅
         // 如策略为 stop，尝试对上一个分析型 profile 做 drain
-        if (paused && this.pausePolicy === 'stop' && prevProfile) {
-          try { const mod = await import('@/api/cp'); await mod.controlDrain(prevProfile, 5).catch(()=>{}) } catch {}
-        }
+        // 不执行 drain；改为直接切换分析模式
         // 重新订阅
-        await this.startAnalysis()
+        // 先更新 analyzing 与 whepUrl，避免中途被 SSE 覆盖导致状态错乱
+        try { const mod = await import('@/api/cp'); await (mod as any).setPipelineMode(this.currentSourceId, this.currentPipeline, nextAnalyzing) } catch {}
         this.setAnalyzing(nextAnalyzing)
         this.updateWhepUrl()
       } catch (e) {
@@ -261,8 +263,8 @@ export const useAnalysisStore = defineStore('analysis', {
           const phase = (st?.data?.phase || '').toString().toLowerCase()
           if (phase === 'ready') {
             const w = st?.data?.whep_url || ''
+            // 不改变当前 analyzing 状态，避免在暂停策略下被误置为 overlay
             if (w) this.whepUrl = w; else this.updateWhepUrl()
-            this.setAnalyzing(true)
             return { ok: true } as const
           }
         } catch {}
@@ -338,8 +340,12 @@ export const useAnalysisStore = defineStore('analysis', {
               } catch {}
               if (phase.toLowerCase() === 'ready') {
                 const w = (data.whep_url || '') as string
-                if (w) this.whepUrl = w; else this.updateWhepUrl()
-                this.setAnalyzing(true)
+                if (this.analyzing) { if (w) this.whepUrl = w; else this.updateWhepUrl() } else { this.updateWhepUrl() }
+                // 默认暂停：在就绪后显式通知后端进入 raw（不绘制overlay），不重建WHEP
+                try {
+                  const mod2 = await import('@/api/cp')
+                  await (mod2 as any).setPipelineMode(this.currentSourceId, this.currentPipeline || 'det_720p', false)
+                } catch {}
                 try { this._subSSE?.close() } catch {}
                 this._subSSE = null
               } else if (phase.toLowerCase() === 'failed' || phase.toLowerCase() === 'cancelled') {
@@ -358,8 +364,7 @@ export const useAnalysisStore = defineStore('analysis', {
               if (phase) { this.subPhase = phase; this.subProgress = phaseToProgress(phase) }
               if ((phase||'').toLowerCase() === 'ready') {
                 const w = st?.data?.whep_url || ''
-                if (w) this.whepUrl = w; else this.updateWhepUrl()
-                this.setAnalyzing(true)
+                if (this.analyzing) { if (w) this.whepUrl = w; else this.updateWhepUrl() } else { this.updateWhepUrl() }
                 try { this._subSSE?.close() } catch {}
                 this._subSSE = null
                 return
@@ -385,8 +390,7 @@ export const useAnalysisStore = defineStore('analysis', {
                     this.subProgress = phaseToProgress(phase)
                     if (phase.toLowerCase() === 'ready') {
                       const w = (data.whep_url || '') as string
-                      if (w) this.whepUrl = w; else this.updateWhepUrl()
-                      this.setAnalyzing(true)
+                      if (this.analyzing) { if (w) this.whepUrl = w; else this.updateWhepUrl() } else { this.updateWhepUrl() }
                       try { this._subSSE?.close() } catch {}
                       this._subSSE = null
                     } else if (phase.toLowerCase() === 'failed' || phase.toLowerCase() === 'cancelled') {
@@ -406,7 +410,7 @@ export const useAnalysisStore = defineStore('analysis', {
             if (!this.analyzing && this.currentSubId === subId) {
               const st: any = await mod.getSubscription(subId).catch(()=>null)
               const phase = (st?.data?.phase || '').toString().toLowerCase()
-              if (phase === 'ready') { const w = st?.data?.whep_url || ''; if (w) this.whepUrl = w; else this.updateWhepUrl(); this.setAnalyzing(true) }
+              if (phase === 'ready') { const w = st?.data?.whep_url || ''; if (this.analyzing) { if (w) this.whepUrl = w; else this.updateWhepUrl() } else { this.updateWhepUrl() } }
             }
           }, 2500)
         }
@@ -444,8 +448,7 @@ export const useAnalysisStore = defineStore('analysis', {
                 } catch {}
                 if (phase.toLowerCase() === 'ready') {
                   const w = (data.whep_url || '') as string
-                  if (w) this.whepUrl = w; else this.updateWhepUrl()
-                  this.setAnalyzing(true)
+                  if (this.analyzing) { if (w) this.whepUrl = w; else this.updateWhepUrl() } else { this.updateWhepUrl() }
                   try { this._subSSE?.close() } catch {}
                   this._subSSE = null
                 } else if (phase.toLowerCase() === 'failed' || phase.toLowerCase() === 'cancelled') {
@@ -502,3 +505,4 @@ export const useAnalysisStore = defineStore('analysis', {
     }
   }
 })
+

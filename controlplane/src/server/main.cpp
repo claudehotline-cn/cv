@@ -540,6 +540,31 @@ int main(int argc, char** argv) {
       }
       emit("/whep", r.status); return r;
     }
+    // Control: set pipeline analysis mode (proxy to VA REST)
+    if (path == "/api/control/pipeline_mode" && method == "POST") {
+      // Resolve VA REST host:port (reuse VA_REST_BASE when present)
+      std::string va_host = "127.0.0.1"; int va_port = 8082;
+      try {
+        const char* env = std::getenv("VA_REST_BASE");
+        if (env) {
+          std::string base(env);
+          auto pos = base.find("://"); if (pos != std::string::npos) base = base.substr(pos+3);
+          auto colon = base.find(':');
+          if (colon != std::string::npos) { va_host = base.substr(0, colon); va_port = std::stoi(base.substr(colon+1)); }
+          else { va_host = base; }
+        }
+      } catch (...) {}
+      // minimal logging for diagnosis
+      std::fprintf(stderr, "[CP] proxy pipeline_mode -> %s:%d\n", va_host.c_str(), va_port);
+      controlplane::HttpResponse proxied;
+      if (!controlplane::proxy_http_simple(va_host, va_port, method, path, headers, body, &proxied, nullptr)) {
+        r.status = 502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/control/pipeline_mode", r.status); return r;
+      }
+      r = std::move(proxied);
+      std::fprintf(stderr, "[CP] proxy pipeline_mode status=%d\n", r.status);
+      r.extraHeaders += "Access-Control-Allow-Origin: *\r\n";
+      emit("/api/control/pipeline_mode", r.status); return r;
+    }
   if (path == "/metrics") {
       r.contentType = "text/plain; version=0.0.4; charset=utf-8";
       r.body = controlplane::metrics::render_prometheus(); emit("/metrics", 200); return r;

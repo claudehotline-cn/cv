@@ -121,10 +121,21 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
     codec_ctx_->framerate = AVRational{settings.fps, 1};
     codec_ctx_->gop_size = settings.gop > 0 ? settings.gop : settings.fps * 2;
     codec_ctx_->max_b_frames = settings.bframes;
-    codec_ctx_->pix_fmt = AV_PIX_FMT_YUV420P;
+    // pix_fmt will be selected after we resolve encoder_name
+    // Color tagging can influence browser decoder behavior; default to "unspecified"
+    // to match previous behavior that users reported as clean. Allow env override.
+    codec_ctx_->color_primaries = AVCOL_PRI_UNSPECIFIED;
+    codec_ctx_->color_trc       = AVCOL_TRC_UNSPECIFIED;
+    codec_ctx_->colorspace      = AVCOL_SPC_UNSPECIFIED;
+    codec_ctx_->color_range     = AVCOL_RANGE_UNSPECIFIED;
     codec_ctx_->bit_rate = static_cast<int64_t>(settings.bitrate_kbps) * 1000;
 
     std::string encoder_name = codec && codec->name ? codec->name : "";
+    // Select pixel format based on encoder implementation (NVENC prefers NV12; SW encoders prefer YUV420P)
+    {
+        const bool is_nvenc = (encoder_name.find("nvenc") != std::string::npos);
+        codec_ctx_->pix_fmt = is_nvenc ? AV_PIX_FMT_NV12 : AV_PIX_FMT_YUV420P;
+    }
 
     VA_LOG_INFO() << "[Encoder] selected encoder name='" << encoder_name << "'";
     // Metrics: encoder build (FFmpeg path)
@@ -158,14 +169,30 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
             nv_preset = settings.preset.c_str();
         }
         av_opt_set(codec_ctx_->priv_data, "preset", nv_preset, 0);
-        av_opt_set(codec_ctx_->priv_data, "rc", "cbr", 0);
+        // Prefer higher quality rate control at same bitrate
+        // Rate control and AQ. Default to conservative settings to avoid颗粒/抖动。
+        // Allow runtime override via environment variables.
+        const char* env_rc = std::getenv("VA_NVENC_RC");
+        const char* env_spaq = std::getenv("VA_NVENC_SPAQ");
+        const char* env_taq = std::getenv("VA_NVENC_TAQ");
+        const char* env_aqs = std::getenv("VA_NVENC_AQ_STRENGTH");
+        std::string rc = env_rc ? std::string(env_rc) : std::string("cbr");
+        av_opt_set(codec_ctx_->priv_data, "rc", rc.c_str(), 0);
+        const char* spaq = env_spaq ? env_spaq : "0";
+        const char* taq  = env_taq  ? env_taq  : "0";
+        const char* aqs  = env_aqs  ? env_aqs  : "0";
+        av_opt_set(codec_ctx_->priv_data, "spatial_aq", spaq, 0);
+        av_opt_set(codec_ctx_->priv_data, "temporal_aq", taq, 0);
+        av_opt_set(codec_ctx_->priv_data, "aq-strength", aqs, 0);
         if (settings.zero_latency) {
             // NVENC low-latency settings
             av_opt_set(codec_ctx_->priv_data, "rc-lookahead", "0", 0);
             av_opt_set(codec_ctx_->priv_data, "delay", "0", 0);
         }
         VA_LOG_INFO() << "[Encoder][nvenc] mapped preset=" << nv_preset
-                      << " rc=cbr" << (settings.zero_latency ? " lookahead=0 delay=0" : "");
+                      << " rc=" << rc
+                      << " sp_aq=" << spaq << " tm_aq=" << taq << " aq_strength=" << aqs
+                      << (settings.zero_latency ? " lookahead=0 delay=0" : "");
         if (!settings.profile.empty()) {
             av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);
         }
@@ -284,7 +311,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         return false;
     }
 
-    // Select target sws format by encoder pix_fmt (YUV420P or NV12)
+    // Select target sws format by encoder pix_fmt
     enum AVPixelFormat dst_fmt = codec_ctx_->pix_fmt == AV_PIX_FMT_NV12 ? AV_PIX_FMT_NV12 : AV_PIX_FMT_YUV420P;
     sws_ctx_ = sws_getContext(settings.width,
                               settings.height,
@@ -292,7 +319,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
                               settings.width,
                               settings.height,
                               dst_fmt,
-                              SWS_BILINEAR,
+                              SWS_BICUBIC,
                               nullptr,
                               nullptr,
                               nullptr);
@@ -307,7 +334,13 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
     fps_ = settings.fps;
     pts_ = 0;
     opened_ = true;
-    VA_LOG_INFO() << "[Encoder] open OK (codec='" << encoder_name << "')";
+    {
+        auto pf = codec_ctx_->pix_fmt;
+        const char* pf_str = (pf==AV_PIX_FMT_NV12?"NV12":(pf==AV_PIX_FMT_YUV420P?"YUV420P":"other"));
+        VA_LOG_INFO() << "[Encoder] open OK codec='" << encoder_name << "' "
+                      << settings.width << "x" << settings.height << "@" << settings.fps
+                      << " pix_fmt=" << pf_str << " bitrate_kbps=" << settings.bitrate_kbps;
+    }
     return true;
 #else
     (void)settings;
@@ -537,6 +570,12 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     frame_->pts = pts_++;
 
     int ret = 0;
+#if defined(USE_FFMPEG)
+    // If keyframe requested, hint encoder via pict_type (SW frame path)
+    if (force_idr_next_ && frame_) {
+        frame_->pict_type = AV_PICTURE_TYPE_I; // hint encoder for IDR on SW frame path
+    }
+#endif
     if (!fed_device_nv12 && use_hwframes_ && hw_frames_ctx_) {
         // Allocate a device frame and upload
         AVFrame* hwf = av_frame_alloc();
@@ -553,6 +592,7 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
             av_frame_free(&hwf);
             return false;
         }
+        if (force_idr_next_) { hwf->pict_type = AV_PICTURE_TYPE_I; force_idr_next_ = false; }
         ret = avcodec_send_frame(codec_ctx_, hwf);
         av_frame_free(&hwf);
     } else if (!fed_device_nv12) {

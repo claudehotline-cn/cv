@@ -201,6 +201,24 @@ bool TrackManager::setParams(const std::string& stream_id,
     return it->second.pipeline->analyzer()->updateParams(std::move(params));
 }
 
+bool TrackManager::setAnalysisEnabled(const std::string& stream_id,
+                                      const std::string& profile_id,
+                                      bool enabled) {
+    const std::string key = makeKey(stream_id, profile_id);
+    std::scoped_lock lock(mutex_);
+    auto it = pipelines_.find(key);
+    if (it == pipelines_.end() || !it->second.pipeline) {
+        return false;
+    }
+    it->second.pipeline->setAnalysisEnabled(enabled);
+    // Request next frame as IDR to avoid artifacts when switching overlay on/off
+    // Use an internal flag handled inside Pipeline::processFrame to call encoder->requestKeyframe()
+    // (avoid calling encoder from control thread directly)
+    // We do this by toggling a flag in Pipeline when mode changes
+    // Note: setAnalysisEnabled already writes the flag; keep this here as redundancy minimal.
+    return true;
+}
+
 std::string TrackManager::makeKey(const std::string& stream_id, const std::string& profile_id) const {
     return stream_id + ":" + profile_id;
 }

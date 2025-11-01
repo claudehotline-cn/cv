@@ -654,8 +654,10 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
       }
     };
     add_range(streamKey);
-    auto pos = streamKey.find(':');
-    if (pos != std::string::npos) add_range(streamKey.substr(0, pos));
+    // Strict variant separation:
+    // - Sessions indexed by full key (e.g., "cam01:det_720p") receive overlay frames only.
+    // - Sessions indexed by base key (e.g., "cam01") receive frames only when publishers push base key.
+    // Do NOT implicitly fanout full-key frames to base key, to prevent overlay leaking into raw.
     if (!targets.empty()) {
       std::unordered_set<std::string> seen;
       std::vector<std::pair<std::string, std::shared_ptr<Session>>> uniq;

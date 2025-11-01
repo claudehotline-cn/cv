@@ -70,6 +70,11 @@ export function controlDrain(pipeline_name: string, timeout_sec = 5) {
   return http.post('/api/control/drain', { pipeline_name, timeout_sec })
 }
 
+// 切换 Pipeline 分析模式（同一 key，暂停=raw 直通，实时=分析叠加）
+export function setPipelineMode(stream_id: string, profile: string, analysis_enabled: boolean) {
+  return http.post('/api/control/pipeline_mode', { stream_id, profile, analysis_enabled })
+}
+
 // 设计文档中的 CP 封装（基于 VITE_CP_BASE_URL）
 const CP_BASE = ((import.meta as any).env?.DEV ? '' : ((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || ''))
 export const cp = {

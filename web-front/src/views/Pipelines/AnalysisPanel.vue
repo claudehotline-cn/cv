@@ -171,6 +171,12 @@ const analyzing = computed({
   get: () => store.analyzing,
   set: async (val: boolean) => {
     if (val) {
+      // resume: if session ready, just switch mode without re-subscribing
+      if (store.currentSubId && String(store.subPhase||'').toLowerCase() === 'ready') {
+        await store.switchAnalyzeMode(false)
+        ElMessage.success('�ѿ�ʼʵʱ����')
+        return
+      }
       const pf = await updatePreflight()
       const res = await store.startAnalysis()
       preflight.value = res

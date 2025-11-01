@@ -318,13 +318,17 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                     const int oh = (meta.original_height>0?meta.original_height:meta.input_height);
                     cudaError_t kerr = cudaSuccess;
                     // 预解码诊断
-                    VA_LOG_C(::va::core::LogLevel::Debug, "ms.nms")
-                        << "gpu_decode.pre ch_first=" << (channels_first?1:0)
-                        << " num_det=" << num_det << " num_attrs=" << num_attrs
-                        << " dtype=" << (t.dtype==core::DType::F16?"F16":"F32")
-                        << " normalized=" << std::boolalpha << normalized
-                        << " pre_sx=" << pre_sx << " pre_sy=" << pre_sy
-                        << " thr=" << conf_thr;
+                    {
+                        auto lvl = va::analyzer::logutil::log_level_for_tag("ms.nms");
+                        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms", 3000);
+                        VA_LOG_THROTTLED(lvl, "ms.nms", thr)
+                            << "gpu_decode.pre ch_first=" << (channels_first?1:0)
+                            << " num_det=" << num_det << " num_attrs=" << num_attrs
+                            << " dtype=" << (t.dtype==core::DType::F16?"F16":"F32")
+                            << " normalized=" << std::boolalpha << normalized
+                            << " pre_sx=" << pre_sx << " pre_sy=" << pre_sy
+                            << " thr=" << conf_thr;
+                    }
                     if (t.dtype == core::DType::F16) {
                         kerr = va::analyzer::cudaops::yolo_decode_to_yxyx_fp16(
                             reinterpret_cast<const __half*>(t.data), num_det, num_attrs, num_attrs-4,
@@ -521,4 +525,5 @@ CPU_NMS:
 
 } // namespace va::analyzer
 #endif
+
 

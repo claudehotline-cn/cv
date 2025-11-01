@@ -66,7 +66,11 @@ public:
         LatencySnapshot postproc;
         LatencySnapshot encode;
     };
-    StageLatencySnapshot stageLatency() const;
+  StageLatencySnapshot stageLatency() const;
+
+  // Analysis on/off (pause=off: bypass analyzer/overlay, send raw under same key)
+  void setAnalysisEnabled(bool enabled);
+  bool analysisEnabled() const { return analysis_enabled_.load(std::memory_order_relaxed); }
 
 private:
     void run();
@@ -138,6 +142,9 @@ private:
         Pipeline* p_ {nullptr};
     };
     StageLatencySinkImpl latency_sink_ {this};
+
+    std::atomic<bool> analysis_enabled_ { true };
+    std::atomic<bool> force_idr_next_ { false };
 };
 
 } // namespace va::core
