@@ -176,17 +176,16 @@ const analyzing = computed({
       preflight.value = res
       if (!res.ok) {
         if (pf.reasons?.length) preflight.value.reasons = pf.reasons
-        ElMessage.warning(res.reasons?.join('；') || '预检失败')
+        ElMessage.warning(res.reasons?.join('、') || '预检失败')
         return
       }
-      ElMessage.success('已开始分析')
+      ElMessage.success('已开始实时分析')
     } else {
-      await store.stopAnalysis()
-      ElMessage.info('已停止分析')
+      await store.switchAnalyzeMode(true)
+      ElMessage.info('暂停：转发原始视频帧')
     }
   }
 })
-
 function pipelineLabel(p: any) { return `${p.name} · ${p.status || '未知'}` }
 function sourceLabel(s: any) {
   const o = (typeof s === 'string') ? { id: s, name: s, status: '' } : (s || {})
@@ -242,8 +241,8 @@ function refresh() {
 
 
 async function onCancel() {
-  await store.stopAnalysis()
-  ElMessage.info('已取消分析')
+  await store.switchAnalyzeMode(true)
+      ElMessage.info('暂停：转发原始视频帧')
 }
 
 function dur(phase: 'opening_rtsp'|'loading_model'|'starting_pipeline') {
@@ -310,6 +309,9 @@ watch(() => route.query.pipeline, (val) => {
 .toolbar-form :deep(.el-form-item__label){ display:flex; align-items:center; padding:0; line-height:1; }
 .toolbar-form :deep(.el-form-item__content){ display:flex; align-items:center; }
 </style>
+
+
+
 
 
 

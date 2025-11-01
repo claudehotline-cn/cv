@@ -23,6 +23,7 @@ export const useAnalysisStore = defineStore('analysis', {
     currentGraphId: '' as string,
     autoPlay: (localStorage.getItem('va_autoplay') ?? 'on') !== 'off',
     analyzing: false,
+    pausedVariant: 'raw',
     whepUrl: '' as string,
     whepBase: '' as string,
     currentSubId: '' as string,
@@ -188,7 +189,9 @@ export const useAnalysisStore = defineStore('analysis', {
       // 归一化为绝对 URL，兼容相对配置
       const absBase = ((): string => { try { return new URL(base, window.location.origin).toString().replace(/\/+$/, '') } catch { return base } })()
       if (absBase && this.currentSourceId && this.currentPipeline) {
-        this.whepUrl = `${absBase}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}`
+        const variant = this.analyzing ? 'overlay' : this.pausedVariant
+        const qs = `variant=${encodeURIComponent(variant)}`
+        this.whepUrl = `${absBase}/whep?stream=${encodeURIComponent(this.currentSourceId)}:${encodeURIComponent(this.currentPipeline)}&${qs}`
       } else {
         this.whepUrl = ''
       }
@@ -197,6 +200,40 @@ export const useAnalysisStore = defineStore('analysis', {
     setAnalyzing(v: boolean) {
       this.analyzing = v
       this.refreshStats()
+    },
+    pausedProfileOf(name: string): string {
+      // 简单映射：det_720p -> det_720p_raw（若存在）；否则仍用原 profile，仅用 variant=raw 传给后端
+      const raw = `${name}_raw`
+      const exists = this.pipelines.find(p => p.name === raw)
+      return exists ? raw : name
+    },
+    async switchAnalyzeMode(paused: boolean) {
+      // 切换分析/暂停：重新订阅并切换 whepUrl；不让播放器中断太久
+      try {
+        const wasAnalyzing = this.analyzing
+        const nextAnalyzing = !paused
+        const prevSub = this.currentSubId
+        // 选择 profile
+        const nextProfile = nextAnalyzing ? (this.currentPipeline || 'det_720p') : this.pausedProfileOf(this.currentPipeline || 'det_720p')
+        if (!this.currentSourceId) {
+          const s = this.sources[0]; if (s) this.currentSourceId = s.id; else this.currentSourceId = 'camera_01'
+        }
+        this.currentPipeline = nextProfile
+        // 先取消旧订阅
+        if (prevSub) {
+          try { const mod = await import('@/api/cp'); await mod.cancelSubscription(prevSub).catch(()=>{}) } catch {}
+          this.currentSubId = ''
+        }
+        // 重新订阅
+        await this.startAnalysis()
+        this.setAnalyzing(nextAnalyzing)
+        this.updateWhepUrl()
+      } catch (e) {
+        // 若切换失败，回落到停止
+        await this.stopAnalysis().catch(()=>{})
+        this.setAnalyzing(false)
+        this.updateWhepUrl()
+      }
     },
     async startAnalysis() {
       // reset error/progress state at the very beginning
