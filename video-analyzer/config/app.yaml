@@ -26,6 +26,8 @@ engine:
 sfu:
   whip_base: ""
   whep_base: ""
+  # default_variant: overlay | raw
+  default_variant: overlay
 orchestration:
   idle_timeout_ms: 60000
   reap_interval_ms: 5000

@@ -130,6 +130,7 @@ struct AppConfigPayload {
     AppEngineSpec engine;
     std::string sfu_whip_base;
     std::string sfu_whep_base;
+    std::string sfu_whep_default_variant; // raw | overlay
     ObservabilityConfig observability;
     SubscriptionsConfig subscriptions; // 订阅参数（YAML 可配）
     struct QuotasConfig {

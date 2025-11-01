@@ -41,8 +41,12 @@ HttpResponse RestServer::Impl::handleWhepCreate(const HttpRequest& req) {
         if (q.count("variant")) {
             variant = q["variant"];
         } else {
-            const char* v = std::getenv("VA_WHEP_DEFAULT_VARIANT");
-            if (v) variant = v;
+            // prefer app config, then env
+            try { variant = va::server::toLower(app.appConfig().sfu_whep_default_variant); } catch (...) {}
+            if (variant.empty()) {
+                const char* v = std::getenv("VA_WHEP_DEFAULT_VARIANT");
+                if (v) variant = v;
+            }
         }
         for (auto& ch : variant) ch = (char)std::tolower((unsigned char)ch);
         if (variant != "raw" && variant != "overlay") variant = "overlay";

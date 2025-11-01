@@ -264,6 +264,7 @@ AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_d
         const auto& sfu = sfu_node;
         payload.sfu_whip_base = sfu["whip_base"].as<std::string>("");
         payload.sfu_whep_base = sfu["whep_base"].as<std::string>("");
+        payload.sfu_whep_default_variant = sfu["default_variant"].as<std::string>(payload.sfu_whep_default_variant);
     }
     const auto observability_node = v["observability"];
     if (observability_node && observability_node.IsMap()) {
