@@ -2,7 +2,7 @@ apiVersion: 1
 providers:
   - name: 'cv-project-dashboards'
     orgId: 1
-    folder: ''
+    folder: 'CV'
     type: file
     disableDeletion: true
     allowUiUpdates: false
@@ -10,4 +10,3 @@ providers:
     options:
       path: /etc/grafana/provisioning/dashboards
       recursive: true
-      foldersFromFilesStructure: true
