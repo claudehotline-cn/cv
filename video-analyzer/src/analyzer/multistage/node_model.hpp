@@ -2,6 +2,7 @@
 
 #include "analyzer/multistage/interfaces.hpp"
 #include "analyzer/interfaces.hpp" // IModelSession
+#include <atomic>
 
 namespace va { namespace analyzer { namespace multistage {
 

@@ -27,8 +27,20 @@ list(APPEND CMAKE_IGNORE_PREFIX_PATH "H:/anaconda3" "H:/anaconda3/Library")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Protobuf CONFIG REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
+find_package(Protobuf CONFIG QUIET)
+if (NOT Protobuf_FOUND)
+  find_package(Protobuf REQUIRED) # fallback to CMake module mode
+endif()
+
+# Try gRPC via CMake config, then fall back to pkg-config
+find_package(gRPC CONFIG QUIET)
+if (NOT gRPC_FOUND)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GRPCPP REQUIRED grpc++)
+  set(gRPC_FOUND TRUE)
+  set(GRPC_INCLUDE_DIRS ${GRPCPP_INCLUDE_DIRS})
+  set(GRPC_LIBRARIES ${GRPCPP_LIBRARIES})
+endif()
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(mysql-concpp CONFIG QUIET)
 if (NOT mysql-concpp_FOUND)
@@ -53,24 +65,41 @@ set(GEN_DIR "${CMAKE_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GEN_DIR}")
 
 if (EXISTS "${VA_PROTO_DIR}/analyzer_control.proto")
-  add_custom_command(
+set(_PROTOC_EXE protoc)
+if (TARGET protobuf::protoc)
+  set(_PROTOC_EXE $<TARGET_FILE:protobuf::protoc>)
+elseif(DEFINED Protobuf_PROTOC_EXECUTABLE)
+  set(_PROTOC_EXE ${Protobuf_PROTOC_EXECUTABLE})
+endif()
+
+# Locate grpc_cpp_plugin
+set(_GRPC_CPP_PLUGIN grpc_cpp_plugin)
+if (TARGET gRPC::grpc_cpp_plugin)
+  set(_GRPC_CPP_PLUGIN $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+else()
+  find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
+  if (GRPC_CPP_PLUGIN_EXECUTABLE)
+    set(_GRPC_CPP_PLUGIN ${GRPC_CPP_PLUGIN_EXECUTABLE})
+  endif()
+endif()
+add_custom_command(
     OUTPUT "${GEN_DIR}/analyzer_control.pb.cc" "${GEN_DIR}/analyzer_control.pb.h"
-    COMMAND protobuf::protoc ARGS --cpp_out "${GEN_DIR}" -I "${VA_PROTO_DIR}" "${VA_PROTO_DIR}/analyzer_control.proto"
+    COMMAND ${_PROTOC_EXE} ARGS --cpp_out "${GEN_DIR}" -I "${VA_PROTO_DIR}" "${VA_PROTO_DIR}/analyzer_control.proto"
     DEPENDS "${VA_PROTO_DIR}/analyzer_control.proto")
-  add_custom_command(
+add_custom_command(
     OUTPUT "${GEN_DIR}/analyzer_control.grpc.pb.cc" "${GEN_DIR}/analyzer_control.grpc.pb.h"
-    COMMAND protobuf::protoc ARGS --grpc_out "${GEN_DIR}" --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin> -I "${VA_PROTO_DIR}" "${VA_PROTO_DIR}/analyzer_control.proto"
+    COMMAND ${_PROTOC_EXE} ARGS --grpc_out "${GEN_DIR}" --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN} -I "${VA_PROTO_DIR}" "${VA_PROTO_DIR}/analyzer_control.proto"
     DEPENDS "${VA_PROTO_DIR}/analyzer_control.proto")
 endif()
 
 if (EXISTS "${VSM_PROTO_DIR}/source_control.proto")
-  add_custom_command(
+add_custom_command(
     OUTPUT "${GEN_DIR}/source_control.pb.cc" "${GEN_DIR}/source_control.pb.h"
-    COMMAND protobuf::protoc ARGS --cpp_out "${GEN_DIR}" -I "${VSM_PROTO_DIR}" "${VSM_PROTO_DIR}/source_control.proto"
+    COMMAND ${_PROTOC_EXE} ARGS --cpp_out "${GEN_DIR}" -I "${VSM_PROTO_DIR}" "${VSM_PROTO_DIR}/source_control.proto"
     DEPENDS "${VSM_PROTO_DIR}/source_control.proto")
-  add_custom_command(
+add_custom_command(
     OUTPUT "${GEN_DIR}/source_control.grpc.pb.cc" "${GEN_DIR}/source_control.grpc.pb.h"
-    COMMAND protobuf::protoc ARGS --grpc_out "${GEN_DIR}" --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin> -I "${VSM_PROTO_DIR}" "${VSM_PROTO_DIR}/source_control.proto"
+    COMMAND ${_PROTOC_EXE} ARGS --grpc_out "${GEN_DIR}" --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN} -I "${VSM_PROTO_DIR}" "${VSM_PROTO_DIR}/source_control.proto"
     DEPENDS "${VSM_PROTO_DIR}/source_control.proto")
 endif()
 
@@ -80,7 +109,37 @@ add_library(cp_proto_objs
   ${GEN_DIR}/source_control.pb.cc
   ${GEN_DIR}/source_control.grpc.pb.cc)
 target_include_directories(cp_proto_objs PUBLIC "${GEN_DIR}")
-target_link_libraries(cp_proto_objs PUBLIC protobuf::libprotobuf gRPC::grpc++ gRPC::grpc)
+if (TARGET protobuf::libprotobuf)
+if (TARGET protobuf::libprotobuf)
+  if (TARGET gRPC::grpc++)
+    target_link_libraries(cp_proto_objs PUBLIC protobuf::libprotobuf gRPC::grpc++ gRPC::grpc)
+  else()
+    target_include_directories(cp_proto_objs PUBLIC ${GRPC_INCLUDE_DIRS})
+    target_link_libraries(cp_proto_objs PUBLIC protobuf::libprotobuf ${GRPC_LIBRARIES})
+  endif()
+else()
+  # Protobuf via module
+  if (TARGET gRPC::grpc++)
+    target_link_libraries(cp_proto_objs PUBLIC ${Protobuf_LIBRARIES} gRPC::grpc++ gRPC::grpc)
+    if (DEFINED Protobuf_INCLUDE_DIRS)
+      target_include_directories(cp_proto_objs PUBLIC ${Protobuf_INCLUDE_DIRS})
+    endif()
+  else()
+    if (DEFINED Protobuf_INCLUDE_DIRS)
+      target_include_directories(cp_proto_objs PUBLIC ${Protobuf_INCLUDE_DIRS})
+    endif()
+    if (DEFINED GRPC_INCLUDE_DIRS)
+      target_include_directories(cp_proto_objs PUBLIC ${GRPC_INCLUDE_DIRS})
+    endif()
+    target_link_libraries(cp_proto_objs PUBLIC ${Protobuf_LIBRARIES} ${GRPC_LIBRARIES})
+  endif()
+endif()
+else()
+  target_link_libraries(cp_proto_objs PUBLIC ${Protobuf_LIBRARIES} gRPC::grpc++ gRPC::grpc)
+  if (DEFINED Protobuf_INCLUDE_DIRS)
+    target_include_directories(cp_proto_objs PUBLIC ${Protobuf_INCLUDE_DIRS})
+  endif()
+endif()
 
 add_executable(controlplane
   src/server/main.cpp
@@ -96,7 +155,22 @@ add_executable(controlplane
   src/server/logging.cpp
   src/server/store.cpp)
 target_include_directories(controlplane PRIVATE include "${GEN_DIR}")
-target_link_libraries(controlplane PRIVATE ${YAML_CPP_TARGET} cp_proto_objs gRPC::grpc++ protobuf::libprotobuf nlohmann_json::nlohmann_json)
+if (TARGET gRPC::grpc++)
+  target_link_libraries(controlplane PRIVATE ${YAML_CPP_TARGET} cp_proto_objs gRPC::grpc++ protobuf::libprotobuf nlohmann_json::nlohmann_json)
+else()
+  # Fallback: use pkg-config discovered GRPC_LIBRARIES and Protobuf module libs
+  if (DEFINED GRPC_INCLUDE_DIRS)
+    target_include_directories(controlplane PRIVATE ${GRPC_INCLUDE_DIRS})
+  endif()
+  if (TARGET protobuf::libprotobuf)
+    target_link_libraries(controlplane PRIVATE ${YAML_CPP_TARGET} cp_proto_objs ${GRPC_LIBRARIES} protobuf::libprotobuf nlohmann_json::nlohmann_json)
+  else()
+    target_link_libraries(controlplane PRIVATE ${YAML_CPP_TARGET} cp_proto_objs ${GRPC_LIBRARIES} ${Protobuf_LIBRARIES} nlohmann_json::nlohmann_json)
+    if (DEFINED Protobuf_INCLUDE_DIRS)
+      target_include_directories(controlplane PRIVATE ${Protobuf_INCLUDE_DIRS})
+    endif()
+  endif()
+endif()
 if (WIN32)
   target_link_libraries(controlplane PRIVATE odbc32)
 endif()

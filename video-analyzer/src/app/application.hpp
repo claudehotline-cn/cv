@@ -99,6 +99,7 @@ private:
     std::unique_ptr<va::core::PipelineBuilder> pipeline_builder_;
     std::unique_ptr<va::core::TrackManager> track_manager_;
     std::unique_ptr<va::server::RestServer> rest_server_;
+    std::unique_ptr<va::server::RestServer> metrics_rest_server_;
     bool initialized_ {false};
 
     AppConfigPayload app_config_;

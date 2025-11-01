@@ -172,7 +172,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 const std::string& op = kv.first;
                 for (const auto& kv2 : kv.second) {
                     std::ostringstream ls; ls << "{op=\"" << op << "\",code=\"" << kv2.first << "\"}";
-                    mb.sample("va_cp_requests_total", ls.str(), static_cast<uint64_t>(kv2.second));
+                    mb.sample("va_cp_requests_total", ls.str(), static_cast<unsigned long long>(kv2.second));
                 }
             }
             // Histogram: duration seconds per op
@@ -186,24 +186,24 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 for (size_t i=0;i<cp_bounds.size();++i) {
                     acc += kvh.second[i];
                     std::ostringstream ls; ls << "{op=\""<<op<<"\",le=\""<<cp_bounds[i]<<"\"}";
-                    mb.sample("va_cp_request_duration_seconds_bucket", ls.str(), static_cast<uint64_t>(acc));
+                    mb.sample("va_cp_request_duration_seconds_bucket", ls.str(), acc);
                 }
                 // +Inf bucket
-                std::ostringstream lsi; lsi << "{op=\""<<op<<"\",le=\"+Inf\"}"; mb.sample("va_cp_request_duration_seconds_bucket", lsi.str(), static_cast<uint64_t>(cnt));
+                std::ostringstream lsi; lsi << "{op=\""<<op<<"\",le=\"+Inf\"}"; mb.sample("va_cp_request_duration_seconds_bucket", lsi.str(), cnt);
                 // _sum and _count
                 std::ostringstream lsn; lsn << "{op=\""<<op<<"\"}";
                 mb.sample("va_cp_request_duration_seconds_sum", lsn.str(), sum);
-                mb.sample("va_cp_request_duration_seconds_count", lsn.str(), static_cast<uint64_t>(cnt));
+                mb.sample("va_cp_request_duration_seconds_count", lsn.str(), cnt);
             }
         }
 
         // WAL/Restart metrics (M1)
         try {
             mb.header("va_wal_failed_restart_total", "counter", "Subscriptions inflight before last restart (from WAL)");
-            mb.sample("va_wal_failed_restart_total", "{}", static_cast<uint64_t>(va::core::wal::failedRestartCount()));
+            mb.sample("va_wal_failed_restart_total", "{}", static_cast<unsigned long long>(va::core::wal::failedRestartCount()));
             // Minimal dimension labels for WAL: feature-enabled gauge（基数受控）
             mb.header("va_feature_enabled", "gauge", "Feature toggle enabled (1/0)");
-            mb.sample("va_feature_enabled", "{feature=\"wal\"}", static_cast<uint64_t>(va::core::wal::enabled() ? 1 : 0));
+            mb.sample("va_feature_enabled", "{feature=\"wal\"}", static_cast<unsigned long long>(va::core::wal::enabled() ? 1 : 0));
             // Mirror tail-derived WAL event counters (best-effort, low cardinality)
             try {
                 auto lines = va::core::wal::tail(200);
@@ -216,7 +216,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                     else if (s.find("\"op\":\"restart\"") != std::string::npos) c_restart++;
                 }
                 mb.header("va_wal_events_total", "counter", "WAL events observed from tail (best-effort)");
-                auto emit = [&](const char* op, unsigned long long v){ std::ostringstream ls; ls<<"{op=\""<<op<<"\"}"; mb.sample("va_wal_events_total", ls.str(), static_cast<uint64_t>(v)); };
+                auto emit = [&](const char* op, unsigned long long v){ std::ostringstream ls; ls<<"{op=\""<<op<<"\"}"; mb.sample("va_wal_events_total", ls.str(), v); };
                 emit("enqueue", c_enqueue); emit("ready", c_ready); emit("failed", c_failed); emit("cancelled", c_cancelled); emit("restart", c_restart);
             } catch (...) {}
         } catch (...) {}
@@ -226,29 +226,29 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             auto& mr = va::analyzer::ModelRegistry::instance();
             auto rs = mr.metricsSnapshot();
             mb.header("va_model_preheat_enabled", "gauge", "Model preheat enabled (1/0)");
-            mb.sample("va_model_preheat_enabled", "{}", static_cast<uint64_t>(rs.enabled ? 1 : 0));
+            mb.sample("va_model_preheat_enabled", "{}", static_cast<unsigned long long>(rs.enabled ? 1 : 0));
             mb.header("va_model_preheat_concurrency", "gauge", "Model preheat concurrency");
-            mb.sample("va_model_preheat_concurrency", "{}", static_cast<uint64_t>(rs.concurrency));
+            mb.sample("va_model_preheat_concurrency", "{}", static_cast<unsigned long long>(rs.concurrency));
             mb.header("va_model_preheat_warmed_total", "gauge", "Models warmed (best-effort)");
-            mb.sample("va_model_preheat_warmed_total", "{}", static_cast<uint64_t>(rs.warmed));
+            mb.sample("va_model_preheat_warmed_total", "{}", static_cast<unsigned long long>(rs.warmed));
             // Cache metrics
             mb.header("va_model_cache_entries", "gauge", "Model registry cache entries");
-            mb.sample("va_model_cache_entries", "{}", static_cast<uint64_t>(rs.cache_entries));
+            mb.sample("va_model_cache_entries", "{}", static_cast<unsigned long long>(rs.cache_entries));
             mb.header("va_model_cache_new_total", "counter", "Model registry cache new entries");
-            mb.sample("va_model_cache_new_total", "{}", static_cast<uint64_t>(rs.cache_new_total));
+            mb.sample("va_model_cache_new_total", "{}", static_cast<unsigned long long>(rs.cache_new_total));
             mb.header("va_model_cache_touch_total", "counter", "Model registry cache touch (hits)");
-            mb.sample("va_model_cache_touch_total", "{}", static_cast<uint64_t>(rs.cache_touch_total));
+            mb.sample("va_model_cache_touch_total", "{}", static_cast<unsigned long long>(rs.cache_touch_total));
             mb.header("va_model_cache_evict_total", "counter", "Model registry cache evictions");
-            mb.sample("va_model_cache_evict_total", "{}", static_cast<uint64_t>(rs.cache_evict_total));
+            mb.sample("va_model_cache_evict_total", "{}", static_cast<unsigned long long>(rs.cache_evict_total));
             // duration histogram
             mb.header("va_model_preheat_duration_seconds", "histogram", "Per-model preheat duration (s)");
             unsigned long long accp = 0ULL;
-            for (size_t i=0;i<rs.bounds.size(); ++i) { accp += (i<rs.bucket_counts.size()? rs.bucket_counts[i] : 0ULL); std::ostringstream ls; ls << "{le=\""<<rs.bounds[i]<<"\"}"; mb.sample("va_model_preheat_duration_seconds_bucket", ls.str(), static_cast<uint64_t>(accp)); }
+            for (size_t i=0;i<rs.bounds.size(); ++i) { accp += (i<rs.bucket_counts.size()? rs.bucket_counts[i] : 0ULL); std::ostringstream ls; ls << "{le=\""<<rs.bounds[i]<<"\"}"; mb.sample("va_model_preheat_duration_seconds_bucket", ls.str(), accp); }
             std::ostringstream lsi; lsi << "{le=\"+Inf\"}"; mb.sample("va_model_preheat_duration_seconds_bucket", lsi.str(), rs.duration_count);
             mb.sample("va_model_preheat_duration_seconds_sum", "{}", rs.duration_sum);
             mb.sample("va_model_preheat_duration_seconds_count", "{}", rs.duration_count);
             mb.header("va_model_preheat_failed_total", "counter", "Model preheat failures");
-            mb.sample("va_model_preheat_failed_total", "{}", static_cast<uint64_t>(rs.failed_total));
+            mb.sample("va_model_preheat_failed_total", "{}", static_cast<unsigned long long>(rs.failed_total));
         } catch (...) {}
 
         // Codec registry metrics (optional; metrics-only, no caching)
@@ -268,10 +268,10 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         if (lro_enabled_ && lro_runner_) {
             auto ms = lro_runner_->metricsSnapshot();
             mb.header("va_subscriptions_queue_length", "gauge", "Pending subscription tasks in queue");
-            mb.sample("va_subscriptions_queue_length", "{}", static_cast<uint64_t>(ms.queue_length));
+            mb.sample("va_subscriptions_queue_length", "{}", static_cast<unsigned long long>(ms.queue_length));
             // In-progress gauge (parity with plain-text branch)
             mb.header("va_subscriptions_in_progress", "gauge", "Non-terminal subscriptions in progress");
-            mb.sample("va_subscriptions_in_progress", "{}", static_cast<uint64_t>(ms.in_progress));
+            mb.sample("va_subscriptions_in_progress", "{}", static_cast<unsigned long long>(ms.in_progress));
             // Slots and backpressure (from admission snapshot in Impl)
             try {
                 int s_open = 0, s_load = 0, s_start = 0; int fairw = 0;
@@ -283,20 +283,20 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 }
                 if (s_open <= 0) s_open = 1; if (s_load <= 0) s_load = 1; if (s_start <= 0) s_start = 1;
                 mb.header("va_subscriptions_slots", "gauge", "Slots for phases");
-                auto emit_slot = [&](const char* t, int v){ std::ostringstream ls; ls<<"{type=\""<<t<<"\"}"; mb.sample("va_subscriptions_slots", ls.str(), static_cast<uint64_t>(v)); };
+                auto emit_slot = [&](const char* t, int v){ std::ostringstream ls; ls<<"{type=\""<<t<<"\"}"; mb.sample("va_subscriptions_slots", ls.str(), static_cast<unsigned long long>(v)); };
                 emit_slot("open_rtsp", s_open);
                 emit_slot("load_model", s_load);
                 emit_slot("start_pipeline", s_start);
-                if (fairw > 0) { mb.header("va_subscriptions_fair_window", "gauge", "Admission fairness window size"); mb.sample("va_subscriptions_fair_window", "{}", static_cast<uint64_t>(fairw)); }
+                if (fairw > 0) { mb.header("va_subscriptions_fair_window", "gauge", "Admission fairness window size"); mb.sample("va_subscriptions_fair_window", "{}", static_cast<unsigned long long>(fairw)); }
                 int slots = std::max(1, std::min({s_open, s_load, s_start}));
                 int est = 1; if (ms.queue_length > 0) { double wait = static_cast<double>(ms.queue_length) / static_cast<double>(slots); est = std::max(est, static_cast<int>(std::ceil(wait))); }
                 if (est < 1) est = 1; if (est > 60) est = 60;
                 mb.header("va_backpressure_retry_after_seconds", "gauge", "Estimated Retry-After based on queue/slots");
-                mb.sample("va_backpressure_retry_after_seconds", "{}", static_cast<uint64_t>(est));
+                mb.sample("va_backpressure_retry_after_seconds", "{}", static_cast<unsigned long long>(est));
             } catch (...) {}
             // Completed totals
             mb.header("va_subscriptions_completed_total", "counter", "Completed subscriptions by result");
-            auto c0 = [&](const char* res, unsigned long long v) { std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), static_cast<uint64_t>(v)); };
+            auto c0 = [&](const char* res, unsigned long long v) { std::ostringstream ls; ls<<"{result=\""<<res<<"\"}"; mb.sample("va_subscriptions_completed_total", ls.str(), v); };
             // Failed by reason (from store snapshot)
             try {
                 std::map<std::string, std::uint64_t> fail_by_reason;
@@ -311,7 +311,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 if (!fail_by_reason.empty()) {
                     mb.header("va_subscriptions_failed_by_reason_total", "counter", "Failed subscriptions by reason");
                     for (const auto& kv : fail_by_reason) {
-                        std::ostringstream ls; ls<<"{reason=\""<<kv.first<<"\"}"; mb.sample("va_subscriptions_failed_by_reason_total", ls.str(), static_cast<uint64_t>(kv.second));
+                        std::ostringstream ls; ls<<"{reason=\""<<kv.first<<"\"}"; mb.sample("va_subscriptions_failed_by_reason_total", ls.str(), kv.second);
                     }
                 }
             } catch (...) {}
@@ -339,10 +339,10 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 }
                 mb.header("va_subscription_duration_seconds", "histogram", "Subscription total duration in seconds");
                 unsigned long long acc0 = 0ULL;
-                for (int i=0;i<6;++i) { acc0 += buckets[i]; std::ostringstream ls; ls<<"{le=\""<<bounds[i]<<"\"}"; mb.sample("va_subscription_duration_seconds_bucket", ls.str(), static_cast<uint64_t>(acc0)); }
-                std::ostringstream lsi0; lsi0 << "{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi0.str(), static_cast<uint64_t>(total_count));
+                for (int i=0;i<6;++i) { acc0 += buckets[i]; std::ostringstream ls; ls<<"{le=\""<<bounds[i]<<"\"}"; mb.sample("va_subscription_duration_seconds_bucket", ls.str(), acc0); }
+                std::ostringstream lsi0; lsi0 << "{le=\"+Inf\"}"; mb.sample("va_subscription_duration_seconds_bucket", lsi0.str(), static_cast<unsigned long long>(total_count));
                 mb.sample("va_subscription_duration_seconds_sum", "{}", total_sum);
-                mb.sample("va_subscription_duration_seconds_count", "{}", static_cast<uint64_t>(total_count));
+                mb.sample("va_subscription_duration_seconds_count", "{}", static_cast<unsigned long long>(total_count));
             } catch (...) {}
             // States gauges
             mb.header("va_subscriptions_states", "gauge", "Subscriptions by current phase");
@@ -355,26 +355,26 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         // SSE connection metrics (always)
         try {
             mb.header("va_sse_connections", "gauge", "Active SSE connections by channel");
-            auto emit_conn = [&](const char* ch, unsigned long long v){ std::ostringstream ls; ls<<"{channel=\""<<ch<<"\"}"; mb.sample("va_sse_connections", ls.str(), static_cast<uint64_t>(v)); };
+            auto emit_conn = [&](const char* ch, unsigned long long v){ std::ostringstream ls; ls<<"{channel=\""<<ch<<"\"}"; mb.sample("va_sse_connections", ls.str(), v); };
             emit_conn("subscriptions", static_cast<unsigned long long>(va::server::g_sse_subscriptions_active.load()));
             emit_conn("sources",       static_cast<unsigned long long>(va::server::g_sse_sources_active.load()));
             emit_conn("logs",          static_cast<unsigned long long>(va::server::g_sse_logs_active.load()));
             emit_conn("events",        static_cast<unsigned long long>(va::server::g_sse_events_active.load()));
             mb.header("va_sse_reconnects_total", "counter", "SSE reconnect events (Last-Event-ID seen)");
-            mb.sample("va_sse_reconnects_total", "{}", static_cast<uint64_t>(va::server::g_sse_reconnects_total.load()));
+            mb.sample("va_sse_reconnects_total", "{}", va::server::g_sse_reconnects_total.load());
         } catch (...) {}
         // Merge/fairness placeholders (zeros) to keep metric presence
         mb.header("va_subscriptions_merge_total", "counter", "use_existing merge counters by type");
-        auto emit_merge0 = [&](const char* t){ std::ostringstream ls; ls<<"{type=\""<<t<<"\"}"; mb.sample("va_subscriptions_merge_total", ls.str(), static_cast<uint64_t>(0ULL)); };
+        auto emit_merge0 = [&](const char* t){ std::ostringstream ls; ls<<"{type=\""<<t<<"\"}"; mb.sample("va_subscriptions_merge_total", ls.str(), 0ULL); };
         emit_merge0("non_terminal"); emit_merge0("ready"); emit_merge0("miss");
         mb.header("va_subscriptions_rr_rotations_total", "counter", "Fair scheduling rotations (window picks)");
-        mb.sample("va_subscriptions_rr_rotations_total", "{}", static_cast<uint64_t>(0ULL));
+        mb.sample("va_subscriptions_rr_rotations_total", "{}", 0ULL);
 
         // Quotas: dropped + would-drop + feature toggles (low cardinality)
         try {
             // dropped
             mb.header("va_quota_dropped_total", "counter", "Quota/ACL dropped requests by reason");
-            auto emit_drop = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_dropped_total", ls.str(), static_cast<uint64_t>(val)); };
+            auto emit_drop = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_dropped_total", ls.str(), val); };
             emit_drop("global_concurrent", quota_drop_global_concurrent_.load(std::memory_order_relaxed));
             emit_drop("key_concurrent",    quota_drop_key_concurrent_.load(std::memory_order_relaxed));
             emit_drop("key_rate",          quota_drop_key_rate_.load(std::memory_order_relaxed));
@@ -383,7 +383,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
 
             // would-drop (observe-only path)
             mb.header("va_quota_would_drop_total", "counter", "Quota/ACL would-drop (observe-only) by reason");
-            auto emit_would = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_would_drop_total", ls.str(), static_cast<uint64_t>(val)); };
+            auto emit_would = [&](const char* reason, unsigned long long val){ std::ostringstream ls; ls<<"{reason=\""<<reason<<"\"}"; mb.sample("va_quota_would_drop_total", ls.str(), val); };
             emit_would("global_concurrent", quota_would_drop_global_concurrent_.load(std::memory_order_relaxed));
             emit_would("key_concurrent",    quota_would_drop_key_concurrent_.load(std::memory_order_relaxed));
             emit_would("key_rate",          quota_would_drop_key_rate_.load(std::memory_order_relaxed));
@@ -392,10 +392,10 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
 
             // feature toggles + enforce percent
             mb.header("va_feature_enabled", "gauge", "Feature toggle enabled (1/0)");
-            mb.sample("va_feature_enabled", "{feature=\"quota_observe\"}", static_cast<uint64_t>(app.appConfig().quotas.observe_only ? 1 : 0));
-            mb.sample("va_feature_enabled", "{feature=\"quota_enforce\"}", static_cast<uint64_t>(app.appConfig().quotas.observe_only ? 0 : 1));
+            mb.sample("va_feature_enabled", "{feature=\"quota_observe\"}", static_cast<unsigned long long>(app.appConfig().quotas.observe_only ? 1 : 0));
+            mb.sample("va_feature_enabled", "{feature=\"quota_enforce\"}", static_cast<unsigned long long>(app.appConfig().quotas.observe_only ? 0 : 1));
             mb.header("va_quota_enforce_percent", "gauge", "Quota enforce percent (0-100)");
-            mb.sample("va_quota_enforce_percent", "{}", static_cast<uint64_t>(app.appConfig().quotas.enforce_percent));
+            mb.sample("va_quota_enforce_percent", "{}", static_cast<unsigned long long>(app.appConfig().quotas.enforce_percent));
         } catch (...) {}
 
         HttpResponse resp;
@@ -914,4 +914,5 @@ HttpResponse RestServer::Impl::handleMetricsConfigSet(const HttpRequest& req) {
 }
 
 } // namespace va::server
+
 

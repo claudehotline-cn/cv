@@ -1,0 +1,73 @@
+version: "3.9"
+services:
+  va:
+    build:
+      context: ../..
+      dockerfile: docker/va/Dockerfile.cpu
+    image: cv/va:latest-cpu
+    container_name: va
+    ports:
+      - "8082:8082"
+      - "9090:9090"
+      - "50051:50051"
+    environment:
+      - VA_PROM_ENDPOINT=0.0.0.0:9090
+    volumes:
+      - ../../video-analyzer/config:/app/config:ro
+      - ../../logs:/logs
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:8082/metrics"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  cp:
+    build:
+      context: ../..
+      dockerfile: docker/cp/Dockerfile
+    image: cv/cp:latest
+    container_name: cp
+    depends_on:
+      - va
+      - vsm
+    ports:
+      - "18080:18080"
+    volumes:
+      - ../../controlplane/config:/app/config:ro
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:18080/metrics"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: ../..
+      dockerfile: docker/web/Dockerfile
+    image: cv/web:latest
+    container_name: web
+    depends_on:
+      - cp
+    ports:
+      - "8080:8080"
+
+  vsm:
+    build:
+      context: ../..
+      dockerfile: docker/vsm/Dockerfile
+    image: cv/vsm:latest
+    container_name: vsm
+    ports:
+      - "7070:7070"   # gRPC（如开启）
+      - "7071:7071"   # HTTP（如开启）
+    volumes:
+      - ../../video-source-manager/config:/app/config:ro
+    healthcheck:
+      test: ["CMD","bash","-c","(curl -sf http://localhost:7071/health || true) && echo ok"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  default:
+    name: cv-net

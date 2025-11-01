@@ -1,6 +1,7 @@
 #include "analyzer/multistage/node_join.hpp"
 #include "analyzer/multistage/nodes_common.hpp"
 #include "core/logger.hpp"
+#include <cstring>
 #ifdef USE_CUDA
 #  if defined(__has_include)
 #    if __has_include(<cuda_runtime.h>)

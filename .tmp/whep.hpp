@@ -151,3 +151,4 @@ inline void WhepSessionManager::feedFrame(const std::string&, const std::vector<
 inline bool WhepSessionManager::hasActiveForKey(const std::string&) { return false; }
 }
 #endif
+

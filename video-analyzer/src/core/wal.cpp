@@ -7,6 +7,8 @@
 #include <mutex>
 #include <deque>
 #include <unordered_map>
+#include <atomic>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 

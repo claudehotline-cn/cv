@@ -44,17 +44,9 @@ if (MSVC AND CMAKE_GENERATOR MATCHES "Ninja")
 endif()
 
 if(MSVC)
-    # 仅对 C/C++ 生效，避免透传到 NVCC
-    add_compile_options(
-        $<$<COMPILE_LANGUAGE:C>:/W4>
-        $<$<COMPILE_LANGUAGE:CXX>:/W4>
-        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
-    )
+    # Keep MSVC defaults to avoid toolchain-specific flag issues
 else()
-    add_compile_options(
-        $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -pedantic>
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -pedantic>
-    )
+    # In Linux containers avoid global compile options; rely on defaults
 endif()
 
 find_package(OpenCV REQUIRED)
@@ -66,7 +58,14 @@ if (VA_USE_LOCAL_YAML AND EXISTS "${YAML_LOCAL_ROOT}/CMakeLists.txt")
     add_subdirectory("${YAML_LOCAL_ROOT}" "${CMAKE_BINARY_DIR}/yaml-cpp" EXCLUDE_FROM_ALL)
 else()
     find_package(yaml-cpp REQUIRED)
-    set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+    if (TARGET yaml-cpp::yaml-cpp)
+        set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+    elseif (TARGET yaml-cpp)
+        set(YAML_CPP_TARGET yaml-cpp)
+    else()
+        # Fallback: some distros only export 'yaml-cpp' without namespace
+        set(YAML_CPP_TARGET yaml-cpp)
+    endif()
 endif()
 
 find_package(PkgConfig QUIET)
@@ -133,7 +132,7 @@ if(USE_CUDA)
 endif()
 
 # Optional: JSONCPP
-find_path(JSONCPP_INCLUDE_DIR NAMES json/json.h PATHS /usr/local/include /usr/include)
+find_path(JSONCPP_INCLUDE_DIR NAMES json/json.h PATHS /usr/local/include /usr/include PATH_SUFFIXES jsoncpp)
 find_library(JSONCPP_LIBRARY NAMES jsoncpp PATHS /usr/local/lib /usr/lib)
 
 # ONNX Runtime (via ONNXRUNTIME_ROOT)
@@ -225,6 +224,11 @@ if (CUDAToolkit_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif()
 
+# When NVCC kernels are not compiled, add CPU/link stubs for CUDA-dependent symbols
+if (UNIX AND NOT HAVE_CUDA_KERNELS)
+    target_sources(${PROJECT_NAME} PRIVATE src/analyzer/cuda/cuda_kernels_stubs.cpp)
+endif()
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
 
 if (VA_DISABLE_HTTP_PUBLIC)
@@ -242,7 +246,7 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE Threads::Threads
     PRIVATE ${YAML_CPP_TARGET})
 
-# Link LRO compiled library when present (keep header-only include for compatibility)
+# Link LRO runtime if available (always, to satisfy lro::make_memory_store())
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../lro/CMakeLists.txt")
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lro" "${CMAKE_BINARY_DIR}/lro" EXCLUDE_FROM_ALL)
     if (TARGET lro_runtime)
@@ -287,10 +291,21 @@ endif()
 
 # Prefer config packages from vcpkg to avoid mixing with system/anaconda modules
 # Prefer Protobuf config package from vcpkg; uppercase name improves DIR hinting
-find_package(Protobuf CONFIG REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
+find_package(Protobuf CONFIG QUIET)
+if (NOT Protobuf_FOUND)
+    find_package(Protobuf REQUIRED)
+endif()
 
-message(STATUS "gRPC/Protobuf found: enabling AnalyzerControl service")
+find_package(gRPC CONFIG QUIET)
+if (NOT gRPC_FOUND)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GRPCPP REQUIRED grpc++)
+    set(GRPC_FOUND TRUE)
+    set(GRPC_INCLUDE_DIRS ${GRPCPP_INCLUDE_DIRS})
+    set(GRPC_LIBRARIES ${GRPCPP_LIBRARIES})
+endif()
+
+message(STATUS "gRPC/Protobuf found (with fallback if needed): enabling AnalyzerControl service")
 add_definitions(-DUSE_GRPC)
 
         set(_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
@@ -299,9 +314,22 @@ add_definitions(-DUSE_GRPC)
         file(MAKE_DIRECTORY ${_GEN_DIR})
         set(PROTO_FILES ${_PROTO_DIR}/analyzer_control.proto ${_PROTO_DIR}/pipeline.proto)
 
-        # Generators
-        get_target_property(_PROTOC_LOCATION protobuf::protoc LOCATION)
-        get_target_property(_GRPC_CPP_PLUGIN_EXECUTABLE gRPC::grpc_cpp_plugin LOCATION)
+        # Generators (portable across config/module pkg layouts)
+        set(_PROTOC_EXE protoc)
+        if (TARGET protobuf::protoc)
+            set(_PROTOC_EXE $<TARGET_FILE:protobuf::protoc>)
+        elseif(DEFINED Protobuf_PROTOC_EXECUTABLE)
+            set(_PROTOC_EXE ${Protobuf_PROTOC_EXECUTABLE})
+        endif()
+        set(_GRPC_CPP_PLUGIN grpc_cpp_plugin)
+        if (TARGET gRPC::grpc_cpp_plugin)
+            set(_GRPC_CPP_PLUGIN $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+        else()
+            find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
+            if (GRPC_CPP_PLUGIN_EXECUTABLE)
+                set(_GRPC_CPP_PLUGIN ${GRPC_CPP_PLUGIN_EXECUTABLE})
+            endif()
+        endif()
 
         set(GEN_SRCS)
         set(GEN_HDRS)
@@ -313,7 +341,7 @@ add_definitions(-DUSE_GRPC)
             list(APPEND GEN_HDRS ${pb_h})
             add_custom_command(
                 OUTPUT ${pb_cc} ${pb_h}
-                COMMAND protobuf::protoc
+                COMMAND ${_PROTOC_EXE}
                 ARGS --cpp_out ${_GEN_DIR}
                      -I ${_PROTO_DIR}
                      ${proto}
@@ -326,9 +354,9 @@ add_definitions(-DUSE_GRPC)
         set(grpc_h  ${_GEN_DIR}/analyzer_control.grpc.pb.h)
         add_custom_command(
             OUTPUT ${grpc_cc} ${grpc_h}
-            COMMAND protobuf::protoc
+            COMMAND ${_PROTOC_EXE}
                 ARGS --grpc_out ${_GEN_DIR}
-                 --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+                 --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN}
                  -I ${_PROTO_DIR}
                  ${_PROTO_DIR}/analyzer_control.proto
             DEPENDS ${_PROTO_DIR}/analyzer_control.proto
@@ -336,7 +364,21 @@ add_definitions(-DUSE_GRPC)
 
         add_library(va_analyzer_control_proto ${GEN_SRCS} ${grpc_cc})
         target_include_directories(va_analyzer_control_proto PUBLIC ${_GEN_DIR})
-        target_link_libraries(va_analyzer_control_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+        if (TARGET gRPC::grpc++)
+            target_link_libraries(va_analyzer_control_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+        else()
+            if (DEFINED GRPC_INCLUDE_DIRS)
+                target_include_directories(va_analyzer_control_proto PUBLIC ${GRPC_INCLUDE_DIRS})
+            endif()
+            if (TARGET protobuf::libprotobuf)
+                target_link_libraries(va_analyzer_control_proto PUBLIC ${GRPC_LIBRARIES} protobuf::libprotobuf)
+            else()
+                target_link_libraries(va_analyzer_control_proto PUBLIC ${GRPC_LIBRARIES} ${Protobuf_LIBRARIES})
+                if (DEFINED Protobuf_INCLUDE_DIRS)
+                    target_include_directories(va_analyzer_control_proto PUBLIC ${Protobuf_INCLUDE_DIRS})
+                endif()
+            endif()
+        endif()
 
         target_include_directories(${PROJECT_NAME} PRIVATE ${_GEN_DIR})
         target_link_libraries(${PROJECT_NAME} PRIVATE va_analyzer_control_proto)
@@ -345,22 +387,36 @@ add_definitions(-DUSE_GRPC)
         if (EXISTS ${_PROTO_DIR}/whep_control.proto)
             add_custom_command(
                 OUTPUT ${_GEN_DIR}/whep_control.pb.cc ${_GEN_DIR}/whep_control.pb.h
-                COMMAND protobuf::protoc
+                COMMAND ${_PROTOC_EXE}
                     ARGS --cpp_out ${_GEN_DIR}
                          -I ${_PROTO_DIR}
                          ${_PROTO_DIR}/whep_control.proto
                 DEPENDS ${_PROTO_DIR}/whep_control.proto)
             add_custom_command(
                 OUTPUT ${_GEN_DIR}/whep_control.grpc.pb.cc ${_GEN_DIR}/whep_control.grpc.pb.h
-                COMMAND protobuf::protoc
+                COMMAND ${_PROTOC_EXE}
                     ARGS --grpc_out ${_GEN_DIR}
-                         --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+                         --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN}
                          -I ${_PROTO_DIR}
                          ${_PROTO_DIR}/whep_control.proto
                 DEPENDS ${_PROTO_DIR}/whep_control.proto)
             add_library(va_whep_proto ${_GEN_DIR}/whep_control.pb.cc ${_GEN_DIR}/whep_control.grpc.pb.cc)
             target_include_directories(va_whep_proto PUBLIC ${_GEN_DIR})
-            target_link_libraries(va_whep_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+            if (TARGET gRPC::grpc++)
+                target_link_libraries(va_whep_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+            else() 
+                if (DEFINED GRPC_INCLUDE_DIRS)
+                    target_include_directories(va_whep_proto PUBLIC ${GRPC_INCLUDE_DIRS})
+                endif()
+                if (TARGET protobuf::libprotobuf)
+                    target_link_libraries(va_whep_proto PUBLIC ${GRPC_LIBRARIES} protobuf::libprotobuf)
+                else()
+                    target_link_libraries(va_whep_proto PUBLIC ${GRPC_LIBRARIES} ${Protobuf_LIBRARIES})
+                    if (DEFINED Protobuf_INCLUDE_DIRS)
+                        target_include_directories(va_whep_proto PUBLIC ${Protobuf_INCLUDE_DIRS})
+                    endif()
+                endif()
+            endif()
             target_link_libraries(${PROJECT_NAME} PRIVATE va_whep_proto)
         endif()
 
@@ -368,22 +424,36 @@ add_definitions(-DUSE_GRPC)
         if (EXISTS ${_VSM_PROTO_DIR}/source_control.proto)
             add_custom_command(
                 OUTPUT ${_GEN_DIR}/source_control.pb.cc ${_GEN_DIR}/source_control.pb.h
-                COMMAND protobuf::protoc
+                COMMAND ${_PROTOC_EXE}
                     ARGS --cpp_out ${_GEN_DIR}
                          -I ${_VSM_PROTO_DIR}
                          ${_VSM_PROTO_DIR}/source_control.proto
                 DEPENDS ${_VSM_PROTO_DIR}/source_control.proto)
             add_custom_command(
                 OUTPUT ${_GEN_DIR}/source_control.grpc.pb.cc ${_GEN_DIR}/source_control.grpc.pb.h
-                COMMAND protobuf::protoc
+                COMMAND ${_PROTOC_EXE}
                     ARGS --grpc_out ${_GEN_DIR}
-                         --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+                         --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN}
                          -I ${_VSM_PROTO_DIR}
                          ${_VSM_PROTO_DIR}/source_control.proto
                 DEPENDS ${_VSM_PROTO_DIR}/source_control.proto)
             add_library(va_vsm_proto ${_GEN_DIR}/source_control.pb.cc ${_GEN_DIR}/source_control.grpc.pb.cc)
             target_include_directories(va_vsm_proto PUBLIC ${_GEN_DIR})
-            target_link_libraries(va_vsm_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+            if (TARGET gRPC::grpc++)
+                target_link_libraries(va_vsm_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+            else()
+                if (DEFINED GRPC_INCLUDE_DIRS)
+                    target_include_directories(va_vsm_proto PUBLIC ${GRPC_INCLUDE_DIRS})
+                endif()
+                if (TARGET protobuf::libprotobuf)
+                    target_link_libraries(va_vsm_proto PUBLIC ${GRPC_LIBRARIES} protobuf::libprotobuf)
+                else()
+                    target_link_libraries(va_vsm_proto PUBLIC ${GRPC_LIBRARIES} ${Protobuf_LIBRARIES})
+                    if (DEFINED Protobuf_INCLUDE_DIRS)
+                        target_include_directories(va_vsm_proto PUBLIC ${Protobuf_INCLUDE_DIRS})
+                    endif()
+                endif()
+            endif()
             target_link_libraries(${PROJECT_NAME} PRIVATE va_vsm_proto)
         endif()
 
@@ -464,52 +534,55 @@ target_link_vcpkg_library(${PROJECT_NAME} "${DATA_CHANNEL_LIB_DEBUG}" "${DATA_CH
 target_link_vcpkg_library(${PROJECT_NAME} "${JUICE_LIB_DEBUG}" "${JUICE_LIB_RELEASE}")
 target_link_vcpkg_library(${PROJECT_NAME} "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_RELEASE}")
 
-# ---- WHEP client probe (test tool) ----
-add_executable(WhepClientProbe src/tools/whep_client_probe.cpp)
-# Add project + vcpkg include paths so <rtc/rtc.hpp> and other headers resolve
-target_include_directories(WhepClientProbe PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${VCPKG_INCLUDE_DIR}
-    "D:/Projects/vcpkg/installed/x64-windows/include")
-target_link_vcpkg_library(WhepClientProbe "${DATA_CHANNEL_LIB_DEBUG}" "${DATA_CHANNEL_LIB_RELEASE}")
-target_link_vcpkg_library(WhepClientProbe "${JUICE_LIB_DEBUG}" "${JUICE_LIB_RELEASE}")
-target_link_vcpkg_library(WhepClientProbe "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_RELEASE}")
-if (WIN32)
-  target_link_libraries(WhepClientProbe PRIVATE ws2_32 iphlpapi winhttp crypt32)
-endif()
-set_target_properties(WhepClientProbe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-
-# ---- WHEP standalone server ----
-add_executable(WhepStandaloneServer src/tools/whep_standalone_server.cpp)
-# Add project + vcpkg include paths so <rtc/rtc.hpp> and other headers resolve
-target_include_directories(WhepStandaloneServer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${VCPKG_INCLUDE_DIR}
-    "D:/Projects/vcpkg/installed/x64-windows/include")
-target_link_vcpkg_library(WhepStandaloneServer "${DATA_CHANNEL_LIB_DEBUG}" "${DATA_CHANNEL_LIB_RELEASE}")
-target_link_vcpkg_library(WhepStandaloneServer "${JUICE_LIB_DEBUG}" "${JUICE_LIB_RELEASE}")
-target_link_vcpkg_library(WhepStandaloneServer "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_RELEASE}")
-set_target_properties(WhepStandaloneServer PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-if (FFMPEG_FOUND)
-  if(FFMPEG_PKG_FOUND)
-    target_include_directories(WhepStandaloneServer PRIVATE ${FFMPEG_PKG_INCLUDE_DIRS})
-    target_link_libraries(WhepStandaloneServer PRIVATE ${FFMPEG_PKG_LIBRARIES})
-  else()
-    foreach(component IN LISTS FFMPEG_COMPONENTS)
-      string(TOUPPER ${component} UPPER)
-      if(FFMPEG_${UPPER}_INCLUDE)
-        target_include_directories(WhepStandaloneServer PRIVATE ${FFMPEG_${UPPER}_INCLUDE})
-      endif()
-      if(FFMPEG_${UPPER}_LIB)
-        target_link_libraries(WhepStandaloneServer PRIVATE ${FFMPEG_${UPPER}_LIB})
-      endif()
-    endforeach()
+option(VA_BUILD_TOOLS "Build WHEP tools (probe/server)" OFF)
+if (VA_BUILD_TOOLS)
+  # ---- WHEP client probe (test tool) ----
+  add_executable(WhepClientProbe src/tools/whep_client_probe.cpp)
+  target_include_directories(WhepClientProbe PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if (WIN32)
+      target_include_directories(WhepClientProbe PRIVATE ${VCPKG_INCLUDE_DIR} "D:/Projects/vcpkg/installed/x64-windows/include")
   endif()
-endif()
-if (WIN32)
-  target_link_libraries(WhepStandaloneServer PRIVATE ws2_32 iphlpapi)
+  target_link_vcpkg_library(WhepClientProbe "${DATA_CHANNEL_LIB_DEBUG}" "${DATA_CHANNEL_LIB_RELEASE}")
+  target_link_vcpkg_library(WhepClientProbe "${JUICE_LIB_DEBUG}" "${JUICE_LIB_RELEASE}")
+  target_link_vcpkg_library(WhepClientProbe "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_RELEASE}")
+  if (WIN32)
+    target_link_libraries(WhepClientProbe PRIVATE ws2_32 iphlpapi winhttp crypt32)
+  endif()
+  set_target_properties(WhepClientProbe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+  # ---- WHEP standalone server ----
+  add_executable(WhepStandaloneServer src/tools/whep_standalone_server.cpp)
+  target_include_directories(WhepStandaloneServer PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if (WIN32)
+      target_include_directories(WhepStandaloneServer PRIVATE ${VCPKG_INCLUDE_DIR} "D:/Projects/vcpkg/installed/x64-windows/include")
+  endif()
+  target_link_vcpkg_library(WhepStandaloneServer "${DATA_CHANNEL_LIB_DEBUG}" "${DATA_CHANNEL_LIB_RELEASE}")
+  target_link_vcpkg_library(WhepStandaloneServer "${JUICE_LIB_DEBUG}" "${JUICE_LIB_RELEASE}")
+  target_link_vcpkg_library(WhepStandaloneServer "${MBEDTLS_LIB_DEBUG}" "${MBEDTLS_LIB_RELEASE}")
+  set_target_properties(WhepStandaloneServer PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+  if (FFMPEG_FOUND)
+    if(FFMPEG_PKG_FOUND)
+      target_include_directories(WhepStandaloneServer PRIVATE ${FFMPEG_PKG_INCLUDE_DIRS})
+      target_link_libraries(WhepStandaloneServer PRIVATE ${FFMPEG_PKG_LIBRARIES})
+    else()
+      foreach(component IN LISTS FFMPEG_COMPONENTS)
+        string(TOUPPER ${component} UPPER)
+        if(FFMPEG_${UPPER}_INCLUDE)
+          target_include_directories(WhepStandaloneServer PRIVATE ${FFMPEG_${UPPER}_INCLUDE})
+        endif()
+        if(FFMPEG_${UPPER}_LIB)
+          target_link_libraries(WhepStandaloneServer PRIVATE ${FFMPEG_${UPPER}_LIB})
+        endif()
+      endforeach()
+    endif()
+  endif()
+  if (WIN32)
+    target_link_libraries(WhepStandaloneServer PRIVATE ws2_32 iphlpapi)
+  endif()
 endif()
 target_link_vcpkg_library(${PROJECT_NAME} "${MBEDCRYPTO_LIB_DEBUG}" "${MBEDCRYPTO_LIB_RELEASE}")
 target_link_vcpkg_library(${PROJECT_NAME} "${MBEDX509_LIB_DEBUG}" "${MBEDX509_LIB_RELEASE}")
@@ -520,6 +593,11 @@ find_library(JSONCPP_LIB_RELEASE NAMES jsoncpp PATHS ${VCPKG_LIB_DIR} NO_DEFAULT
 find_library(JSONCPP_LIB_DEBUG NAMES jsoncpp PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
 if (JSONCPP_LIB_RELEASE OR JSONCPP_LIB_DEBUG)
     target_link_vcpkg_library(${PROJECT_NAME} "${JSONCPP_LIB_DEBUG}" "${JSONCPP_LIB_RELEASE}")
+endif()
+
+# If system JSONCPP headers are available, add include path for <json/json.h>
+if (JSONCPP_INCLUDE_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${JSONCPP_INCLUDE_DIR})
 endif()
 
 # Optional: MySQL Connector/C++ via vcpkg (unofficial-mysql-connector-cpp)
@@ -594,10 +672,12 @@ if (WIN32)
 endif()
 
 # Ensure vcpkg include path is visible for header-only deps (ixwebsocket, rtc/libdatachannel, jsoncpp, etc.)
-target_include_directories(${PROJECT_NAME} PRIVATE "${VCPKG_INCLUDE_DIR}")
-if (EXISTS "D:/Projects/vcpkg/installed/x64-windows/include")
-    # Also add user vcpkg tree explicitly to override VS-integrated vcpkg lacking some ports
-    target_include_directories(${PROJECT_NAME} PRIVATE "D:/Projects/vcpkg/installed/x64-windows/include")
+if (WIN32)
+    target_include_directories(${PROJECT_NAME} PRIVATE "${VCPKG_INCLUDE_DIR}")
+    if (EXISTS "D:/Projects/vcpkg/installed/x64-windows/include")
+        # Also add user vcpkg tree explicitly to override VS-integrated vcpkg lacking some ports
+        target_include_directories(${PROJECT_NAME} PRIVATE "D:/Projects/vcpkg/installed/x64-windows/include")
+    endif()
 endif()
 
 if (WIN32)
@@ -732,3 +812,17 @@ endif()
 
 
 
+
+
+# In container builds we disable direct libdatachannel usage unless headers are available
+target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAVE_RTC=0)
+
+
+
+# In UNIX container builds, keep public HTTP routes disabled by default to reduce dependencies
+if (UNIX)
+    set(VA_DISABLE_HTTP_PUBLIC ON CACHE BOOL "Disable public HTTP routes on UNIX" FORCE)
+    if (VA_DISABLE_HTTP_PUBLIC)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VA_DISABLE_HTTP_PUBLIC)
+    endif()
+endif()

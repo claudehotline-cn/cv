@@ -1,4 +1,5 @@
 #include "core/nvdec_events.hpp"
+#include <atomic>
 #include "core/utils.hpp"
 
 namespace va::core::NvdecEvents {

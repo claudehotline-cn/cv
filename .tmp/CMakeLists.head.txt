@@ -1,0 +1,300 @@
+cmake_minimum_required(VERSION 3.16)
+project(VideoAnalyzer)
+
+set(VCPKG_APPLOCAL_DEPS OFF)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Hint OpenCV install if environment provides typical Windows paths
+if (NOT DEFINED OpenCV_DIR)
+    if (EXISTS "H:/opencv/build/x64/vc16/lib/OpenCVConfig.cmake")
+        set(OpenCV_DIR "H:/opencv/build/x64/vc16/lib" CACHE PATH "OpenCV CMake config" FORCE)
+    elseif (EXISTS "H:/opencv/build/OpenCVConfig.cmake")
+        set(OpenCV_DIR "H:/opencv/build" CACHE PATH "OpenCV CMake config" FORCE)
+    endif()
+endif()
+if (DEFINED OpenCV_DIR)
+    list(PREPEND CMAKE_PREFIX_PATH "${OpenCV_DIR}")
+endif()
+message(STATUS "OpenCV_DIR hint: ${OpenCV_DIR}")
+
+# vcpkg hints early (for OpenCV, etc.)
+set(VCPKG_ROOT_DIR "$ENV{VCPKG_ROOT}")
+if (NOT VCPKG_ROOT_DIR)
+    set(VCPKG_ROOT_DIR "${CMAKE_SOURCE_DIR}/../vcpkg")
+endif()
+if (NOT EXISTS "${VCPKG_ROOT_DIR}")
+    set(VCPKG_ROOT_DIR "D:/Projects/vcpkg")
+endif()
+if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows")
+    list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+endif()
+# Additional common vcpkg locations (VS-integrated or custom drive)
+if (EXISTS "H:/vcpkg/installed/x64-windows")
+    list(PREPEND CMAKE_PREFIX_PATH "H:/vcpkg/installed/x64-windows")
+endif()
+if (EXISTS "H:/Program Files/Microsoft Visual Studio/2022/Community/VC/vcpkg/installed/x64-windows")
+    list(PREPEND CMAKE_PREFIX_PATH "H:/Program Files/Microsoft Visual Studio/2022/Community/VC/vcpkg/installed/x64-windows")
+endif()
+
+# Ninja+MSVC: 避免为对象编译生成 PDB（会通过 -Fd 传给 NVCC 并导致报错）
+if (MSVC AND CMAKE_GENERATOR MATCHES "Ninja")
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "Embedded") # /Z7, no /Fd
+endif()
+
+if(MSVC)
+    # Keep MSVC defaults to avoid toolchain-specific flag issues
+else()
+    # In Linux containers avoid global compile options; rely on defaults
+endif()
+
+find_package(OpenCV REQUIRED)
+find_package(Threads REQUIRED)
+option(VA_USE_LOCAL_YAML "Use bundled yaml-cpp under third_party" OFF)
+set(YAML_LOCAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/yaml-cpp/yaml-cpp-0.8.0")
+if (VA_USE_LOCAL_YAML AND EXISTS "${YAML_LOCAL_ROOT}/CMakeLists.txt")
+    set(YAML_CPP_TARGET yaml-cpp)
+    add_subdirectory("${YAML_LOCAL_ROOT}" "${CMAKE_BINARY_DIR}/yaml-cpp" EXCLUDE_FROM_ALL)
+else()
+    find_package(yaml-cpp REQUIRED)
+    if (TARGET yaml-cpp::yaml-cpp)
+        set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+    elseif (TARGET yaml-cpp)
+        set(YAML_CPP_TARGET yaml-cpp)
+    else()
+        # Fallback: some distros only export 'yaml-cpp' without namespace
+        set(YAML_CPP_TARGET yaml-cpp)
+    endif()
+endif()
+
+find_package(PkgConfig QUIET)
+
+set(FFMPEG_LOCAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/ffmpeg-prebuilt/ffmpeg-master-latest-win64-lgpl-shared")
+if(EXISTS "${FFMPEG_LOCAL_ROOT}")
+    list(PREPEND CMAKE_PREFIX_PATH "${FFMPEG_LOCAL_ROOT}")
+    list(PREPEND CMAKE_LIBRARY_PATH "${FFMPEG_LOCAL_ROOT}/lib")
+    list(PREPEND CMAKE_INCLUDE_PATH "${FFMPEG_LOCAL_ROOT}/include")
+endif()
+
+set(FFMPEG_COMPONENTS avcodec avformat avutil swscale swresample)
+set(FFMPEG_FOUND ON)
+
+if(PKGCONFIG_FOUND)
+    pkg_check_modules(FFMPEG_PKG QUIET libavcodec libavformat libavutil libswscale libswresample)
+endif()
+
+if(NOT FFMPEG_PKG_FOUND)
+    foreach(component IN LISTS FFMPEG_COMPONENTS)
+        string(TOUPPER ${component} UPPER)
+        find_library(FFMPEG_${UPPER}_LIB NAMES ${component})
+        find_path(FFMPEG_${UPPER}_INCLUDE NAMES libavcodec/avcodec.h libavformat/avformat.h libavutil/avutil.h)
+        if(NOT FFMPEG_${UPPER}_LIB)
+            set(FFMPEG_FOUND OFF)
+        endif()
+        endforeach()
+else()
+    set(FFMPEG_FOUND ON)
+endif()
+
+if(NOT FFMPEG_FOUND)
+    message(WARNING "FFmpeg libraries not found. FfmpegH264Encoder will be disabled.")
+endif()
+
+# Optional: CUDA support
+option(USE_CUDA "Enable CUDA support for GPU inference" ON)
+option(WITH_CUDA_KERNELS "Build CUDA kernels (device-side decode/NMS/overlay)" OFF)
+option(WITH_NVDEC "Build NVDEC-based RTSP source (scaffold)" OFF)
+option(WITH_NVENC "Build NVENC-based H264 encoder (FFmpeg wrapper)" OFF)
+option(VA_DISABLE_HTTP_PUBLIC "Disable public HTTP routes (keep WHEP/metrics)" OFF)
+option(VA_REST_DEPRECATED_410 "Expose deprecated VA REST endpoints as 410 Gone placeholders when public HTTP disabled" OFF)
+## gRPC 为必需能力：构建必须具备 Protobuf/gRPC，且默认开启服务端
+option(VA_BUILD_TESTS "Build unit test targets" OFF)
+option(VA_WITH_MYSQL "Enable MySQL-backed storage (mysql-connector-c++)" OFF)
+## 默认 CUDA 架构（可在配置时覆盖）
+## 示例覆盖：-DVA_CUDA_ARCHS=89 或 -DCMAKE_CUDA_ARCHITECTURES=89
+set(VA_CUDA_ARCHS "89" CACHE STRING "CUDA SM architectures for NVCC (e.g. 89;90;120)")
+if(USE_CUDA)
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_FOUND)
+        add_definitions(-DUSE_CUDA)
+        if(WITH_CUDA_KERNELS)
+            set(HAVE_CUDA_KERNELS ON)
+            message(STATUS "CUDA found: ${CUDAToolkit_VERSION} - building with NVCC kernels")
+        else()
+            set(HAVE_CUDA_KERNELS OFF)
+            message(STATUS "CUDA found: ${CUDAToolkit_VERSION} - building without NVCC kernels")
+        endif()
+    else()
+        set(HAVE_CUDA_KERNELS OFF)
+        message(WARNING "CUDA not found - GPU inference disabled")
+    endif()
+endif()
+
+# Optional: JSONCPP
+find_path(JSONCPP_INCLUDE_DIR NAMES json/json.h PATHS /usr/local/include /usr/include PATH_SUFFIXES jsoncpp)
+find_library(JSONCPP_LIBRARY NAMES jsoncpp PATHS /usr/local/lib /usr/lib)
+
+# ONNX Runtime (via ONNXRUNTIME_ROOT)
+# ONNX Runtime (via ONNXRUNTIME_ROOT)
+# Support both standard layout (<root>/include, <root>/lib) and Windows build tree (<root>/build/Windows/Release)
+find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h
+    PATHS
+        ${ONNXRUNTIME_ROOT}/include
+        ${ONNXRUNTIME_ROOT}/build/Windows/Release/include
+        /usr/local/include/onnxruntime /usr/include/onnxruntime)
+find_library(ONNXRUNTIME_LIB NAMES onnxruntime
+    PATHS
+        ${ONNXRUNTIME_ROOT}/lib
+        ${ONNXRUNTIME_ROOT}/build/Windows/Release
+        /usr/local/lib /usr/lib)
+
+# Allow overriding ORT DLL directory explicitly (folder containing onnxruntime*.dll)
+set(ONNXRUNTIME_DLL_DIR "$ENV{ONNXRUNTIME_DLL_DIR}" CACHE PATH "Directory that contains onnxruntime*.dll (optional override)")
+
+# Optional vcpkg-installed dependencies
+set(VCPKG_LIB_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/lib")
+set(VCPKG_LIB_DIR_DEBUG "${VCPKG_ROOT_DIR}/installed/x64-windows/debug/lib")
+set(VCPKG_INCLUDE_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/include")
+
+find_library(IXWEBSOCKET_LIB_RELEASE NAMES ixwebsocket PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(IXWEBSOCKET_LIB_DEBUG NAMES ixwebsocket PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+find_library(DATA_CHANNEL_LIB_RELEASE NAMES datachannel PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(DATA_CHANNEL_LIB_DEBUG NAMES datachannel PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+find_library(JUICE_LIB_RELEASE NAMES juice PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(JUICE_LIB_DEBUG NAMES juice PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+find_library(MBEDTLS_LIB_RELEASE NAMES mbedtls PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(MBEDTLS_LIB_DEBUG NAMES mbedtls PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+find_library(MBEDCRYPTO_LIB_RELEASE NAMES mbedcrypto PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(MBEDCRYPTO_LIB_DEBUG NAMES mbedcrypto PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+find_library(MBEDX509_LIB_RELEASE NAMES mbedx509 PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(MBEDX509_LIB_DEBUG NAMES mbedx509 PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+find_library(ZLIB_LIB_RELEASE NAMES zlib PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(ZLIB_LIB_DEBUG NAMES zlib PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+
+include_directories(${OpenCV_INCLUDE_DIRS})
+include_directories(include)
+if(JSONCPP_INCLUDE_DIR)
+    include_directories(${JSONCPP_INCLUDE_DIR})
+endif()
+if(ONNXRUNTIME_INCLUDE_DIR)
+    include_directories(${ONNXRUNTIME_INCLUDE_DIR})
+    add_definitions(-DUSE_ONNXRUNTIME)
+endif()
+
+file(GLOB_RECURSE SOURCES "src/*.cpp")
+# Exclude tool executables from main target sources; they have their own targets
+list(FILTER SOURCES EXCLUDE REGEX ".*/src/tools/.*\\.cpp$")
+file(GLOB_RECURSE HEADERS "include/*.h" "src/*.hpp")
+if (HAVE_CUDA_KERNELS)
+    file(GLOB_RECURSE CUDA_SOURCES "src/*.cu")
+endif()
+
+# Ensure newly added core metric/event sources are included even if glob caching misses them
+list(APPEND SOURCES
+    # Multistage analyzer core
+    src/analyzer/multistage/graph.cpp
+    src/analyzer/multistage/registry.cpp
+    src/analyzer/multistage/node_preproc_letterbox.cpp
+    src/analyzer/multistage/node_model.cpp
+    src/analyzer/multistage/node_nms.cpp
+    src/analyzer/multistage/node_overlay.cpp
+    src/analyzer/multistage/node_roi_batch.cpp
+    src/analyzer/multistage/builder_yaml.cpp
+    src/analyzer/multistage/node_roi_batch_cuda.cpp
+    src/analyzer/multistage/node_kpt_decode.cpp
+    src/analyzer/multistage/runner.cpp
+    src/analyzer/multistage/node_overlay_kpt.cpp
+    src/core/drop_metrics.cpp
+    src/analyzer/multistage/node_join.cpp
+    src/analyzer/multistage/node_reid_smooth.cpp
+    src/core/source_reconnects.cpp
+    src/core/nvdec_events.cpp
+    # Storage: DB repositories
+    src/storage/session_repo.cpp
+    src/storage/graph_repo.cpp
+    src/storage/source_repo.cpp)
+
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
+if (HAVE_CUDA_KERNELS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAS_CUDA_KERNELS)
+endif()
+if (CUDAToolkit_FOUND)
+    # Ensure host code sees cuda_runtime.h so GPU postproc runtime paths are enabled
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+endif()
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
+
+if (VA_DISABLE_HTTP_PUBLIC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_DISABLE_HTTP_PUBLIC)
+endif()
+if (VA_REST_DEPRECATED_410)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_REST_DEPRECATED_410)
+endif()
+
+target_include_directories(${PROJECT_NAME}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE ${OpenCV_LIBS}
+    PRIVATE Threads::Threads
+    PRIVATE ${YAML_CPP_TARGET})
+
+# Link LRO compiled library when present (keep header-only include for compatibility)
+option(VA_WITH_LRO_RUNTIME "Link LRO runtime library (build subproject)" OFF)
+if (VA_WITH_LRO_RUNTIME)
+  if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../lro/CMakeLists.txt")
+      add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lro" "${CMAKE_BINARY_DIR}/lro" EXCLUDE_FROM_ALL)
+      if (TARGET lro_runtime)
+          target_link_libraries(${PROJECT_NAME} PRIVATE lro_runtime)
+      endif()
+  endif()
+endif()
+
+# Control plane (embedded) sources — 无外部依赖占位，默认总是编译
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        src/controlplane/interfaces.hpp
+        src/controlplane/controllers/pipeline_controller.cpp
+        src/controlplane/controllers/pipeline_controller.hpp
+        src/controlplane/adapters/graph_adapter_yaml.cpp
+        src/controlplane/adapters/graph_adapter_yaml.hpp
+        src/controlplane/exporters/prometheus_exporter.cpp
+        src/controlplane/exporters/prometheus_exporter.hpp
+        src/controlplane/io/from_vsm_link.hpp)
+
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        
+        src/core/wal.cpp
+        src/core/wal.hpp
+        src/analyzer/model_registry.cpp
+        src/analyzer/model_registry.hpp
+        # Admin: WAL read-only endpoints
+        src/server/rest_admin_wal.cpp)
+
+## gRPC/Protobuf（REQUIRED）：通过 vcpkg 提示路径，强制启用
+# vcpkg hints (share config packages)
+if (DEFINED VCPKG_ROOT_DIR)
+    if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows/share/protobuf/protobuf-config.cmake")
+        list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+        set(Protobuf_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/share/protobuf")
+    endif()
+    if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows/share/grpc/gRPCConfig.cmake")
+        list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+        set(gRPC_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/share/grpc")
+    endif()
+endif()
+
+# Prefer config packages from vcpkg to avoid mixing with system/anaconda modules
+# Prefer Protobuf config package from vcpkg; uppercase name improves DIR hinting
+find_package(Protobuf CONFIG QUIET)
+if (NOT Protobuf_FOUND)
+    find_package(Protobuf REQUIRED)
+endif()
+
+find_package(gRPC CONFIG QUIET)
+if (NOT gRPC_FOUND)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GRPCPP REQUIRED grpc++)

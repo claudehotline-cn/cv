@@ -329,6 +329,28 @@ bool Application::start() {
         ok = rest_server_->start();
     }
 
+    // Optional standalone Prometheus endpoint (metrics-only via second RestServer)
+    try {
+        std::string prom_ep;
+        if (const char* envp = std::getenv("VA_PROM_ENDPOINT")) { prom_ep = envp; }
+        if (prom_ep.empty()) prom_ep = app_config_.observability.metrics_prom_endpoint;
+        if (!prom_ep.empty()) {
+            auto pos = prom_ep.find(':');
+            std::string host = "0.0.0.0"; int port = 9090;
+            if (pos != std::string::npos) { host = prom_ep.substr(0,pos); try { port = std::stoi(prom_ep.substr(pos+1)); } catch (...) {} }
+            else { try { port = std::stoi(prom_ep); } catch (...) {} }
+            if (port > 0 && port < 65536) {
+                va::server::RestServerOptions mo; mo.host = host; mo.port = port;
+                metrics_rest_server_ = std::make_unique<va::server::RestServer>(mo, *this);
+                if (metrics_rest_server_ && !metrics_rest_server_->start()) {
+                    VA_LOG_WARN() << "[Observability] prom_endpoint start failed at " << host << ":" << port;
+                } else {
+                    VA_LOG_INFO() << "[Observability] prom_endpoint listening at " << host << ":" << port;
+                }
+            }
+        }
+    } catch (...) { VA_LOG_WARN() << "[Observability] prom_endpoint start exception"; }
+
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
     // 控制平面：按 app.yaml 启动 gRPC（可由 env 覆盖）
     if (app_config_.control_plane.enabled) {

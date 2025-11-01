@@ -71,8 +71,9 @@ static bool dechunk(const std::string& in, std::string& out) {
   }
 }
 
-static std::string host_header_value(const std::string& host, int port, int family_hint = AF_UNSPEC) {
-  bool need_bracket = (family_hint == AF_INET6) || (host.find(':') != std::string::npos);
+static std::string host_header_value(const std::string& host, int port, int /*family_hint*/ = 0) {
+  // On non-Windows builds we avoid relying on AF_* macros; bracket IPv6 literals by detecting ':'
+  bool need_bracket = (host.find(':') != std::string::npos);
   std::ostringstream os; if (need_bracket) os << "[" << host << "]:" << port; else os << host << ":" << port; return os.str();
 }
 

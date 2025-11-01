@@ -1,0 +1,35 @@
+# Video Analyzer (CPU) — multi-stage build
+
+FROM ubuntu:22.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    build-essential cmake ninja-build git pkg-config curl unzip \
+    libssl-dev libyaml-cpp-dev libjsoncpp-dev \
+    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+    libopencv-dev \
+    libgrpc++-dev protobuf-compiler protobuf-compiler-grpc libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . /app
+
+# Build VideoAnalyzer (CPU)
+RUN cmake -S video-analyzer -B build -G Ninja \
+    -DUSE_CUDA=OFF -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
+ && cmake --build build -j
+
+FROM ubuntu:22.04 AS runtime
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    ffmpeg libssl3 ca-certificates \
+    libyaml-cpp0.7 libjsoncpp25 \
+    libopencv-core4.5 libopencv-imgproc4.5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
+COPY video-analyzer/config /app/config
+
+ENV VA_PROM_ENDPOINT=0.0.0.0:9090
+EXPOSE 8082 9090 50051
+ENTRYPOINT ["/app/bin/VideoAnalyzer","/app/config"]

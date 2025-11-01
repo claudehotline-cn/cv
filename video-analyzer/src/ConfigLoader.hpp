@@ -103,6 +103,8 @@ struct ObservabilityConfig {
     // Metrics registry + labels
     bool metrics_registry_enabled {true};
     bool metrics_extended_labels {false};
+    // Optional standalone Prometheus endpoint (host:port). Empty = disabled.
+    std::string metrics_prom_endpoint; // e.g., "0.0.0.0:9090"
     // Metrics series TTL seconds (per-source shard cleanup); <=0 disables
     int metrics_ttl_seconds {300};
     // Added: logging format and module-level overrides from config file

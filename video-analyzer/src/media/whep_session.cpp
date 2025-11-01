@@ -2,6 +2,8 @@
 #include "media/whep_session.hpp"
 #include "core/logger.hpp"
 
+#if defined(VA_HAVE_RTC) && VA_HAVE_RTC
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -916,6 +918,8 @@ void WhepSessionManager::feedFrame(const std::string& streamKey, const std::vect
 }
 
 } // namespace va::media
+
+#endif // VA_HAVE_RTC
 
 
 

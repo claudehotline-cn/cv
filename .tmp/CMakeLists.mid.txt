@@ -1,0 +1,121 @@
+find_library(MBEDX509_LIB_DEBUG NAMES mbedx509 PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+find_library(ZLIB_LIB_RELEASE NAMES zlib PATHS ${VCPKG_LIB_DIR} NO_DEFAULT_PATH)
+find_library(ZLIB_LIB_DEBUG NAMES zlib PATHS ${VCPKG_LIB_DIR_DEBUG} NO_DEFAULT_PATH)
+
+include_directories(${OpenCV_INCLUDE_DIRS})
+include_directories(include)
+if(JSONCPP_INCLUDE_DIR)
+    include_directories(${JSONCPP_INCLUDE_DIR})
+endif()
+if(ONNXRUNTIME_INCLUDE_DIR)
+    include_directories(${ONNXRUNTIME_INCLUDE_DIR})
+    add_definitions(-DUSE_ONNXRUNTIME)
+endif()
+
+file(GLOB_RECURSE SOURCES "src/*.cpp")
+# Exclude tool executables from main target sources; they have their own targets
+list(FILTER SOURCES EXCLUDE REGEX ".*/src/tools/.*\\.cpp$")
+file(GLOB_RECURSE HEADERS "include/*.h" "src/*.hpp")
+if (HAVE_CUDA_KERNELS)
+    file(GLOB_RECURSE CUDA_SOURCES "src/*.cu")
+endif()
+
+# Ensure newly added core metric/event sources are included even if glob caching misses them
+list(APPEND SOURCES
+    # Multistage analyzer core
+    src/analyzer/multistage/graph.cpp
+    src/analyzer/multistage/registry.cpp
+    src/analyzer/multistage/node_preproc_letterbox.cpp
+    src/analyzer/multistage/node_model.cpp
+    src/analyzer/multistage/node_nms.cpp
+    src/analyzer/multistage/node_overlay.cpp
+    src/analyzer/multistage/node_roi_batch.cpp
+    src/analyzer/multistage/builder_yaml.cpp
+    src/analyzer/multistage/node_roi_batch_cuda.cpp
+    src/analyzer/multistage/node_kpt_decode.cpp
+    src/analyzer/multistage/runner.cpp
+    src/analyzer/multistage/node_overlay_kpt.cpp
+    src/core/drop_metrics.cpp
+    src/analyzer/multistage/node_join.cpp
+    src/analyzer/multistage/node_reid_smooth.cpp
+    src/core/source_reconnects.cpp
+    src/core/nvdec_events.cpp
+    # Storage: DB repositories
+    src/storage/session_repo.cpp
+    src/storage/graph_repo.cpp
+    src/storage/source_repo.cpp)
+
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
+if (HAVE_CUDA_KERNELS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAS_CUDA_KERNELS)
+endif()
+if (CUDAToolkit_FOUND)
+    # Ensure host code sees cuda_runtime.h so GPU postproc runtime paths are enabled
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+endif()
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
+
+if (VA_DISABLE_HTTP_PUBLIC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_DISABLE_HTTP_PUBLIC)
+endif()
+if (VA_REST_DEPRECATED_410)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_REST_DEPRECATED_410)
+endif()
+
+target_include_directories(${PROJECT_NAME}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE ${OpenCV_LIBS}
+    PRIVATE Threads::Threads
+    PRIVATE ${YAML_CPP_TARGET})
+
+# Link LRO compiled library when present (keep header-only include for compatibility)
+option(VA_WITH_LRO_RUNTIME "Link LRO runtime library (build subproject)" OFF)
+if (VA_WITH_LRO_RUNTIME)
+  if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../lro/CMakeLists.txt")
+      add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lro" "${CMAKE_BINARY_DIR}/lro" EXCLUDE_FROM_ALL)
+      if (TARGET lro_runtime)
+          target_link_libraries(${PROJECT_NAME} PRIVATE lro_runtime)
+      endif()
+  endif()
+endif()
+
+# Control plane (embedded) sources — 无外部依赖占位，默认总是编译
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        src/controlplane/interfaces.hpp
+        src/controlplane/controllers/pipeline_controller.cpp
+        src/controlplane/controllers/pipeline_controller.hpp
+        src/controlplane/adapters/graph_adapter_yaml.cpp
+        src/controlplane/adapters/graph_adapter_yaml.hpp
+        src/controlplane/exporters/prometheus_exporter.cpp
+        src/controlplane/exporters/prometheus_exporter.hpp
+        src/controlplane/io/from_vsm_link.hpp)
+
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        
+        src/core/wal.cpp
+        src/core/wal.hpp
+        src/analyzer/model_registry.cpp
+        src/analyzer/model_registry.hpp
+        # Admin: WAL read-only endpoints
+        src/server/rest_admin_wal.cpp)
+
+## gRPC/Protobuf（REQUIRED）：通过 vcpkg 提示路径，强制启用
+# vcpkg hints (share config packages)
+if (DEFINED VCPKG_ROOT_DIR)
+    if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows/share/protobuf/protobuf-config.cmake")
+        list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+        set(Protobuf_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/share/protobuf")
+    endif()
+    if (EXISTS "${VCPKG_ROOT_DIR}/installed/x64-windows/share/grpc/gRPCConfig.cmake")
+        list(PREPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT_DIR}/installed/x64-windows")
+        set(gRPC_DIR "${VCPKG_ROOT_DIR}/installed/x64-windows/share/grpc")
+    endif()
+endif()
+
+# Prefer config packages from vcpkg to avoid mixing with system/anaconda modules
+# Prefer Protobuf config package from vcpkg; uppercase name improves DIR hinting

@@ -340,6 +340,9 @@ AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_d
             obs.metrics_registry_enabled = metrics_node["registry_enabled"].as<bool>(obs.metrics_registry_enabled);
             obs.metrics_extended_labels = metrics_node["extended_labels"].as<bool>(obs.metrics_extended_labels);
             obs.metrics_ttl_seconds = metrics_node["ttl_seconds"].as<int>(obs.metrics_ttl_seconds);
+            if (metrics_node["prom_endpoint"]) {
+                try { obs.metrics_prom_endpoint = metrics_node["prom_endpoint"].as<std::string>(obs.metrics_prom_endpoint); } catch (...) {}
+            }
         } else {
             if (observability_node["metrics_registry_enabled"]) {
                 obs.metrics_registry_enabled = observability_node["metrics_registry_enabled"].as<bool>(obs.metrics_registry_enabled);

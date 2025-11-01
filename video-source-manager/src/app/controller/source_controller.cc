@@ -1,5 +1,31 @@
 #include "app/controller/source_controller.h"
+#ifdef VSM_WITH_OPENCV
 #include "adapters/inputs/ffmpeg_rtsp_reader.h"
+#else
+#include <string>
+namespace vsm {
+// Minimal stub when OpenCV/RTSP reader is not available in the build
+class FfmpegRtspReader {
+public:
+  explicit FfmpegRtspReader(std::string uri) : uri_(std::move(uri)) {}
+  bool Start() { return true; }
+  void Stop() {}
+  double Fps() const { return 0.0; }
+  const std::string& Uri() const { return uri_; }
+  double JitterMs() const { return 0.0; }
+  double RttMs() const { return 0.0; }
+  double LossRatio() const { return 0.0; }
+  std::uint64_t LastOkUnixSec() const { return 0ULL; }
+  int Width() const { return 0; }
+  int Height() const { return 0; }
+  const std::string& Codec() const { static std::string v; return v; }
+  const std::string& PixFmt() const { static std::string v; return v; }
+  const std::string& ColorSpace() const { static std::string v; return v; }
+private:
+  std::string uri_;
+};
+} // namespace vsm
+#endif
 #include "adapters/outputs/to_analyzer_link.h"
 
 namespace vsm {

@@ -2,6 +2,8 @@
 
 #include "core/logger.hpp"
 
+#if defined(VA_HAVE_RTC) && VA_HAVE_RTC
+
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <json/json.h>
 #include <rtc/rtc.hpp>
@@ -1318,6 +1320,39 @@ ITransport::Stats WebRTCDataChannelTransport::stats() const {
 }
 
 } // namespace va::media
+
+#else // !VA_HAVE_RTC
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+
+namespace va::media {
+
+struct WebRTCDataChannelTransport::Impl {};
+
+WebRTCDataChannelTransport::WebRTCDataChannelTransport()
+    : impl_(std::make_shared<Impl>()) {}
+
+WebRTCDataChannelTransport::~WebRTCDataChannelTransport() = default;
+
+bool WebRTCDataChannelTransport::connect(const std::string& endpoint) {
+    VA_LOG_WARN() << "WebRTCDataChannel disabled (VA_HAVE_RTC=0), endpoint=" << endpoint;
+    return false;
+}
+
+bool WebRTCDataChannelTransport::send(const std::string&, const uint8_t*, size_t) {
+    return false;
+}
+
+void WebRTCDataChannelTransport::disconnect() {}
+
+ITransport::Stats WebRTCDataChannelTransport::stats() const { return {}; }
+
+} // namespace va::media
+
+#endif // VA_HAVE_RTC
 
 // Ensure H.264 bitstream is Annex B (0x00000001 start codes). If input appears to be AVCC (length-prefixed),
 // convert to Annex B by rewriting each NAL with a 4-byte start code.
