@@ -216,7 +216,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                     else if (s.find("\"op\":\"restart\"") != std::string::npos) c_restart++;
                 }
                 mb.header("va_wal_events_total", "counter", "WAL events observed from tail (best-effort)");
-                auto emit = [&](const char* op, unsigned long long v){ std::ostringstream ls; ls<<"{op=\\\""<<op<<"\\\"}"; mb.sample("va_wal_events_total", ls.str(), v); };
+                auto emit = [&](const char* op, unsigned long long v){ std::ostringstream ls; ls<<"{op=\""<<op<<"\"}"; mb.sample("va_wal_events_total", ls.str(), v); };
                 emit("enqueue", c_enqueue); emit("ready", c_ready); emit("failed", c_failed); emit("cancelled", c_cancelled); emit("restart", c_restart);
             } catch (...) {}
         } catch (...) {}
@@ -311,7 +311,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
                 if (!fail_by_reason.empty()) {
                     mb.header("va_subscriptions_failed_by_reason_total", "counter", "Failed subscriptions by reason");
                     for (const auto& kv : fail_by_reason) {
-                        std::ostringstream ls; ls<<"{reason=\\\""<<kv.first<<"\\\"}"; mb.sample("va_subscriptions_failed_by_reason_total", ls.str(), kv.second);
+                        std::ostringstream ls; ls<<"{reason=\""<<kv.first<<"\"}"; mb.sample("va_subscriptions_failed_by_reason_total", ls.str(), kv.second);
                     }
                 }
             } catch (...) {}
@@ -355,7 +355,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
         // SSE connection metrics (always)
         try {
             mb.header("va_sse_connections", "gauge", "Active SSE connections by channel");
-            auto emit_conn = [&](const char* ch, unsigned long long v){ std::ostringstream ls; ls<<"{channel=\\\""<<ch<<"\\\"}"; mb.sample("va_sse_connections", ls.str(), v); };
+            auto emit_conn = [&](const char* ch, unsigned long long v){ std::ostringstream ls; ls<<"{channel=\""<<ch<<"\"}"; mb.sample("va_sse_connections", ls.str(), v); };
             emit_conn("subscriptions", static_cast<unsigned long long>(va::server::g_sse_subscriptions_active.load()));
             emit_conn("sources",       static_cast<unsigned long long>(va::server::g_sse_sources_active.load()));
             emit_conn("logs",          static_cast<unsigned long long>(va::server::g_sse_logs_active.load()));
