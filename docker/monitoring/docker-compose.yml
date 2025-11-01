@@ -23,7 +23,8 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
-      - ../../grafana:/etc/grafana/provisioning/dashboards/cv:ro
+      # Windows 绝对路径挂载到 Grafana dashboards 目录（请保持盘符大小写一致）
+      - D:/Projects/ai/cv/grafana:/etc/grafana/provisioning/dashboards/cv:ro
     ports:
       - "3000:3000"
     depends_on:

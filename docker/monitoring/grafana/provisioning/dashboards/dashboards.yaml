@@ -10,3 +10,4 @@ providers:
     options:
       path: /etc/grafana/provisioning/dashboards
       recursive: true
+      foldersFromFilesStructure: true
