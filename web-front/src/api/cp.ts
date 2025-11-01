@@ -66,6 +66,9 @@ export function subscriptionEventsUrl(id: string) {
 // Control-plane apply（保留旧接口别名）
 export function applyPipeline(spec: any) { return http.post('/api/control/apply_pipeline', spec) }
 export function applyPipelines(items: any[]) { return http.post('/api/control/apply_pipelines', { items }) }
+export function controlDrain(pipeline_name: string, timeout_sec = 5) {
+  return http.post('/api/control/drain', { pipeline_name, timeout_sec })
+}
 
 // 设计文档中的 CP 封装（基于 VITE_CP_BASE_URL）
 const CP_BASE = ((import.meta as any).env?.DEV ? '' : ((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || ''))

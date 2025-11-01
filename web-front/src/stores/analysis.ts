@@ -26,6 +26,7 @@ export const useAnalysisStore = defineStore('analysis', {
     pausedVariant: 'raw',
     whepUrl: '' as string,
     whepBase: '' as string,
+    pausePolicy: 'pass_through' as 'pass_through'|'stop',
     currentSubId: '' as string,
     subPhase: '' as string,
     subProgress: 0 as number,
@@ -61,6 +62,8 @@ export const useAnalysisStore = defineStore('analysis', {
         ])
         const sysData = (sysResp as any).data || {}
         this.whepBase = (sysData.sfu?.whep_base || '').toString()
+        const pol = ((sysData.sfu?.pause_policy || '') as string).toLowerCase()
+        if (pol === 'stop' || pol === 'pass_through') this.pausePolicy = pol as any
         {
           const sAny: any = (sourcesResp as any)
           const raw = ((sAny?.data && (sAny.data.items || sAny.data)) || sAny?.items || sAny) || []
@@ -213,6 +216,7 @@ export const useAnalysisStore = defineStore('analysis', {
         const wasAnalyzing = this.analyzing
         const nextAnalyzing = !paused
         const prevSub = this.currentSubId
+        const prevProfile = this.currentPipeline
         // 选择 profile
         const nextProfile = nextAnalyzing ? (this.currentPipeline || 'det_720p') : this.pausedProfileOf(this.currentPipeline || 'det_720p')
         if (!this.currentSourceId) {
@@ -223,6 +227,10 @@ export const useAnalysisStore = defineStore('analysis', {
         if (prevSub) {
           try { const mod = await import('@/api/cp'); await mod.cancelSubscription(prevSub).catch(()=>{}) } catch {}
           this.currentSubId = ''
+        }
+        // 如策略为 stop，尝试对上一个分析型 profile 做 drain
+        if (paused && this.pausePolicy === 'stop' && prevProfile) {
+          try { const mod = await import('@/api/cp'); await mod.controlDrain(prevProfile, 5).catch(()=>{}) } catch {}
         }
         // 重新订阅
         await this.startAnalysis()
