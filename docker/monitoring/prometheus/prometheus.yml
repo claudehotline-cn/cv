@@ -19,10 +19,16 @@ scrape_configs:
 
   # Prefer VA 独立 Prom endpoint（9090）；如未启用可改回 http job
   # PROM disabled (VA 9090 not enabled)
-  #\n  #   - job_name: video-analyzer-http
+  #\n  #     # - job_name: video-analyzer-http
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ['host.docker.internal:8082']
+  #       labels:
+  #         service: video-analyzer
+
+  - job_name: video-analyzer-prom
     metrics_path: /metrics
     static_configs:
-      - targets: ['host.docker.internal:8082']
+      - targets: ['host.docker.internal:9090']
         labels:
           service: video-analyzer
-
