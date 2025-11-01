@@ -7,6 +7,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    BreadcrumbBar: typeof import('./src/components/chrome/BreadcrumbBar.vue')['default']
     ChartBase: typeof import('./src/components/analytics/ChartBase.vue')['default']
     DBLogsList: typeof import('./src/components/observability/DBLogsList.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
@@ -15,13 +16,14 @@ declare module 'vue' {
     ElBreadcrumb: typeof import('element-plus/es')['ElBreadcrumb']
     ElBreadcrumbItem: typeof import('element-plus/es')['ElBreadcrumbItem']
     ElButton: typeof import('element-plus/es')['ElButton']
-    ElButtonGroup: typeof import('element-plus/es')['ElButtonGroup']
     ElCard: typeof import('element-plus/es')['ElCard']
     ElCheckTag: typeof import('element-plus/es')['ElCheckTag']
     ElCol: typeof import('element-plus/es')['ElCol']
     ElConfigProvider: typeof import('element-plus/es')['ElConfigProvider']
     ElContainer: typeof import('element-plus/es')['ElContainer']
     ElDatePicker: typeof import('element-plus/es')['ElDatePicker']
+    ElDescriptions: typeof import('element-plus/es')['ElDescriptions']
+    ElDescriptionsItem: typeof import('element-plus/es')['ElDescriptionsItem']
     ElDialog: typeof import('element-plus/es')['ElDialog']
     ElDivider: typeof import('element-plus/es')['ElDivider']
     ElDrawer: typeof import('element-plus/es')['ElDrawer']
@@ -53,7 +55,6 @@ declare module 'vue' {
     ElTableColumn: typeof import('element-plus/es')['ElTableColumn']
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
-    ElUpload: typeof import('element-plus/es')['ElUpload']
     EventsList: typeof import('./src/components/observability/EventsList.vue')['default']
     FooterBar: typeof import('./src/components/chrome/FooterBar.vue')['default']
     HotPipelines: typeof import('./src/components/analytics/HotPipelines.vue')['default']

@@ -1,21 +1,31 @@
 <template>
   <div class="page">
-    <el-page-header content="Pipeline 预览 / 分析" @back="goBack" />
+    
     <el-card shadow="hover" class="panel">
       <template #header>
         <div class="toolbar">
-          <el-select v-model="selectedPipeline" filterable placeholder="选择 Pipeline" style="width:200px" :loading="store.loading">
-            <el-option v-for="p in pipelines" :key="p.name" :label="pipelineLabel(p)" :value="p.name" />
-          </el-select>
-          <el-select v-model="selectedSource" filterable placeholder="选择视频源" style="width:240px" :loading="store.loading">
-            <el-option v-for="opt in sourceOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-          </el-select>
-          <el-select v-model="selectedGraph" filterable placeholder="选择分析图" style="width:240px" :loading="store.loading">
-            <el-option v-for="g in graphs" :key="g.graph_id" :label="graphLabel(g)" :value="g.graph_id" />
-          </el-select>
-          <el-select v-model="selectedModel" placeholder="选择分析模型" style="width:220px" :disabled="!models.length">
-            <el-option v-for="m in models" :key="m.id" :label="modelLabel(m)" :value="m.id" />
-          </el-select>
+          <el-form inline size="small" class="toolbar-form" label-position="left">
+            <el-form-item label="Pipeline">
+              <el-select v-model="selectedPipeline" filterable placeholder="选择 Pipeline" style="width:200px" :loading="store.loading">
+                <el-option v-for="p in pipelines" :key="p.name" :label="pipelineLabel(p)" :value="p.name" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="视频源">
+              <el-select v-model="selectedSource" filterable placeholder="选择视频源" style="width:240px" :loading="store.loading">
+                <el-option v-for="opt in sourceOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="图">
+              <el-select v-model="selectedGraph" filterable placeholder="选择图" style="width:240px" :loading="store.loading">
+                <el-option v-for="g in graphs" :key="g.graph_id" :label="graphLabel(g)" :value="g.graph_id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="模型">
+              <el-select v-model="selectedModel" placeholder="选择模型" style="width:220px" :disabled="!models.length">
+                <el-option v-for="m in models" :key="m.id" :label="modelLabel(m)" :value="m.id" />
+              </el-select>
+            </el-form-item>
+          </el-form>
           <el-switch v-model="autoPlay" active-text="自动播放" style="margin-left:8px" />
           <el-switch v-model="analyzing" :disabled="!preflight.ok && !store.analyzing" active-text="实时分析" inactive-text="暂停" style="margin-left:8px" />
           <el-button type="danger" size="small" :disabled="!store.analyzing && !store.currentSubId" @click="onCancel" style="margin-left:4px">
@@ -229,7 +239,7 @@ function refresh() {
   playerRef.value?.refresh()
 }
 
-function goBack() { router.back() }
+
 
 async function onCancel() {
   await store.stopAnalysis()
@@ -276,12 +286,13 @@ watch(() => route.query.pipeline, (val) => {
 })
 </script>
 
-<style scoped>
+<style scoped>\n.toolbar-form .el-form-item{ margin-right:10px; }\n/* 隐藏旧的内联下拉（若仍存在） */\n.toolbar > span.ddl-label, .toolbar > el-select{ display:none !important; }\n
 .page{ padding:12px 4px; display:flex; flex-direction:column; gap:12px; }
 .panel{ border-radius:10px; }
 .toolbar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .status{ margin-left:auto; }
-.player-wrapper{ position:relative; }
+.player-wrapper{ position:relative; max-width: 960px; margin: 0 auto; }
+@media (max-width: 1100px){ .player-wrapper{ max-width: 86vw; } }
 .overlay{ position:absolute; left:16px; top:16px; display:flex; gap:8px; }
 .preflight{ margin-bottom:12px; }
 .meta{ margin-top:4px; }
@@ -291,4 +302,17 @@ watch(() => route.query.pipeline, (val) => {
 .progress .phase{ color:#fff; font-size:12px; margin-bottom:6px; }
 .timeline{ display:flex; gap:10px; color:#fff; font-size:12px; margin-top:6px; opacity:0.9 }
 </style>
+
+<style scoped>
+/* 垂直居中工具栏内的表单与下拉 */
+.toolbar-form{ display:flex; align-items:center; flex-wrap:wrap; }
+.toolbar-form :deep(.el-form-item){ margin-right:10px; margin-bottom:0; display:inline-flex; align-items:center; vertical-align:middle; }
+.toolbar-form :deep(.el-form-item__label){ display:flex; align-items:center; padding:0; line-height:1; }
+.toolbar-form :deep(.el-form-item__content){ display:flex; align-items:center; }
+</style>
+
+
+
+
+
 

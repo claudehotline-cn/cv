@@ -135,3 +135,4 @@ quotas:
   #     observe_only: true
   #   - key: "vip-canary"
   #     enforce_percent: 50   # 对该 key 仅 50% 请求执行拦截
+

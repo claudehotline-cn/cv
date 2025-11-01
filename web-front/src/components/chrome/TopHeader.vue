@@ -20,16 +20,10 @@
       <el-tooltip content="切换主题">
         <el-switch v-model="dark" @change="toggleTheme" :active-color="`#22b2ff`"/>
       </el-tooltip>
+      <el-tag size="small" :type="online ? 'success' : 'info'" effect="plain">{{ online ? 'Online' : 'Offline' }}</el-tag>
       <el-tag size="small" type="success" effect="plain">GPU: {{ gpuStat }}</el-tag>
       <el-tag size="small" type="warning" effect="plain">告警: {{ alerts }}</el-tag>
     </div>
-  </div>
-  <div class="sub">
-    <el-breadcrumb separator="/">
-      <el-breadcrumb-item>AI 平台</el-breadcrumb-item>
-      <el-breadcrumb-item>{{ routeName }}</el-breadcrumb-item>
-    </el-breadcrumb>
-    <el-tag :type="online ? 'success' : 'info'" size="small">{{ online ? 'Online' : 'Offline' }}</el-tag>
   </div>
   <el-divider style="margin:0"/>
 </template>
@@ -39,6 +33,8 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { VideoCameraFilled, Search } from '@element-plus/icons-vue'
+const props = defineProps<{ collapsed?: boolean }>()
+const emit = defineEmits(['toggle-aside'])
 
 const q = ref('')
 const dark = ref(true)
@@ -76,16 +72,6 @@ function goSearch(){
 }
 
 const route = useRoute()
-const routeName = computed(() => {
-  const p = route.path
-  if (p.startsWith('/pipeline')) return 'Pipelines'
-  if (p.startsWith('/source')) return 'Sources'
-  if (p.startsWith('/model')) return 'Models'
-  if (p.startsWith('/observability')) return 'Observability'
-  if (p.startsWith('/settings')) return 'Settings'
-  if (p.startsWith('/about')) return 'About'
-  return 'Dashboard'
-})
 
 const app = useAppStore()
 const online = computed(() => app.online)
@@ -94,12 +80,13 @@ const alerts = ref(0)
 </script>
 
 <style scoped>
-.bar{ display:flex; align-items:center; gap:12px; height:48px; }
-.sub{ display:flex; align-items:center; gap:12px; height:16px; margin-top:4px; }
+.bar{ display:flex; align-items:center; gap:12px; height:64px; }
 .brand{ display:flex; align-items:center; gap:8px; font-weight:600; color: var(--va-text-1); }
 .brand span{ font-size:16px; letter-spacing:.2px; }
 .brand-tag{ margin-left:8px; }
 .search{ max-width: 520px; margin-left: 12px; }
 .actions{ margin-left:auto; display:flex; align-items:center; gap:10px; }
+.icon-btn{ width: 28px; height: 28px; padding: 0; }
 </style>
+
 
