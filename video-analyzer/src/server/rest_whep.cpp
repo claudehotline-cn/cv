@@ -35,7 +35,19 @@ HttpResponse RestServer::Impl::handleWhepCreate(const HttpRequest& req) {
         auto q = parseQueryKV(req.query);
         std::string stream = q.count("stream")? q["stream"] : (q.count("stream_id")? q["stream_id"] : std::string());
         if (stream.empty() || offer.empty()) return errorResponse("missing stream/sdp", 400);
-        std::string streamKey = stream; auto p = streamKey.find(':'); if (p != std::string::npos) streamKey = streamKey.substr(0, p);
+        // Variant selection: overlay (default) → use full stream (e.g. cam01:det_720p);
+        // raw → strip profile suffix (use cam01) 以转发原始帧。
+        std::string variant;
+        if (q.count("variant")) {
+            variant = q["variant"];
+        } else {
+            const char* v = std::getenv("VA_WHEP_DEFAULT_VARIANT");
+            if (v) variant = v;
+        }
+        for (auto& ch : variant) ch = (char)std::tolower((unsigned char)ch);
+        if (variant != "raw" && variant != "overlay") variant = "overlay";
+        std::string streamKey = stream;
+        if (variant == "raw") { auto p = streamKey.find(':'); if (p != std::string::npos) streamKey = streamKey.substr(0, p); }
         // choose VA instance by hashing
         std::vector<std::string> hosts = parseHosts("VA_GRPC_HOSTS");
         std::string addr = hosts.empty()? (std::getenv("VA_GRPC_ADDR")? std::getenv("VA_GRPC_ADDR") : std::string()) : pickHost(hosts, streamKey);
