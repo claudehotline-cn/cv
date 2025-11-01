@@ -41,6 +41,11 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
     if (root["restream"]) {
       auto r = root["restream"]; if (r["rtsp_base"]) out->restream_rtsp_base = r["rtsp_base"].as<std::string>();
     }
+    if (root["sfu"]) {
+      auto sfu = root["sfu"];
+      if (sfu["whep_base"]) out->sfu_whep_base = sfu["whep_base"].as<std::string>(out->sfu_whep_base);
+      if (sfu["default_variant"]) out->sfu_whep_default_variant = sfu["default_variant"].as<std::string>(out->sfu_whep_default_variant);
+    }
     if (root["sse"]) {
       auto s = root["sse"];
       if (s["keepalive_ms"]) out->sse.keepalive_ms = s["keepalive_ms"].as<int>(out->sse.keepalive_ms);

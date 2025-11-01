@@ -42,6 +42,10 @@ struct AppConfig {
   std::string http_listen{"0.0.0.0:8080"};
   std::string va_addr{"127.0.0.1:50051"};
   std::string vsm_addr{"127.0.0.1:7070"};
+  // SFU/WHEP base for front-end negotiation hints (e.g., http://127.0.0.1:18080)
+  std::string sfu_whep_base{"http://127.0.0.1:18080"};
+  // Optional default variant hint for front-end (overlay|raw)
+  std::string sfu_whep_default_variant{"overlay"};
   int va_timeout_ms{8000};
   int vsm_timeout_ms{8000};
   int va_retries{1};

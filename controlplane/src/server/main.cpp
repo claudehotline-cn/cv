@@ -200,13 +200,13 @@ int main(int argc, char** argv) {
       os << "{\"code\":\"OK\",\"data\":{";
       // CP restream config
       os << "\"restream\":{\"rtsp_base\":\"" << cfg.restream_rtsp_base << "\",\"source\":\"config\"},";
-      // SFU/WHEP endpoint for negotiation: point to CP base explicitly
-      // Also echo default variant for front-end hint (from env; overlay as fallback)
+      // SFU/WHEP endpoint for negotiation: use cfg value; also echo default variant (cfg/env fallback)
       {
-        std::string defv = "overlay";
-        try { const char* v = std::getenv("VA_WHEP_DEFAULT_VARIANT"); if (v && *v) defv = v; } catch (...) {}
+        std::string base = cfg.sfu_whep_base.empty()? std::string("http://") + cfg.http_listen : cfg.sfu_whep_base;
+        std::string defv = cfg.sfu_whep_default_variant.empty()? "overlay" : cfg.sfu_whep_default_variant;
+        if (defv.empty()) { try { const char* v = std::getenv("VA_WHEP_DEFAULT_VARIANT"); if (v && *v) defv = v; } catch (...) {} }
         for (auto& ch : defv) ch = (char)std::tolower((unsigned char)ch);
-        os << "\"sfu\":{\"whep_base\":\"http://127.0.0.1:18080\",\"whep_default_variant\":\"" << defv << "\"},";
+        os << "\"sfu\":{\"whep_base\":\"" << base << "\",\"whep_default_variant\":\"" << defv << "\"},";
       }
       // VA runtime
       os << "\"runtime\":{\"provider\":\""<<provider<<"\",\"gpu_active\":"<<(gpu?"true":"false")<<",\"io_binding\":"<<(iob?"true":"false")<<"},";
