@@ -1,0 +1,43 @@
+groups:
+  - name: cv_targets_health
+    interval: 15s
+    rules:
+      - alert: CVTargetDown
+        expr: up{job=~"controlplane|video-analyzer-.*"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Target down ({{ $labels.job }})"
+          description: "{{ $labels.instance }} is down for more than 30s."
+
+      - alert: CVScrapeErrors
+        expr: increase(prometheus_target_scrapes_exceeded_sample_limit_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Prometheus scrape errors observed"
+          description: "Some scrapes exceeded sample limit in last 5m."
+
+  - name: cv_video_analyzer_quality
+    interval: 30s
+    rules:
+      - alert: VAThroughputDrop
+        expr: rate(va_encoder_bytes_total[1m]) < 10000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VA throughput low"
+          description: "Encoded bytes per second < 10KB/s ({{ $value }})"
+
+      - alert: VAEncoderEagainSpike
+        expr: increase(va_encoder_eagain_total[5m]) > 10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Encoder EAGAIN spikes"
+          description: ">10 EAGAIN in last 5m for {{ $labels.source_id }}"
+
