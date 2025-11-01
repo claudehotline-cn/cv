@@ -206,7 +206,9 @@ int main(int argc, char** argv) {
         std::string defv = cfg.sfu_whep_default_variant.empty()? "overlay" : cfg.sfu_whep_default_variant;
         if (defv.empty()) { try { const char* v = std::getenv("VA_WHEP_DEFAULT_VARIANT"); if (v && *v) defv = v; } catch (...) {} }
         for (auto& ch : defv) ch = (char)std::tolower((unsigned char)ch);
-        os << "\"sfu\":{\"whep_base\":\"" << base << "\",\"whep_default_variant\":\"" << defv << "\"},";
+        std::string pause = cfg.sfu_pause_policy.empty()? "pass_through" : cfg.sfu_pause_policy;
+        for (auto& ch : pause) ch = (char)std::tolower((unsigned char)ch);
+        os << "\"sfu\":{\"whep_base\":\"" << base << "\",\"whep_default_variant\":\"" << defv << "\",\"pause_policy\":\"" << pause << "\"},";
       }
       // VA runtime
       os << "\"runtime\":{\"provider\":\""<<provider<<"\",\"gpu_active\":"<<(gpu?"true":"false")<<",\"io_binding\":"<<(iob?"true":"false")<<"},";

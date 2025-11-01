@@ -21,6 +21,10 @@ restream:
   rtsp_base: rtsp://127.0.0.1:8554/
 sfu:
   whep_base: http://127.0.0.1:18080
+  default_variant: overlay
+  pause_policy: pass_through # pass_through | stop
+sfu:
+  whep_base: http://127.0.0.1:18080
   # default_variant is a hint for front-end; VA takes precedence
   default_variant: overlay
 ## 可选：SSE 配置

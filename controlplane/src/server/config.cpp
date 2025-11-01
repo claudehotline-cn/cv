@@ -45,6 +45,7 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
       auto sfu = root["sfu"];
       if (sfu["whep_base"]) out->sfu_whep_base = sfu["whep_base"].as<std::string>(out->sfu_whep_base);
       if (sfu["default_variant"]) out->sfu_whep_default_variant = sfu["default_variant"].as<std::string>(out->sfu_whep_default_variant);
+      if (sfu["pause_policy"]) out->sfu_pause_policy = sfu["pause_policy"].as<std::string>(out->sfu_pause_policy);
     }
     if (root["sse"]) {
       auto s = root["sse"];

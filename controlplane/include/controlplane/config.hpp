@@ -46,6 +46,8 @@ struct AppConfig {
   std::string sfu_whep_base{"http://127.0.0.1:18080"};
   // Optional default variant hint for front-end (overlay|raw)
   std::string sfu_whep_default_variant{"overlay"};
+  // Pause policy hint for front-end (pass_through|stop)
+  std::string sfu_pause_policy{"pass_through"};
   int va_timeout_ms{8000};
   int vsm_timeout_ms{8000};
   int va_retries{1};
