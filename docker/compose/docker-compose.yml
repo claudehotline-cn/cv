@@ -14,7 +14,7 @@ services:
       - VA_PROM_ENDPOINT=0.0.0.0:9090
     volumes:
       - ../../video-analyzer/config:/app/config:ro
-      - ../../logs:/logs
+      - ../../logs:/app/logs
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9090/metrics >/dev/null || exit 1"]
       interval: 10s
@@ -74,4 +74,5 @@ services:
 networks:
   default:
     name: cv-net
+
 
