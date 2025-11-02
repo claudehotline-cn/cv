@@ -4,19 +4,19 @@ engine:
   device: 0
   options:
     # Default to FFmpeg RTSP source for better stability on Windows
-    use_ffmpeg_source: false
-    use_nvdec: true
-    use_nvenc: true
+    use_ffmpeg_source: true
+    use_nvdec: false
+    use_nvenc: false
     use_multistage: true
     use_io_binding: true
-    allow_cpu_fallback: false
+    allow_cpu_fallback: true
     # 按“检测框问题修复.md”止血建议：暂时关闭 device 直出视图，改为主机暂存
     device_output_views: false
     stage_device_outputs: true
     use_cuda_nms: true
-    render_passthrough: false
-    render_cuda: true
-    use_cuda_preproc: true
+    render_passthrough: true
+    render_cuda: false
+    use_cuda_preproc: false
     graph_id: analyzer_multistage_example
     warmup_runs: auto
     overlay_thickness: 3                                                       
@@ -92,7 +92,7 @@ database:
     interval_seconds: 600 # 清理周期（秒）
     jitter_percent: 10    # 抖动百分比，避免同时触发
 control_plane:
-  enabled: true
+  enabled: false
   grpc_addr: "0.0.0.0:50051"
   vsm_addr: "127.0.0.1:7070"
   tls:
