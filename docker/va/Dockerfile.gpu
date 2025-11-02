@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y \
     libgrpc++1 \
     libopencv-core4.5 libopencv-imgproc4.5 \
     libopencv-videoio4.5 libopencv-highgui4.5 libopencv-imgcodecs4.5 libopencv-video4.5 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

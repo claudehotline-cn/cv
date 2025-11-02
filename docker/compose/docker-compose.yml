@@ -16,7 +16,7 @@ services:
       - ../../video-analyzer/config:/app/config:ro
       - ../../logs:/logs
     healthcheck:
-      test: ["CMD","curl","-f","http://localhost:8082/metrics"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9090/metrics >/dev/null || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -28,14 +28,16 @@ services:
     image: cv/cp:latest
     container_name: cp
     depends_on:
-      - va
-      - vsm
+      va:
+        condition: service_healthy
+      vsm:
+        condition: service_healthy
     ports:
       - "18080:18080"
     volumes:
       - ../../controlplane/config:/app/config:ro
     healthcheck:
-      test: ["CMD","curl","-f","http://localhost:18080/metrics"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18080/api/system/info >/dev/null || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -47,7 +49,8 @@ services:
     image: cv/web:latest
     container_name: web
     depends_on:
-      - cp
+      cp:
+        condition: service_healthy
     ports:
       - "8080:8080"
 
@@ -71,3 +74,4 @@ services:
 networks:
   default:
     name: cv-net
+

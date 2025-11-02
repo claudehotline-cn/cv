@@ -19,7 +19,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     libssl3 ca-certificates libyaml-cpp0.7 libjsoncpp25 \
-    libgrpc++1 \
+    libgrpc++1 curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -28,3 +28,4 @@ COPY controlplane/config /app/config
 
 EXPOSE 18080
 ENTRYPOINT ["/app/bin/controlplane","/app/config"]
+
