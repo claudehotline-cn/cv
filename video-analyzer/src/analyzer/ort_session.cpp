@@ -396,6 +396,13 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
         impl_->output_names.emplace_back(impl_->output_names_storage.back().c_str());
     }
 
+    if (output_count == 0) {
+        try {
+            VA_LOG_C(::va::core::LogLevel::Error, "analyzer.ort")
+                << "load: model has zero outputs (path='" << model_path << "').";
+        } catch (...) { /* ignore */ }
+    }
+
     impl_->resolved_provider = provider_appended ? provider : std::string{"cpu"};
     impl_->cpu_fallback = gpu_requested && !provider_appended;
 

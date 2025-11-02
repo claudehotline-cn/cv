@@ -3,7 +3,7 @@ services:
     build:
       dockerfile: docker/va/Dockerfile.gpu
       args:
-        ORT_VERSION: "1.23.0"
+        ORT_VERSION: "1.23.2"
         CUDA_VER: "12.9.0"   # 与宿主 CUDA 对齐（根据 nvcc 12.9）
         UBUNTU_VER: "22.04"  # 需与基础镜像兼容
     image: cv/va:latest-gpu

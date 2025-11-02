@@ -95,6 +95,16 @@ bool NodeModel::open(NodeContext& ctx) {
             VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "failed to load model: " << model_path_;
             return false;
         }
+        // 若模型未声明任何输出，直接判定为配置/工件错误，避免下游误报 NMS 失败
+        try {
+            auto out_names_probe = s->outputNames();
+            if (out_names_probe.empty()) {
+                VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                    << "model has zero declared outputs (path='" << model_path_ << "'). Check ONNX graph outputs / export config (nms=False).";
+                return false;
+            }
+        } catch (...) { /* ignore */ }
+
         // 回填 EngineManager 的运行态（provider/gpu/io_binding/device_binding），用于 RuntimeSummary
         if (ctx.engine_registry) {
             try {
@@ -128,7 +138,16 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
     if (it == p.tensors.end()) return false;
     // 移除冗余推理输入日志，避免控制台噪声
     std::vector<va::core::TensorView> outs;
-    if (!session_ || !session_->run(it->second, outs)) { infer_fail_count_.fetch_add(1, std::memory_order_relaxed); return false; }
+    if (!session_ || !session_->run(it->second, outs)) {
+        infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (outs.empty()) {
+        infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+        VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+            << "model.run produced zero outputs (path='" << model_path_ << "').";
+        return false;
+    }
     // Map outputs to keys (support multiple outputs and auto keys)
     if (!outs.empty()) {
         const size_t n_model = outs.size();

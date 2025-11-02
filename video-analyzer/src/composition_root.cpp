@@ -266,17 +266,27 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
 
         std::shared_ptr<va::analyzer::IPreprocessor> preprocessor;
 #ifdef USE_CUDA
-        // Enable CUDA preprocessor by engine option or env
-        bool opt_cuda_preproc = false;
+        // Prefer CUDA preprocessor when GPU provider is active (zero-copy path),
+        // unless explicitly disabled via engine option or env.
+        auto toLower3 = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+        // Default preference follows provider hint
+        bool prefer_cuda_preproc = hint_gpu;
+        // Engine option override (accepts true/false)
         if (!engine_desc.options.empty()) {
             auto it = engine_desc.options.find("use_cuda_preproc");
             if (it != engine_desc.options.end()) {
-                std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
-                opt_cuda_preproc = (v=="1"||v=="true"||v=="yes"||v=="on");
+                std::string v = toLower3(it->second);
+                if (v=="1"||v=="true"||v=="yes"||v=="on") prefer_cuda_preproc = true;
+                else if (v=="0"||v=="false"||v=="no"||v=="off") prefer_cuda_preproc = false;
             }
         }
-        const char* use_cuda_preproc = std::getenv("VA_USE_CUDA_PREPROC");
-        if (hint_gpu && (opt_cuda_preproc || (use_cuda_preproc && (std::string(use_cuda_preproc) == "1" || std::string(use_cuda_preproc) == "true")))) {
+        // Environment override (VA_USE_CUDA_PREPROC=1/0)
+        if (const char* env_cuda_pre = std::getenv("VA_USE_CUDA_PREPROC")) {
+            std::string v = toLower3(env_cuda_pre);
+            if (v=="1"||v=="true"||v=="yes"||v=="on") prefer_cuda_preproc = true;
+            else if (v=="0"||v=="false"||v=="no"||v=="off") prefer_cuda_preproc = false;
+        }
+        if (prefer_cuda_preproc) {
             preprocessor = std::make_shared<va::analyzer::LetterboxPreprocessorCUDA>(cfg.input_width, cfg.input_height);
         }
 #endif // USE_CUDA
@@ -290,7 +300,8 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         va::analyzer::OrtModelSession::Options options;
         options.provider = !cfg.engine_provider.empty() ? cfg.engine_provider : engine_desc.provider;
         options.device_id = cfg.device_index;
-        options.use_io_binding = cfg.use_io_binding;
+        // Enable IoBinding by default for GPU provider to keep zero-copy path active
+        options.use_io_binding = cfg.use_io_binding || hint_gpu;
         options.prefer_pinned_memory = cfg.prefer_pinned_memory;
         options.allow_cpu_fallback = cfg.allow_cpu_fallback;
         options.enable_profiling = cfg.enable_profiling;

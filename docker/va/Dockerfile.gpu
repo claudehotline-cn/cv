@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . /app
 
+# Ensure destination for locally built ONNX Runtime exists early (defensive)
+RUN mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include
+
 # Build and install libdatachannel with OpenSSL backend to enable WHEP
 RUN set -eux; \
     git clone --depth=1 --recursive https://github.com/paullouisageneau/libdatachannel.git /tmp/libdatachannel && \
@@ -32,24 +35,53 @@ RUN set -eux; \
     cmake --install /tmp/ixwebsocket/build && \
     rm -rf /tmp/ixwebsocket
 
-# Install ONNX Runtime GPU (headers+libs) and build VideoAnalyzer with CUDA kernels + NVDEC/NVENC + ORT
-ARG ORT_VERSION=1.23.0
+# Build ONNX Runtime from source (v1.23.2) with CUDA; then build VideoAnalyzer
+ARG ORT_VERSION=1.23.2
 RUN set -eux; \
-    mkdir -p /opt/onnxruntime && \
-    curl -L -o /tmp/ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz && \
-    tar -C /opt -xzf /tmp/ort.tgz && \
-    rm -rf /opt/onnxruntime && mv /opt/onnxruntime-linux-x64-gpu-${ORT_VERSION} /opt/onnxruntime && \
-    rm -f /tmp/ort.tgz && \
+    # Base toolchain for building ORT
+    apt-get update && apt-get install -y wget gnupg ca-certificates python3 python3-pip python3-dev && \
+    # Add NVIDIA Machine Learning repo for TensorRT (Ubuntu 22.04)
+    wget -qO /usr/share/keyrings/nvidia-archive-keyring.gpg https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub || true && \
+    echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2204/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list && \
+    apt-get update || true && \
+    apt-get install -y libnvinfer-dev libnvinfer-plugin-dev libnvonnxparsers-dev libnvparsers-dev || true && \
+    # Clone ONNX Runtime source (no repo-side third-party directory required)
+    git clone --depth 1 --branch v${ORT_VERSION} https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime && \
+    python3 -m pip install --upgrade pip wheel setuptools && \
+    cd /tmp/onnxruntime && \
+    # TensorRT is optional; skip unless headers are present
+    TRT_FLAGS=""; if [ -f /usr/include/NvInfer.h ]; then TRT_FLAGS="--use_tensorrt --tensorrt_home=/usr"; fi && \
+    python3 tools/ci_build/build.py \
+      --config Release \
+      --build_dir /tmp/ort_build \
+      --build_shared_lib \
+      --skip_tests \
+      --parallel \
+      --cmake_generator Ninja \
+      --use_cuda --cuda_home=/usr/local/cuda --cudnn_home=/usr/lib/x86_64-linux-gnu \
+      --cuda_version=12.9 \
+      --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=120 \
+      --cmake_extra_defines FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER \
+      ${TRT_FLAGS} && \
+    mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include && \
+    # Install headers
+    cp -rv include/onnxruntime /opt/onnxruntime/include/ || true && \
+    # Collect built libraries
+    find /tmp/ort_build -type f -name 'libonnxruntime*.so*' -exec cp -v {} /opt/onnxruntime/lib/ \; || true && \
+    find /tmp/ort_build -type f -name 'libonnxruntime_providers_*' -exec cp -v {} /opt/onnxruntime/lib/ \; || true && \
+    # Build VideoAnalyzer against locally built ONNX Runtime
+    cd /app && \
     cmake -S video-analyzer -B build -G Ninja \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
       -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
-      -DCMAKE_CUDA_ARCHITECTURES=89 \
+      -DCMAKE_CUDA_ARCHITECTURES=120 \
       -DONNXRUNTIME_ROOT=/opt/onnxruntime \
     && cmake --build build -j
 
 ARG CUDA_VER=12.9.0
 ARG UBUNTU_VER=22.04
-FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu${UBUNTU_VER} AS runtime
+# Use cudnn-runtime to ensure libcudnn is available for ONNX Runtime CUDA EP
+FROM nvidia/cuda:${CUDA_VER}-cudnn-runtime-ubuntu${UBUNTU_VER} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     ffmpeg libssl3 ca-certificates \
