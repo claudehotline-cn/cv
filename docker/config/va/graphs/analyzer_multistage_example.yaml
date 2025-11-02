@@ -7,7 +7,7 @@ analyzer:
       - name: det
         type: model.ort
         # 为降低冷启动时延，默认使用较小模型（yolov12n）。需要高精度时可改回 yolov12x。
-        params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "/models/yolov12n.onnx" }
+        params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "/models/yolov12x.onnx" }
       - name: nms
         type: post.yolo.nms
         params: { conf: "0.65", iou: "0.45", use_cuda: "1" }
