@@ -190,7 +190,7 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     impl_->session_options->SetIntraOpNumThreads(1);
 
     if (impl_->options.enable_profiling) {
-        impl_->session_options->EnableProfiling(L"ort_profile_");
+        impl_->session_options->EnableProfiling(ORT_TSTR("ort_profile_"));
     }
 
     std::string provider = toLower(impl_->options.provider);

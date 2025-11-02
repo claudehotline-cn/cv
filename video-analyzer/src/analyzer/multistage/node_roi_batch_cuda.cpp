@@ -3,6 +3,7 @@
 #include "analyzer/multistage/node_roi_batch.hpp"
 #include "analyzer/cuda/preproc_letterbox_kernels.hpp"
 #include "core/logger.hpp"
+#include <cmath>
 
 using va::analyzer::multistage::util::get_or_int;
 

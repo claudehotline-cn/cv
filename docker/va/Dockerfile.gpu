@@ -22,11 +22,12 @@ RUN set -eux; \
     mkdir -p /opt/onnxruntime && \
     curl -L -o /tmp/ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz && \
     tar -C /opt -xzf /tmp/ort.tgz && \
-    mv /opt/onnxruntime-linux-x64-gpu-${ORT_VERSION} /opt/onnxruntime && \
+    rm -rf /opt/onnxruntime && mv /opt/onnxruntime-linux-x64-gpu-${ORT_VERSION} /opt/onnxruntime && \
     rm -f /tmp/ort.tgz && \
     cmake -S video-analyzer -B build -G Ninja \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
       -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
+      -DCMAKE_CUDA_ARCHITECTURES=89 \
       -DONNXRUNTIME_ROOT=/opt/onnxruntime \
     && cmake --build build -j
 
@@ -46,6 +47,7 @@ WORKDIR /app
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
 COPY --from=build /opt/onnxruntime /opt/onnxruntime
 COPY video-analyzer/config /app/config
+RUN mkdir -p /app/logs
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility

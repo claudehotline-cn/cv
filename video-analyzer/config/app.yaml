@@ -62,7 +62,7 @@ observability:
     encoder.ffmpeg: debug                                                                        
   console: true
   file:
-    path: D:\Projects\ai\cv\logs\video-analyzer-release.log
+    path: /app/logs/video-analyzer-release.log
     max_size_kb: 10240
     max_files: 5
   pipeline_metrics:
