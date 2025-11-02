@@ -1,0 +1,41 @@
+server:
+  http_listen: 0.0.0.0:18080
+va:
+  grpc_addr: va:50051
+  timeout_ms: 60000
+  retries: 0
+  tls:
+    enabled: true
+    root_cert_file: certs/ca.pem
+    client_cert_file: certs/cp_client.crt
+    client_key_file: certs/cp_client.key
+vsm:
+  grpc_addr: vsm:7070
+  retries: 1
+  tls:
+    enabled: true
+    root_cert_file: certs/ca.pem
+    client_cert_file: certs/cp_client.crt
+    client_key_file: certs/cp_client.key
+restream:
+  rtsp_base: rtsp://host.docker.internal:8554/
+sfu:
+  whep_base: http://localhost:18080
+  default_variant: overlay
+  pause_policy: stop
+security:
+  cors:
+    allowed_origins: ["*"]
+  auth:
+    bearer_token: ""
+  rate_limit:
+    rps: 0
+db:
+  driver: mysql
+  host: host.docker.internal
+  port: 13306
+  user: root
+  password: 123456
+  schema: cv_cp
+  timeout_ms: 1000
+

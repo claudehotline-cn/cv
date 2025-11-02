@@ -266,6 +266,22 @@ AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_d
         payload.sfu_whep_base = sfu["whep_base"].as<std::string>("");
         payload.sfu_whep_default_variant = sfu["default_variant"].as<std::string>(payload.sfu_whep_default_variant);
     }
+
+    // webrtc section (ICE / mDNS)
+    if (v["webrtc"] && v["webrtc"].IsMap()) {
+        const auto wr = v["webrtc"];
+        if (wr["ice"] && wr["ice"].IsMap()) {
+            const auto ice = wr["ice"];
+            payload.webrtc.ice.bind_address = ice["bind_address"].as<std::string>(payload.webrtc.ice.bind_address);
+            payload.webrtc.ice.public_ip = ice["public_ip"].as<std::string>(payload.webrtc.ice.public_ip);
+            payload.webrtc.ice.port_range_begin = ice["port_range_begin"].as<int>(payload.webrtc.ice.port_range_begin);
+            payload.webrtc.ice.port_range_end = ice["port_range_end"].as<int>(payload.webrtc.ice.port_range_end);
+        }
+        if (wr["mdns"] && wr["mdns"].IsMap()) {
+            const auto md = wr["mdns"];
+            payload.webrtc.mdns.disable = md["disable"].as<bool>(payload.webrtc.mdns.disable);
+        }
+    }
     const auto observability_node = v["observability"];
     if (observability_node && observability_node.IsMap()) {
         auto& obs = payload.observability;
@@ -520,37 +536,42 @@ AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_d
 std::vector<DetectionModelEntry> ConfigLoader::loadDetectionModels(const std::string& config_dir) {
     std::vector<DetectionModelEntry> models;
     YAML::Node root = loadYamlFile(makePath(config_dir, "models.yaml"));
-    YAML::Node models_node = root["models"] ? root["models"] : root;
-    if (!models_node || !models_node.IsMap()) {
+    YAML::Node models_node = root["models"];
+    if (!models_node.IsDefined()) models_node = root;
+    if (!models_node.IsDefined() || !models_node.IsMap()) {
         return models;
     }
 
-    for (auto it = models_node.begin(); it != models_node.end(); ++it) {
-        const std::string task_name = it->first.as<std::string>();
-        const YAML::Node& families = it->second;
-        if (!families.IsMap()) {
-            continue;
-        }
+    try {
+        for (auto it = models_node.begin(); it != models_node.end(); ++it) {
+            std::string task_name;
+            try { task_name = it->first.as<std::string>(); } catch (...) { continue; }
+            if (task_name.empty()) continue;
+            const YAML::Node families = it->second;
+            if (!families.IsMap()) continue;
 
-        for (auto fit = families.begin(); fit != families.end(); ++fit) {
-            const std::string family_name = fit->first.as<std::string>();
-            const YAML::Node& variants = fit->second;
+            for (auto fit = families.begin(); fit != families.end(); ++fit) {
+                std::string family_name;
+                try { family_name = fit->first.as<std::string>(); } catch (...) { continue; }
+                if (family_name.empty()) continue;
+                const YAML::Node variants = fit->second;
 
-            if (variants.IsMap()) {
-                for (auto vit = variants.begin(); vit != variants.end(); ++vit) {
-                    const std::string variant_name = vit->first.as<std::string>();
-                    DetectionModelEntry entry = parseModelVariant(task_name, family_name, variant_name, vit->second);
-                    if (!entry.id.empty()) {
-                        models.emplace_back(std::move(entry));
+                if (variants.IsMap()) {
+                    for (auto vit = variants.begin(); vit != variants.end(); ++vit) {
+                        std::string variant_name;
+                        try { variant_name = vit->first.as<std::string>(); } catch (...) { continue; }
+                        DetectionModelEntry entry = parseModelVariant(task_name, family_name, variant_name, vit->second);
+                        if (!entry.id.empty()) models.emplace_back(std::move(entry));
                     }
-                }
-            } else if (variants.IsScalar()) {
-                DetectionModelEntry entry = parseModelVariant(task_name, family_name, "", variants);
-                if (!entry.id.empty()) {
-                    models.emplace_back(std::move(entry));
+                } else if (variants.IsScalar()) {
+                    DetectionModelEntry entry = parseModelVariant(task_name, family_name, "", variants);
+                    if (!entry.id.empty()) models.emplace_back(std::move(entry));
                 }
             }
         }
+    } catch (...) {
+        // On malformed YAML, return what we have parsed so far instead of crashing
+        return models;
     }
     return models;
 }

@@ -102,10 +102,34 @@ bool NvdecRtspSource::openImpl() {
     // Count an 'await IDR' event for NVDEC startup/reopen
     va::core::NvdecEvents::incrementAwaitIdrByUri(uri_, 1);
     idr_log_printed_ = false;
-    if (avformat_open_input(&fmt_ctx_, uri_.c_str(), nullptr, nullptr) < 0) {
+    // Build FFmpeg format options (similar to FFmpeg software path) with safer defaults
+    AVDictionary* opts = nullptr;
+    av_dict_set(&opts, "rtsp_transport", "tcp", 0);
+    av_dict_set(&opts, "rtsp_flags", "prefer_tcp", 0);
+    av_dict_set(&opts, "stimeout", "5000000", 0);
+    av_dict_set(&opts, "rw_timeout", "5000000", 0);
+    const char* env_ad = std::getenv("VA_RTSP_ANALYZEDURATION_US");
+    const char* env_ps = std::getenv("VA_RTSP_PROBESIZE");
+    av_dict_set(&opts, "analyzeduration", env_ad && *env_ad ? env_ad : "1000000", 0);
+    av_dict_set(&opts, "probesize", env_ps && *env_ps ? env_ps : "5000000", 0);
+    auto env_ll = std::getenv("VA_RTSP_LOW_DELAY");
+    bool low_delay = false;
+    if (env_ll) { std::string v(env_ll); for (auto& c : v) c=(char)std::tolower((unsigned char)c); low_delay = (v=="1"||v=="true"||v=="yes"||v=="on"); }
+    if (low_delay) {
+        av_dict_set(&opts, "flags", "low_delay", 0);
+        av_dict_set(&opts, "fflags", "nobuffer", 0);
+        av_dict_set(&opts, "max_delay", "0", 0);
+        av_dict_set(&opts, "reorder_queue_size", "0", 0);
+    }
+    av_dict_set(&opts, "buffer_size", "1048576", 0);
+    av_dict_set(&opts, "user_agent", "VideoAnalyzer/1.0", 0);
+
+    if (avformat_open_input(&fmt_ctx_, uri_.c_str(), nullptr, &opts) < 0) {
+        av_dict_free(&opts);
         fmt_ctx_ = nullptr;
         return false;
     }
+    av_dict_free(&opts);
     if (avformat_find_stream_info(fmt_ctx_, nullptr) < 0) {
         closeImpl();
         return false;

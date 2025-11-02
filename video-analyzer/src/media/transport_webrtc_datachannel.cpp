@@ -26,6 +26,7 @@
 #include <queue>
 #include "core/drop_metrics.hpp"
 #include <random>
+#include <climits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -432,7 +433,7 @@ public:
                 return (s=="1"||s=="true"||s=="yes"||s=="on");
             };
 
-            rtc_config_.enableIceTcp = parse_bool_env("VA_ICE_TCP", true); // 默认 UDP-only
+            rtc_config_.enableIceTcp = parse_bool_env("VA_ICE_TCP", true); // true=允许TCP（默认同时开UDP/TCP）
             rtc_config_.iceServers.clear();
             VA_LOG_INFO() << "[WebRTC] Configuration: enableIceTcp=" << (rtc_config_.enableIceTcp?"true":"false")
                           << ", iceServers=" << rtc_config_.iceServers.size();
@@ -440,8 +441,23 @@ public:
                 VA_LOG_INFO() << "[WebRTC] iceServer: host='" << s.hostname << "' port=" << s.port << " user='" << s.username << "'";
             }
             rtc_config_.disableAutoNegotiation = false;
+            // 端口范围可通过 VA_ICE_PORT_BEGIN/VA_ICE_PORT_END 或 VA_ICE_PORT_RANGE=begin-end 覆盖
             rtc_config_.portRangeBegin = 10000;
             rtc_config_.portRangeEnd = 10100;
+            if (const char* pr = std::getenv("VA_ICE_PORT_RANGE")) {
+                try {
+                    std::string s(pr);
+                    auto dash = s.find('-');
+                    if (dash != std::string::npos) {
+                        int b = std::stoi(s.substr(0, dash));
+                        int e = std::stoi(s.substr(dash+1));
+                        if (b > 0 && e > b && e <= 65535) { rtc_config_.portRangeBegin = (uint16_t)b; rtc_config_.portRangeEnd = (uint16_t)e; }
+                    }
+                } catch (...) {}
+            } else {
+                if (const char* b = std::getenv("VA_ICE_PORT_BEGIN")) { try { int v = std::stoi(b); if (v>0 && v<65535) rtc_config_.portRangeBegin = (uint16_t)v; } catch (...) {} }
+                if (const char* e = std::getenv("VA_ICE_PORT_END")) { try { int v = std::stoi(e); if (v>0 && v<=65535) rtc_config_.portRangeEnd = (uint16_t)v; } catch (...) {} }
+            }
 
             // RTP/发送节奏可在环境变量控制（不改动对外接口）
             mtu_ = 1200; // 默认安全值
@@ -462,12 +478,26 @@ public:
             }
             fps_ = 30; // 目标 FPS（用于 RTP ts 与发送调度）
             if (const char* f = std::getenv("VA_WEBRTC_FPS")) { try { int v = std::stoi(f); if (v >= 5 && v <= 120) fps_ = v; } catch (...) {} }
-            // A-2: 不指定环回，使用系统可用的本机/内网地址做 host 候选；可通过 VA_ICE_BIND 覆盖
+            // A-2: 绑定与发布地址
             if (const char* bind = std::getenv("VA_ICE_BIND")) {
                 rtc_config_.bindAddress = std::string(bind);
             } else {
                 // 显式绑定到指定网卡（用户要求 192.168.50.183）
                 rtc_config_.bindAddress = std::nullopt;
+            }
+
+            // A-3: STUN 服务器（允许通过 VA_STUN=host:port 指定；若未指定可回退内网直连场景）
+            if (const char* stun = std::getenv("VA_STUN")) {
+                std::string s(stun);
+                std::string host = s;
+                uint16_t port = 19302;
+                auto c = s.rfind(':');
+                if (c != std::string::npos) {
+                    host = s.substr(0, c);
+                    try { int p = std::stoi(s.substr(c+1)); if (p>0 && p<=65535) port = static_cast<uint16_t>(p); } catch (...) {}
+                }
+                // libdatachannel IceServer requires ctor with args; no default ctor in this version
+                rtc_config_.iceServers.emplace_back(host, port);
             }
 
             should_stop_sender_ = false;

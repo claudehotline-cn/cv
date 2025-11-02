@@ -66,6 +66,19 @@ RestServer::Impl::Impl(RestServerOptions opts, va::app::Application& application
     cfg_max_queue_ = mq;
     cfg_ttl_seconds_ = ttl;
 
+    // --- WebRTC/WHEP ICE configuration from app config ---
+    try {
+        va::media::WhepSessionManager::Config wcfg;
+        wcfg.bind_address = app.appConfig().webrtc.ice.bind_address;
+        wcfg.public_ip = app.appConfig().webrtc.ice.public_ip;
+        int pb = app.appConfig().webrtc.ice.port_range_begin;
+        int pe = app.appConfig().webrtc.ice.port_range_end;
+        if (pb > 0 && pb <= 65535) wcfg.port_begin = static_cast<uint16_t>(pb);
+        if (pe > 0 && pe <= 65535) wcfg.port_end   = static_cast<uint16_t>(pe);
+        wcfg.disable_mdns = app.appConfig().webrtc.mdns.disable;
+        va::media::WhepSessionManager::instance().setConfig(wcfg);
+    } catch (...) { /* ignore */ }
+
     // Optional: initialize LRO runner when enabled
     try {
         const char* lro_env = std::getenv("VA_LRO_ENABLED");

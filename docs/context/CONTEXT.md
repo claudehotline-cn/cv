@@ -1,53 +1,77 @@
-# 项目上下文（最新）
+# 项目上下文（VA/CP/VSM/Web + Docker）
 
-本文件汇总本仓库“视频分析系统”的关键背景、现状、主要变更与风险，覆盖 VA（Video Analyzer）、CP（Controlplane）、VSM（Video Source Manager）、前端与观测链路（Prometheus/Grafana）。
+本文汇总近期问题、修复与当前可运行形态，聚焦：容器化、模型与图配置、RTSP 拉流、CP 订阅与 SSE、WHEP/ICE 在纯内网的可达性，以及最小可验证路径。
 
-## 1. 组件与目录
-- video-analyzer（VA）：RTSP 接入、预处理/推理/后处理、WHEP 输出、/metrics。
-- controlplane（CP）：统一 API 与路由；WHEP 代理；DB 访问；SSE（规划中）。
-- video-source-manager（VSM）：RTSP 源管理与健康；OpenCV 读取器可选。
-- web-front：前端（分析页、Pipelines 编辑器、Observability：Overview/Metrics）。
-- docker/compose、docker/va|cp|web|vsm：容器化与编排；docker/monitoring：Prom+Grafana。
-- grafana：仪表盘 JSON；docs：context/design/references/memo 等。
+## 架构与进程
+- `video-analyzer`（VA）：拉 RTSP → 多阶段图（预处理/推理/后处理/渲染）→ 推送 WebRTC（WHEP）/ REST 控制。
+- `controlplane`（CP）：对外 REST API 与订阅编排，向 VA 发起 gRPC/HTTP 控制，提供 `/api/subscriptions` 与 `/api/subscriptions/{id}/events`（SSE）。
+- `video-source-manager`（VSM）：RTSP 源管理（可选）。
+- `web-frontend`：分析页面（通过 CP API 交互）。
 
-## 2. 关键能力与现状
-- 分析页“暂停/实时”同会话切换：前端仅调用 `setPipelineMode`；VA 暂停时旁路分析/叠加，恢复时注入一次 IDR，避免花屏与黑帧；不重建订阅/WHEP。
-- YOLO 检测修复：统一 CUDA stream；IoBinding dtype 保真（F16/F32）；设备侧解码/NMS 优先（失败回退 CPU）；NV12 叠加内核走同一 stream。
-- CP WHEP 代理：统一 CORS/预检；POST 强制 Accept=application/sdp；支持 chunked 去分块；Location 改写；`/api/subscriptions` 返回 `{code:"ACCEPTED",data:{id}}`；VSM 为空时可合成默认源稳定前端（可配置关闭）。
-- DB 三接口：`GET /api/models|/api/pipelines|/api/graphs` 由 MySQL 返回（经典/ODBC/X DevAPI 三级兜底）；`/_debug/db` 返回最近 SQL 异常文本。
-- 观测：VA `/metrics` 标签转义问题已修复；支持独立 Prom 端点 `observability.metrics.prom_endpoint: 0.0.0.0:9090`；Grafana 可通过 docker/monitoring 或 CP 反代接入前端。
+## 容器与配置要点
+- 模型卷：将宿主 `docker/model` 映射到容器 `/models`，图文件中统一写绝对路径，例如：`/models/yolov12x.onnx`。
+- 日志：容器内统一写 `/logs/video-analyzer-release.log`，宿主映射 `app/logs/` 目录。
+- 数据库：CP 指向 `host.docker.internal:13306`（user: root / pwd: 123456 / db: cv_cp）。
+- 证书：CP↔VA 双向 TLS，证书 SAN 统一（包含 `localhost`/内网 IP）；已验证 mTLS 互通。
+- 依赖：容器构建期编译 `libdatachannel` 与 `IXWebSocket`，启用 WHEP；`ONNX Runtime` 已就绪（若需 GPU EP，请补齐匹配版本 cuDNN）。
 
-## 3. 前端与编辑器
-- 统一走 CP 代理（移除直连 VA）；分析页通过 CP→WHEP 播放；支持 variant=overlay/raw（后台按模式输出）。
-- Pipelines 编辑器：画布全屏、左侧分类工具条、连线约束、YAML 导出（对齐 `graphs/analyzer_multistage_example.yaml`）。正修复拖拽复制/释放消失/连线后不可操作等问题，并完善 DAG 合法性校验与属性联动。
-- Observability：Overview（Grafana 面板 iframe/PNG 兜底）、Metrics（PromQL 图表与 KPI）。
+## 关键配置片段
+1) 图与模型（示例）
+```yaml
+# docker/config/va/graphs/analyzer_multistage_example.yaml
+model_path: "/models/yolov12x.onnx"
+profile: "det_720p"
+```
+2) 纯内网 WHEP/ICE（通过配置文件，不用环境变量）
+```yaml
+# docker/config/va/app.yaml
+webrtc:
+  ice:
+    bind_address: "0.0.0.0"
+    public_ip: "192.168.50.78"
+    port_range_begin: 10000
+    port_range_end: 10100
+  mdns:
+    disable: true
+```
+说明：
+- 容器需映射 UDP 10000–10100；Windows 防火墙放行该范围。
+- VA 将在 Answer SDP 的 `o=`/`c=` 与 `a=candidate` 中重写为 `public_ip`，浏览器候选即可直连。
 
-## 4. 容器化与构建要点
-- 新增 VA CPU/GPU、CP、Web、VSM 多阶段 Dockerfile 与 compose；`.dockerignore` 大幅缩小构建上下文。
-- Linux/CI 兼容修复：
-  - gRPC/Protobuf：优先 CMake CONFIG，失败回退 Protobuf 模块与 pkg‑config(grpc++)；统一探测 protoc 与 grpc_cpp_plugin；替换自定义命令。
-  - yaml-cpp：同时支持 `yaml-cpp::yaml-cpp` 与 `yaml-cpp` 目标。
-  - jsoncpp：自动探测并在存在时注入 `/usr/include/jsoncpp` 头路径；保留 vcpkg 链接可选。
-  - VSM OpenCV 可选：未安装时不编译 RTSP 读取器，提供最小 stub；补齐 <vector> 与 Linux 套接字头。
-  - WebRTC/libdatachannel 缺失时：WHEP 媒体改为桩实现（返回 501），保证可编；需要时扩展镜像启用。
-  - 编译选项：移除易被错误展开的全局 generator expressions，避免 `-pedantic>` 类问题。
+## 订阅/播放最小链路
+1) 创建订阅（CP）
+```
+POST http://127.0.0.1:18080/api/subscriptions?stream_id=camera_01&profile=det_720p&source_uri=rtsp://host.docker.internal:8554/camera_01
+```
+期望返回：202 + `Location: /api/subscriptions/{id}`。
 
-## 5. 数据库与配置
-- MySQL：host=127.0.0.1 port=13306 user=root pass=123456 db=cv_cp；VA/CP 统一从配置读取；异常时 `/_debug/db` 诊断。
-- Redis：规划中（当前接口未强依赖）。
-- 证书/TLS：VA gRPC/HTTP 支持 TLS；CP→VA 走 mTLS（按配置）。
+2) 订阅事件（SSE）
+```
+GET /api/subscriptions/{id}/events
+```
+期望收到 `phase: ready` 等事件（已在 CP 实现/接好代理）。
 
-## 6. 仍待推进
-- SSE 事件与订阅状态（ready/timeline）映射打通；
-- 分析页编辑器交互细节打磨（连线/校验/抽屉属性联动/Apply 闭环）；
-- CP 数据源列表的合成兜底加开关并在生产禁用；
-- VA 容器默认禁用 WebRTC 发送（无 libdatachannel），如需启用需扩展镜像；
-- 长稳（≥30min）播放与 GPU 负载/FPS 回归测试；
-- DB 出错返回约定（是否 503）与 CP 故障注入测试。
+3) WHEP 协商
+- 前端向 CP 发起 WHEP Offer，CP/VA 返回 Answer；Answer 中应可见 `192.168.50.78` 的 host 候选。
 
-## 7. 测试与取证建议
-- 后端：构建→运行→端口与日志→处理帧数>0；DB 三接口返回非空；
-- 前端：订阅 202 → WHEP 201（有 Location）→ ICE PATCH 204 → <video> 播放；切换 pause/resume 不重建会话且首帧 IDR；
-- 观测：Prom 目标 UP；Grafana 面板有数据；指标标签无转义错误；
-- 文档：每日在 `docs/memo/YYYY-MM-DD.md` 追加任务记录与证据（截图/命令）。
+## RTSP 拉流与冷启动
+- VA 针对 FFmpeg/NVDEC 打开参数做了温和调优：`analyzeduration=1s`，`probesize=5MB`，支持低延迟开关（可选）。
+- 冷启动超时：若大模型（如 `yolov12x`）首次加载超过 CP 超时，可在 `docker/config/cp/app.yaml` 提高 `va.timeout_ms`（如 60000），或先用小模型 `v8n` 验证链路。
+
+## 已修复与变更
+- ConfigLoader：YAML 判空与 `as<>` 防护，避免 Exit 139。
+- WHEP 依赖：容器内构建 `libdatachannel` + `IXWebSocket`；VA `CMakeLists.txt` 检测并链接。
+- CP SSE watch：实现 `/api/subscriptions/{id}/events`，能流式输出阶段事件与 VA 代理 Watch。
+- 模型路径与卷：图文件改为 `/models/...`，compose 统一映射。
+- TLS：CP↔VA 双向验证，证书 SAN 对齐。
+
+## 已知事项与排查要点
+- ORT CUDA EP 如需启用，需配套 libcudnn 对齐；否则回落 CPU。
+- `/api/events/recent`：前端若调用该路由返回 404，可暂时隐藏 UI 或在 CP 侧补实现。
+- 订阅超时：优先检查 VA 日志是否已连接 RTSP 并开始解码，确认 CP 超时设置与模型大小。
+
+## 最小排查清单
+- Docker：`docker ps` 确认 `va/cp/web/vsm` 状态；`docker logs <va>` 是否出现 RTSP 连接、解码与帧计数；`docker logs <cp>` 观察订阅超时/错误。
+- DevTools：打开分析页，观察 Network 中 `/api/subscriptions` 与 `/whep` 请求，确认 Answer SDP 中 host 候选为 `192.168.50.78`。
+- 端口：宿主 8554（RTSP）可达；容器 UDP 10000–10100 已映射；Windows 防火墙放行。
 

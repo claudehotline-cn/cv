@@ -502,8 +502,15 @@ int WhepSessionManager::createSession(const std::string& streamKey,
                                       std::string& outSid) {
   try {
     rtc::Configuration cfg;
-    cfg.portRangeBegin = 10000; cfg.portRangeEnd = 10100;
-    if (const char* bind = std::getenv("VA_ICE_BIND")) { if (bind && *bind) cfg.bindAddress = std::string(bind); }
+    {
+      std::lock_guard<std::mutex> g(mu_);
+      cfg.portRangeBegin = cfg_.port_begin;
+      cfg.portRangeEnd   = cfg_.port_end;
+#if RTC_ENABLE_MDNS
+      try { cfg.disableMDNS = cfg_.disable_mdns; } catch (...) {}
+#endif
+      if (!cfg_.bind_address.empty()) cfg.bindAddress = cfg_.bind_address;
+    }
 
     auto pc = std::make_shared<rtc::PeerConnection>(cfg);
     auto sid = genSid();
@@ -551,6 +558,45 @@ int WhepSessionManager::createSession(const std::string& streamKey,
     catch (const std::exception& ex) { VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] createAnswer ex: " << ex.what(); return 500; }
     catch (...) { VA_LOG_C(::va::core::LogLevel::Error, "transport.webrtc") << "[WHEP] createAnswer unknown"; return 500; }
     if (outAnswerSdp.empty()) return 409;
+
+    // If configured, rewrite SDP to advertise a public host candidate/IP that matches host network mapping
+    {
+      std::string pubip;
+      {
+        std::lock_guard<std::mutex> g(mu_);
+        pubip = cfg_.public_ip;
+      }
+      auto rewrite_ip = [&](std::string& sdp, const std::string& ip){
+        if (ip.empty()) return;
+        std::istringstream iss(sdp);
+        std::vector<std::string> lines; lines.reserve(256);
+        std::string line; while (std::getline(iss, line)) { if (!line.empty() && line.back()=='\r') line.pop_back(); lines.push_back(line); }
+        for (auto& L : lines) {
+          if (L.rfind("o=", 0) == 0) {
+            // Replace address in origin line if present
+            auto p = L.find(" IN IP4 ");
+            if (p != std::string::npos) {
+              // keep prefix up to IN IP4, then add ip
+              L = L.substr(0, p + 8) + ip;
+            }
+          } else if (L.rfind("c=IN IP4 ", 0) == 0) {
+            L = std::string("c=IN IP4 ") + ip;
+          } else if (L.rfind("a=candidate:", 0) == 0) {
+            // candidate format: foundation comp transport priority address port typ type ...
+            std::istringstream ls(L);
+            std::vector<std::string> tok; std::string t; while (ls >> t) tok.push_back(t);
+            if (tok.size() >= 6 && tok[0].rfind("a=candidate:",0)==0) {
+              tok[4] = ip; // address
+              std::ostringstream os; for (size_t i=0;i<tok.size();++i) { if (i) os << ' '; os << tok[i]; }
+              L = os.str();
+            }
+          }
+        }
+        std::ostringstream os; for (size_t i=0;i<lines.size();++i) { os << lines[i] << "\r\n"; }
+        sdp = os.str();
+      };
+      rewrite_ip(outAnswerSdp, pubip);
+    }
 
     // Patch Answer SDP: ensure H264 fmtp has packetization-mode=1 (non-interleaved)
     // Some receivers treat pmode=0 rigidly and may mishandle FU-A; aligning to pmode=1 improves P-frame continuity.

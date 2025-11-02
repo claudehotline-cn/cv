@@ -147,8 +147,11 @@ int main(int argc, char** argv) {
     // CORS preflight
     if (method == "OPTIONS") {
       r.status = 200;
-      r.extraHeaders += "Access-Control-Allow-Methods: GET,POST,DELETE,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,Authorization\r\n";
-      r.body = "{}"; emit("OPTIONS", r.status); return r;
+      // Allow common verbs and headers used by front-end/RTC flows
+      r.extraHeaders += "Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS\r\n";
+      r.extraHeaders += "Access-Control-Allow-Headers: Content-Type, Authorization, Accept, If-Match, Accept-Patch\r\n";
+      r.extraHeaders += "Access-Control-Expose-Headers: Location, ETag, Accept-Patch\r\n";
+      r.body = ""; emit("OPTIONS", r.status); return r;
     }
     // Security: bearer token (only when configured); exempt /metrics
     auto needs_auth = [&](){ return !cfg.security.bearer_token.empty() && path.rfind("/metrics",0)!=0; }();
@@ -394,7 +397,9 @@ int main(int argc, char** argv) {
         auto& st = Store::instance();
         auto cp_id = st.create(stream_id, profile, source_uri, model_id, va_id);
         r.status = 202;
-        r.extraHeaders = std::string("Location: /api/subscriptions/") + cp_id + "\r\nAccess-Control-Expose-Headers: Location,ETag\r\n";
+        // Do not clobber CORS header set earlier; append Location and expose headers
+        r.extraHeaders += std::string("Location: /api/subscriptions/") + cp_id + "\r\n";
+        r.extraHeaders += "Access-Control-Expose-Headers: Location, ETag, Accept-Patch\r\n";
         r.body = std::string("{\"code\":\"ACCEPTED\",\"data\":{\"id\":\"") + cp_id + "\"}}";
         emit("/api/subscriptions", r.status);
         return r;

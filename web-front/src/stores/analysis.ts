@@ -304,7 +304,8 @@ export const useAnalysisStore = defineStore('analysis', {
           const mod = await import('@/api/cp')
           // 防止同 stream:profile 残留管线导致内部切换失败，先尝试一次性退订（忽略错误）
           // 仅使用异步订阅路径，不调用旧的控制平面/同步接口
-          const subId = await mod.createSubscription(this.currentSourceId, profile, uri, model, { useExisting: true, source_id: this.currentSourceId })
+          // 方案B：仅通过 source_id 由 CP 使用 restream.rtsp_base 拼接 RTSP，避免浏览器环境提供的 source_uri 引入不可解析的主机名
+          const subId = await mod.createSubscription(this.currentSourceId, profile, '', model, { useExisting: true, source_id: this.currentSourceId })
           if (!subId) throw new Error('createSubscription failed')
           this.currentSubId = subId
           // 建立 SSE
@@ -427,7 +428,7 @@ export const useAnalysisStore = defineStore('analysis', {
           // @ts-ignore
           if (typeof window !== 'undefined' && this.currentSourceId && this.currentPipeline && uri2) {
             const mod = await import('@/api/cp')
-            const subId = await mod.createSubscription(this.currentSourceId, this.currentPipeline, uri2, this.currentModelUri || undefined, { useExisting: true, source_id: this.currentSourceId })
+            const subId = await mod.createSubscription(this.currentSourceId, this.currentPipeline, '', this.currentModelUri || undefined, { useExisting: true, source_id: this.currentSourceId })
             this.currentSubId = subId
             try { this._subSSE?.close() } catch {}
             const es = new EventSource(mod.subscriptionEventsUrl(subId))

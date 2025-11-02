@@ -1,0 +1,147 @@
+engine:
+  type: ort-cuda
+  provider: cuda
+  device: 0
+  options:
+    use_ffmpeg_source: false
+    use_nvdec: true
+    use_nvenc: true
+    use_multistage: true
+    use_io_binding: true
+    allow_cpu_fallback: false
+    device_output_views: false
+    stage_device_outputs: true
+    use_cuda_nms: true
+    render_passthrough: false
+    render_cuda: true
+    use_cuda_preproc: true
+    graph_id: analyzer_multistage_example
+    warmup_runs: auto
+    overlay_thickness: 3
+    overlay_alpha: 0.25
+    trt_fp16: true
+    trt_workspace_mb: 2048
+sfu:
+  whip_base: ""
+  whep_base: ""
+  default_variant: overlay
+webrtc:
+  ice:
+    bind_address: "0.0.0.0"
+    public_ip: "192.168.50.78"
+    port_range_begin: 10000
+    port_range_end: 10100
+  mdns:
+    disable: true
+rtc:
+  # 建议：为浏览器可达提供可预测的候选与端口
+  public_ip: host.docker.internal
+  listen_addr: 0.0.0.0
+  ice_port_range: "62000-62100"
+  ice_tcp: true
+  stun_servers:
+    - "stun:stun.l.google.com:19302"
+orchestration:
+  idle_timeout_ms: 60000
+  reap_interval_ms: 5000
+defaults:
+  decoder:
+    impl: ffmpeg
+    rtsp:
+      prefer_tcp: true
+      timeout_ms: 5000
+  encoder:
+    impl: ffmpeg_h264
+    width: 1280
+    height: 720
+    fps: 30
+    bitrate_kbps: 3500
+    gop: 30
+    bframes: 0
+    preset: veryfast
+    tune_zerolatency: true
+security:
+  allowed_source_schemes:
+    - rtsp
+    - rtsps
+  switch_limits:
+    source_per_stream_per_sec: 0.2
+    model_per_stream_per_sec: 0.5
+observability:
+  log_level: debug
+  log_format: text
+  module_levels:
+    transport.webrtc: debug
+    encoder.ffmpeg: debug
+  console: true
+  file:
+    path: /logs/video-analyzer-release.log
+    max_size_kb: 10240
+    max_files: 5
+  pipeline_metrics:
+    enabled: true
+    interval_ms: 5000
+  metrics:
+    prom_endpoint: "0.0.0.0:9090"
+    extended_labels: true
+    registry_enabled: true
+
+# Database configuration (MySQL)
+database:
+  driver: mysql
+  host: host.docker.internal
+  port: 13306
+  user: root
+  password: "123456"
+  db: cv_cp
+  pool:
+    min: 4
+    max: 16
+    timeout_ms: 2000
+  retention:
+    enabled: false
+    events_seconds: 86400
+    logs_seconds: 86400
+    interval_seconds: 600
+    jitter_percent: 10
+
+control_plane:
+  enabled: true
+  grpc_addr: "0.0.0.0:50051"
+  vsm_addr: "vsm:7070"
+  tls:
+    enabled: true
+    root_cert_file: "certs/ca.pem"
+    client_cert_file: "certs/va_client.crt"
+    client_key_file: "certs/va_client.key"
+    server_cert_file: "certs/va_server.crt"
+    server_key_file: "certs/va_server.key"
+    require_client_cert: true
+  metrics_enabled: true
+
+subscriptions:
+  heavy_slots: 2
+  model_slots: 2
+  rtsp_slots: 4
+  open_rtsp_slots: 2
+  load_model_slots: 2
+  start_pipeline_slots: 2
+  max_queue: 1024
+  ttl_seconds: 900
+
+quotas:
+  enabled: true
+  header_key: "X-API-Key"
+  default:
+    concurrent: 1
+    rate_per_min: 1
+  global:
+    concurrent: 100
+  acl:
+    allowed_schemes: ["rtsp", "rtsps"]
+    allowed_profiles: ["det_720p", "seg_720p"]
+  observe_only: false
+  enforce_percent: 100
+  exempt_keys: []
+  key_overrides: []
+

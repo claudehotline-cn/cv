@@ -229,7 +229,7 @@ if (UNIX AND NOT HAVE_CUDA_KERNELS)
     target_sources(${PROJECT_NAME} PRIVATE src/analyzer/cuda/cuda_kernels_stubs.cpp)
 endif()
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY IXWEBSOCKET_USE_TLS=0)
+target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_USE_TLS=0)
 
 if (VA_DISABLE_HTTP_PUBLIC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE VA_DISABLE_HTTP_PUBLIC)
@@ -822,8 +822,49 @@ endif()
 
 
 
-# In container builds we disable direct libdatachannel usage unless headers are available
-target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAVE_RTC=0)
+# Detect libdatachannel headers and enable RTC when available
+include(CheckIncludeFileCXX)
+check_include_file_cxx("rtc/rtc.hpp" HAVE_RTC_HEADER)
+if (HAVE_RTC_HEADER)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAVE_RTC=1)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAVE_RTC=0)
+endif()
+
+# On UNIX, try to link libdatachannel stack from default locations when present
+if (UNIX)
+    find_library(LIB_DATACHANNEL datachannel)
+    find_library(LIB_JUICE juice)
+    find_library(LIB_USRSCTP usrsctp)
+    find_library(LIB_MBEDTLS mbedtls)
+    find_library(LIB_MBEDCRYPTO mbedcrypto)
+    find_library(LIB_MBEDX509 mbedx509)
+    find_library(LIB_IXWEBSOCKET ixwebsocket)
+    if (LIB_DATACHANNEL)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIB_DATACHANNEL})
+    endif()
+    if (LIB_JUICE)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIB_JUICE})
+    endif()
+    if (LIB_USRSCTP)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIB_USRSCTP})
+    endif()
+    if (LIB_MBEDTLS)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIB_MBEDTLS})
+    endif()
+    if (LIB_MBEDCRYPTO)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIB_MBEDCRYPTO})
+    endif()
+    if (LIB_MBEDX509)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIB_MBEDX509})
+    endif()
+    if (LIB_IXWEBSOCKET)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIB_IXWEBSOCKET})
+    else()
+        # Fallback to header-only if lib not found
+        target_compile_definitions(${PROJECT_NAME} PRIVATE IXWEBSOCKET_HEADER_ONLY)
+    endif()
+endif()
 
 
 

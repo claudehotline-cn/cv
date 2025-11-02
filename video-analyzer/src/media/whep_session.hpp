@@ -58,6 +58,14 @@ struct H264FrameState {
 class WhepSessionManager {
 public:
     static WhepSessionManager& instance();
+    struct Config {
+      std::string bind_address;  // e.g., "0.0.0.0"
+      std::string public_ip;     // e.g., "192.168.50.78" (for SDP rewrite)
+      uint16_t port_begin {10000};
+      uint16_t port_end   {10100};
+      bool disable_mdns { true };
+    };
+    void setConfig(const Config& c) { std::lock_guard<std::mutex> g(mu_); cfg_ = c; }
 
     // 创建会话：输入 streamKey（如 "cam01:det_720p" 或 "cam01"），与浏览器 Offer SDP。
     // 输出 Answer SDP 与 session id（用于 Location: /whep/sessions/{sid}）。
@@ -79,7 +87,8 @@ public:
   // Query whether there is at least one active WHEP session subscribed to streamKey
   bool hasActiveForKey(const std::string& streamKey);
 
-private:
+  private:
+    Config cfg_{};
     WhepSessionManager() = default;
 
     #if VA_HAVE_RTC

@@ -10,11 +10,20 @@ services:
       - "8082:8082"
       - "9090:9090"
       - "50051:50051"
+      - "10000-10100:10000-10100/udp"
+      - "10000-10100:10000-10100/udp"
     environment:
       - VA_PROM_ENDPOINT=0.0.0.0:9090
+      - VA_ICE_PORT_RANGE=10000-10100
+      - VA_ICE_TCP=1
+      - VA_STUN=stun.l.google.com:19302
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ../../video-analyzer/config:/app/config:ro
-      - ../../logs:/app/logs
+      - ../config/va:/app/config:ro
+      - ../model:/models:ro
+      - ../../video-analyzer/config/certs:/app/config/certs:ro
+      - ../../logs:/logs:rw
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9090/metrics >/dev/null || exit 1"]
       interval: 10s
@@ -27,6 +36,8 @@ services:
       dockerfile: docker/cp/Dockerfile
     image: cv/cp:latest
     container_name: cp
+    environment:
+      - VA_REST_BASE=va:8082
     depends_on:
       va:
         condition: service_healthy
@@ -35,7 +46,8 @@ services:
     ports:
       - "18080:18080"
     volumes:
-      - ../../controlplane/config:/app/config:ro
+      - ../config/cp:/app/config:ro
+      - ../../controlplane/config/certs:/app/config/certs:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:18080/api/system/info >/dev/null || exit 1"]
       interval: 10s
@@ -61,8 +73,8 @@ services:
     image: cv/vsm:latest
     container_name: vsm
     ports:
-      - "7070:7070"   # gRPC（如开启）
-      - "7071:7071"   # HTTP（如开启）
+      - "7070:7070"   # gRPC 端口暴露
+      - "7071:7071"   # HTTP 端口暴露
     volumes:
       - ../../video-source-manager/config:/app/config:ro
     healthcheck:
@@ -74,5 +86,3 @@ services:
 networks:
   default:
     name: cv-net
-
-

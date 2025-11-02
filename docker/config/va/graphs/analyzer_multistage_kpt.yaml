@@ -1,0 +1,19 @@
+analyzer:
+  multistage:
+    nodes:
+      - name: pre
+        type: preproc.letterbox
+        params: { out_w: "640", out_h: "640", use_cuda: "1" }
+      - name: det
+        type: model.ort
+        params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/model/yolov12x_pose.onnx" }
+      - name: kpt
+        type: post.yolo.kpt
+        params: { in: "tensor:det_raw", out: "tensor:kpt", kpt_offset: "5", min_score: "0.2", draw_skeleton: "1" }
+      - name: ovl
+        type: overlay.kpt
+        params: { radius: "3", thickness: "2" }
+    edges:
+      - [pre, det]
+      - [det, kpt]
+      - [kpt, ovl]

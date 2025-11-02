@@ -126,11 +126,27 @@ bool FfmpegRtspSource::openImpl() {
         // Timeouts (microseconds)
         av_dict_set(&opts, "stimeout", "5000000", 0);    // socket open timeout
         av_dict_set(&opts, "rw_timeout", "5000000", 0);  // IO read/write timeout
-        // Low-latency tuning
-        av_dict_set(&opts, "flags", "low_delay", 0);
-        av_dict_set(&opts, "fflags", "nobuffer", 0);
-        av_dict_set(&opts, "max_delay", "0", 0);
-        av_dict_set(&opts, "reorder_queue_size", "0", 0);
+
+        // Probe/analyze — default to safer values to improve compatibility; allow env override
+        const char* env_ad = std::getenv("VA_RTSP_ANALYZEDURATION_US");
+        const char* env_ps = std::getenv("VA_RTSP_PROBESIZE");
+        av_dict_set(&opts, "analyzeduration", env_ad && *env_ad ? env_ad : "1000000", 0); // 1s
+        av_dict_set(&opts, "probesize", env_ps && *env_ps ? env_ps : "5000000", 0);       // 5MB
+
+        // Low-latency toggles (optional). Default OFF to avoid parameter detection failure on some RTSP servers.
+        auto env_ll = std::getenv("VA_RTSP_LOW_DELAY");
+        bool low_delay = false;
+        if (env_ll) {
+            std::string v(env_ll); for (auto& c : v) c = (char)std::tolower((unsigned char)c);
+            low_delay = (v=="1" || v=="true" || v=="yes" || v=="on");
+        }
+        if (low_delay) {
+            av_dict_set(&opts, "flags", "low_delay", 0);
+            av_dict_set(&opts, "fflags", "nobuffer", 0);
+            av_dict_set(&opts, "max_delay", "0", 0);
+            av_dict_set(&opts, "reorder_queue_size", "0", 0);
+        }
+
         // Buffers & UA (best-effort)
         av_dict_set(&opts, "buffer_size", "1048576", 0);
         av_dict_set(&opts, "user_agent", "VideoAnalyzer/1.0", 0);

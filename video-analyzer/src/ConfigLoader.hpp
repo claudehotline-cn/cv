@@ -198,6 +198,17 @@ struct AppConfigPayload {
         int backoff_max_ms {10000};
         double backoff_jitter {0.2};
     } control_plane;
+    struct WebRtcConfig {
+        struct IceConfig {
+            std::string bind_address;   // e.g., "0.0.0.0"
+            std::string public_ip;      // e.g., "192.168.50.78" (for SDP candidate rewrite)
+            int port_range_begin {10000};
+            int port_range_end   {10100};
+        } ice;
+        struct MdnsConfig {
+            bool disable { true }; // disable mDNS by default for determinism
+        } mdns;
+    } webrtc;
 };
 
 class ConfigLoader {

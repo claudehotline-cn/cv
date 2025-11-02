@@ -157,10 +157,11 @@ bool va_subscribe(const std::string& addr,
     va::v1::SubscribePipelineReply rep;
     // Use configured VA timeout for Subscribe; creating pipelines may take >1.5s under load.
     // Keep retries behavior controlled by config (default 0).
+    // Subscribe can be slow on cold-start (model load, pipeline init). Add generous extra timeout.
     auto status = call_with_retry(
       [&](grpc::ClientContext& ctx){ return stub->SubscribePipeline(&ctx, req, &rep); },
       true,
-      0,
+      /*extra_timeout_ms=*/60000,
       "SubscribePipeline"
     );
     if (!status.ok() || !rep.ok()) {

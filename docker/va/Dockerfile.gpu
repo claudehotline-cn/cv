@@ -16,6 +16,22 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . /app
 
+# Build and install libdatachannel with OpenSSL backend to enable WHEP
+RUN set -eux; \
+    git clone --depth=1 --recursive https://github.com/paullouisageneau/libdatachannel.git /tmp/libdatachannel && \
+    cmake -S /tmp/libdatachannel -B /tmp/libdatachannel/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DUSE_OPENSSL=ON -DUSE_MBEDTLS=OFF -DUSE_GNUTLS=OFF && \
+    cmake --build /tmp/libdatachannel/build -j && \
+    cmake --install /tmp/libdatachannel/build && \
+    rm -rf /tmp/libdatachannel
+
+# Build and install IXWebSocket (library) for signaling WebSocket server (no TLS)
+RUN set -eux; \
+    git clone --depth=1 https://github.com/machinezone/IXWebSocket.git /tmp/ixwebsocket && \
+    cmake -S /tmp/ixwebsocket -B /tmp/ixwebsocket/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DUSE_TLS=OFF && \
+    cmake --build /tmp/ixwebsocket/build -j && \
+    cmake --install /tmp/ixwebsocket/build && \
+    rm -rf /tmp/ixwebsocket
+
 # Install ONNX Runtime GPU (headers+libs) and build VideoAnalyzer with CUDA kernels + NVDEC/NVENC + ORT
 ARG ORT_VERSION=1.23.0
 RUN set -eux; \
@@ -47,12 +63,13 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
 COPY --from=build /opt/onnxruntime /opt/onnxruntime
+COPY --from=build /usr/local /usr/local
 COPY video-analyzer/config /app/config
 RUN mkdir -p /app/logs
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV VA_PROM_ENDPOINT=0.0.0.0:9090
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/usr/local/lib:${LD_LIBRARY_PATH}
 EXPOSE 8082 9090 50051
 ENTRYPOINT ["/app/bin/VideoAnalyzer","/app/config"]

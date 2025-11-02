@@ -15,10 +15,6 @@ models:
           nms_threshold: 0.45
         input_width: 640
         input_height: 640
-      v8n:
-        onnx: "model/yolov8n.onnx"
-        input_width: 640
-        input_height: 640
   seg:
     yolo:
       v12s_seg:
@@ -26,9 +22,5 @@ models:
         defaults:
           confidence_threshold: 0.25
           nms_threshold: 0.45
-        input_width: 640
-        input_height: 640
-      v8s_seg:
-        onnx: "model/yolov8s-seg.onnx"
         input_width: 640
         input_height: 640

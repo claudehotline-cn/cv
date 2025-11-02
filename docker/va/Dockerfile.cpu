@@ -13,6 +13,22 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . /app
 
+# Build and install libdatachannel with OpenSSL backend to enable WHEP
+RUN set -eux; \
+    git clone --depth=1 --recursive https://github.com/paullouisageneau/libdatachannel.git /tmp/libdatachannel && \
+    cmake -S /tmp/libdatachannel -B /tmp/libdatachannel/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DUSE_OPENSSL=ON -DUSE_MBEDTLS=OFF -DUSE_GNUTLS=OFF && \
+    cmake --build /tmp/libdatachannel/build -j && \
+    cmake --install /tmp/libdatachannel/build && \
+    rm -rf /tmp/libdatachannel
+
+# Build and install IXWebSocket (library) for signaling WebSocket server (no TLS)
+RUN set -eux; \
+    git clone --depth=1 https://github.com/machinezone/IXWebSocket.git /tmp/ixwebsocket && \
+    cmake -S /tmp/ixwebsocket -B /tmp/ixwebsocket/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DUSE_TLS=OFF && \
+    cmake --build /tmp/ixwebsocket/build -j && \
+    cmake --install /tmp/ixwebsocket/build && \
+    rm -rf /tmp/ixwebsocket
+
 # Build VideoAnalyzer (CPU)
 RUN cmake -S video-analyzer -B build -G Ninja \
     -DUSE_CUDA=OFF -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
@@ -29,6 +45,9 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
 COPY video-analyzer/config /app/config
+COPY --from=build /usr/local /usr/local
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
 
 ENV VA_PROM_ENDPOINT=0.0.0.0:9090
 EXPOSE 8082 9090 50051

@@ -1,0 +1,19 @@
+[ req ]
+distinguished_name = req_distinguished_name
+prompt = no
+req_extensions = v3_req
+[ req_distinguished_name ]
+C = CN
+ST = Dev
+L = Dev
+O = VisionOps
+OU = Dev CA
+CN = Vision CA
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment, keyCertSign
+extendedKeyUsage = serverAuth, clientAuth
+subjectAltName = @alt_names
+[ alt_names ]
+DNS.1 = localhost
+IP.1 = 127.0.0.1

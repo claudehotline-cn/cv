@@ -8,6 +8,13 @@
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
 #  pragma comment(lib, "Ws2_32.lib")
+#else
+#  include <sys/types.h>
+#  include <sys/socket.h>
+#  include <netdb.h>
+#  include <arpa/inet.h>
+#  include <unistd.h>
+#  include <netinet/tcp.h>
 #endif
 
 namespace controlplane {
@@ -86,7 +93,83 @@ bool proxy_http_simple(const std::string& host,
                        HttpResponse* out,
                        std::string* out_location) {
 #ifndef _WIN32
-  (void)host; (void)port; (void)method; (void)path_and_query; (void)in_headers; (void)body; (void)out; (void)out_location; return false;
+  out->status = 502; out->contentType = "application/json"; out->body = "{}"; out->extraHeaders.clear(); if (out_location) *out_location = {};
+  // POSIX implementation using BSD sockets
+  int sock = -1;
+  struct addrinfo hints{}; hints.ai_socktype = SOCK_STREAM; hints.ai_family = AF_UNSPEC; hints.ai_protocol = IPPROTO_TCP;
+  struct addrinfo* res = nullptr;
+  if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) return false;
+  bool ok = false;
+  for (auto p = res; p != nullptr; p = p->ai_next) {
+    int s = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+    if (s < 0) continue;
+    // Timeouts
+    struct timeval tv; tv.tv_sec = 5; tv.tv_usec = 0;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    int yes = 1; setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+    if (::connect(s, p->ai_addr, p->ai_addrlen) == 0) { sock = s; ok = true; break; }
+    ::close(s);
+  }
+  freeaddrinfo(res);
+  if (!ok) return false;
+
+  auto req_h = parse_headers_ci(in_headers);
+  std::map<std::string, std::string> fwd_h;
+  auto it = req_h.find("authorization"); if (it != req_h.end()) fwd_h["Authorization"] = it->second;
+  it = req_h.find("content-type"); if (it != req_h.end()) fwd_h["Content-Type"] = it->second;
+  it = req_h.find("accept"); if (it != req_h.end()) fwd_h["Accept"] = it->second;
+  it = req_h.find("if-match"); if (it != req_h.end()) fwd_h["If-Match"] = it->second;
+  if (to_lower(method) == "post") fwd_h["Accept"] = "application/sdp";
+  fwd_h["Accept-Encoding"] = "identity";
+  fwd_h["Connection"] = "close";
+
+  std::ostringstream req;
+  req << method << " " << path_and_query << " HTTP/1.1\r\n";
+  req << "Host: " << host_header_value(host, port) << "\r\n";
+  for (const auto& kv : fwd_h) req << kv.first << ": " << kv.second << "\r\n";
+  if (!body.empty()) req << "Content-Length: " << body.size() << "\r\n";
+  req << "\r\n";
+  if (!body.empty()) req.write(body.data(), static_cast<std::streamsize>(body.size()));
+  auto str = req.str();
+  {
+    size_t off = 0; const char* buf = str.data(); size_t len = str.size();
+    while (off < len) {
+      ssize_t n = ::send(sock, buf + off, len - off, 0);
+      if (n <= 0) { ::close(sock); return false; }
+      off += static_cast<size_t>(n);
+    }
+  }
+
+  std::string resp; resp.reserve(4096);
+  char buf[4096]; for (;;) { ssize_t n = ::recv(sock, buf, sizeof(buf), 0); if (n <= 0) break; resp.append(buf, buf+n); }
+  ::close(sock);
+
+  auto h_end = resp.find("\r\n\r\n"); if (h_end == std::string::npos) return false;
+  std::string head = resp.substr(0, h_end); std::string body_raw = resp.substr(h_end + 4);
+  // status line
+  int status = 502; { auto sp1 = head.find(' '); if (sp1 != std::string::npos) { auto sp2 = head.find(' ', sp1+1); if (sp2 != std::string::npos) { try { status = std::stoi(head.substr(sp1+1, sp2-sp1-1)); } catch (...) {} } } }
+  // headers
+  std::map<std::string, std::string> resp_h; std::string contentType = "application/octet-stream"; std::string location; bool is_chunked = false;
+  { size_t pos = 0; auto line_end = head.find("\r\n", pos); if (line_end == std::string::npos) return false; pos = line_end; // skip status line
+    while (true) { auto next = head.find("\r\n", pos+2); if (next == std::string::npos) break; auto line = head.substr(pos+2, next-(pos+2)); pos = next; auto cpos = line.find(':'); if (cpos==std::string::npos) continue; auto key = to_lower(line.substr(0, cpos)); auto val = line.substr(cpos+1); size_t b=0; while (b<val.size() && (val[b]==' '||val[b]=='\t')) ++b; val = val.substr(b); resp_h[key]=val; if (key=="content-type") contentType = val; else if (key=="location") location = val; else if (key=="transfer-encoding") { auto vl=to_lower(val); if (vl.find("chunked")!=std::string::npos) is_chunked=true; } }
+  }
+  std::string body_out;
+  if (is_chunked) { if (!dechunk(body_raw, body_out)) body_out = body_raw; }
+  else { body_out = std::move(body_raw); }
+
+  out->status = status;
+  out->contentType = contentType.empty()? "application/octet-stream" : contentType;
+  out->body = std::move(body_out);
+  // propagate important headers to caller via extraHeaders (they will be exposed to browser later)
+  if (!location.empty()) {
+    if (out_location) *out_location = location;
+    // Also surface original Location header to caller; main.cpp may rewrite it later
+    out->extraHeaders += std::string("Location: ") + location + "\r\n";
+  }
+  if (resp_h.count("etag")) out->extraHeaders += std::string("ETag: ") + resp_h["etag"] + "\r\n";
+  if (resp_h.count("accept-patch")) out->extraHeaders += std::string("Accept-Patch: ") + resp_h["accept-patch"] + "\r\n";
+  return true;
 #else
   out->status = 502; out->contentType = "application/json"; out->body = "{}"; out->extraHeaders.clear(); if (out_location) *out_location = {};
   sock_t s = INVALID_SOCKET; if (!connect_with_timeout(host, port, s, 5000)) return false;
@@ -97,7 +180,7 @@ bool proxy_http_simple(const std::string& host,
   it = req_h.find("content-type"); if (it != req_h.end()) fwd_h["Content-Type"] = it->second;
   it = req_h.find("accept"); if (it != req_h.end()) fwd_h["Accept"] = it->second;
   it = req_h.find("if-match"); if (it != req_h.end()) fwd_h["If-Match"] = it->second;
-  if (!body.empty() && to_lower(method) == "post" && fwd_h.find("Accept") == fwd_h.end()) fwd_h["Accept"] = "application/sdp";
+  if (to_lower(method) == "post") fwd_h["Accept"] = "application/sdp";
   fwd_h["Accept-Encoding"] = "identity"; // avoid gzip/chunked complexities
   fwd_h["Connection"] = "close";
 
@@ -130,7 +213,10 @@ bool proxy_http_simple(const std::string& host,
   out->contentType = contentType.empty()? "application/octet-stream" : contentType;
   out->body = std::move(body_out);
   // propagate important headers to caller via extraHeaders (they will be exposed to browser later)
-  if (!location.empty()) { if (out_location) *out_location = location; }
+  if (!location.empty()) {
+    if (out_location) *out_location = location;
+    out->extraHeaders += std::string("Location: ") + location + "\r\n";
+  }
   if (resp_h.count("etag")) out->extraHeaders += std::string("ETag: ") + resp_h["etag"] + "\r\n";
   if (resp_h.count("accept-patch")) out->extraHeaders += std::string("Accept-Patch: ") + resp_h["accept-patch"] + "\r\n";
   return true;
