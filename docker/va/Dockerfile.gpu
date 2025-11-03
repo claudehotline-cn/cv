@@ -60,7 +60,7 @@ RUN set -eux; \
       --cmake_generator Ninja \
       --use_cuda --cuda_home=/usr/local/cuda --cudnn_home=/usr/lib/x86_64-linux-gnu \
       --cuda_version=12.9 \
-      --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=120 \
+      --cmake_extra_defines "CMAKE_CUDA_ARCHITECTURES=90;120" \
       --cmake_extra_defines FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER \
       ${TRT_FLAGS} && \
     mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include && \
@@ -74,7 +74,7 @@ RUN set -eux; \
     cmake -S video-analyzer -B build -G Ninja \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
       -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
-      -DCMAKE_CUDA_ARCHITECTURES=120 \
+      -DCMAKE_CUDA_ARCHITECTURES="90;120" \
       -DONNXRUNTIME_ROOT=/opt/onnxruntime \
     && cmake --build build -j
 
