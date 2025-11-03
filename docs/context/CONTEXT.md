@@ -1,77 +1,57 @@
-# 项目上下文（VA/CP/VSM/Web + Docker）
+# 项目上下文（2025-11-03 更新，VA/CP/VSM/Web + Docker）
 
-本文汇总近期问题、修复与当前可运行形态，聚焦：容器化、模型与图配置、RTSP 拉流、CP 订阅与 SSE、WHEP/ICE 在纯内网的可达性，以及最小可验证路径。
+本文件聚焦当前会话中的关键结论、配置变更与问题定位，覆盖：GPU 零拷贝路径（IoBinding/CUDA）、Docker 构建（ORT 源码编译）、模型/图配置、CP 交互与最小验证流程。
 
-## 架构与进程
-- `video-analyzer`（VA）：拉 RTSP → 多阶段图（预处理/推理/后处理/渲染）→ 推送 WebRTC（WHEP）/ REST 控制。
-- `controlplane`（CP）：对外 REST API 与订阅编排，向 VA 发起 gRPC/HTTP 控制，提供 `/api/subscriptions` 与 `/api/subscriptions/{id}/events`（SSE）。
-- `video-source-manager`（VSM）：RTSP 源管理（可选）。
-- `web-frontend`：分析页面（通过 CP API 交互）。
+## 架构与数据流
+- VA：RTSP 拉流 → 预处理（NVDEC→CUDA Letterbox）→ 推理（ONNX Runtime CUDA/TensorRT）→ 后处理（YOLO NMS，CPU/GPU 可选）→ 叠加与编码（NVENC）→ WebRTC（WHEP）。
+- CP：对外 REST；编排订阅（/api/subscriptions），代理 WHEP；提供 /api/control/pipeline_mode、/api/control/hotswap 等控制路径。
+- VSM：RTSP 源管理（可选）。
+- Web：通过 CP 与 VA 交互。
 
-## 容器与配置要点
-- 模型卷：将宿主 `docker/model` 映射到容器 `/models`，图文件中统一写绝对路径，例如：`/models/yolov12x.onnx`。
-- 日志：容器内统一写 `/logs/video-analyzer-release.log`，宿主映射 `app/logs/` 目录。
-- 数据库：CP 指向 `host.docker.internal:13306`（user: root / pwd: 123456 / db: cv_cp）。
-- 证书：CP↔VA 双向 TLS，证书 SAN 统一（包含 `localhost`/内网 IP）；已验证 mTLS 互通。
-- 依赖：容器构建期编译 `libdatachannel` 与 `IXWebSocket`，启用 WHEP；`ONNX Runtime` 已就绪（若需 GPU EP，请补齐匹配版本 cuDNN）。
+## Docker 与构建（GPU）
+- Dockerfile.gpu：
+  - 运行时基础镜像：`nvidia/cuda:<ver>-cudnn-runtime-ubuntu22.04`（保证 libcudnn 就绪）。
+  - 从源码构建 ONNX Runtime v1.23.2：启用 CUDA，支持可选 TensorRT（探测到 NvInfer 头文件自动开启）。
+  - CUDA 架构：统一使用 `CMAKE_CUDA_ARCHITECTURES="90;120"`（兼容 RTX 5090d）。
+  - 构建产物安装到 `/opt/onnxruntime`，VA 以该路径编译链接。
+- Compose（GPU override）：
+  - 模型卷仅映射为相对路径友好的 `/app/models`；图/YAML 中统一写 `models/xxx.onnx`。
+  - 日志：`/logs/video-analyzer-release.log` 映射宿主 `logs/`。
 
-## 关键配置片段
-1) 图与模型（示例）
-```yaml
-# docker/config/va/graphs/analyzer_multistage_example.yaml
-model_path: "/models/yolov12x.onnx"
-profile: "det_720p"
-```
-2) 纯内网 WHEP/ICE（通过配置文件，不用环境变量）
-```yaml
-# docker/config/va/app.yaml
-webrtc:
-  ice:
-    bind_address: "0.0.0.0"
-    public_ip: "192.168.50.78"
-    port_range_begin: 10000
-    port_range_end: 10100
-  mdns:
-    disable: true
-```
-说明：
-- 容器需映射 UDP 10000–10100；Windows 防火墙放行该范围。
-- VA 将在 Answer SDP 的 `o=`/`c=` 与 `a=candidate` 中重写为 `public_ip`，浏览器候选即可直连。
+## 零拷贝路径与默认策略
+- IoBinding：在 GPU Provider（cuda/trt）场景默认启用；VA 统一使用 TLS CUDA 流（user_compute_stream）。
+- 预处理：在 GPU Provider 下默认选择 CUDA letterbox。
+- 输出视图：`device_output_views=true`、`stage_device_outputs=false`，下游 GPU NMS 可直接消费设备张量。
+- NMS：支持 CPU/GPU 两条；GPU NMS 用于零拷贝路径验证。
 
-## 订阅/播放最小链路
-1) 创建订阅（CP）
-```
-POST http://127.0.0.1:18080/api/subscriptions?stream_id=camera_01&profile=det_720p&source_uri=rtsp://host.docker.internal:8554/camera_01
-```
-期望返回：202 + `Location: /api/subscriptions/{id}`。
+## 日志增强（用于精确定位）
+- 加载阶段（analyzer.ort）：
+  - provider_req/resolved、inputs/outputs、首个输入 dtype/shape。
+  - I/O 名称摘要（前 8 个）。
+  - 若 `outputs==0`：立即错误日志 `model has zero outputs (path=...)`。
+- 运行阶段：
+  - `ort.run.start`：provider、IoB 开关、dev_bind、输入形状与 on_gpu。
+  - `ort.run`：`outputs` 与 `out0..2_shapes`、前两个输出 dtype。
+  - `ms.node_model`：`out_count` 与前 3 个输出形状（含 gpu/cpu 标记）。
 
-2) 订阅事件（SSE）
-```
-GET /api/subscriptions/{id}/events
-```
-期望收到 `phase: ready` 等事件（已在 CP 实现/接好代理）。
+## 当前阻塞与结论
+- 现网日志表明：`models/yolov12x.onnx`、`models/yolov12n.onnx` 在 ORT 会话中被识别为 `zero declared outputs`。这不是“检测框为 0”，而是“模型 Graph 未声明任何输出张量”。
+- 仅当 det 产生 `det_raw`（至少一个模型输出张量）时，nms 才能工作；否则管线在 det 或 nms 节点失败。
 
-3) WHEP 协商
-- 前端向 CP 发起 WHEP Offer，CP/VA 返回 Answer；Answer 中应可见 `192.168.50.78` 的 host 候选。
+## 模型要求与修复建议
+- 使用“无 NMS 的 ONNX”，但必须具备 Graph 输出（head logits 等），且（如使用 external data）确保所有分片随同挂载至 `/app/models`。
+- 替换为已知可用的小模型先通路（例：yolov8n.onnx，导出时 `nms=False`），确认 det_raw 产出 → 切回目标模型。
+- 如需继续用“内置 NMS”的 onnx：应移除 graph 的 post.yolo.nms 节点，改为解析模型输出的自定义后处理，或改用 ORT TensorRT EP 并适配输出；此路线与“统一 CUDA 流零拷贝 + 可控阈值”的既定设计不一致，不推荐。
 
-## RTSP 拉流与冷启动
-- VA 针对 FFmpeg/NVDEC 打开参数做了温和调优：`analyzeduration=1s`，`probesize=5MB`，支持低延迟开关（可选）。
-- 冷启动超时：若大模型（如 `yolov12x`）首次加载超过 CP 超时，可在 `docker/config/cp/app.yaml` 提高 `va.timeout_ms`（如 60000），或先用小模型 `v8n` 验证链路。
+## CP 交互（最小流程）
+- 订阅：`POST /api/subscriptions?stream_id=camera_01&profile=det_720p&source_uri=rtsp://host.docker.internal:8554/camera_01` → 返回 202 + Location。
+- 切换实时/暂停：`POST /api/control/pipeline_mode`（analysis_enabled true/false）。
+- 热更新模型：`/api/control/hotswap`（要求 pipeline_name/node/model_uri，CP 转发至 VA gRPC）。
 
-## 已修复与变更
-- ConfigLoader：YAML 判空与 `as<>` 防护，避免 Exit 139。
-- WHEP 依赖：容器内构建 `libdatachannel` + `IXWebSocket`；VA `CMakeLists.txt` 检测并链接。
-- CP SSE watch：实现 `/api/subscriptions/{id}/events`，能流式输出阶段事件与 VA 代理 Watch。
-- 模型路径与卷：图文件改为 `/models/...`，compose 统一映射。
-- TLS：CP↔VA 双向验证，证书 SAN 对齐。
+## 验证与指标
+- 日志：`analyzer.ort load` / `ort.run.start` / `ort.run` / `ms.node_model`。
+- 指标：`va_d2d_nv12_frames_total`、`va_overlay_nv12_passthrough_total` 递增验证零拷贝链路。
 
-## 已知事项与排查要点
-- ORT CUDA EP 如需启用，需配套 libcudnn 对齐；否则回落 CPU。
-- `/api/events/recent`：前端若调用该路由返回 404，可暂时隐藏 UI 或在 CP 侧补实现。
-- 订阅超时：优先检查 VA 日志是否已连接 RTSP 并开始解码，确认 CP 超时设置与模型大小。
-
-## 最小排查清单
-- Docker：`docker ps` 确认 `va/cp/web/vsm` 状态；`docker logs <va>` 是否出现 RTSP 连接、解码与帧计数；`docker logs <cp>` 观察订阅超时/错误。
-- DevTools：打开分析页，观察 Network 中 `/api/subscriptions` 与 `/whep` 请求，确认 Answer SDP 中 host 候选为 `192.168.50.78`。
-- 端口：宿主 8554（RTSP）可达；容器 UDP 10000–10100 已映射；Windows 防火墙放行。
-
+## 现状与下一步
+- 已落地：IoBinding/CUDA 预处理默认开启；Dockerfile.gpu 改为 ORT 源码构建；日志增强；模型/卷统一相对路径；NMS 改回 GPU 验证。
+- 待完成：提供“有 Graph 输出”的 onnx；观测新日志字段；若需 TRT EP，确保容器内 TRT dev 依赖与 ORT TRT 编译启用。

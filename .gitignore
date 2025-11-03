@@ -198,6 +198,11 @@ Thumbs.db
 data/
 datasets/
 *.csv
+
+# ONNX Runtime host build artifacts
+.onnxruntime-src/
+.onnxruntime-build/
+docker/ort-prebuilt/
 *.json.bak
 
 # Configuration files with sensitive data
