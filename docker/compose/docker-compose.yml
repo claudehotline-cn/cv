@@ -20,7 +20,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ../config/va:/app/config:ro
-      - ../model:/models:ro
+      # 模型目录仅映射为相对路径可用的 /app/models（YAML 写 models/xxx.onnx）
+      - ../model:/app/models:ro
       - ../../video-analyzer/config/certs:/app/config/certs:ro
       - ../../logs:/logs:rw
     healthcheck:
