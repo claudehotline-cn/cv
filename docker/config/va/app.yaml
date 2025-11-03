@@ -9,8 +9,8 @@ engine:
     use_multistage: true
     use_io_binding: true
     allow_cpu_fallback: false
-    device_output_views: false
-    stage_device_outputs: true
+    device_output_views: true
+    stage_device_outputs: false
     use_cuda_nms: true
     render_passthrough: false
     render_cuda: true

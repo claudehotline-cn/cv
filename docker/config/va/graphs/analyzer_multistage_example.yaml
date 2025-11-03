@@ -6,11 +6,12 @@ analyzer:
         params: { out_w: "640", out_h: "640", use_cuda: "1" }
       - name: det
         type: model.ort
-        # 为降低冷启动时延，默认使用较小模型（yolov12n）。需要高精度时可改回 yolov12x。
-        params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "models/yolov12x.onnx" }
+        # 先用较小模型验证链路（确保该文件存在于 /app/models）
+        params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "models/yolov12n.onnx" }
       - name: nms
         type: post.yolo.nms
-        params: { conf: "0.65", iou: "0.45", use_cuda: "1" }
+        # 调低置信度阈值，并暂时走 CPU NMS 以排除 GPU 视图不匹配干扰
+        params: { conf: "0.25", iou: "0.45", use_cuda: "0" }
       - name: ovl
         type: overlay.cuda
         params: { alpha: "0.2", thickness: "3" }
