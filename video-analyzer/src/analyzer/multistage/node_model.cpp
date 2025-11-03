@@ -161,6 +161,17 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
                 }
             }
         } catch (...) { /* ignore */ }
+        // 详细日志：列出前若干输出 shape 与 on_gpu 标志
+        try {
+            std::string shapes;
+            for (size_t i=0;i<n_model && i<3;i++) {
+                auto& t = outs[i];
+                std::string s; for (size_t k=0;k<t.shape.size();++k){ s += (k?"x":""); s += std::to_string(t.shape[k]); }
+                if (i) shapes += ","; shapes += s; shapes += (t.on_gpu?"(gpu)":"(cpu)");
+            }
+            VA_LOG_THROTTLED(::va::core::LogLevel::Info, "ms.node_model", 1000)
+                << "out_count=" << n_model << " out0..2=" << shapes;
+        } catch (...) {}
         auto sanitize = [](std::string s) {
             for (auto& c : s) {
                 bool ok = (c == '_') || (c == '-') || (c == ':') ||

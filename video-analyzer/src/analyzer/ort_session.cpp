@@ -422,6 +422,17 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
             << " cpu_fallback=" << impl_->cpu_fallback
             << " inputs=" << input_count << " outputs=" << output_count
             << " in0_dtype=" << in0_dtype << " in0_shape=" << shapeToStr(in0_shape);
+        // 额外：列出前若干输入/输出名，辅助校验导出是否包含 graph outputs
+        try {
+            std::string in_names, out_names;
+            for (size_t i=0;i<input_count && i<8;i++) { if (i) in_names += ","; in_names += impl_->input_names_storage[i]; }
+            for (size_t i=0;i<output_count && i<8;i++) { if (i) out_names += ","; out_names += impl_->output_names_storage[i]; }
+            VA_LOG_C(::va::core::LogLevel::Info, "analyzer.ort")
+                << "io.names in=[" << in_names << "] out=[" << out_names << "]"
+                << " use_iob=" << std::boolalpha << impl_->options.use_io_binding
+                << " allow_cpu_fallback=" << impl_->options.allow_cpu_fallback
+                << " device_id=" << impl_->options.device_id;
+        } catch (...) {}
     } catch (...) { /* best-effort */ }
 
     // Lightweight warmup: run N inference passes with a zero tensor on CPU memory.
@@ -695,6 +706,14 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             }
 
             Ort::RunOptions run_opts;
+            try {
+                VA_LOG_THROTTLED(::va::core::LogLevel::Info, "ort.run.start", 1000)
+                    << "provider=" << (impl_->resolved_provider.empty()?"cpu":impl_->resolved_provider)
+                    << " iob=" << (impl_->io_binding!=nullptr)
+                    << " dev_bind=" << impl_->device_binding_active
+                    << " in_shape=" << shapeToStr(input.shape)
+                    << " in_on_gpu=" << input.on_gpu;
+            } catch (...) {}
             impl_->session->Run(run_opts, *impl_->io_binding);
             impl_->io_binding->SynchronizeOutputs();
 
