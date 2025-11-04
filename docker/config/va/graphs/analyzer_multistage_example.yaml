@@ -10,8 +10,8 @@ analyzer:
         params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "models/yolov12n.onnx" }
       - name: nms
         type: post.yolo.nms
-        # 改回 GPU NMS，测试 GPU 零拷贝分支
-        params: { conf: "0.25", iou: "0.45", use_cuda: "1" }
+        # GPU NMS；按需求保持 0.65 置信度
+        params: { conf: "0.65", iou: "0.45", use_cuda: "1" }
       - name: ovl
         type: overlay.cuda
         params: { alpha: "0.2", thickness: "3" }
