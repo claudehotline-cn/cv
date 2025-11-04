@@ -174,7 +174,7 @@ const analyzing = computed({
       // resume: if session ready, just switch mode without re-subscribing
       if (store.currentSubId && String(store.subPhase||'').toLowerCase() === 'ready') {
         await store.switchAnalyzeMode(false)
-        ElMessage.success('�ѿ�ʼʵʱ����')
+        ElMessage.success('已开始实时分析')
         return
       }
       const pf = await updatePreflight()
