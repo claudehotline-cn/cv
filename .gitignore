@@ -199,6 +199,9 @@ data/
 datasets/
 *.csv
 
+# ORT TensorRT engine/timing cache (do not commit large binaries)
+.ort_trt_cache/
+
 # ONNX Runtime TensorRT timing/engine caches
 .ort_trt_cache/
 
