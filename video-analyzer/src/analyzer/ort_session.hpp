@@ -26,6 +26,16 @@ public:
         int tensorrt_workspace_mb {0};
         int tensorrt_max_partition_iterations {0};
         int tensorrt_min_subgraph_size {0};
+        // Optional TensorRT dynamic shape profile hints (pass-through to ORT TRTEP)
+        // Format: "input_name:1x3x640x640;other_input:..."
+        std::string tensorrt_profile_min_shapes;
+        std::string tensorrt_profile_opt_shapes;
+        std::string tensorrt_profile_max_shapes;
+        // Optional builder knobs
+        int tensorrt_builder_optimization_level { -1 }; // -1 = unset
+        bool tensorrt_force_sequential_build { false };  // map to trt_force_sequential_engine_build
+        int tensorrt_auxiliary_streams { -1 };           // map to trt_auxiliary_streams
+        bool tensorrt_detailed_build_log { false };      // map to trt_detailed_build_log
         size_t io_binding_input_bytes {0};
         size_t io_binding_output_bytes {0};
         // stage outputs to host after IoBinding run (safe ownership, optional)
@@ -36,6 +46,8 @@ public:
         bool device_output_views {false};
         // warmup runs right after model load (0 = disable)
         int warmup_runs {1};
+        // RTX EP 暂不实现：忽略相关严格要求（总是回退到常规 tensorrt/cuda/cpu）
+        bool require_rtx_when_requested {false};
     };
 
     void setOptions(const Options& options);
@@ -55,10 +67,13 @@ public:
     bool loadModel(const std::string& model_path, bool use_gpu) override;
     bool run(const core::TensorView& input, std::vector<core::TensorView>& outputs) override;
 
+    // Backward-compat provider-specific runtime info
     RuntimeInfo runtimeInfo() const;
 
+    // IModelSession introspection
+    ModelRuntimeInfo getRuntimeInfo() const override;
     // Returns the model's output tensor names if available (empty otherwise).
-    std::vector<std::string> outputNames() const;
+    std::vector<std::string> outputNames() const override;
 
 private:
     struct Impl;

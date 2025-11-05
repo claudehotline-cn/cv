@@ -4,8 +4,16 @@ services:
       dockerfile: docker/va/Dockerfile.gpu
       args:
         ORT_VERSION: "1.23.2"
-        CUDA_VER: "12.9.0"   # 与宿主 CUDA 对齐（根据 nvcc 12.9）
-        UBUNTU_VER: "22.04"  # 需与基础镜像兼容
+        ORT_REBUILD: "0"                # 默认不重建 ORT（需要时可临时改为 1）
+        ORT_BUILD_TAG: "ort-1.23.2-cuda13-sm120-trt"
+        UBUNTU_VER: "22.04"                    # 与 NGC 镜像 ubuntu 版本一致
+        NGC_TRT_TAG: "${NGC_TRT_TAG}"         # 由环境变量指定，需对应 CUDA 13.0 的标签
+        EXPECTED_CUDA_MAJOR: "13"               # 严格版本校验：CUDA 主版本（13）
+        EXPECTED_CUDA_MINOR: "0"                # 严格版本校验：CUDA 次版本（13.0 -> 0）
+        EXPECTED_CUDNN_MAJOR: "9"               # 严格版本校验：cuDNN 主版本
+        STRICT_VERSION: "ON"                    # 不匹配直接失败
+        STRICT_TRT: "ON"                        # 缺少 TRT 头/库直接失败
+        STRICT_CUDA_MINOR: "OFF"                 # 开启次版本严格校验（要求 13.0）
     image: cv/va:latest-gpu
     deploy:
       resources:
@@ -13,8 +21,14 @@ services:
           devices:
             - capabilities: ["gpu"]
     runtime: nvidia
+    # 对于新版 compose，可使用：
+    # deploy: { resources: { reservations: { devices: [ { driver: nvidia, count: all, capabilities: [gpu] } ] } } }
+    # 或者：
+    #    gpus: all
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-
-
+      - ORT_LOG_SEVERITY_LEVEL=0
+    volumes:
+      # 持久化 ORT TensorRT 引擎与 timing 缓存，避免重启后重建
+      - ../../.ort_trt_cache:/app/.ort_trt_cache

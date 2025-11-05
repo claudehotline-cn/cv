@@ -1,5 +1,5 @@
 #include "analyzer/multistage/node_model.hpp"
-#include "analyzer/ort_session.hpp"
+#include "analyzer/model_session_factory.hpp"
 #include "core/engine_manager.hpp"
 #include "analyzer/logging_util.hpp"
 #include <algorithm>
@@ -27,71 +27,22 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
 
 bool NodeModel::open(NodeContext& ctx) {
     if (session_) return true;
-    auto s = std::make_shared<va::analyzer::OrtModelSession>();
 
-#ifdef USE_ONNXRUNTIME
-    // Infer provider/device from EngineManager if available
-    va::analyzer::OrtModelSession::Options opt;
-    bool prefer_gpu = false;
-    int device_id = 0;
-    bool stage_device_outputs = false;
-    bool device_output_views = false;
-    bool allow_cpu_fallback = true;
-    bool use_io_binding_opt = false;
+    // Create model session via factory (encapsulates provider priority and options mapping)
+    va::core::EngineDescriptor desc;
     if (ctx.engine_registry) {
-        try {
-            auto* em = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry);
-            auto desc = em->currentEngine();
-            std::string prov = desc.provider; 
-            std::transform(prov.begin(), prov.end(), prov.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-            if (prov.find("cuda") != std::string::npos || prov.find("trt") != std::string::npos) {
-                prefer_gpu = true;
-                opt.provider = "cuda"; // normalize to CUDA EP here; TRT can be added later when needed
-            } else {
-                opt.provider = "cpu";
-            }
-            device_id = desc.device_index;
-            // Read optional IoBinding output preferences from engine options map
-            auto findBool = [&](const char* key, bool defv){
-                auto it = desc.options.find(key);
-                if (it == desc.options.end()) return defv;
-                std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
-                if (v=="1"||v=="true"||v=="yes"||v=="on") return true;
-                if (v=="0"||v=="false"||v=="no"||v=="off") return false;
-                return defv;
-            };
-            stage_device_outputs = findBool("stage_device_outputs", false);
-            device_output_views = findBool("device_output_views", false);
-            allow_cpu_fallback = findBool("allow_cpu_fallback", false);
-            use_io_binding_opt = findBool("use_io_binding", prefer_gpu);
-        } catch (...) {
-            opt.provider = prefer_gpu ? std::string("cuda") : std::string("cpu");
-        }
-    } else {
-        opt.provider = "cpu";
+        try { desc = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry)->currentEngine(); }
+        catch (...) { /* ignore */ }
     }
-    opt.device_id = device_id;
-    opt.use_io_binding = use_io_binding_opt;   // enable IoBinding when configured (defaults to GPU preference)
-    opt.prefer_pinned_memory = prefer_gpu;     // prefer pinned when staging
-    opt.allow_cpu_fallback = allow_cpu_fallback;
-    opt.stage_device_outputs = stage_device_outputs;
-    opt.device_output_views = device_output_views;
-    // Bind unified CUDA stream from pipeline context when available
-    opt.user_stream = ctx.stream;
-    s->setOptions(opt);
-#endif
+
+    ProviderDecision dec{};
+    auto s = va::analyzer::create_model_session(desc, ctx, &dec);
 
     if (!model_path_.empty()) {
-#ifdef USE_ONNXRUNTIME
         VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model")
-            << "open: model_path='" << model_path_ << "' provider_opt='" << opt.provider
-            << "' device_id=" << opt.device_id
-            << " use_io_binding=" << std::boolalpha << opt.use_io_binding
-            << " allow_cpu_fallback=" << opt.allow_cpu_fallback
-            << " device_output_views=" << opt.device_output_views
-            << " stage_device_outputs=" << opt.stage_device_outputs;
-#endif
-        if (!s->loadModel(model_path_, /*use_gpu*/false /*opt controls EP*/)) {
+            << "open: model_path='" << model_path_ << "' provider_req='" << dec.requested
+            << "' device_id=" << desc.device_index;
+        if (!s->loadModel(model_path_, /*use_gpu*/false)) {
             VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "failed to load model: " << model_path_;
             return false;
         }
@@ -109,18 +60,18 @@ bool NodeModel::open(NodeContext& ctx) {
         if (ctx.engine_registry) {
             try {
                 auto* em = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry);
-                auto ri = s->runtimeInfo();
+                auto ri = s->getRuntimeInfo();
                 va::core::EngineRuntimeStatus st;
                 st.provider = ri.provider;
                 st.gpu_active = ri.gpu_active;
-                st.io_binding = ri.io_binding_active;
-                st.device_binding = ri.device_binding_active;
+                st.io_binding = ri.io_binding;
+                st.device_binding = ri.device_binding;
                 st.cpu_fallback = ri.cpu_fallback;
                 em->updateRuntimeStatus(std::move(st));
                 VA_LOG_C(::va::core::LogLevel::Info, "app") << "[RuntimeSummary][post-open] provider=" << ri.provider
                     << " gpu_active=" << std::boolalpha << ri.gpu_active
-                    << " io_binding=" << ri.io_binding_active
-                    << " device_binding=" << ri.device_binding_active;
+                    << " io_binding=" << ri.io_binding
+                    << " device_binding=" << ri.device_binding;
             } catch (...) { /* best-effort */ }
         }
         // 输出名统计
@@ -154,13 +105,7 @@ bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
         const size_t n_keys  = out_keys_.size();
         // Try to use real model output names when not provided in YAML
         std::vector<std::string> model_out_names;
-        try {
-            if (session_) {
-                if (auto ort = std::dynamic_pointer_cast<va::analyzer::OrtModelSession>(session_)) {
-                    model_out_names = ort->outputNames();
-                }
-            }
-        } catch (...) { /* ignore */ }
+        try { if (session_) model_out_names = session_->outputNames(); } catch (...) { /* ignore */ }
         // 详细日志：列出前若干输出 shape 与 on_gpu 标志
         try {
             std::string shapes;

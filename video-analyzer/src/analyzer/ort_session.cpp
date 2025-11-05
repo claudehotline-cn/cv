@@ -12,6 +12,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <filesystem>
 #include "utils/cuda_ctx_guard.hpp"
 
 #ifdef USE_ONNXRUNTIME
@@ -194,6 +195,7 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     }
 
     std::string provider = toLower(impl_->options.provider);
+    const std::string initial_provider = provider;
     if (provider == "ort-trt" || provider == "ort_tensor_rt" || provider == "ort-tensorrt") {
         provider = "tensorrt";
     } else if (provider == "ort-cuda" || provider == "ort-gpu") {
@@ -201,50 +203,73 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     } else if (provider == "ort-cpu") {
         provider = "cpu";
     }
+    // Normalize RTX alias
+    if (provider == "nv_tensorrt_rtx" || provider == "tensorrt_rtx" || provider == "rtx") {
+        // 当前不实现 RTX EP：将 RTX 请求视为常规 TensorRT
+        provider = "tensorrt";
+    }
     bool gpu_requested = use_gpu || provider == "cuda" || provider == "gpu" || provider == "tensorrt";
     impl_->use_gpu = gpu_requested;
 
     bool provider_appended = false;
     try {
 #if defined(USE_CUDA)
+        // 不尝试 RTX EP
         if (!provider_appended && provider == "tensorrt") {
             const OrtApi& api = Ort::GetApi();
             OrtTensorRTProviderOptionsV2* trt_options = nullptr;
             try {
                 Ort::ThrowOnError(api.CreateTensorRTProviderOptions(&trt_options));
 
-                std::vector<std::string> option_storage;
-                std::vector<const char*> option_keys;
-                std::vector<const char*> option_values;
-
-                option_storage.emplace_back(std::to_string(impl_->options.device_id));
-                option_keys.emplace_back("device_id");
-                option_values.emplace_back(option_storage.back().c_str());
-
-                option_storage.emplace_back(impl_->options.tensorrt_fp16 ? "1" : "0");
-                option_keys.emplace_back("trt_fp16_enable");
-                option_values.emplace_back(option_storage.back().c_str());
-
-                option_storage.emplace_back(impl_->options.tensorrt_int8 ? "1" : "0");
-                option_keys.emplace_back("trt_int8_enable");
-                option_values.emplace_back(option_storage.back().c_str());
-
+                // 先收集键值对，结束后再生成 char* 数组，避免 vector 重新分配导致 c_str() 失效
+                struct KV { const char* key; std::string val; };
+                std::vector<KV> kvs; kvs.reserve(24);
+                kvs.push_back({"device_id", std::to_string(impl_->options.device_id)});
+                kvs.push_back({"trt_fp16_enable", impl_->options.tensorrt_fp16 ? "1" : "0"});
+                kvs.push_back({"trt_int8_enable", impl_->options.tensorrt_int8 ? "1" : "0"});
+                // 启用 TensorRT 引擎与时序缓存，首次构建可能较久，缓存后显著加速
+                std::string cache_dir = "/app/.ort_trt_cache";
+                try { std::filesystem::create_directories(cache_dir); std::filesystem::create_directories(cache_dir + "/timing"); } catch (...) {}
+                kvs.push_back({"trt_engine_cache_enable", "1"});
+                kvs.push_back({"trt_engine_cache_path", cache_dir});
+                kvs.push_back({"trt_timing_cache_enable", "1"});
+                kvs.push_back({"trt_timing_cache_path", cache_dir + "/timing"});
+                // 可选：串行构建（降低资源峰值）；默认关闭
+                if (impl_->options.tensorrt_force_sequential_build) {
+                    kvs.push_back({"trt_force_sequential_engine_build", "1"});
+                }
                 if (impl_->options.tensorrt_workspace_mb > 0) {
                     size_t workspace_bytes = static_cast<size_t>(impl_->options.tensorrt_workspace_mb) * 1024ull * 1024ull;
-                    option_storage.emplace_back(std::to_string(workspace_bytes));
-                    option_keys.emplace_back("trt_max_workspace_size");
-                    option_values.emplace_back(option_storage.back().c_str());
+                    kvs.push_back({"trt_max_workspace_size", std::to_string(workspace_bytes)});
                 }
                 if (impl_->options.tensorrt_max_partition_iterations > 0) {
-                    option_storage.emplace_back(std::to_string(impl_->options.tensorrt_max_partition_iterations));
-                    option_keys.emplace_back("trt_max_partition_iterations");
-                    option_values.emplace_back(option_storage.back().c_str());
+                    kvs.push_back({"trt_max_partition_iterations", std::to_string(impl_->options.tensorrt_max_partition_iterations)});
                 }
                 if (impl_->options.tensorrt_min_subgraph_size > 0) {
-                    option_storage.emplace_back(std::to_string(impl_->options.tensorrt_min_subgraph_size));
-                    option_keys.emplace_back("trt_min_subgraph_size");
-                    option_values.emplace_back(option_storage.back().c_str());
+                    kvs.push_back({"trt_min_subgraph_size", std::to_string(impl_->options.tensorrt_min_subgraph_size)});
                 }
+                if (!impl_->options.tensorrt_profile_min_shapes.empty()) {
+                    kvs.push_back({"trt_profile_min_shapes", impl_->options.tensorrt_profile_min_shapes});
+                }
+                if (!impl_->options.tensorrt_profile_opt_shapes.empty()) {
+                    kvs.push_back({"trt_profile_opt_shapes", impl_->options.tensorrt_profile_opt_shapes});
+                }
+                if (!impl_->options.tensorrt_profile_max_shapes.empty()) {
+                    kvs.push_back({"trt_profile_max_shapes", impl_->options.tensorrt_profile_max_shapes});
+                }
+                if (impl_->options.tensorrt_builder_optimization_level >= 0) {
+                    kvs.push_back({"trt_builder_optimization_level", std::to_string(impl_->options.tensorrt_builder_optimization_level)});
+                }
+                if (impl_->options.tensorrt_auxiliary_streams >= 0) {
+                    kvs.push_back({"trt_auxiliary_streams", std::to_string(impl_->options.tensorrt_auxiliary_streams)});
+                }
+                if (impl_->options.tensorrt_detailed_build_log) {
+                    kvs.push_back({"trt_detailed_build_log", "1"});
+                }
+
+                std::vector<const char*> option_keys; option_keys.reserve(kvs.size());
+                std::vector<const char*> option_values; option_values.reserve(kvs.size());
+                for (auto& kv : kvs) { option_keys.push_back(kv.key); option_values.push_back(kv.val.c_str()); }
 
                 if (!option_keys.empty()) {
                     Ort::ThrowOnError(api.UpdateTensorRTProviderOptions(trt_options,
@@ -257,6 +282,9 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
                 provider_appended = true;
                 impl_->use_gpu = true;
                 provider = "tensorrt";
+                VA_LOG_C(::va::core::LogLevel::Info, "analyzer.ort")
+                    << "TensorRT EP(V2) appended device=" << impl_->options.device_id
+                    << " cache_path='" << cache_dir << "'";
             } catch (const Ort::Exception& ex) {
                 VA_LOG_WARN() << "Failed to configure TensorRT provider: " << ex.what() << ". Falling back to CUDA.";
                 provider = "cuda";
@@ -355,6 +383,8 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
         return false;
     }
 
+    // 不实现 RTX 严格要求：忽略 require_rtx_when_requested
+
     if (!provider_appended) {
         impl_->use_gpu = false;
     }
@@ -440,6 +470,14 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     try {
         // Decide warmup runs: 0=disable, -1=auto, >0=fixed
         int runs_cfg = impl_->options.warmup_runs;
+        // On TensorRT EP, skip auto warmup to avoid long engine build at startup
+        if ((provider_appended ? provider : std::string{"cpu"}) == std::string{"tensorrt"} && runs_cfg < 0) {
+            runs_cfg = 0; // auto -> off for TRT
+            try {
+                VA_LOG_C(::va::core::LogLevel::Info, "analyzer.ort")
+                    << "[OrtWarmup] provider=tensorrt auto->off to avoid first-run engine build at startup.";
+            } catch (...) { /* ignore */ }
+        }
         Ort::AllocatorWithDefaultOptions warm_alloc;
         // Derive an input shape; replace dynamic dims with concrete values
         std::vector<int64_t> ishape;
@@ -575,6 +613,23 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
     }
 
     try {
+        // Lazy-enable IoBinding if requested and GPU active but not yet created
+        if (!impl_->io_binding && impl_->options.use_io_binding && impl_->use_gpu) {
+            try {
+                impl_->io_binding = std::make_unique<Ort::IoBinding>(*impl_->session);
+                impl_->io_binding_enabled = true;
+#if VA_HAS_CUDA_RUNTIME
+                if (!impl_->device_pool) {
+                    impl_->device_pool = std::make_unique<va::core::GpuBufferPool>(impl_->options.io_binding_input_bytes, 4);
+                }
+#endif
+                VA_LOG_C(::va::core::LogLevel::Info, "analyzer.ort") << "IoBinding (lazy) enabled for run()";
+            } catch (const std::exception& ex) {
+                VA_LOG_WARN() << "IoBinding lazy init failed: " << ex.what() << "; continue without IoBinding.";
+                impl_->io_binding.reset();
+                impl_->io_binding_enabled = false;
+            }
+        }
         // Pre-run summary (once per throttle window)
         try {
             VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "ort.run.in", 1000)
@@ -990,6 +1045,17 @@ std::vector<std::string> OrtModelSession::outputNames() const {
 #else
     return {};
 #endif
+}
+
+IModelSession::ModelRuntimeInfo OrtModelSession::getRuntimeInfo() const {
+    IModelSession::ModelRuntimeInfo out;
+    auto ri = runtimeInfo();
+    out.provider = std::move(ri.provider);
+    out.gpu_active = ri.gpu_active;
+    out.io_binding = ri.io_binding_active;
+    out.device_binding = ri.device_binding_active;
+    out.cpu_fallback = ri.cpu_fallback;
+    return out;
 }
 
 #else // USE_ONNXRUNTIME

@@ -1,12 +1,13 @@
 # Video Analyzer (GPU) — requires NVIDIA Container Toolkit on host
 
-# Parameterize CUDA/Ubuntu to match host if needed
-ARG CUDA_VER=12.9.0
+# Parameterize Ubuntu and NGC TensorRT tag
 ARG UBUNTU_VER=22.04
-FROM nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER} AS build
+ARG NGC_TRT_TAG=25.08-py3
+# Use NGC TensorRT tag directly (no -devel/-runtime suffix in tags)
+FROM nvcr.io/nvidia/tensorrt:${NGC_TRT_TAG} AS build
 # Re-declare build args inside the stage so they are available to RUN
-ARG CUDA_VER
 ARG UBUNTU_VER
+ARG NGC_TRT_TAG
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     build-essential cmake ninja-build git pkg-config curl ca-certificates \
@@ -16,19 +17,80 @@ RUN apt-get update && apt-get install -y \
     libgrpc++-dev protobuf-compiler protobuf-compiler-grpc libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 
+
 # Upgrade CMake to >=3.28 via Kitware APT (ORT 1.23.2 requires it)
 RUN set -eux; \
     apt-get update && apt-get install -y wget gnupg && \
     wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" > /etc/apt/sources.list.d/kitware.list && \
+    CODENAME=$(grep UBUNTU_CODENAME /etc/os-release | cut -d= -f2) && \
+    echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ ${CODENAME} main" > /etc/apt/sources.list.d/kitware.list && \
     apt-get update && apt-get install -y --no-install-recommends cmake && \
     cmake --version
 
-WORKDIR /app
-COPY . /app
-
 # Ensure destination for locally built ONNX Runtime exists early (defensive)
 RUN mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include
+
+# Self-checks: ensure CUDA/cuDNN/TRT availability and (optionally) exact versions
+ARG EXPECTED_CUDA_MAJOR=13
+ARG EXPECTED_CUDA_MINOR=0
+ARG EXPECTED_CUDNN_MAJOR=9
+ARG STRICT_VERSION=ON
+ARG STRICT_TRT=ON
+ARG STRICT_CUDA_MINOR=OFF
+RUN set -eux; \
+    nvcc --version || { echo "nvcc missing in NGC devel image"; exit 1; }; \
+    CUDA_MAJ=$(nvcc --version | sed -n 's/.*release \([0-9]*\)\..*/\1/p' | head -n1); \
+    CUDA_MIN=$(nvcc --version | sed -n 's/.*release [0-9]*\.\([0-9]*\).*/\1/p' | head -n1); \
+    echo "Detected CUDA ${CUDA_MAJ}.${CUDA_MIN}"; \
+    if [ "${STRICT_VERSION}" = "ON" ]; then \
+      if [ "${CUDA_MAJ}" != "${EXPECTED_CUDA_MAJOR}" ]; then \
+        echo "ERROR: CUDA major ${CUDA_MAJ} != expected ${EXPECTED_CUDA_MAJOR}"; exit 1; \
+      fi; \
+      if [ "${STRICT_CUDA_MINOR}" = "ON" ] && [ "${CUDA_MIN}" != "${EXPECTED_CUDA_MINOR}" ]; then \
+        echo "ERROR: CUDA minor ${CUDA_MIN} != expected ${EXPECTED_CUDA_MINOR}"; exit 1; \
+      fi; \
+    fi; \
+    CUDNN_H=/usr/include/cudnn_version.h; \
+    if [ ! -f "$CUDNN_H" ]; then echo "ERROR: cudnn_version.h not found"; exit 1; fi; \
+    CUDNN_MAJOR=$(grep -m1 '^#define CUDNN_MAJOR' "$CUDNN_H" | awk '{print $3}'); \
+    echo "Detected cuDNN major ${CUDNN_MAJOR}"; \
+    if [ "${STRICT_VERSION}" = "ON" ] && [ "${CUDNN_MAJOR}" != "${EXPECTED_CUDNN_MAJOR}" ]; then \
+      echo "ERROR: cuDNN major ${CUDNN_MAJOR} != expected ${EXPECTED_CUDNN_MAJOR}"; exit 1; \
+    fi; \
+    # Locate TensorRT headers/libs (multiple layouts across tags)
+    TRT_HOME=""; \
+    if [ -f /usr/include/NvInfer.h ]; then TRT_HOME="/usr"; fi; \
+    if [ -z "$TRT_HOME" ] && [ -f /usr/include/x86_64-linux-gnu/NvInfer.h ]; then \
+      ln -sf /usr/include/x86_64-linux-gnu/NvInfer.h /usr/include/NvInfer.h || true; \
+      if [ -f /usr/include/x86_64-linux-gnu/NvInferVersion.h ]; then \
+        ln -sf /usr/include/x86_64-linux-gnu/NvInferVersion.h /usr/include/NvInferVersion.h || true; \
+      fi; \
+      TRT_HOME="/usr"; \
+    fi; \
+    if [ -z "$TRT_HOME" ]; then \
+      for d in /usr/local/TensorRT* /opt/TensorRT* /opt/tensorrt*; do \
+        if [ -f "$d/include/NvInfer.h" ]; then TRT_HOME="$d"; break; fi; \
+      done; \
+    fi; \
+    if [ -z "$TRT_HOME" ]; then \
+      echo "Attempting to install TensorRT dev packages via NVIDIA ML repo (ubuntu2404)"; \
+      apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-certificates || true; \
+      echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2404/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list || true; \
+      curl -fsSL https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2404/x86_64/7fa2af80.pub | apt-key add - || true; \
+      apt-get update || true; \
+      apt-get install -y --no-install-recommends libnvinfer-dev libnvonnxparsers-dev libnvinfer-plugin-dev libnvinfer-bin || true; \
+      if [ -f /usr/include/x86_64-linux-gnu/NvInfer.h ] && [ ! -f /usr/include/NvInfer.h ]; then ln -sf /usr/include/x86_64-linux-gnu/NvInfer.h /usr/include/NvInfer.h; fi; \
+      if [ -f /usr/include/NvInfer.h ]; then TRT_HOME="/usr"; fi; \
+    fi; \
+    if [ -z "$TRT_HOME" ] && [ "${STRICT_TRT}" = "ON" ]; then echo "ERROR: TensorRT headers not found"; exit 1; fi; \
+    FOUND_LIB=""; ldconfig -p | grep -E 'libnvinfer\\.so' >/dev/null 2>&1 && FOUND_LIB=1 || true; \
+    if [ -z "$FOUND_LIB" ]; then \
+      for d in /usr/lib/x86_64-linux-gnu /usr/local/TensorRT*/lib* /opt/TensorRT*/lib* /opt/tensorrt*/lib*; do \
+        if ls "$d"/libnvinfer.so* 1>/dev/null 2>&1; then export LD_LIBRARY_PATH="$d:${LD_LIBRARY_PATH}"; FOUND_LIB=1; break; fi; \
+      done; \
+    fi; \
+    if [ -z "$FOUND_LIB" ] && [ "${STRICT_TRT}" = "ON" ]; then echo "ERROR: TensorRT libs not found"; exit 1; fi; \
+    echo "TRT_HOME=${TRT_HOME}" > /tmp/trt_home.env
 
 # Build and install libdatachannel with OpenSSL backend to enable WHEP
 RUN set -eux; \
@@ -47,44 +109,86 @@ RUN set -eux; \
     rm -rf /tmp/ixwebsocket
 
 ARG ORT_VERSION=1.23.2
+ARG ORT_JOBS=24
+# 手动缓存键：若要强制重建 ORT，可变更此值
+ARG ORT_BUILD_TAG="ort-${ORT_VERSION}-cuda13-sm120-trt"
+ARG ORT_REBUILD=0
 RUN set -eux; \
-    # Python for ORT build tooling
-    apt-get update && apt-get install -y python3 python3-pip python3-dev && \
-    python3 -m pip install --upgrade pip wheel setuptools && \
-    # Fetch ONNX Runtime source
-    git clone --depth 1 --branch v${ORT_VERSION} https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime && \
-    cd /tmp/onnxruntime && \
-    # Optional TensorRT EP if headers exist
-    TRT_FLAGS=""; if [ -f /usr/include/NvInfer.h ]; then TRT_FLAGS="--use_tensorrt --tensorrt_home=/usr"; fi && \
-    # Build ORT shared libs with CUDA EP, arch 90;120, 24 threads, Flash-Attention off
-    python3 tools/ci_build/build.py \
-      --config Release \
-      --build_dir /tmp/ort_build \
-      --build_shared_lib \
-      --skip_tests \
-      --parallel 24 \
-      --cmake_generator Ninja \
-      --use_cuda --cuda_home=/usr/local/cuda --cudnn_home=/usr \
-      --cuda_version=${CUDA_VER%.*} \
-      --cmake_extra_defines "CMAKE_CUDA_ARCHITECTURES=120" \
-      --cmake_extra_defines "onnxruntime_USE_FLASH_ATTENTION=OFF" \
-      --cmake_extra_defines FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER \
-      --allow_running_as_root \
-      ${TRT_FLAGS} && \
-    # Install headers and libs to /opt/onnxruntime
-    mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include && \
-    cp -rv include/onnxruntime /opt/onnxruntime/include/ || true && \
-    find /tmp/ort_build -type f -name 'libonnxruntime*.so*' -print | sort > /tmp/ort_libs.txt && \
-    find /tmp/ort_build -type f -name 'libonnxruntime_providers_*' -print >> /tmp/ort_libs.txt && \
-    test -s /tmp/ort_libs.txt || { echo "ERROR: ONNX Runtime libs not found"; find /tmp/ort_build -maxdepth 3 -type f | sed -n '1,200p'; exit 1; } && \
-    while IFS= read -r f; do cp -v "$f" /opt/onnxruntime/lib/; done < /tmp/ort_libs.txt && \
-    # Ensure SONAME symlinks exist for loader resolution
-    set +e; best=$(ls -1 /opt/onnxruntime/lib/libonnxruntime.so* 2>/dev/null | sort -V | tail -n1); set -e; \
-    if [ -n "$best" ]; then \
-      if [ ! -e /opt/onnxruntime/lib/libonnxruntime.so ]; then ln -s "$(basename "$best")" /opt/onnxruntime/lib/libonnxruntime.so; fi; \
-      if [ ! -e /opt/onnxruntime/lib/libonnxruntime.so.1 ]; then ln -s "$(basename "$best")" /opt/onnxruntime/lib/libonnxruntime.so.1; fi; \
-    fi && \
-    # Build VideoAnalyzer against locally built ONNX Runtime
+    echo "ORT_BUILD_TAG=${ORT_BUILD_TAG} ORT_REBUILD=${ORT_REBUILD}"; \
+    if [ -f /opt/onnxruntime/lib/libonnxruntime.so ] \
+       && [ -f /opt/onnxruntime/lib/libonnxruntime_providers_shared.so ] \
+       && [ "${ORT_REBUILD}" != "1" ]; then \
+      echo "Reusing cached ONNX Runtime in /opt/onnxruntime"; \
+    else \
+      apt-get update && apt-get install -y python3 python3-pip python3-dev ccache && \
+      python3 -m pip install --upgrade pip wheel setuptools psutil packaging --break-system-packages || true && \
+      rm -rf /tmp/onnxruntime /tmp/onnxruntime.tar.gz || true; \
+      for i in 1 2 3; do \
+        git clone --depth 1 --branch v${ORT_VERSION} https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime && break || sleep 3; \
+      done; \
+      if [ ! -d /tmp/onnxruntime ]; then \
+        echo "git clone failed; trying tarball"; \
+        curl -fsSL -o /tmp/onnxruntime.tar.gz https://codeload.github.com/microsoft/onnxruntime/tar.gz/refs/tags/v${ORT_VERSION} && \
+        mkdir -p /tmp/ort_src && tar -xzf /tmp/onnxruntime.tar.gz -C /tmp/ort_src && \
+        SRC_DIR=$(find /tmp/ort_src -maxdepth 1 -type d -name 'onnxruntime-*' | head -n1) && \
+        mkdir -p /tmp/onnxruntime && cp -R "$SRC_DIR"/* /tmp/onnxruntime/; \
+      fi; \
+      test -f /tmp/onnxruntime/tools/ci_build/build.py || { echo "ERROR: ORT source not available"; exit 2; }; \
+      cd /tmp/onnxruntime && \
+      TRT_FLAGS=""; if [ -f /tmp/trt_home.env ]; then . /tmp/trt_home.env; fi; if [ -n "${TRT_HOME}" ]; then TRT_FLAGS="--use_tensorrt --tensorrt_home=${TRT_HOME}"; fi && \
+      CUDA_MAJ_MIN=$(nvcc --version | sed -n 's/.*release \([0-9]*\)\.\([0-9]*\).*/\1.\2/p' | head -n1) && \
+      CUDARCHS="120" && echo "Using CMAKE_CUDA_ARCHITECTURES=${CUDARCHS}" && \
+      python3 /tmp/onnxruntime/tools/ci_build/build.py \
+        --config Release \
+        --build_dir /tmp/ort_build \
+        --build_shared_lib \
+        --skip_tests \
+        --parallel ${ORT_JOBS} \
+        --compile_no_warning_as_error \
+        --cmake_generator Ninja \
+        --cmake_path /usr/bin/cmake \
+        --use_cuda --cuda_home=/usr/local/cuda --cudnn_home=/usr \
+        --cuda_version=${CUDA_MAJ_MIN} \
+        --cmake_extra_defines "CMAKE_CUDA_ARCHITECTURES=${CUDARCHS}" \
+        --cmake_extra_defines "onnxruntime_USE_FLASH_ATTENTION=OFF" \
+        --cmake_extra_defines "onnxruntime_DISABLE_CONTRIB_OPS=OFF" \
+        --cmake_extra_defines "CMAKE_CXX_COMPILER_LAUNCHER=ccache" \
+        --cmake_extra_defines "CMAKE_CUDA_COMPILER_LAUNCHER=ccache" \
+        --cmake_extra_defines FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER \
+        --allow_running_as_root \
+        ${TRT_FLAGS} \
+        --cmake_extra_defines onnxruntime_USE_TENSORRT=$(test -f /usr/include/NvInfer.h && echo ON || echo OFF) \
+        && \
+      mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include && \
+      cp -rv include/onnxruntime /opt/onnxruntime/include/ || true && \
+      find /tmp/ort_build -type f -name 'libonnxruntime*.so*' -print | sort > /tmp/ort_libs.txt && \
+      find /tmp/ort_build -type f -name 'libonnxruntime_providers_*' -print >> /tmp/ort_libs.txt && \
+      test -s /tmp/ort_libs.txt || { echo "ERROR: ONNX Runtime libs not found"; find /tmp/ort_build -maxdepth 3 -type f | sed -n '1,200p'; exit 1; } && \
+      while IFS= read -r f; do cp -v "$f" /opt/onnxruntime/lib/; done < /tmp/ort_libs.txt && \
+      set +e; best=$(ls -1 /opt/onnxruntime/lib/libonnxruntime.so* 2>/dev/null | sort -V | tail -n1); set -e; \
+      if [ -n "$best" ]; then \
+        if [ ! -e /opt/onnxruntime/lib/libonnxruntime.so ]; then ln -s "$(basename "$best")" /opt/onnxruntime/lib/libonnxruntime.so; fi; \
+        if [ ! -e /opt/onnxruntime/lib/libonnxruntime.so.1 ]; then ln -s "$(basename "$best")" /opt/onnxruntime/lib/libonnxruntime.so.1; fi; \
+      fi && \
+      if [ -n "${TRT_HOME:-}" ]; then \
+        if ! ls /opt/onnxruntime/lib/libonnxruntime_providers_* 2>/dev/null | grep -i -E 'tensorrt' >/dev/null; then \
+          echo "ERROR: TensorRT provider library not found under /opt/onnxruntime/lib (TRT_HOME=${TRT_HOME})"; \
+          ls -l /opt/onnxruntime/lib || true; \
+          exit 10; \
+        else \
+          echo "INFO: TensorRT provider library detected under /opt/onnxruntime/lib"; \
+        fi; \
+      else \
+        echo "INFO: TensorRT headers not found; TensorRT EP disabled (falling back to CUDA EP)."; \
+      fi; \
+    fi
+
+# Copy source after ORT build so app changes不触发 ORT 重建
+WORKDIR /app
+COPY . /app
+
+# Build VideoAnalyzer against locally built ONNX Runtime
+RUN set -eux; \
     cd /app && \
     cmake -S video-analyzer -B build -G Ninja \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
@@ -93,23 +197,23 @@ RUN set -eux; \
       -DONNXRUNTIME_ROOT=/opt/onnxruntime \
       -DONNXRUNTIME_INCLUDE_DIR=/opt/onnxruntime/include/onnxruntime/core/session \
       -DONNXRUNTIME_LIB:FILEPATH=/opt/onnxruntime/lib/libonnxruntime.so \
-    && cmake --build build -j
+    && cmake --build build -j${ORT_JOBS}
 
-ARG CUDA_VER=12.9.0
 ARG UBUNTU_VER=22.04
-# Use cudnn-runtime to ensure libcudnn is available for ONNX Runtime CUDA EP
-FROM nvidia/cuda:${CUDA_VER}-cudnn-runtime-ubuntu${UBUNTU_VER} AS runtime
+# Use the same NGC TensorRT tag for runtime; it includes TRT runtime libs
+FROM nvcr.io/nvidia/tensorrt:${NGC_TRT_TAG} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
-    ffmpeg libssl3 ca-certificates \
-    libyaml-cpp0.7 libjsoncpp25 \
-    libgrpc++1 \
-    libopencv-core4.5 libopencv-imgproc4.5 \
-    libopencv-videoio4.5 libopencv-highgui4.5 libopencv-imgcodecs4.5 libopencv-video4.5 \
-    curl \
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg libssl3 ca-certificates \
+      libyaml-cpp-dev libjsoncpp-dev \
+      libgrpc++-dev \
+      libopencv-dev \
+      curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:${LD_LIBRARY_PATH}
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
 COPY --from=build /opt/onnxruntime /opt/onnxruntime
 COPY --from=build /usr/local /usr/local
@@ -119,6 +223,6 @@ RUN mkdir -p /app/logs
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV VA_PROM_ENDPOINT=0.0.0.0:9090
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/usr/local/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
 EXPOSE 8082 9090 50051
 ENTRYPOINT ["/app/bin/VideoAnalyzer","/app/config"]

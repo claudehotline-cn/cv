@@ -182,6 +182,20 @@ if(ONNXRUNTIME_INCLUDE_DIR)
     add_definitions(-DUSE_ONNXRUNTIME)
 endif()
 
+# Optional: TensorRT (native session)
+find_path(TENSORRT_INCLUDE_DIR NAMES NvInfer.h PATHS /usr/include /usr/local/include ENV CPATH)
+find_library(NVINFER_LIB NAMES nvinfer)
+find_library(NVONNXPARSER_LIB NAMES nvonnxparser)
+if (TENSORRT_INCLUDE_DIR AND NVINFER_LIB AND NVONNXPARSER_LIB)
+    set(TENSORRT_FOUND TRUE)
+    message(STATUS "TensorRT found: enabling USE_TENSORRT")
+    add_definitions(-DUSE_TENSORRT)
+    include_directories(${TENSORRT_INCLUDE_DIR})
+else()
+    set(TENSORRT_FOUND FALSE)
+    message(STATUS "TensorRT not found: native TensorRT session disabled")
+endif()
+
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 # Exclude tool executables from main target sources; they have their own targets
 list(FILTER SOURCES EXCLUDE REGEX ".*/src/tools/.*\\.cpp$")
@@ -218,6 +232,10 @@ list(APPEND SOURCES
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${CUDA_SOURCES})
 if (HAVE_CUDA_KERNELS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE VA_HAS_CUDA_KERNELS)
+endif()
+
+if (TENSORRT_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${NVINFER_LIB} ${NVONNXPARSER_LIB})
 endif()
 if (CUDAToolkit_FOUND)
     # Ensure host code sees cuda_runtime.h so GPU postproc runtime paths are enabled

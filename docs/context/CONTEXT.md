@@ -1,6 +1,6 @@
-# 项目上下文（2025-11-03 更新，VA/CP/VSM/Web + Docker）
+# 项目上下文（2025-11-04 更新，VA/CP/VSM/Web + Docker + TensorRT）
 
-本文件聚焦当前会话中的关键结论、配置变更与问题定位，覆盖：GPU 零拷贝路径（IoBinding/CUDA）、Docker 构建（ORT 源码编译）、模型/图配置、CP 交互与最小验证流程。
+本文件聚焦当前会话的关键决定、变更与问题定位：GPU 零拷贝路径、Docker 内 ORT 源码编译（SM=90;120）、前端提示修复、以及 TensorRT/RTX 引擎设计与实施路线。
 
 ## 架构与数据流
 - VA：RTSP 拉流 → 预处理（NVDEC→CUDA Letterbox）→ 推理（ONNX Runtime CUDA/TensorRT）→ 后处理（YOLO NMS，CPU/GPU 可选）→ 叠加与编码（NVENC）→ WebRTC（WHEP）。
@@ -9,14 +9,11 @@
 - Web：通过 CP 与 VA 交互。
 
 ## Docker 与构建（GPU）
-- Dockerfile.gpu：
-  - 运行时基础镜像：`nvidia/cuda:<ver>-cudnn-runtime-ubuntu22.04`（保证 libcudnn 就绪）。
-  - 从源码构建 ONNX Runtime v1.23.2：启用 CUDA，支持可选 TensorRT（探测到 NvInfer 头文件自动开启）。
-  - CUDA 架构：统一使用 `CMAKE_CUDA_ARCHITECTURES="90;120"`（兼容 RTX 5090d）。
-  - 构建产物安装到 `/opt/onnxruntime`，VA 以该路径编译链接。
-- Compose（GPU override）：
-  - 模型卷仅映射为相对路径友好的 `/app/models`；图/YAML 中统一写 `models/xxx.onnx`。
-  - 日志：`/logs/video-analyzer-release.log` 映射宿主 `logs/`。
+- Build 基镜像：`nvidia/cuda:<ver>-cudnn-devel-ubuntu22.04`；Runtime 基镜像：`cudnn-runtime`。
+- 容器内源码构建 ORT v1.23.2：`CMAKE_CUDA_ARCHITECTURES="90;120"`，禁用 Flash-Attention，并行 24；`--allow_running_as_root`。
+- 安装到 `/opt/onnxruntime`，并补全 `libonnxruntime.so/.so.1` 链接；`LD_LIBRARY_PATH` 包含该目录。
+- 修复：在 build 阶段重新声明 `ARG CUDA_VER` 以消除 `${CUDA_VER%.*}` 报错；确保链接到我们构建的 ORT（此前未链接导致 `zero declared outputs` 误判）。
+- Compose：模型卷映射到 `/app/models`；图 YAML 统一写 `models/xxx.onnx`；日志映射到宿主 `logs/`。
 
 ## 零拷贝路径与默认策略
 - IoBinding：在 GPU Provider（cuda/trt）场景默认启用；VA 统一使用 TLS CUDA 流（user_compute_stream）。
@@ -35,13 +32,11 @@
   - `ms.node_model`：`out_count` 与前 3 个输出形状（含 gpu/cpu 标记）。
 
 ## 当前阻塞与结论
-- 现网日志表明：`models/yolov12x.onnx`、`models/yolov12n.onnx` 在 ORT 会话中被识别为 `zero declared outputs`。这不是“检测框为 0”，而是“模型 Graph 未声明任何输出张量”。
-- 仅当 det 产生 `det_raw`（至少一个模型输出张量）时，nms 才能工作；否则管线在 det 或 nms 节点失败。
+- 之前的 `zero declared outputs` 根因是运行时未正确装载我们编译的 ORT；已通过容器内编译与链接修复。容器内 Python 校验脚本 `/app/tools/check_onnx.py` 已验证模型 `yolov12n/x.onnx` 均能输出 `[1,84,8400]`。
 
-## 模型要求与修复建议
-- 使用“无 NMS 的 ONNX”，但必须具备 Graph 输出（head logits 等），且（如使用 external data）确保所有分片随同挂载至 `/app/models`。
-- 替换为已知可用的小模型先通路（例：yolov8n.onnx，导出时 `nms=False`），确认 det_raw 产出 → 切回目标模型。
-- 如需继续用“内置 NMS”的 onnx：应移除 graph 的 post.yolo.nms 节点，改为解析模型输出的自定义后处理，或改用 ORT TensorRT EP 并适配输出；此路线与“统一 CUDA 流零拷贝 + 可控阈值”的既定设计不一致，不推荐。
+## 模型与 NMS
+- 模型需“无内置 NMS 且有 Graph 输出”；如有 external data，需一并挂载到 `/app/models`。
+- NMS：默认使用 GPU 分支；阈值保持 `conf=0.65, iou=0.45`（按需求）。
 
 ## CP 交互（最小流程）
 - 订阅：`POST /api/subscriptions?stream_id=camera_01&profile=det_720p&source_uri=rtsp://host.docker.internal:8554/camera_01` → 返回 202 + Location。
@@ -49,8 +44,17 @@
 - 热更新模型：`/api/control/hotswap`（要求 pipeline_name/node/model_uri，CP 转发至 VA gRPC）。
 
 ## 验证与指标
-- 日志：`analyzer.ort load` / `ort.run.start` / `ort.run` / `ms.node_model`。
-- 指标：`va_d2d_nv12_frames_total`、`va_overlay_nv12_passthrough_total` 递增验证零拷贝链路。
+- 日志：`analyzer.ort load/ort.run` 或后续 `analyzer.trt load/trt.run`、`ms.node_model out_count`。
+- 指标：`va_d2d_nv12_frames_total`、`va_overlay_nv12_passthrough_total` 递增。
+
+## 前端修复
+- 分析页面“实时分析”提示乱码：`AnalysisPanel.vue` 已改为中文 `'已开始实时分析'`，构建后生效。
+
+## TensorRT 引擎路线（5090D / SM_120）
+- Provider 选择（优先→回退）：`tensorrt-rtx` → `tensorrt` → `cuda`；阶段二新增 `tensorrt-native`（原生 TRT 会话）。
+- 新增工厂 `model_session_factory`，NodeModel 依赖抽象与工厂（不改 YAML）。
+- 满足 SOLID：SRP/ISP（职责内聚）、OCP/DIP（新增 Provider 无需改调用方）、LSP（会话可替换）。
+- 设计文档：`docs/design/tensorrt_engine.md`（已提交）。
 
 ## 现状与下一步
 - 已落地：IoBinding/CUDA 预处理默认开启；Dockerfile.gpu 改为 ORT 源码构建；日志增强；模型/卷统一相对路径；NMS 改回 GPU 验证。

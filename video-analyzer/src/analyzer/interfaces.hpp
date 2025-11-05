@@ -22,6 +22,17 @@ struct IModelSession {
     virtual ~IModelSession() = default;
     virtual bool loadModel(const std::string& model_path, bool use_gpu) = 0;
     virtual bool run(const TensorView& input, std::vector<TensorView>& outputs) = 0;
+    struct ModelRuntimeInfo {
+        std::string provider {"cpu"};
+        bool gpu_active {false};
+        bool io_binding {false};
+        bool device_binding {false};
+        bool cpu_fallback {false};
+    };
+    // Minimal introspection for observability without leaking provider details
+    virtual ModelRuntimeInfo getRuntimeInfo() const = 0;
+    // Optional output names (empty if not applicable)
+    virtual std::vector<std::string> outputNames() const = 0;
 };
 
 struct IPostprocessor {

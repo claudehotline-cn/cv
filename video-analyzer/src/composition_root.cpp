@@ -1,7 +1,7 @@
 #include "composition_root.hpp"
 
 #include "analyzer/analyzer.hpp"
-#include "analyzer/ort_session.hpp"
+#include "analyzer/model_session_factory.hpp"
 #include "analyzer/preproc_letterbox_cpu.hpp"
 #include "analyzer/preproc_letterbox_cuda.hpp"
 #include "analyzer/postproc_yolo_det.hpp"
@@ -21,6 +21,10 @@
 #include "media/transport_webrtc_datachannel.hpp"
 
 #include "core/logger.hpp"
+// unified CUDA stream
+#include "exec/stream_pool.hpp"
+// NodeContext structure reused for factory hints
+#include "analyzer/multistage/interfaces.hpp"
 
 #include "analyzer/multistage/runner.hpp"
 #include "analyzer/multistage/builder_yaml.hpp"
@@ -295,59 +299,10 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         }
         analyzer->setPreprocessor(preprocessor);
 
-        auto session = std::make_shared<va::analyzer::OrtModelSession>();
-#ifdef USE_ONNXRUNTIME
-        va::analyzer::OrtModelSession::Options options;
-        options.provider = !cfg.engine_provider.empty() ? cfg.engine_provider : engine_desc.provider;
-        options.device_id = cfg.device_index;
-        // Enable IoBinding by default for GPU provider to keep zero-copy path active
-        options.use_io_binding = cfg.use_io_binding || hint_gpu;
-        options.prefer_pinned_memory = cfg.prefer_pinned_memory;
-        options.allow_cpu_fallback = cfg.allow_cpu_fallback;
-        options.enable_profiling = cfg.enable_profiling;
-        options.tensorrt_fp16 = cfg.tensorrt_fp16;
-        options.tensorrt_int8 = cfg.tensorrt_int8;
-        options.tensorrt_workspace_mb = cfg.tensorrt_workspace_mb;
-        options.tensorrt_max_partition_iterations = cfg.tensorrt_max_partition_iterations;
-        options.tensorrt_min_subgraph_size = cfg.tensorrt_min_subgraph_size;
-        options.io_binding_input_bytes = cfg.io_binding_input_bytes;
-        options.io_binding_output_bytes = cfg.io_binding_output_bytes;
-        // Optional IoBinding staging controls via engine options map
-        auto toLower_opt = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return static_cast<char>(std::tolower(c));}); return v; };
-        auto findBool = [&](const char* key, bool fallback){
-            auto it = engine_desc.options.find(key);
-            if (it == engine_desc.options.end()) return fallback;
-            std::string v = toLower_opt(it->second);
-            if (v=="1"||v=="true"||v=="yes"||v=="on") return true;
-            if (v=="0"||v=="false"||v=="no"||v=="off") return false;
-            return fallback;
-        };
-        auto findSize = [&](const char* key, std::size_t fallback){
-            auto it = engine_desc.options.find(key);
-            if (it == engine_desc.options.end()) return fallback;
-            try { long long vv = std::stoll(it->second); return vv>0 ? static_cast<std::size_t>(vv) : fallback; }
-            catch (...) { return fallback; }
-        };
-        auto findInt = [&](const char* key, int fallback){
-            auto it = engine_desc.options.find(key);
-            if (it == engine_desc.options.end()) return fallback;
-            try { return std::stoi(it->second); } catch (...) { return fallback; }
-        };
-        // stage / device view options
-        options.stage_device_outputs = findBool("stage_device_outputs", options.stage_device_outputs);
-        options.tensor_host_pool_bytes = findSize("tensor_host_pool_bytes", options.tensor_host_pool_bytes);
-        options.device_output_views = findBool("device_output_views", options.device_output_views);
-        // warmup_runs supports numeric or "auto" -> -1
-        if (auto itw = engine_desc.options.find("warmup_runs"); itw != engine_desc.options.end()) {
-            std::string v = toLower_opt(itw->second);
-            if (v == "auto") {
-                options.warmup_runs = -1;
-            } else {
-                try { options.warmup_runs = std::stoi(v); } catch (...) { /* keep default */ }
-            }
-        }
-        session->setOptions(options);
-#endif
+        // Create model session via factory (decoupled from concrete provider)
+        va::analyzer::multistage::NodeContext node_ctx; node_ctx.stream = va::exec::StreamPool::instance().tls();
+        va::analyzer::ProviderDecision dec{};
+        auto session = va::analyzer::create_model_session(engine_desc, node_ctx, &dec);
 
         const std::string& model_path = !cfg.model_path.empty() ? cfg.model_path : cfg.model_id;
 
@@ -364,12 +319,12 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         }
 
         {
-            auto runtime = session->runtimeInfo();
+            auto runtime = session->getRuntimeInfo();
             va::core::EngineRuntimeStatus status;
             status.provider = runtime.provider;
             status.gpu_active = runtime.gpu_active;
-            status.io_binding = runtime.io_binding_active;
-            status.device_binding = runtime.device_binding_active;
+            status.io_binding = runtime.io_binding;
+            status.device_binding = runtime.device_binding;
             status.cpu_fallback = runtime.cpu_fallback;
             engine_manager.updateRuntimeStatus(std::move(status));
         }

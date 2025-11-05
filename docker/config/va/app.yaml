@@ -1,6 +1,6 @@
 engine:
-  type: ort-cuda
-  provider: cuda
+  type: ort-gpu
+  provider: tensorrt
   device: 0
   options:
     use_ffmpeg_source: false
@@ -9,6 +9,7 @@ engine:
     use_multistage: true
     use_io_binding: true
     allow_cpu_fallback: false
+    require_rtx: false
     device_output_views: true
     stage_device_outputs: false
     use_cuda_nms: true
@@ -20,7 +21,20 @@ engine:
     overlay_thickness: 3
     overlay_alpha: 0.25
     trt_fp16: true
-    trt_workspace_mb: 2048
+    trt_workspace_mb: 1024
+    trt_max_partition_iterations: 200
+    trt_min_subgraph_size: 1
+    # 建议：为动态形状模型提供 TensorRT 优化 profile，避免首次构建耗时过长
+    # YOLOv12x 常见输入名可能为 images 或 input 或 data，填写错误名会被忽略
+    # 你可以先保留如下三者，TensorRT 会仅匹配存在的输入名
+    trt_profile_min_shapes: "images:1x3x640x640;input:1x3x640x640;data:1x3x640x640"
+    trt_profile_opt_shapes: "images:1x3x640x640;input:1x3x640x640;data:1x3x640x640"
+    trt_profile_max_shapes: "images:1x3x640x640;input:1x3x640x640;data:1x3x640x640"
+    trt_builder_optimization_level: 1
+    # 可选：并行构建（更快）或串行构建（更稳，资源占用低）。默认并行
+    trt_force_sequential: false
+    trt_auxiliary_streams: 0
+    trt_detailed_build_log: true
 sfu:
   whip_base: ""
   whep_base: ""
@@ -144,4 +158,3 @@ quotas:
   enforce_percent: 100
   exempt_keys: []
   key_overrides: []
-
