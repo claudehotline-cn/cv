@@ -175,6 +175,8 @@ Thumbs.db
 *.pkl
 *.pth
 *.pt
+*.engine
+docker/model/*.engine
 
 # Video files (test data)
 *.mp4
