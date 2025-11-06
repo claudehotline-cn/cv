@@ -9,9 +9,9 @@ analyzer:
         params:
           in: "tensor:det_input"
           outs: "tensor:det_raw"
-          model_path_trt: "models/yolov12n_sm120_fp16.engine"
-          model_path_ort: "models/yolov12n.onnx"
-          model_path: "models/yolov12n_sm120_fp16.engine"
+          model_path_trt: "models/yolov12x_sm120_fp16.engine"
+          model_path_ort: "models/yolov12x.onnx"
+          model_path: "models/yolov12x_sm120_fp16.engine"
       - name: nms
         type: post.yolo.nms
         # GPU NMS；按需求保持 0.65 置信度

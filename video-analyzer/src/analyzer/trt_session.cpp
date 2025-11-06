@@ -448,7 +448,17 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         nvinfer1::Dims odims = impl_->context->getTensorShape(nm);
         size_t out_elem = 1; std::vector<int64_t> oshape; oshape.reserve(odims.nbDims);
         for (int d=0; d<odims.nbDims; ++d) { int v = odims.d[d]; if (v<=0) v=1; oshape.push_back(v); out_elem *= static_cast<size_t>(v); }
-        const size_t obytes = out_elem * sizeof(float);
+        // Query TensorRT tensor data type to allocate correct size and set dtype
+        nvinfer1::DataType tdt = nvinfer1::DataType::kFLOAT;
+        try { tdt = impl_->engine->getTensorDataType(nm); } catch (...) {}
+        size_t elem_size = 4; va::core::DType vdt = va::core::DType::F32;
+        switch (tdt) {
+            case nvinfer1::DataType::kHALF: elem_size = 2; vdt = va::core::DType::F16; break;
+            case nvinfer1::DataType::kFLOAT: elem_size = 4; vdt = va::core::DType::F32; break;
+            case nvinfer1::DataType::kINT32: elem_size = 4; vdt = va::core::DType::I32; break;
+            default: elem_size = 4; vdt = va::core::DType::F32; break;
+        }
+        const size_t obytes = out_elem * elem_size;
         void* o_dev = nullptr;
         va::core::GpuBufferPool::Memory pooled_out{};
         if (impl_->device_pool) {
@@ -462,7 +472,7 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
             VA_LOG_ERROR() << "setTensorAddress(output) failed for " << nm;
             return false;
         }
-        core::TensorView tv; tv.data = o_dev; tv.on_gpu = true; tv.dtype = core::DType::F32; tv.shape = std::move(oshape);
+        core::TensorView tv; tv.data = o_dev; tv.on_gpu = true; tv.dtype = vdt; tv.shape = std::move(oshape);
         outputs.push_back(tv);
     }
     // Enqueue
@@ -518,7 +528,16 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         auto bdims = impl_->context->getBindingDimensions(bi);
         size_t out_elem = 1; std::vector<int64_t> oshape; oshape.reserve(bdims.nbDims);
         for (int d=0; d<bdims.nbDims; ++d) { int v = bdims.d[d]; if (v<=0) v=1; oshape.push_back(v); out_elem *= static_cast<size_t>(v); }
-        const size_t obytes = out_elem * sizeof(float);
+        // Query binding data type for correct allocation and dtype reporting
+        nvinfer1::DataType bdt = nvinfer1::DataType::kFLOAT; try { bdt = impl_->engine->getBindingDataType(bi); } catch (...) {}
+        size_t elem_size = 4; va::core::DType vdt = va::core::DType::F32;
+        switch (bdt) {
+            case nvinfer1::DataType::kHALF: elem_size = 2; vdt = va::core::DType::F16; break;
+            case nvinfer1::DataType::kFLOAT: elem_size = 4; vdt = va::core::DType::F32; break;
+            case nvinfer1::DataType::kINT32: elem_size = 4; vdt = va::core::DType::I32; break;
+            default: elem_size = 4; vdt = va::core::DType::F32; break;
+        }
+        const size_t obytes = out_elem * elem_size;
         void* o_dev = nullptr;
         va::core::GpuBufferPool::Memory pooled_out{};
         if (impl_->device_pool) {
@@ -529,7 +548,7 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
             if (cudaMalloc(&o_dev, obytes) != cudaSuccess) { VA_LOG_ERROR() << "cudaMalloc output failed"; return false; }
         }
         bindings[bi] = o_dev;
-        core::TensorView tv; tv.data = o_dev; tv.on_gpu = true; tv.dtype = core::DType::F32; tv.shape = std::move(oshape);
+        core::TensorView tv; tv.data = o_dev; tv.on_gpu = true; tv.dtype = vdt; tv.shape = std::move(oshape);
         outputs.push_back(tv);
     }
 
