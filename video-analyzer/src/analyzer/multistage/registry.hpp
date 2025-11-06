@@ -17,8 +17,21 @@ private:
     std::unordered_map<std::string, NodeCreateFn> map_;
 };
 
+// 生成唯一的静态变量名，避免同一 CLASS 多次注册时发生重定义
+#ifndef VA_MS_CONCAT_INNER
+#  define VA_MS_CONCAT_INNER(a,b) a##b
+#endif
+#ifndef VA_MS_CONCAT
+#  define VA_MS_CONCAT(a,b) VA_MS_CONCAT_INNER(a,b)
+#endif
+#ifdef __COUNTER__
+#  define VA_MS_UNIQUE(base) VA_MS_CONCAT(base, __COUNTER__)
+#else
+#  define VA_MS_UNIQUE(base) VA_MS_CONCAT(base, __LINE__)
+#endif
+
 #define MS_REGISTER_NODE(TYPE, CLASS) \
-    static bool __ms_reg_##CLASS = [](){ \
+    static bool VA_MS_UNIQUE(__ms_reg_) = [](){ \
         va::analyzer::multistage::NodeRegistry::instance().reg(TYPE, \
             [](const std::unordered_map<std::string,std::string>& cfg){ \
                 return std::make_shared<CLASS>(cfg); }); \
