@@ -15,6 +15,8 @@
 #include "core/drop_metrics.hpp"
 #include "core/source_reconnects.hpp"
 #include "core/nvdec_events.hpp"
+// For multistage analyzer pre-open/preload
+#include "analyzer/multistage/runner.hpp"
 
 namespace va::core {
 
@@ -74,6 +76,28 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     } catch (...) {
         VA_LOG_ERROR() << "[PipelineBuilder] unknown exception creating analyzer";
         return nullptr;
+    }
+
+    // 订阅时预加载模型（不依赖分析开关）：
+    // 若为多阶段 Analyzer，则在这里提前 open_all()，确保 det 节点的模型与引擎已加载，
+    // 之后从暂停切换到实时分析可直接推理，无需等待加载/构建。
+    if (analyzer) {
+        if (auto ms = std::dynamic_pointer_cast<va::analyzer::multistage::AnalyzerMultistageAdapter>(analyzer)) {
+            try {
+                auto& ctx = ms->context();
+                // 将 EngineManager 句柄注入给 NodeContext，便于 NodeModel 选择 provider 与路径
+                ctx.engine_registry = reinterpret_cast<void*>(&engine_manager_);
+                if (ms->graph().open_all(ctx)) {
+                    VA_LOG_C(::va::core::LogLevel::Info, "composition") << "[Preload] multistage graph opened at subscribe (models preloaded).";
+                } else {
+                    VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] multistage graph open_all failed; will lazy-open on first frame.";
+                }
+            } catch (const std::exception& ex) {
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] multistage pre-open threw: " << ex.what();
+            } catch (...) {
+                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] multistage pre-open unknown error";
+            }
+        }
     }
 
     try {
