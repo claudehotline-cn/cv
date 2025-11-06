@@ -35,6 +35,13 @@ struct TensorRTModelSession::Impl {
     std::vector<std::string> output_names;
     std::unique_ptr<va::core::GpuBufferPool> device_pool;
     std::unique_ptr<va::core::HostBufferPool> host_pool;
+    // Staged device buffers to keep outputs alive across pipeline stages for the
+    // previous run. We release/recycle them at the beginning of the next run.
+    std::vector<va::core::GpuBufferPool::Memory> staged_outputs;
+    std::vector<void*> staged_raw_cuda; // non-pooled fallbacks allocated via cudaMalloc
+    // Staged input buffers (when we H2D stage for CPU input)
+    std::vector<va::core::GpuBufferPool::Memory> staged_inputs;
+    std::vector<void*> staged_input_raw;
     bool use_gpu {true};
     bool cpu_fallback {false};
     void* cuda_stream {nullptr};
@@ -399,6 +406,19 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
     std::scoped_lock lock(impl_->mutex);
     if (!impl_->context || !impl_->engine) return false;
     if (input.shape.empty() || input.dtype != core::DType::F32 || !input.data) return false;
+    // Recycle staged buffers from previous run (safe on same stream order)
+    if (impl_->device_pool && !impl_->staged_outputs.empty()) {
+        for (auto &m : impl_->staged_outputs) impl_->device_pool->release(std::move(m));
+        impl_->staged_outputs.clear();
+    }
+    for (void* p : impl_->staged_raw_cuda) { if (p) cudaFree(p); }
+    impl_->staged_raw_cuda.clear();
+    if (impl_->device_pool && !impl_->staged_inputs.empty()) {
+        for (auto &m : impl_->staged_inputs) impl_->device_pool->release(std::move(m));
+        impl_->staged_inputs.clear();
+    }
+    for (void* p : impl_->staged_input_raw) { if (p) cudaFree(p); }
+    impl_->staged_input_raw.clear();
     // Find first input tensor name
     int numIO = impl_->engine->getNbIOTensors();
     const char* inputName = nullptr;
@@ -429,10 +449,14 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         if (!in_dev) {
             cudaError_t err = cudaMalloc(&in_dev, bytes);
             if (err != cudaSuccess) { VA_LOG_ERROR() << "cudaMalloc input failed"; return false; }
+            impl_->staged_input_raw.push_back(in_dev);
         }
         cudaError_t err = cudaMemcpyAsync(in_dev, input.data, bytes, cudaMemcpyHostToDevice,
                             impl_->cuda_stream ? reinterpret_cast<cudaStream_t>(impl_->cuda_stream) : 0);
         if (err != cudaSuccess) { VA_LOG_ERROR() << "H2D failed"; return false; }
+        if (pooled_in.ptr) {
+            impl_->staged_inputs.emplace_back(std::move(pooled_in));
+        }
     }
     // Bind input tensor address
     if (!impl_->context->setTensorAddress(inputName, in_dev)) {
@@ -455,7 +479,7 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         switch (tdt) {
             case nvinfer1::DataType::kHALF: elem_size = 2; vdt = va::core::DType::F16; break;
             case nvinfer1::DataType::kFLOAT: elem_size = 4; vdt = va::core::DType::F32; break;
-            case nvinfer1::DataType::kINT32: elem_size = 4; vdt = va::core::DType::I32; break;
+            case nvinfer1::DataType::kINT32: elem_size = 4; vdt = va::core::DType::F32; break; // map to F32 (postproc expects float)
             default: elem_size = 4; vdt = va::core::DType::F32; break;
         }
         const size_t obytes = out_elem * elem_size;
@@ -467,6 +491,10 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         }
         if (!o_dev) {
             if (cudaMalloc(&o_dev, obytes) != cudaSuccess) { VA_LOG_ERROR() << "cudaMalloc output failed"; return false; }
+            impl_->staged_raw_cuda.push_back(o_dev);
+        } else {
+            // keep pooled buffer alive until next run
+            impl_->staged_outputs.emplace_back(std::move(pooled_out));
         }
         if (!impl_->context->setTensorAddress(nm, o_dev)) {
             VA_LOG_ERROR() << "setTensorAddress(output) failed for " << nm;
@@ -484,6 +512,19 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
     std::scoped_lock lock(impl_->mutex);
     if (!impl_->context || !impl_->engine) return false;
     if (input.shape.empty() || input.dtype != core::DType::F32 || !input.data) return false;
+    // Recycle staged buffers from previous run
+    if (impl_->device_pool && !impl_->staged_outputs.empty()) {
+        for (auto &m : impl_->staged_outputs) impl_->device_pool->release(std::move(m));
+        impl_->staged_outputs.clear();
+    }
+    for (void* p : impl_->staged_raw_cuda) { if (p) cudaFree(p); }
+    impl_->staged_raw_cuda.clear();
+    if (impl_->device_pool && !impl_->staged_inputs.empty()) {
+        for (auto &m : impl_->staged_inputs) impl_->device_pool->release(std::move(m));
+        impl_->staged_inputs.clear();
+    }
+    for (void* p : impl_->staged_input_raw) { if (p) cudaFree(p); }
+    impl_->staged_input_raw.clear();
     // Prepare bindings array
     const int nb = impl_->nbBindings;
     std::vector<void*> bindings(nb, nullptr);
@@ -514,10 +555,14 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         if (!in_dev) {
             cudaError_t err = cudaMalloc(&in_dev, bytes);
             if (err != cudaSuccess) { VA_LOG_ERROR() << "cudaMalloc input failed"; return false; }
+            impl_->staged_input_raw.push_back(in_dev);
         }
         cudaError_t err = cudaMemcpyAsync(in_dev, input.data, bytes, cudaMemcpyHostToDevice,
                             impl_->cuda_stream ? reinterpret_cast<cudaStream_t>(impl_->cuda_stream) : 0);
         if (err != cudaSuccess) { VA_LOG_ERROR() << "H2D failed"; return false; }
+        if (pooled_in.ptr) {
+            impl_->staged_inputs.emplace_back(std::move(pooled_in));
+        }
     }
     bindings[inputIndex] = in_dev;
 
@@ -534,7 +579,7 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         switch (bdt) {
             case nvinfer1::DataType::kHALF: elem_size = 2; vdt = va::core::DType::F16; break;
             case nvinfer1::DataType::kFLOAT: elem_size = 4; vdt = va::core::DType::F32; break;
-            case nvinfer1::DataType::kINT32: elem_size = 4; vdt = va::core::DType::I32; break;
+            case nvinfer1::DataType::kINT32: elem_size = 4; vdt = va::core::DType::F32; break; // map to F32 (postproc expects float)
             default: elem_size = 4; vdt = va::core::DType::F32; break;
         }
         const size_t obytes = out_elem * elem_size;
@@ -546,6 +591,9 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
         }
         if (!o_dev) {
             if (cudaMalloc(&o_dev, obytes) != cudaSuccess) { VA_LOG_ERROR() << "cudaMalloc output failed"; return false; }
+            impl_->staged_raw_cuda.push_back(o_dev);
+        } else {
+            impl_->staged_outputs.emplace_back(std::move(pooled_out));
         }
         bindings[bi] = o_dev;
         core::TensorView tv; tv.data = o_dev; tv.on_gpu = true; tv.dtype = vdt; tv.shape = std::move(oshape);
