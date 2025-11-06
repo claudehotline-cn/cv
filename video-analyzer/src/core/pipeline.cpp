@@ -237,26 +237,7 @@ bool Pipeline::processFrame(const core::Frame& in) {
     } catch (...) { /* best-effort */ }
     // Use virtual IFrameFilter::process to allow multistage adapter to take effect
     if (!analyzer_->process(in, analyzed)) {
-        // 分析暂不可用（例如首次构建 TensorRT 引擎期间）：
-        // 为避免前端画面卡住，这里回退为原始帧直通编码与发送。
-        VA_LOG_DEBUG() << "[Pipeline] analyze() returned false -> passthrough raw frame";
-        if (encoder_ && transport_) {
-            va::media::IEncoder::Packet packet;
-            auto t0 = std::chrono::high_resolution_clock::now();
-            if (force_idr_next_.exchange(false)) {
-                VA_LOG_INFO() << "[Pipeline] force next frame IDR (analyze not-ready) key='" << track_id_ << "'";
-                try { encoder_->requestKeyframe(); } catch (...) {}
-            }
-            if (encoder_->encode(in, packet)) {
-                auto t1 = std::chrono::high_resolution_clock::now();
-                auto ms = [](auto a, auto b){ return std::chrono::duration_cast<std::chrono::milliseconds>(b-a).count(); };
-                if (in.lat) in.lat->record_encode_ms(static_cast<double>(ms(t0, t1)));
-                if (!packet.data.empty()) {
-                    transport_->send(track_id_, packet.data.data(), packet.data.size());
-                }
-                return true;
-            }
-        }
+        VA_LOG_DEBUG() << "[Pipeline] analyze() returned false";
         return false;
     }
     // Ensure analyzed frame carries metrics sink
