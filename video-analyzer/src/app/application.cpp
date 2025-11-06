@@ -170,19 +170,49 @@ bool Application::initialize(const std::string& config_dir) {
 
     va::core::EngineDescriptor descriptor;
     descriptor.name = app_config_.engine.type;
+    // Normalize provider/type with explicit family constraints
+    auto to_lower = [](std::string s){ std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){return (char)std::tolower(c);}); return s; };
+    std::string type_lower = to_lower(app_config_.engine.type);
     std::string raw_provider = app_config_.engine.provider.empty() ? app_config_.engine.type : app_config_.engine.provider;
-    std::string provider_lower = raw_provider;
-    std::transform(provider_lower.begin(), provider_lower.end(), provider_lower.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    if (provider_lower == "ort-trt" || provider_lower == "ort_tensor_rt" || provider_lower == "ort-tensorrt") {
-        raw_provider = "tensorrt";
-    } else if (provider_lower == "ort-cuda" || provider_lower == "ort-gpu") {
-        raw_provider = "cuda";
-    } else if (provider_lower == "ort-cpu") {
-        raw_provider = "cpu";
+    std::string provider_lower = to_lower(raw_provider);
+    // First, normalize common aliases for provider
+    if (provider_lower == "ort-trt" || provider_lower == "ort_tensor_rt" || provider_lower == "ort-tensorrt") raw_provider = "tensorrt";
+    else if (provider_lower == "ort-cuda" || provider_lower == "ort-gpu") raw_provider = "cuda";
+    else if (provider_lower == "ort-cpu") raw_provider = "cpu";
+    else if (provider_lower == "rtx" || provider_lower == "tensorrt_rtx" || provider_lower == "nv_tensorrt_rtx") raw_provider = "tensorrt-rtx";
+    else if (provider_lower == "trt-native" || provider_lower == "tensorrt_native") raw_provider = "tensorrt-native";
+
+    // Family constraints:
+    // - type in {"tensorrt","trt","tensorrt-native","trt-native"} => provider ∈ {tensorrt-native, tensorrt-rtx}
+    // - type in {"ort","ort-gpu","ort-cuda","ort-cpu"}          => provider ∈ {cpu,cuda,tensorrt,tensorrt-rtx}
+    std::string family = "";
+    if (type_lower == "tensorrt" || type_lower == "trt" || type_lower == "tensorrt-native" || type_lower == "trt-native") family = "tensorrt";
+    else if (type_lower == "ort" || type_lower == "ort-gpu" || type_lower == "ort-cuda" || type_lower == "ort-cpu") family = "ort";
+
+    std::string prov_norm = to_lower(raw_provider);
+    if (family == "tensorrt") {
+        // Accept only native/rtx; map rtx→native（RTX 暂不实现）
+        if (prov_norm == "tensorrt-rtx") {
+            prov_norm = "tensorrt-native";
+        } else if (prov_norm != "tensorrt-native") {
+            // If user passed cuda/cpu/tensorrt here, prefer native for clarity
+            prov_norm = "tensorrt-native";
+        }
+    } else if (family == "ort") {
+        // Accept cpu/cuda/tensorrt/(rtx→tensorrt). Native not allowed on ORT family.
+        if (prov_norm == "tensorrt-rtx") {
+            prov_norm = "tensorrt"; // RTX 暂不实现，静默回退
+        } else if (prov_norm == "tensorrt-native") {
+            prov_norm = "tensorrt"; // 在 ORT family 下不支持原生 TRT，会话统一走 ORT TRTEP
+        } else if (prov_norm != "cpu" && prov_norm != "cuda" && prov_norm != "tensorrt") {
+            // Unknown → default to cuda for ORT family
+            prov_norm = "cuda";
+        }
+    } else {
+        // Unknown type family: keep provider normalized aliases only
+        if (prov_norm == "tensorrt-rtx") prov_norm = "tensorrt"; // default mapping
     }
-    descriptor.provider = raw_provider;
+    descriptor.provider = prov_norm;
     descriptor.device_index = app_config_.engine.device;
     descriptor.options["use_io_binding"] = app_config_.engine.options.use_io_binding ? "true" : "false";
     descriptor.options["prefer_pinned_memory"] = app_config_.engine.options.prefer_pinned_memory ? "true" : "false";

@@ -16,6 +16,11 @@ services:
       - VA_ICE_PORT_RANGE=10000-10100
       - VA_ICE_TCP=1
       - VA_STUN=stun.l.google.com:19302
+      # Speed up native TensorRT engine build (tensorrt-native)
+      - VA_TRT_TACTIC_SOURCES=cublaslt,cublas,cudnn
+      - VA_TRT_BUILDER_OPT=1
+      - VA_TRT_MIN_TIMING=1
+      - VA_TRT_AVG_TIMING=1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -24,6 +29,8 @@ services:
       - ../model:/app/models:ro
       - ../../video-analyzer/config/certs:/app/config/certs:ro
       - ../../logs:/logs:rw
+      # 持久化原生 TensorRT timing/engine 缓存，缩短冷启动时长
+      - ../../.trt_native_cache:/app/.trt_native_cache:rw
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9090/metrics >/dev/null || exit 1"]
       interval: 10s

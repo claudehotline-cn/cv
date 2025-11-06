@@ -28,7 +28,15 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-      - ORT_LOG_SEVERITY_LEVEL=0
+      # ORT 日志等级：2=WARNING，仅警告及以上
+      - ORT_LOG_SEVERITY_LEVEL=2
+      # Speed up native TensorRT engine build (tensorrt-native)
+      - VA_TRT_TACTIC_SOURCES=cublaslt,cublas,cudnn
+      - VA_TRT_BUILDER_OPT=1
+      - VA_TRT_MIN_TIMING=1
+      - VA_TRT_AVG_TIMING=1
     volumes:
       # 持久化 ORT TensorRT 引擎与 timing 缓存，避免重启后重建
       - ../../.ort_trt_cache:/app/.ort_trt_cache
+      # 持久化原生 TensorRT (tensorrt-native) timing/engine 缓存
+      - ../../.trt_native_cache:/app/.trt_native_cache

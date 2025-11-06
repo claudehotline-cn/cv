@@ -1,6 +1,6 @@
 engine:
-  type: ort-gpu
-  provider: tensorrt
+  type: tensorrt
+  provider: tensorrt-native
   device: 0
   options:
     use_ffmpeg_source: false
@@ -34,7 +34,7 @@ engine:
     # 可选：并行构建（更快）或串行构建（更稳，资源占用低）。默认并行
     trt_force_sequential: false
     trt_auxiliary_streams: 0
-    trt_detailed_build_log: true
+    trt_detailed_build_log: false
 sfu:
   whip_base: ""
   whep_base: ""
@@ -85,6 +85,7 @@ observability:
   log_level: debug
   log_format: text
   module_levels:
+    analyzer.trt: debug
     transport.webrtc: debug
     encoder.ffmpeg: debug
   console: true

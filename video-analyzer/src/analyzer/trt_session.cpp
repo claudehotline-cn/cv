@@ -9,6 +9,9 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
 
 #if defined(USE_TENSORRT)
 #include <cuda_runtime.h>
@@ -37,11 +40,42 @@ struct TensorRTModelSession::Impl {
     void* cuda_stream {nullptr};
 #if defined(USE_TENSORRT)
     struct TRTLogger : public nvinfer1::ILogger {
+        // Throttle INFO/VERBOSE logs to avoid flooding. Immediate for WARN/ERROR.
+        int throttle_ms {1000};
+        std::atomic<unsigned long long> suppressed {0};
+        std::atomic<long long> last_emit_ms {0};
+        TRTLogger() {
+            if (const char* e = std::getenv("VA_TRT_LOG_THROTTLE_MS")) {
+                try { int v = std::stoi(e); if (v >= 0) throttle_ms = v; } catch (...) {}
+            }
+        }
+        static long long now_ms() {
+            using namespace std::chrono; return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+        }
         void log(Severity s, nvinfer1::AsciiChar const* msg) noexcept override {
             using L = ::va::core::LogLevel;
-            L lvl = (s <= Severity::kWARNING) ? L::Warn : L::Debug;
-            if (s == Severity::kERROR || s == Severity::kINTERNAL_ERROR) lvl = L::Error;
-            VA_LOG_C(lvl, "analyzer.trt") << msg;
+            // Map TRT severity to our levels
+            if (s == Severity::kERROR || s == Severity::kINTERNAL_ERROR) {
+                VA_LOG_C(L::Error, "analyzer.trt") << msg;
+                return;
+            }
+            if (s == Severity::kWARNING) {
+                VA_LOG_C(L::Warn, "analyzer.trt") << msg;
+                return;
+            }
+            // INFO/VERBOSE: throttle output
+            if (throttle_ms <= 0) { VA_LOG_C(L::Debug, "analyzer.trt") << msg; return; }
+            const long long now = now_ms();
+            long long last = last_emit_ms.load(std::memory_order_relaxed);
+            if (now - last >= throttle_ms && last_emit_ms.compare_exchange_strong(last, now)) {
+                unsigned long long sup = suppressed.exchange(0, std::memory_order_relaxed);
+                if (sup > 0) {
+                    VA_LOG_C(L::Debug, "analyzer.trt") << "[throttled] suppressed " << sup << " messages";
+                }
+                VA_LOG_C(L::Debug, "analyzer.trt") << msg;
+            } else {
+                suppressed.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     } logger;
 
@@ -98,11 +132,175 @@ bool TensorRTModelSession::loadModel(const std::string& model_path, bool /*use_g
     return false;
 #else
 #if NV_TENSORRT_MAJOR >= 10
-    // Minimal stub for TensorRT 10+: native path not yet implemented; prefer ORT TensorRT EP
-    VA_LOG_ERROR() << "TensorRT 10+ native path not implemented; please use ORT TensorRT EP (provider=tensorrt).";
-    impl_->cpu_fallback = true;
-    loaded_ = false;
-    return false;
+    try {
+        // Create builder/network/config
+        impl_->builder = nvinfer1::createInferBuilder(impl_->logger);
+        if (!impl_->builder) throw std::runtime_error("createInferBuilder failed");
+        uint32_t flags = 1u << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+        impl_->network = impl_->builder->createNetworkV2(flags);
+        if (!impl_->network) throw std::runtime_error("createNetworkV2 failed");
+        impl_->config = impl_->builder->createBuilderConfig();
+        if (!impl_->config) throw std::runtime_error("createBuilderConfig failed");
+        impl_->parser = nvonnxparser::createParser(*impl_->network, impl_->logger);
+        if (!impl_->parser) throw std::runtime_error("createParser failed");
+        // Parse ONNX
+        if (!impl_->parser->parseFromFile(model_path.c_str(), static_cast<int>(nvinfer1::ILogger::Severity::kWARNING))) {
+            throw std::runtime_error("nvonnxparser parse failed");
+        }
+        // Config
+        if (impl_->options.fp16) {
+            impl_->config->setFlag(nvinfer1::BuilderFlag::kFP16);
+        }
+        const size_t workspace = impl_->options.workspace_mb > 0 ? static_cast<size_t>(impl_->options.workspace_mb) * 1024ull * 1024ull : 0ull;
+        if (workspace > 0) {
+            impl_->config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, workspace);
+        }
+        // Basic builder tuning (env overrides)
+        auto get_env_int = [](const char* k, int defv){ if (const char* e = std::getenv(k)) { try { return std::stoi(e); } catch (...) {} } return defv; };
+        int opt = get_env_int("VA_TRT_BUILDER_OPT", impl_->options.builder_opt_level);
+        try { impl_->config->setBuilderOptimizationLevel(opt); } catch (...) {}
+        int minIter = get_env_int("VA_TRT_MIN_TIMING", impl_->options.min_timing_iterations);
+        int avgIter = get_env_int("VA_TRT_AVG_TIMING", impl_->options.avg_timing_iterations);
+#if NV_TENSORRT_MAJOR < 10
+        try { impl_->config->setMinTimingIterations(minIter); } catch (...) {}
+        try { impl_->config->setAvgTimingIterations(avgIter); } catch (...) {}
+#else
+        // In TRT 10, setMinTimingIterations may be removed; keep avg iterations if available.
+        try { impl_->config->setAvgTimingIterations(avgIter); } catch (...) {}
+#endif
+        // Restrict tactic sources if requested
+        if (const char* ts = std::getenv("VA_TRT_TACTIC_SOURCES")) {
+            std::string v = ts; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);});
+            uint64_t mask = 0;
+#ifdef NV_TENSORRT_MAJOR
+            if (v.find("cublaslt") != std::string::npos) mask |= (1ull << static_cast<int>(nvinfer1::TacticSource::kCUBLAS_LT));
+            if (v.find("cublas") != std::string::npos)   mask |= (1ull << static_cast<int>(nvinfer1::TacticSource::kCUBLAS));
+            if (v.find("cudnn") != std::string::npos)    mask |= (1ull << static_cast<int>(nvinfer1::TacticSource::kCUDNN));
+            if (mask) { try { impl_->config->setTacticSources(mask); } catch (...) {} }
+#endif
+        }
+        // Reduce tactic spew: lower profiling verbosity unless explicitly enabled
+        try {
+            bool verbose = false;
+            if (const char* e = std::getenv("VA_TRT_VERBOSE_TACTICS")) {
+                std::string v = e; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);});
+                verbose = (v=="1"||v=="true"||v=="yes");
+            }
+            impl_->config->setProfilingVerbosity(verbose ? nvinfer1::ProfilingVerbosity::kDETAILED : nvinfer1::ProfilingVerbosity::kNONE);
+        } catch (...) { /* ignore if not supported */ }
+
+        // Timing cache load (native TRT):
+        try {
+            std::string cache_dir = "/app/.trt_native_cache";
+            if (const char* e = std::getenv("VA_TRT_CACHE_DIR")) cache_dir = e;
+            std::error_code ec; std::filesystem::create_directories(cache_dir, ec);
+            std::string cache_path = cache_dir + "/timing_sm";
+            // Append arch if available
+            try {
+                int dev=0; cudaDeviceProp prop{}; cudaGetDevice(&dev); if (cudaGetDeviceProperties(&prop, dev)==cudaSuccess) {
+                    std::ostringstream oss; oss << cache_path << (int)prop.major << (int)prop.minor << ".blob"; cache_path = oss.str();
+                }
+            } catch (...) {}
+            std::ifstream ifs(cache_path, std::ios::binary);
+            if (ifs.good()) {
+                std::vector<char> buf((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+                if (!buf.empty()) {
+                    auto* tc = impl_->config->createTimingCache(buf.data(), buf.size());
+                    if (tc) { impl_->config->setTimingCache(*tc, false); VA_LOG_C(::va::core::LogLevel::Info, "analyzer.trt") << "TRT native: loaded timing cache from '" << cache_path << "'"; }
+                }
+            }
+            // After build, we will serialize timing cache again
+        } catch (...) {}
+        // Optimization profile for dynamic shapes (minimal 1x3x640x640 fallback)
+        try {
+            nvinfer1::IOptimizationProfile* prof = impl_->builder->createOptimizationProfile();
+            const char* inName = nullptr;
+            // Try get first input tensor name from network
+            int nbInputs = 0;
+            try { nbInputs = impl_->network->getNbInputs(); } catch (...) { nbInputs = 0; }
+            if (nbInputs > 0) {
+                try {
+                    auto* in = impl_->network->getInput(0);
+                    if (in) inName = in->getName();
+                } catch (...) { inName = nullptr; }
+            }
+            if (!inName) {
+                // Heuristic common names
+                static const char* guesses[] = {"images", "input", "data", "input_0", "inputs"};
+                for (auto g : guesses) { inName = g; break; }
+            }
+            if (prof && inName) {
+                nvinfer1::Dims minD{4, {1,3,640,640}};
+                nvinfer1::Dims optD{4, {1,3,640,640}};
+                nvinfer1::Dims maxD{4, {1,3,640,640}};
+                bool ok = prof->setDimensions(inName, nvinfer1::OptProfileSelector::kMIN, minD)
+                       && prof->setDimensions(inName, nvinfer1::OptProfileSelector::kOPT, optD)
+                       && prof->setDimensions(inName, nvinfer1::OptProfileSelector::kMAX, maxD);
+                if (ok) {
+                    impl_->config->addOptimizationProfile(prof);
+                    VA_LOG_C(::va::core::LogLevel::Info, "analyzer.trt")
+                        << "TRT native: added optimization profile for '" << inName << "' min/opt/max=1x3x640x640";
+                } else {
+                    VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.trt") << "TRT native: set profile dims failed for input '" << inName << "'";
+                }
+            } else {
+                VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.trt") << "TRT native: no input name found to create optimization profile";
+            }
+        } catch (const std::exception& ex) {
+            VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.trt") << "TRT native: optimization profile setup skipped: " << ex.what();
+        } catch (...) {
+            VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.trt") << "TRT native: optimization profile setup skipped (unknown error)";
+        }
+        // Build engine
+        impl_->engine = impl_->builder->buildEngineWithConfig(*impl_->network, *impl_->config);
+        if (!impl_->engine) throw std::runtime_error("buildEngineWithConfig failed");
+        // Save timing cache for next runs
+        try {
+            auto* tc = impl_->config->getTimingCache();
+            if (tc) {
+                nvinfer1::IHostMemory* mem = tc->serialize();
+                if (mem && mem->size() > 0) {
+                    std::string cache_dir = "/app/.trt_native_cache";
+                    if (const char* e = std::getenv("VA_TRT_CACHE_DIR")) cache_dir = e;
+                    std::error_code ec; std::filesystem::create_directories(cache_dir, ec);
+                    std::string cache_path = cache_dir + "/timing_sm";
+                    try {
+                        int dev=0; cudaDeviceProp prop{}; cudaGetDevice(&dev); if (cudaGetDeviceProperties(&prop, dev)==cudaSuccess) {
+                            std::ostringstream oss; oss << cache_path << (int)prop.major << (int)prop.minor << ".blob"; cache_path = oss.str();
+                        }
+                    } catch (...) {}
+                    std::ofstream ofs(cache_path, std::ios::binary);
+                    ofs.write(static_cast<const char*>(mem->data()), mem->size());
+                    ofs.close();
+                    VA_LOG_C(::va::core::LogLevel::Info, "analyzer.trt") << "TRT native: saved timing cache to '" << cache_path << "' size=" << mem->size();
+#if NV_TENSORRT_MAJOR < 10
+                    mem->destroy();
+#endif
+                }
+            }
+        } catch (...) {}
+        impl_->context = impl_->engine->createExecutionContext();
+        if (!impl_->context) throw std::runtime_error("createExecutionContext failed");
+        // Cache tensor names (outputs)
+        impl_->output_names.clear();
+        int numIO = impl_->engine->getNbIOTensors();
+        for (int i = 0; i < numIO; ++i) {
+            const char* nm = impl_->engine->getIOTensorName(i);
+            if (!nm) continue;
+            if (impl_->engine->getTensorIOMode(nm) == nvinfer1::TensorIOMode::kOUTPUT) {
+                impl_->output_names.emplace_back(nm);
+            }
+        }
+        // Device pool for outputs
+        impl_->device_pool = std::make_unique<va::core::GpuBufferPool>(0 /*initial*/, 4);
+        loaded_ = true;
+        VA_LOG_C(::va::core::LogLevel::Info, "analyzer.trt") << "load: provider_req='tensorrt-native' resolved='tensorrt-native' outputs=" << impl_->output_names.size();
+        return true;
+    } catch (const std::exception& ex) {
+        VA_LOG_ERROR() << "TensorRTModelSession load failed: " << ex.what();
+        loaded_ = false;
+        return false;
+    }
 #else
     try {
         // Create builder/network/config
@@ -168,9 +366,80 @@ bool TensorRTModelSession::run(const core::TensorView& input, std::vector<core::
     return false;
 #else
 #if NV_TENSORRT_MAJOR >= 10
-    // TensorRT 10+ native path未实现：避免引用旧 API（bindingIsInput/getBindingDimensions/enqueueV2 等）
-    VA_LOG_ERROR() << "TensorRT 10+ native path not implemented; please use ORT TensorRT EP (provider=tensorrt).";
-    return false;
+    std::scoped_lock lock(impl_->mutex);
+    if (!impl_->context || !impl_->engine) return false;
+    if (input.shape.empty() || input.dtype != core::DType::F32 || !input.data) return false;
+    // Find first input tensor name
+    int numIO = impl_->engine->getNbIOTensors();
+    const char* inputName = nullptr;
+    for (int i = 0; i < numIO; ++i) {
+        const char* nm = impl_->engine->getIOTensorName(i);
+        if (nm && impl_->engine->getTensorIOMode(nm) == nvinfer1::TensorIOMode::kINPUT) { inputName = nm; break; }
+    }
+    if (!inputName) return false;
+    // Set input shape
+    nvinfer1::Dims dims{}; dims.nbDims = static_cast<int>(input.shape.size());
+    for (int i=0;i<dims.nbDims && i<8; ++i) dims.d[i] = static_cast<int>(input.shape[i]);
+    if (!impl_->context->setInputShape(inputName, dims)) {
+        VA_LOG_ERROR() << "TensorRT setInputShape failed, shape=" << shapeToStr(input.shape);
+        return false;
+    }
+    // Prepare input buffer
+    const size_t elem_count = std::accumulate(input.shape.begin(), input.shape.end(), (size_t)1, std::multiplies<size_t>());
+    const size_t bytes = elem_count * sizeof(float);
+    void* in_dev = nullptr;
+    va::core::GpuBufferPool::Memory pooled_in{};
+    if (input.on_gpu) {
+        in_dev = const_cast<void*>(static_cast<const void*>(input.data));
+    } else {
+        if (impl_->device_pool) {
+            pooled_in = impl_->device_pool->acquire(bytes);
+            in_dev = pooled_in.ptr;
+        }
+        if (!in_dev) {
+            cudaError_t err = cudaMalloc(&in_dev, bytes);
+            if (err != cudaSuccess) { VA_LOG_ERROR() << "cudaMalloc input failed"; return false; }
+        }
+        cudaError_t err = cudaMemcpyAsync(in_dev, input.data, bytes, cudaMemcpyHostToDevice,
+                            impl_->cuda_stream ? reinterpret_cast<cudaStream_t>(impl_->cuda_stream) : 0);
+        if (err != cudaSuccess) { VA_LOG_ERROR() << "H2D failed"; return false; }
+    }
+    // Bind input tensor address
+    if (!impl_->context->setTensorAddress(inputName, in_dev)) {
+        VA_LOG_ERROR() << "setTensorAddress(input) failed";
+        return false;
+    }
+    // Allocate and bind outputs
+    outputs.clear();
+    for (int i = 0; i < numIO; ++i) {
+        const char* nm = impl_->engine->getIOTensorName(i);
+        if (!nm) continue;
+        if (impl_->engine->getTensorIOMode(nm) != nvinfer1::TensorIOMode::kOUTPUT) continue;
+        nvinfer1::Dims odims = impl_->context->getTensorShape(nm);
+        size_t out_elem = 1; std::vector<int64_t> oshape; oshape.reserve(odims.nbDims);
+        for (int d=0; d<odims.nbDims; ++d) { int v = odims.d[d]; if (v<=0) v=1; oshape.push_back(v); out_elem *= static_cast<size_t>(v); }
+        const size_t obytes = out_elem * sizeof(float);
+        void* o_dev = nullptr;
+        va::core::GpuBufferPool::Memory pooled_out{};
+        if (impl_->device_pool) {
+            pooled_out = impl_->device_pool->acquire(obytes);
+            o_dev = pooled_out.ptr;
+        }
+        if (!o_dev) {
+            if (cudaMalloc(&o_dev, obytes) != cudaSuccess) { VA_LOG_ERROR() << "cudaMalloc output failed"; return false; }
+        }
+        if (!impl_->context->setTensorAddress(nm, o_dev)) {
+            VA_LOG_ERROR() << "setTensorAddress(output) failed for " << nm;
+            return false;
+        }
+        core::TensorView tv; tv.data = o_dev; tv.on_gpu = true; tv.dtype = core::DType::F32; tv.shape = std::move(oshape);
+        outputs.push_back(tv);
+    }
+    // Enqueue
+    cudaStream_t stream = impl_->cuda_stream ? reinterpret_cast<cudaStream_t>(impl_->cuda_stream) : 0;
+    bool ok = impl_->context->enqueueV3(stream);
+    if (!ok) { VA_LOG_ERROR() << "TensorRT enqueueV3 failed"; return false; }
+    return true;
 #else
     std::scoped_lock lock(impl_->mutex);
     if (!impl_->context || !impl_->engine) return false;

@@ -16,6 +16,10 @@ public:
         int workspace_mb {0};
         bool device_output_views {true};
         bool stage_device_outputs {false};
+        // Native TRT builder tuning (optional via env fallback)
+        int builder_opt_level {1};        // 0..5
+        int min_timing_iterations {1};    // reduce search
+        int avg_timing_iterations {1};
     };
 
     TensorRTModelSession();
@@ -37,4 +41,3 @@ private:
 };
 
 } // namespace va::analyzer
-
