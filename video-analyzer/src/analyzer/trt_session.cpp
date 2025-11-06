@@ -133,6 +133,36 @@ bool TensorRTModelSession::loadModel(const std::string& model_path, bool /*use_g
 #else
 #if NV_TENSORRT_MAJOR >= 10
     try {
+        // If model_path points to a serialized TensorRT engine (.engine/.plan), load it directly.
+        {
+            std::string lower = model_path; std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+            const bool is_plan = (lower.size()>=7 && (lower.rfind(".engine") == lower.size()-7 || lower.rfind(".plan") == lower.size()-5));
+            if (is_plan) {
+                std::ifstream ifs(model_path, std::ios::binary);
+                if (!ifs.good()) throw std::runtime_error("engine file not found");
+                std::vector<char> buf((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+                auto* runtime = nvinfer1::createInferRuntime(impl_->logger);
+                if (!runtime) throw std::runtime_error("createInferRuntime failed");
+                impl_->engine = runtime->deserializeCudaEngine(buf.data(), buf.size());
+                if (!impl_->engine) throw std::runtime_error("deserializeCudaEngine failed");
+                impl_->context = impl_->engine->createExecutionContext();
+                if (!impl_->context) throw std::runtime_error("createExecutionContext failed");
+                // Collect output tensor names
+                impl_->output_names.clear();
+                int numIO = impl_->engine->getNbIOTensors();
+                for (int i = 0; i < numIO; ++i) {
+                    const char* nm = impl_->engine->getIOTensorName(i);
+                    if (!nm) continue;
+                    if (impl_->engine->getTensorIOMode(nm) == nvinfer1::TensorIOMode::kOUTPUT) {
+                        impl_->output_names.emplace_back(nm);
+                    }
+                }
+                impl_->device_pool = std::make_unique<va::core::GpuBufferPool>(0, 4);
+                loaded_ = true;
+                VA_LOG_C(::va::core::LogLevel::Info, "analyzer.trt") << "load: provider_req='tensorrt-native' resolved='tensorrt-native' (engine) outputs=" << impl_->output_names.size();
+                return true;
+            }
+        }
         // Create builder/network/config
         impl_->builder = nvinfer1::createInferBuilder(impl_->logger);
         if (!impl_->builder) throw std::runtime_error("createInferBuilder failed");

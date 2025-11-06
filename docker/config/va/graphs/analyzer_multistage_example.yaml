@@ -5,9 +5,12 @@ analyzer:
         type: preproc.letterbox
         params: { out_w: "640", out_h: "640", use_cuda: "1" }
       - name: det
-        type: model.ort
-        # 先用较小模型验证链路（确保该文件存在于 /app/models）
-        params: { in: "tensor:det_input", outs: "tensor:det_raw", model_path: "models/yolov12x.onnx" }
+        params:
+          in: "tensor:det_input"
+          outs: "tensor:det_raw"
+          model_path_trt: ".trt_native_cache/engines/yolov12n_sm120_fp16.engine"
+          model_path_ort: "models/yolov12n.onnx"
+          model_path: ".trt_native_cache/engines/yolov12n_sm120_fp16.engine"
       - name: nms
         type: post.yolo.nms
         # GPU NMS；按需求保持 0.65 置信度

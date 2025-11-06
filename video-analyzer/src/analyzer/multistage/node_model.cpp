@@ -23,6 +23,8 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
         }
     }
     auto itPath = cfg.find("model_path"); if (itPath != cfg.end()) model_path_ = itPath->second;
+    if (auto itT = cfg.find("model_path_trt"); itT != cfg.end()) model_path_trt_ = itT->second;
+    if (auto itO = cfg.find("model_path_ort"); itO != cfg.end()) model_path_ort_ = itO->second;
 }
 
 bool NodeModel::open(NodeContext& ctx) {
@@ -38,12 +40,24 @@ bool NodeModel::open(NodeContext& ctx) {
     ProviderDecision dec{};
     auto s = va::analyzer::create_model_session(desc, ctx, &dec);
 
-    if (!model_path_.empty()) {
+    // 根据 provider 选择实际模型路径：tensorrt-native -> 优先 model_path_trt_；否则优先 model_path_ort_
+    std::string chosen_path = model_path_;
+    try {
+        std::string prov = dec.resolved;
+        std::transform(prov.begin(), prov.end(), prov.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+        if ((prov == "tensorrt-native" || prov == "tensorrt_native" || prov == "trt-native") && !model_path_trt_.empty()) {
+            chosen_path = model_path_trt_;
+        } else if (!model_path_ort_.empty()) {
+            chosen_path = model_path_ort_;
+        }
+    } catch (...) { /* keep default */ }
+
+    if (!chosen_path.empty()) {
         VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model")
-            << "open: model_path='" << model_path_ << "' provider_req='" << dec.requested
+            << "open: model_path='" << chosen_path << "' provider_req='" << dec.requested
             << "' device_id=" << desc.device_index;
-        if (!s->loadModel(model_path_, /*use_gpu*/false)) {
-            VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "failed to load model: " << model_path_;
+        if (!s->loadModel(chosen_path, /*use_gpu*/false)) {
+            VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "failed to load model: " << chosen_path;
             return false;
         }
         // 若模型未声明任何输出，直接判定为配置/工件错误，避免下游误报 NMS 失败

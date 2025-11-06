@@ -215,6 +215,8 @@ RUN set -eux; \
 WORKDIR /app
 ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:${LD_LIBRARY_PATH}
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
+COPY --from=build /app/build/bin/trt_cache_builder /app/bin/trt_cache_builder
+COPY --from=build /app/build/bin/trt_engine_exporter /app/bin/trt_engine_exporter
 COPY --from=build /opt/onnxruntime /opt/onnxruntime
 COPY --from=build /usr/local /usr/local
 COPY video-analyzer/config /app/config

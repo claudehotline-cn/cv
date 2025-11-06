@@ -39,6 +39,7 @@ static void ensure_ms_nodes_registered() {
     std::call_once(once, []{
         MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
         MS_REGISTER_NODE("model.ort", NodeModel);
+        MS_REGISTER_NODE("model", NodeModel); // generic alias (no engine hinted in YAML)
         MS_REGISTER_NODE("post.yolo.nms", NodeNmsYolo);
         MS_REGISTER_NODE("overlay.cuda", NodeOverlay);
         va::analyzer::multistage::NodeRegistry::instance().reg("overlay.cpu", [](const std::unordered_map<std::string,std::string>& cfg){ return std::make_shared<NodeOverlay>(cfg); });

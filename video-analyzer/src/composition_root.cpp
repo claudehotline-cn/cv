@@ -135,6 +135,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             using va::analyzer::multistage::NodeReidSmooth;
             MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
             MS_REGISTER_NODE("model.ort", NodeModel);
+            MS_REGISTER_NODE("model", NodeModel);
             MS_REGISTER_NODE("post.yolo.nms", NodeNmsYolo);
             MS_REGISTER_NODE("overlay.cuda", NodeOverlay);
             va::analyzer::multistage::NodeRegistry::instance().reg("overlay.cpu", [](const std::unordered_map<std::string,std::string>& cfg){ return std::make_shared<NodeOverlay>(cfg); });
