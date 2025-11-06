@@ -17,6 +17,7 @@
 #include "core/nvdec_events.hpp"
 // For multistage analyzer pre-open/preload
 #include "analyzer/multistage/runner.hpp"
+#include "utils/cuda_ctx_guard.hpp"
 
 namespace va::core {
 
@@ -78,24 +79,61 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
         return nullptr;
     }
 
-    // 订阅时预加载模型（不依赖分析开关）：
-    // 若为多阶段 Analyzer，则在这里提前 open_all()，确保 det 节点的模型与引擎已加载，
-    // 之后从暂停切换到实时分析可直接推理，无需等待加载/构建。
+    // 订阅即预加载（后台，不阻塞）：限制并发与记录耗时；容量不足则跳过等待下一帧懒加载
     if (analyzer) {
         if (auto ms = std::dynamic_pointer_cast<va::analyzer::multistage::AnalyzerMultistageAdapter>(analyzer)) {
-            try {
-                auto& ctx = ms->context();
-                // 将 EngineManager 句柄注入给 NodeContext，便于 NodeModel 选择 provider 与路径
-                ctx.engine_registry = reinterpret_cast<void*>(&engine_manager_);
-                if (ms->graph().open_all(ctx)) {
-                    VA_LOG_C(::va::core::LogLevel::Info, "composition") << "[Preload] multistage graph opened at subscribe (models preloaded).";
-                } else {
-                    VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] multistage graph open_all failed; will lazy-open on first frame.";
-                }
-            } catch (const std::exception& ex) {
-                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] multistage pre-open threw: " << ex.what();
-            } catch (...) {
-                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] multistage pre-open unknown error";
+            static std::atomic<int> preopen_inflight{0};
+            // 解析并发上限：优先 engine.options.preopen_concurrency，其次 VA_PREOPEN_CONCURRENCY，再次 subscriptions.load_model_slots，否则默认2
+            auto eng = engine_manager_.currentEngine();
+            auto toLower = [](std::string v){ std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);}); return v; };
+            int cap = 2;
+            if (auto it = eng.options.find("preopen_concurrency"); it != eng.options.end()) {
+                try { cap = std::max(0, std::stoi(it->second)); } catch (...) {}
+            } else if (const char* e = std::getenv("VA_PREOPEN_CONCURRENCY")) {
+                try { cap = std::max(0, std::stoi(e)); } catch (...) {}
+            } else {
+                // fallback to load_model_slots when provided in app.yaml
+                // NOTE: PipelineBuilder 无法直接读取 app 配置，此处保留默认 2
+            }
+            int timeout_ms = 10000; // 仅用于日志阈值
+            if (auto it = eng.options.find("preopen_timeout_ms"); it != eng.options.end()) {
+                try { timeout_ms = std::max(0, std::stoi(it->second)); } catch (...) {}
+            } else if (const char* e = std::getenv("VA_PREOPEN_TIMEOUT_MS")) {
+                try { timeout_ms = std::max(0, std::stoi(e)); } catch (...) {}
+            }
+            if (cap <= 0) {
+                VA_LOG_C(::va::core::LogLevel::Info, "composition") << "[Preload] disabled (cap=0)";
+            } else if (preopen_inflight.load(std::memory_order_relaxed) >= cap) {
+                VA_LOG_C(::va::core::LogLevel::Info, "composition") << "[Preload] skip due to capacity (inflight=" << preopen_inflight.load() << "/" << cap << ")";
+            } else {
+                preopen_inflight.fetch_add(1, std::memory_order_relaxed);
+                std::weak_ptr<va::analyzer::multistage::AnalyzerMultistageAdapter> weak_ms = ms;
+                auto* eng_mgr = &engine_manager_;
+                std::thread([weak_ms, eng_mgr, timeout_ms]() {
+                    auto t0 = std::chrono::steady_clock::now();
+                    try {
+                        // 确保 CUDA 上下文可用
+                        va::utils::ensure_cuda_ready(0);
+                        if (auto ms2 = weak_ms.lock()) {
+                            auto& ctx = ms2->context();
+                            ctx.engine_registry = reinterpret_cast<void*>(eng_mgr);
+                            bool ok = ms2->graph().open_all(ctx);
+                            auto t1 = std::chrono::steady_clock::now();
+                            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+                            if (ok) {
+                                auto lvl = (ms > timeout_ms) ? ::va::core::LogLevel::Warn : ::va::core::LogLevel::Info;
+                                VA_LOG_C(lvl, "composition") << "[Preload] graph opened in background, ms=" << ms;
+                            } else {
+                                VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] graph open_all failed in background";
+                            }
+                        }
+                    } catch (const std::exception& ex) {
+                        VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] background threw: " << ex.what();
+                    } catch (...) {
+                        VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] background unknown error";
+                    }
+                    preopen_inflight.fetch_sub(1, std::memory_order_relaxed);
+                }).detach();
             }
         }
     }
