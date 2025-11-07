@@ -1,0 +1,29 @@
+# VA app config (Triton gRPC example)
+
+engine:
+  # 使用自定义 family，避免框架将 provider 规约为 cuda/tensorrt
+  type: custom
+  provider: triton
+  device: 0
+  options:
+    # 多阶段图
+    use_multistage: true
+    multistage_yaml: graphs/analyzer_multistage_example.yaml
+    graph_id: det_720p
+    # Triton 连接参数（根据实际模型仓库调整）
+    triton_url: triton:8001
+    triton_model: yolov12x
+    triton_model_version: ""
+    triton_input: images
+    triton_outputs: dets
+    triton_timeout_ms: 2000
+    triton_shm_cuda: false  # T0: Host 内存路径
+
+observability:
+  metrics_prom_endpoint: "0.0.0.0:9090"
+
+subscriptions:
+  heavy_slots: 2
+  model_slots: 2
+  rtsp_slots: 4
+
