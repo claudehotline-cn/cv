@@ -33,7 +33,7 @@ services:
       # 持久化原生 TensorRT (tensorrt-native) timing/engine 缓存
       - ../../.trt_native_cache:/app/.trt_native_cache
   triton:
-    image: nvcr.io/nvidia/tritonserver:24.08-py3
+    image: nvcr.io/nvidia/tritonserver:25.08-py3
     gpus: all
     command: ["tritonserver", "--model-repository=/models", "--grpc-port=8001", "--http-port=8000"]
     volumes:

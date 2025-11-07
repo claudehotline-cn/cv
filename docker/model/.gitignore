@@ -1,5 +1,6 @@
-# Ignore all model repo contents by default
+# Ignore all by default
 *
-# But keep these helper files
+# Keep helper files
 !.gitignore
 !README.md
+!yolov12x/config.pbtxt
