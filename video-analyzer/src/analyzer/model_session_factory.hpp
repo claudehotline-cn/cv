@@ -3,6 +3,7 @@
 #include "analyzer/interfaces.hpp"
 #include "analyzer/multistage/interfaces.hpp"
 #include "core/engine_manager.hpp"
+#include "analyzer/triton_session.hpp"
 
 #include <memory>
 #include <string>

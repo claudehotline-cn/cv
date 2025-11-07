@@ -1,5 +1,6 @@
 #include "server/rest_impl.hpp"
 #include "analyzer/model_registry.hpp"
+#include "analyzer/triton_metrics.hpp"
 #include "analyzer/load_metrics.hpp"
 #include "server/sse_metrics.hpp"
 #include "core/codec_registry.hpp"
@@ -276,6 +277,19 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             mb.sample("va_graph_open_duration_seconds_count", "{}", static_cast<uint64_t>(gs.count));
             mb.header("va_graph_open_failed_total", "counter", "Background graph open failures");
             mb.sample("va_graph_open_failed_total", "{}", static_cast<uint64_t>(gs.failed_total));
+        } catch (...) {}
+
+        // Triton RPC latency histogram + failures (global)
+        try {
+            auto ts = va::analyzer::metrics::triton_snapshot_rpc();
+            mb.header("va_triton_rpc_seconds", "histogram", "Triton gRPC inference latency (s)");
+            unsigned long long acc = 0ULL;
+            for (size_t i=0;i<ts.bounds.size(); ++i) { acc += (i<ts.bucket_counts.size()? ts.bucket_counts[i] : 0ULL); std::ostringstream ls; ls << "{le=\""<<ts.bounds[i]<<"\"}"; mb.sample("va_triton_rpc_seconds_bucket", ls.str(), static_cast<uint64_t>(acc)); }
+            { std::ostringstream lsi; lsi << "{le=\"+Inf\"}"; mb.sample("va_triton_rpc_seconds_bucket", lsi.str(), static_cast<uint64_t>(ts.count)); }
+            mb.sample("va_triton_rpc_seconds_sum", "{}", ts.sum_seconds);
+            mb.sample("va_triton_rpc_seconds_count", "{}", static_cast<uint64_t>(ts.count));
+            mb.header("va_triton_rpc_failed_total", "counter", "Triton RPC failures");
+            mb.sample("va_triton_rpc_failed_total", "{}", static_cast<uint64_t>(ts.failed_total));
         } catch (...) {}
 
         // Codec registry metrics (optional; metrics-only, no caching)

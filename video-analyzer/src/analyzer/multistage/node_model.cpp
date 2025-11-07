@@ -45,6 +45,7 @@ bool NodeModel::open(NodeContext& ctx) {
         std::string p = model_path_;
         std::string v = prov; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
         if ((v=="tensorrt-native" || v=="tensorrt_native" || v=="trt-native") && !model_path_trt_.empty()) return model_path_trt_;
+        if (v=="triton") return std::string("__triton__"); // 占位，Triton 会话忽略路径
         if (!model_path_ort_.empty()) return model_path_ort_;
         return p;
     };
@@ -57,8 +58,9 @@ bool NodeModel::open(NodeContext& ctx) {
     std::vector<std::string> chain;
     auto norm = [](std::string s){ std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){return (char)std::tolower(c);} ); return s; };
     primary = norm(primary);
-    if (primary == "tensorrt-native") { chain = {"tensorrt-native","tensorrt","cuda"}; }
-    else if (primary == "tensorrt")   { chain = {"tensorrt","cuda"}; }
+    if (primary == "tensorrt-native") { chain = {"tensorrt-native","triton","tensorrt","cuda"}; }
+    else if (primary == "tensorrt")   { chain = {"tensorrt","triton","cuda"}; }
+    else if (primary == "triton")     { chain = {"triton","tensorrt","cuda"}; }
     else if (primary == "cuda")       { chain = {"cuda"}; }
     else { chain = {"cuda"}; }
 
@@ -69,7 +71,8 @@ bool NodeModel::open(NodeContext& ctx) {
         ProviderDecision d2{};
         auto cand = va::analyzer::create_model_session(tryd, ctx, &d2);
         std::string path = pick_path_for(prov);
-        if (path.empty()) continue;
+        // 对于本地会话，空路径视为配置错误；Triton 使用占位路径允许继续
+        if (path.empty() && prov != "triton") continue;
         VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model")
             << "open: model_path='" << path << "' provider_try='" << prov << "' device_id=" << tryd.device_index;
         auto t0 = now_ms();

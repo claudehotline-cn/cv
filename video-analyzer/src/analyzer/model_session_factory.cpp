@@ -43,12 +43,13 @@ create_model_session(const va::core::EngineDescriptor& engine,
     // Normalize common aliases
     if (req == "gpu" || req == "ort-gpu" || req == "ort-cuda") req = "cuda";
     if (req == "ort-trt" || req == "ort-tensorrt" || req == "tensor_rt") req = "tensorrt";
+    if (req == "triton-grpc" || req == "triton_infer" || req == "tritonserver") req = "triton";
     // 当前不实现 RTX EP：将 RTX 请求视为常规 TensorRT
     if (req == "nv_tensorrt_rtx" || req == "rtx" || req == "tensorrt_rtx") req = "tensorrt";
 
     // Decide fallback chain (includes tensorrt-native)
     std::string chosen = req;
-    if (req != "tensorrt-native" && req != "tensorrt" && req != "cuda" && req != "cpu") {
+    if (req != "tensorrt-native" && req != "tensorrt" && req != "cuda" && req != "cpu" && req != "triton") {
         // Unknown provider → prefer GPU if name contains cuda/trt, otherwise cpu
         if (req.find("trt") != std::string::npos || req.find("cuda") != std::string::npos)
             chosen = "cuda";
@@ -81,6 +82,32 @@ create_model_session(const va::core::EngineDescriptor& engine,
         return trt;
     }
 #endif
+
+    // Triton gRPC path (best-effort when enabled)
+    if (chosen == "triton") {
+#if defined(USE_TRITON_CLIENT)
+        va::analyzer::TritonGrpcModelSession::Options topt;
+        const auto& opts = engine.options;
+        if (auto it = opts.find("triton_url"); it != opts.end()) topt.url = it->second;
+        if (auto it = opts.find("triton_model"); it != opts.end()) topt.model_name = it->second;
+        if (auto it = opts.find("triton_model_version"); it != opts.end()) topt.model_version = it->second;
+        if (auto it = opts.find("triton_input"); it != opts.end()) topt.input_name = it->second;
+        if (auto it = opts.find("triton_outputs"); it != opts.end()) {
+            topt.output_names.clear();
+            std::string v = it->second; std::string cur; for (char c : v){ if (c==','||c==';'){ if(!cur.empty()){ topt.output_names.push_back(cur); cur.clear(); } } else cur.push_back(c);} if(!cur.empty()) topt.output_names.push_back(cur);
+        }
+        topt.timeout_ms = parse_int(opts, "triton_timeout_ms", 2000);
+        topt.use_cuda_shm = parse_bool(opts, "triton_shm_cuda", false);
+        topt.cuda_shm_bytes = parse_int(opts, "triton_cuda_shm_bytes", 0);
+        topt.device_id = engine.device_index;
+        auto s = std::make_shared<va::analyzer::TritonGrpcModelSession>(topt);
+        if (decision) { decision->resolved = "triton"; }
+        return s;
+#else
+        VA_LOG_C(::va::core::LogLevel::Warn, "analyzer") << "provider='triton' requested but Triton client disabled; falling back to cuda";
+        chosen = "cuda";
+#endif
+    }
 
     // Default: return ONNX Runtime session with mapped provider preference
     auto session = std::make_shared<va::analyzer::OrtModelSession>();
