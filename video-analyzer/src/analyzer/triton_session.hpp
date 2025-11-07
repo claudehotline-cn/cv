@@ -33,7 +33,11 @@ public:
 private:
     Options opt_;
     bool loaded_{false};
+#if defined(USE_TRITON_CLIENT)
+    // 持久化输出缓冲，保证 run() 返回的 TensorView 生命周期
+    std::vector<std::vector<uint8_t>> host_out_bufs_;
+    std::vector<std::vector<int64_t>> host_out_shapes_;
+#endif
 };
 
 } // namespace va::analyzer
-
