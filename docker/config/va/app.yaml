@@ -41,7 +41,7 @@ engine:
     triton_model: yolov12x
     triton_model_version: ""
     triton_input: images
-    triton_outputs: dets
+    triton_outputs: output0
     triton_timeout_ms: 2000
     triton_shm_cuda: false
 sfu:
