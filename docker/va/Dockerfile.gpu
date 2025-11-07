@@ -4,8 +4,8 @@
 ARG UBUNTU_VER=22.04
 ARG NGC_TRT_TAG=25.08-py3
 
-# Provide Triton C++ client headers/libs via a helper stage
-FROM nvcr.io/nvidia/tritonserver:25.08-py3 AS tritonclient
+# Provide Triton C++ client headers/libs via the SDK image (contains grpc_client.h & libgrpcclient.so)
+FROM nvcr.io/nvidia/tritonserver:25.08-py3-sdk AS tritonclient
 # Use NGC TensorRT tag directly (no -devel/-runtime suffix in tags)
 FROM nvcr.io/nvidia/tensorrt:${NGC_TRT_TAG} AS build
 # Re-declare build args inside the stage so they are available to RUN
@@ -20,9 +20,35 @@ RUN apt-get update && apt-get install -y \
     libgrpc++-dev protobuf-compiler protobuf-compiler-grpc libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 
-## Bring in Triton client headers/libs for optional gRPC client build
-COPY --from=tritonclient /opt/tritonserver/include /opt/tritonclient/include
-COPY --from=tritonclient /opt/tritonserver/lib /opt/tritonclient/lib
+## Bring in Triton client headers/libs for optional gRPC client build (robust to SDK layout)
+# Prefer SDK's installed clients under /workspace/install
+COPY --from=tritonclient /workspace/install/include /opt/tritonclient/include
+COPY --from=tritonclient /workspace/install/lib /opt/tritonclient/lib
+# Fallbacks for older SDK layouts
+COPY --from=tritonclient /opt /opt/_tc
+RUN set -eux; \
+    mkdir -p /opt/tritonclient/include /opt/tritonclient/lib; \
+    if [ ! -f /opt/tritonclient/include/grpc_client.h ]; then \
+       if [ -d /opt/_tc/triton/install/include ]; then \
+          cp -rv /opt/_tc/triton/install/include/* /opt/tritonclient/include/ || true; \
+       fi; \
+       if [ -d /opt/_tc/triton/install/lib ]; then \
+          cp -rv /opt/_tc/triton/install/lib/* /opt/tritonclient/lib/ || true; \
+       fi; \
+       if [ -f /opt/_tc/tritonserver/clients/include/grpc_client.h ]; then \
+          cp -rv /opt/_tc/tritonserver/clients/include/* /opt/tritonclient/include/ || true; \
+          [ -d /opt/_tc/tritonserver/clients/lib ] && cp -rv /opt/_tc/tritonserver/clients/lib/* /opt/tritonclient/lib/ || true; \
+       elif [ -d /opt/_tc/tritonserver/include ]; then \
+          cp -rv /opt/_tc/tritonserver/include/* /opt/tritonclient/include/ || true; \
+          [ -d /opt/_tc/tritonserver/lib ] && cp -rv /opt/_tc/tritonserver/lib/* /opt/tritonclient/lib/ || true; \
+       fi; \
+    fi; \
+    # Final check & log
+    if [ ! -f /opt/tritonclient/include/grpc_client.h ]; then \
+      echo 'WARNING: grpc_client.h not found under /opt/tritonclient/include'; \
+      find /opt/tritonclient -maxdepth 3 -type f -name 'grpc_client.h' -print || true; \
+    fi; \
+    ls -l /opt/tritonclient/include || true; ls -l /opt/tritonclient/lib || true
 
 
 # Upgrade CMake to >=3.28 via Kitware APT (ORT 1.23.2 requires it)
@@ -116,16 +142,16 @@ RUN set -eux; \
     rm -rf /tmp/ixwebsocket
 
 ARG ORT_VERSION=1.23.2
-ARG ORT_JOBS=32
+ARG ORT_JOBS=24
 # 手动缓存键：若要强制重建 ORT，可变更此值
 ARG ORT_BUILD_TAG="ort-${ORT_VERSION}-cuda13-sm120-trt"
 ARG ORT_REBUILD=0
 RUN set -eux; \
     echo "ORT_BUILD_TAG=${ORT_BUILD_TAG} ORT_REBUILD=${ORT_REBUILD}"; \
-    if [ -f /opt/onnxruntime/lib/libonnxruntime.so ] \
-       && [ -f /opt/onnxruntime/lib/libonnxruntime_providers_shared.so ] \
+    if [ -f /opt/onnxruntime/.build.tag ] \
+       && grep -q "^${ORT_BUILD_TAG}$" /opt/onnxruntime/.build.tag \
        && [ "${ORT_REBUILD}" != "1" ]; then \
-      echo "Reusing cached ONNX Runtime in /opt/onnxruntime"; \
+      echo "Reusing cached ONNX Runtime in /opt/onnxruntime (tag matched)"; \
     else \
       apt-get update && apt-get install -y python3 python3-pip python3-dev ccache && \
       python3 -m pip install --upgrade pip wheel setuptools psutil packaging --break-system-packages || true && \
@@ -177,8 +203,9 @@ RUN set -eux; \
         if [ ! -e /opt/onnxruntime/lib/libonnxruntime.so ]; then ln -s "$(basename "$best")" /opt/onnxruntime/lib/libonnxruntime.so; fi; \
         if [ ! -e /opt/onnxruntime/lib/libonnxruntime.so.1 ]; then ln -s "$(basename "$best")" /opt/onnxruntime/lib/libonnxruntime.so.1; fi; \
       fi && \
+      # Sanity: if TRT headers present ensure provider libs copied
       if [ -n "${TRT_HOME:-}" ]; then \
-        if ! ls /opt/onnxruntime/lib/libonnxruntime_providers_* 2>/dev/null | grep -i -E 'tensorrt' >/dev/null; then \
+        if ! ls /opt/onnxruntime/lib/libonnxruntime_providers_* 2>/dev/null | grep -qi 'tensorrt'; then \
           echo "ERROR: TensorRT provider library not found under /opt/onnxruntime/lib (TRT_HOME=${TRT_HOME})"; \
           ls -l /opt/onnxruntime/lib || true; \
           exit 10; \
@@ -188,6 +215,7 @@ RUN set -eux; \
       else \
         echo "INFO: TensorRT headers not found; TensorRT EP disabled (falling back to CUDA EP)."; \
       fi; \
+      echo "${ORT_BUILD_TAG}" > /opt/onnxruntime/.build.tag; \
     fi
 
 # Copy source after ORT build so app changes不触发 ORT 重建
@@ -201,11 +229,15 @@ RUN set -eux; \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
       -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
       -DUSE_TRITON_CLIENT=ON -DTRITON_CLIENT_ROOT=/opt/tritonclient \
+      -DTRITON_CLIENT_INCLUDE_DIR=/opt/tritonclient/include \
+      -DTRITON_CLIENT_GRPC_LIB=/opt/tritonclient/lib/libgrpcclient.so \
       -DCMAKE_CUDA_ARCHITECTURES="120" \
       -DONNXRUNTIME_ROOT=/opt/onnxruntime \
       -DONNXRUNTIME_INCLUDE_DIR=/opt/onnxruntime/include/onnxruntime/core/session \
       -DONNXRUNTIME_LIB:FILEPATH=/opt/onnxruntime/lib/libonnxruntime.so \
-    && cmake --build build -j${ORT_JOBS}
+    && cmake --build build -j${ORT_JOBS} \
+    && { ldd build/bin/VideoAnalyzer | grep -qi 'grpcclient' \
+         || { echo 'ERROR: libgrpcclient linkage missing. Check Triton client detection.'; ldd build/bin/VideoAnalyzer || true; exit 90; }; }
 
 ARG UBUNTU_VER=22.04
 # Use the same NGC TensorRT tag for runtime; it includes TRT runtime libs

@@ -140,15 +140,22 @@ option(USE_TRITON_CLIENT "Enable Triton gRPC client integration" OFF)
 if (USE_TRITON_CLIENT)
     set(TRITON_CLIENT_ROOT "$ENV{TRITON_CLIENT_ROOT}" CACHE PATH "Root of Triton C++ client install")
     if (TRITON_CLIENT_ROOT)
-        find_path(TRITON_CLIENT_INCLUDE_DIR NAMES grpc_client.h PATHS ${TRITON_CLIENT_ROOT}/include /usr/include /usr/local/include)
-        find_library(TRITON_CLIENT_GRPC_LIB NAMES triton-grpc-client grpcclient tritonclient PATHS ${TRITON_CLIENT_ROOT}/lib ${TRITON_CLIENT_ROOT}/lib64 /usr/lib /usr/local/lib)
+        find_path(TRITON_CLIENT_INCLUDE_DIR NAMES grpc_client.h
+            PATHS ${TRITON_CLIENT_ROOT}/include /usr/include /usr/local/include
+            PATH_SUFFIXES "" triton triton/client clients client)
+        find_library(TRITON_CLIENT_GRPC_LIB
+            NAMES triton-grpc-client grpcclient tritonclient triton_grpc_client
+            PATHS ${TRITON_CLIENT_ROOT}/lib ${TRITON_CLIENT_ROOT}/lib64 /usr/lib /usr/local/lib)
     else()
-        find_path(TRITON_CLIENT_INCLUDE_DIR NAMES grpc_client.h PATHS /usr/include /usr/local/include)
-        find_library(TRITON_CLIENT_GRPC_LIB NAMES triton-grpc-client grpcclient tritonclient PATHS /usr/lib /usr/local/lib)
+        find_path(TRITON_CLIENT_INCLUDE_DIR NAMES grpc_client.h
+            PATHS /usr/include /usr/local/include
+            PATH_SUFFIXES "" triton triton/client clients client)
+        find_library(TRITON_CLIENT_GRPC_LIB
+            NAMES triton-grpc-client grpcclient tritonclient triton_grpc_client
+            PATHS /usr/lib /usr/local/lib)
     endif()
     if (TRITON_CLIENT_INCLUDE_DIR)
         add_definitions(-DUSE_TRITON_CLIENT)
-        include_directories(${TRITON_CLIENT_INCLUDE_DIR})
         message(STATUS "Triton client headers found: ${TRITON_CLIENT_INCLUDE_DIR}")
     else()
         message(WARNING "Triton client headers not found; disabling USE_TRITON_CLIENT")
@@ -287,6 +294,28 @@ target_link_libraries(${PROJECT_NAME}
 
 if (USE_TRITON_CLIENT AND TRITON_CLIENT_GRPC_LIB)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${TRITON_CLIENT_GRPC_LIB})
+    # 仅为 Triton 源文件添加头文件搜索路径，避免污染全局包含（尤其是 absl/grpc 版本差异）
+    set_source_files_properties(
+        src/analyzer/triton_session.cpp
+        PROPERTIES
+            COMPILE_OPTIONS "-I${TRITON_CLIENT_INCLUDE_DIR}"
+            COMPILE_DEFINITIONS "TRITON_ENABLE_GPU"
+    )
+endif()
+
+# 全局开启 TRITON_ENABLE_GPU，确保 Triton ipc.h 使用 CUDA 路径（避免与 stub 冲突）
+add_definitions(-DTRITON_ENABLE_GPU)
+
+# 将 OpenSSL 放在链接尾部（如需静态对象解析）
+find_package(OpenSSL)
+if (OpenSSL_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+else()
+    find_library(SSL_LIB ssl)
+    find_library(CRYPTO_LIB crypto)
+    if (SSL_LIB AND CRYPTO_LIB)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${SSL_LIB} ${CRYPTO_LIB})
+    endif()
 endif()
 
 # Tools: TensorRT native cache builder (standalone)

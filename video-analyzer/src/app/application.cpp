@@ -266,6 +266,14 @@ bool Application::initialize(const std::string& config_dir) {
     if (!app_config_.engine.options.graph_id.empty()) {
         descriptor.options["graph_id"] = app_config_.engine.options.graph_id;
     }
+    // Provider-specific passthrough options from config (e.g., Triton)
+    try {
+        for (const auto& kv : app_config_.engine.options.extras) {
+            if (!kv.first.empty() && !kv.second.empty()) {
+                descriptor.options[kv.first] = kv.second;
+            }
+        }
+    } catch (...) { /* ignore */ }
     if (!app_config_.engine.options.multistage_yaml.empty()) {
         descriptor.options["multistage_yaml"] = app_config_.engine.options.multistage_yaml;
     }

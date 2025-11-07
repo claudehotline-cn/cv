@@ -36,6 +36,8 @@ engine:
     trt_force_sequential: false
     trt_auxiliary_streams: 0
     trt_detailed_build_log: false
+    # 强制仅使用 Triton provider，便于定位路径
+    force_provider: triton
     # Triton 连接参数（与 compose 中 triton 服务对应）
     triton_url: triton:8001
     triton_model: yolov12x
@@ -95,6 +97,9 @@ observability:
   log_format: text
   module_levels:
     analyzer.trt: debug
+    analyzer.triton: debug
+    ms.node_model: debug
+    composition: info
     transport.webrtc: debug
     encoder.ffmpeg: debug
   console: true

@@ -96,6 +96,10 @@ create_model_session(const va::core::EngineDescriptor& engine,
             topt.output_names.clear();
             std::string v = it->second; std::string cur; for (char c : v){ if (c==','||c==';'){ if(!cur.empty()){ topt.output_names.push_back(cur); cur.clear(); } } else cur.push_back(c);} if(!cur.empty()) topt.output_names.push_back(cur);
         }
+        if (auto it = opts.find("triton_no_batch"); it != opts.end()) {
+            std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+            topt.assume_no_batch = (v=="1"||v=="true"||v=="yes"||v=="on");
+        }
         topt.timeout_ms = parse_int(opts, "triton_timeout_ms", 2000);
         topt.use_cuda_shm = parse_bool(opts, "triton_shm_cuda", false);
         topt.cuda_shm_bytes = parse_int(opts, "triton_cuda_shm_bytes", 0);

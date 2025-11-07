@@ -84,6 +84,8 @@ struct EngineOptions {
     bool use_multistage {false};
     std::string graph_id;           // load from config/graphs/<graph_id>.yaml if set
     std::string multistage_yaml;    // explicit YAML path override
+    // Passthrough kv for provider-specific options (e.g., Triton)
+    std::map<std::string, std::string> extras;
 };
 
 struct AppEngineSpec {

@@ -257,6 +257,22 @@ AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_d
             if (options_node["multistage_yaml"]) {
                 try { opts.multistage_yaml = options_node["multistage_yaml"].as<std::string>(""); } catch (...) {}
             }
+            // Provider-specific passthrough (Triton & provider chain overrides)
+            auto put_str = [&](const char* k){ if (options_node[k]) { try { opts.extras[k] = options_node[k].as<std::string>(""); } catch (...) {} } };
+            auto put_bool = [&](const char* k){ if (options_node[k]) { try { opts.extras[k] = options_node[k].as<bool>(false) ? "true" : "false"; } catch (...) {} } };
+            auto put_int  = [&](const char* k){ if (options_node[k]) { try { opts.extras[k] = std::to_string(options_node[k].as<long long>(0)); } catch (...) {} } };
+            // Triton URL/model IO
+            put_str("triton_url");
+            put_str("triton_model");
+            put_str("triton_model_version");
+            put_str("triton_input");
+            put_str("triton_outputs");
+            put_int("triton_timeout_ms");
+            put_bool("triton_shm_cuda");
+            put_int("triton_cuda_shm_bytes");
+            // Provider chain override
+            put_str("force_provider");
+            put_str("providers");
         }
     }
     const auto sfu_node = v["sfu"];

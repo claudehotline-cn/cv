@@ -64,6 +64,23 @@ bool NodeModel::open(NodeContext& ctx) {
     else if (primary == "cuda")       { chain = {"cuda"}; }
     else { chain = {"cuda"}; }
 
+    // Optional override via engine option: force_provider / providers
+    try {
+        auto it_force = desc.options.find("force_provider");
+        if (it_force != desc.options.end()) {
+            std::string v = norm(it_force->second);
+            if (!v.empty()) {
+                chain.clear(); chain.push_back(v);
+                VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model") << "provider chain overridden by force_provider='" << v << "'";
+            }
+        } else if (auto it_p = desc.options.find("providers"); it_p != desc.options.end()) {
+            // comma/semicolon separated list
+            chain.clear(); std::string cur; for (char c : it_p->second){ if (c==','||c==';'){ if(!cur.empty()){ chain.push_back(norm(cur)); cur.clear(); } } else cur.push_back(c);} if(!cur.empty()) chain.push_back(norm(cur));
+            if (chain.empty()) chain.push_back(primary);
+            VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model") << "provider chain overridden by providers option (n=" << chain.size() << ")";
+        }
+    } catch (...) { /* ignore */ }
+
     std::shared_ptr<IModelSession> loaded;
     std::string used_provider;
     for (const auto& prov : chain) {
