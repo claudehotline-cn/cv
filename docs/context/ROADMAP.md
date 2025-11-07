@@ -1,33 +1,37 @@
 # 路线图总览
 
-- M0「GPU 链路稳定 + ORT 固化」：容器内源码编译 ORT v1.23.2（SM=90;120），补全动态库链接；默认开启零拷贝与统一 CUDA 流；前端提示修复。
-  - 验收：`provider=cuda` 时 `ort.run outputs>0`、`ms.node_model out_count>0`；日志含 in/out 与 shapes；Prom 帧数指标递增。
-- M1「TensorRT‑RTX EP 接入」：完善 ORT EP 选择（tensorrt-rtx→tensorrt→cuda），在 5090D 上优先解析 RTX EP 并回退有序。
-  - 验收：`analyzer.ort load` 显示 resolved=`tensorrt-rtx`（或 `tensorrt`），端到端 outputs>0；720p ≥30FPS；不劣于 CUDA EP。
-- M2「原生 TensorRT 会话」：实现 `TensorRTModelSession`（FP16/静态 1x3x640x640），统一流与设备视图输出；规划动态 profile/引擎序列化。
-  - 验收：provider=`tensorrt-native` 时 outputs>0；与 ORT EP 行为一致；压测性能达标（720p ≥30FPS）。
+- M0「GPU 可用 + 基础稳定」
+  - 目标：容器 GPU 注入稳定（gpus: all），NVENC 正常，原有 ORT CUDA/ORT‑TRT 可用；多阶段图以相对路径（models/…）。
+  - 验收：WHEP 正常出图；`analyzer.ort|trt load ... outputs>0`；无 `libcuda.so.1`/NVENC 报错；Prom 帧数指标递增。
+
+- M1「原生 TensorRT + 异步预热」
+  - 目标：tensorrt‑native 读取 .engine 稳定推理；订阅时后台预热，不阻塞返回；开启分析时不再加载。
+  - 验收：订阅→日志出现“预热开始/完成”；切到 ON 无新的 open/load；`ms.nms boxes>0`；720p 正常帧率。
+
+- M2「可观测 + 回退 + 基准」
+  - 目标：完善诊断日志与指标；必要时回退链（native→ORT‑TRT→CUDA）；提供端到端基准与部署指引。
+  - 验收：出现 `pipeline.analyze / ms.runner / ms.node_model / ms.nms` 关键日志；Prom 导出预热/构建耗时；基准报告完成。
 
 # 分阶段计划（表格）
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 | ---- | ---------- | -------- | --------- | -------- |
-| P0 | ORT 构建固化 | cudnn-devel 构建；ORT 1.23.2 源码；SM=90;120；并行24；修复 SONAME | 链接缺失→补软链；ARG 泄漏→阶段内声明 | 构建成功；VA 启动健康 |
-| P1 | EP 选择完善 | tensorrt-rtx→tensorrt→cuda 有序回退；选项映射 | TRT 不可用→回退 CUDA，打印告警 | 输出>0；日志 provider 正确 |
-| P2 | 原生 TRT 会话 | TensorRT 解析/构建/绑定；统一 CUDA 流；设备视图输出 | 形状/类型不匹配→限制首版 float32；后续适配 | 720p ≥30FPS；零拷贝稳定 |
-| P3 | 动态/序列化 | 动态 profile；plan 缓存；预热 | 存储/兼容性→版本封存与哈希 | 冷启动<3s；回归稳定 |
-| P4 | 可观测/自动化 | 指标完善；CP 脚本；故障注入 | 采集不足→补日志/指标 | 5 分钟出具端到端证据 |
+| M0 | GPU 注入与 NVENC 修复 | compose `gpus: all`；NVENC `aq-strength` 合法化；相对路径图 | 主机驱动/工具包差异 → 自检清单 | 无异常日志，帧数>0 |
+| M1 | 原生 TRT + 异步预热 | tensorrt-native 读取 .engine；订阅后台 open_all；订阅幂等 | 预热与首帧竞争 → 幂等/一次性 open | 切 ON 不再 load；boxes>0 |
+| M2 | 可观测/回退/基准 | `pipeline.analyze`/`ms.*` 日志与 Prom；回退链；报告 | 指标不足 → 增加预热/构建/推理耗时 | 报告含 FPS/P95 |
 
 # 依赖矩阵
 
 - 内部依赖：
-  - VA（analyzer/multistage、ORT/TRT 会话、CUDA 预处理/叠加、NMS）、CP（订阅/切换/换模）、VSM（RTSP 源）、Web（交互与播放）。
+  - VA（多阶段、NVDEC/Overlay/NMS/NVENC）、CP（订阅/切换/热更）、VSM（源）、Web（WHEP/控制）。
 - 外部依赖（库/服务/硬件）：
-  - CUDA 12.9、cuDNN 9.x、TensorRT ≥10.3（5090D/SM_120）、ONNX Runtime 1.23.2、FFmpeg、NVIDIA GPU（RTX 5090D）、MySQL、Redis。
+  - CUDA 12/13、cuDNN 9、TensorRT ≥10.x、ONNX Runtime 1.23.x、FFmpeg、NVIDIA GPU（5090D/SM_120）、MySQL、Redis。
 
 # 风险清单（Top-5）
 
-- 模型无 Graph 输出 → 导出异常/权重分片缺失 → `outputs=0`/load 错 → 使用 `nms=False` 的 ONNX；补齐 external data。
-- TRT 版本不兼容 → EP 失败/回退 → 加载日志/EP 错误 → 固定 TRT 版本，提供回退链路 → 首选 RTX EP，不可用即退。
-- 零拷贝链路不一致 → NMS 读取失败 → `on_gpu=false` 或 `stage_device_outputs=true` → 默认 device_output_views；关闭 stage。
-- ORT/库链接缺失 → 构建/复制遗漏 → ldd 缺少 onnxruntime → 软链与校验清单，强制无缓存构建。
-- 前端提示与交互问题 → 误引导/乱码 → 浏览器消息/日志 → 统一 UTF‑8，修复固定文案；回归测试。
+- NVENC/驱动不匹配 → 启动时报错 → 日志含 `libcuda.so.1`/avcodec 失败 → 统一 `gpus: all` 与自检脚本。
+- 原生 TRT 与模型不兼容 → 反序列化失败 → `deserializeCudaEngine failed` → 回退 ORT‑TRT/CUDA，提供 .onnx 旁路。
+- 异步预热与首帧竞争 → 二次 open/load → 订阅幂等 + 一次性 open（门闩）+ 引擎缓存。
+- 推理有输出但 boxes=0 → 阈值/布局差异 → `ms.nms candidates=0` → 暂降 conf=0.25 验证，必要时补布局开关。
+- 观测不足影响定位 → 缺少关键日志/指标 → 仅见 load 无 run → 增补 `pipeline.analyze/ms.runner/ms.node_model/ms.nms` 与 Prom 预热/耗时指标。
+

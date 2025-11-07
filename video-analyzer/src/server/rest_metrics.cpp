@@ -1,5 +1,6 @@
 #include "server/rest_impl.hpp"
 #include "analyzer/model_registry.hpp"
+#include "analyzer/load_metrics.hpp"
 #include "server/sse_metrics.hpp"
 #include "core/codec_registry.hpp"
 #include "core/wal.hpp"
@@ -249,6 +250,32 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             mb.sample("va_model_preheat_duration_seconds_count", "{}", rs.duration_count);
             mb.header("va_model_preheat_failed_total", "counter", "Model preheat failures");
             mb.sample("va_model_preheat_failed_total", "{}", static_cast<uint64_t>(rs.failed_total));
+        } catch (...) {}
+
+        // Model session load histogram + failures (global)
+        try {
+            auto hs = va::analyzer::metrics::snapshot_model_session_load();
+            mb.header("va_model_session_load_seconds", "histogram", "Per-session model load duration (s)");
+            unsigned long long acc = 0ULL;
+            for (size_t i=0;i<hs.bounds.size(); ++i) { acc += (i<hs.bucket_counts.size()? hs.bucket_counts[i] : 0ULL); std::ostringstream ls; ls << "{le=\""<<hs.bounds[i]<<"\"}"; mb.sample("va_model_session_load_seconds_bucket", ls.str(), static_cast<uint64_t>(acc)); }
+            { std::ostringstream lsi; lsi << "{le=\"+Inf\"}"; mb.sample("va_model_session_load_seconds_bucket", lsi.str(), static_cast<uint64_t>(hs.count)); }
+            mb.sample("va_model_session_load_seconds_sum", "{}", hs.sum_seconds);
+            mb.sample("va_model_session_load_seconds_count", "{}", static_cast<uint64_t>(hs.count));
+            mb.header("va_model_session_load_failed_total", "counter", "Model session load failures");
+            mb.sample("va_model_session_load_failed_total", "{}", static_cast<uint64_t>(hs.failed_total));
+        } catch (...) {}
+
+        // Graph open_all background histogram + failures (global)
+        try {
+            auto gs = va::analyzer::metrics::snapshot_graph_open_duration();
+            mb.header("va_graph_open_duration_seconds", "histogram", "Background graph open_all duration (s)");
+            unsigned long long acc = 0ULL;
+            for (size_t i=0;i<gs.bounds.size(); ++i) { acc += (i<gs.bucket_counts.size()? gs.bucket_counts[i] : 0ULL); std::ostringstream ls; ls << "{le=\""<<gs.bounds[i]<<"\"}"; mb.sample("va_graph_open_duration_seconds_bucket", ls.str(), static_cast<uint64_t>(acc)); }
+            { std::ostringstream lsi; lsi << "{le=\"+Inf\"}"; mb.sample("va_graph_open_duration_seconds_bucket", lsi.str(), static_cast<uint64_t>(gs.count)); }
+            mb.sample("va_graph_open_duration_seconds_sum", "{}", gs.sum_seconds);
+            mb.sample("va_graph_open_duration_seconds_count", "{}", static_cast<uint64_t>(gs.count));
+            mb.header("va_graph_open_failed_total", "counter", "Background graph open failures");
+            mb.sample("va_graph_open_failed_total", "{}", static_cast<uint64_t>(gs.failed_total));
         } catch (...) {}
 
         // Codec registry metrics (optional; metrics-only, no caching)

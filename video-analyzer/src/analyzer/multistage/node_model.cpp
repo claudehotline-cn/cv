@@ -1,8 +1,10 @@
 #include "analyzer/multistage/node_model.hpp"
 #include "analyzer/model_session_factory.hpp"
+#include "analyzer/load_metrics.hpp"
 #include "core/engine_manager.hpp"
 #include "analyzer/logging_util.hpp"
 #include <algorithm>
+#include <chrono>
 #include "analyzer/multistage/nodes_common.hpp"
 #include "core/logger.hpp"
 
@@ -37,64 +39,88 @@ bool NodeModel::open(NodeContext& ctx) {
         catch (...) { /* ignore */ }
     }
 
+    auto now_ms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); };
+
+    auto pick_path_for = [&](const std::string& prov)->std::string{
+        std::string p = model_path_;
+        std::string v = prov; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
+        if ((v=="tensorrt-native" || v=="tensorrt_native" || v=="trt-native") && !model_path_trt_.empty()) return model_path_trt_;
+        if (!model_path_ort_.empty()) return model_path_ort_;
+        return p;
+    };
+
+    // Primary decision
     ProviderDecision dec{};
-    auto s = va::analyzer::create_model_session(desc, ctx, &dec);
+    (void)va::analyzer::create_model_session(desc, ctx, &dec);
+    std::string primary = dec.resolved;
+    // Build fallback chain (no CPU fallback to avoid GPU→CPU tensor mismatch)
+    std::vector<std::string> chain;
+    auto norm = [](std::string s){ std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){return (char)std::tolower(c);} ); return s; };
+    primary = norm(primary);
+    if (primary == "tensorrt-native") { chain = {"tensorrt-native","tensorrt","cuda"}; }
+    else if (primary == "tensorrt")   { chain = {"tensorrt","cuda"}; }
+    else if (primary == "cuda")       { chain = {"cuda"}; }
+    else { chain = {"cuda"}; }
 
-    // 根据 provider 选择实际模型路径：tensorrt-native -> 优先 model_path_trt_；否则优先 model_path_ort_
-    std::string chosen_path = model_path_;
-    try {
-        std::string prov = dec.resolved;
-        std::transform(prov.begin(), prov.end(), prov.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-        if ((prov == "tensorrt-native" || prov == "tensorrt_native" || prov == "trt-native") && !model_path_trt_.empty()) {
-            chosen_path = model_path_trt_;
-        } else if (!model_path_ort_.empty()) {
-            chosen_path = model_path_ort_;
-        }
-    } catch (...) { /* keep default */ }
-
-    if (!chosen_path.empty()) {
+    std::shared_ptr<IModelSession> loaded;
+    std::string used_provider;
+    for (const auto& prov : chain) {
+        va::core::EngineDescriptor tryd = desc; tryd.provider = prov;
+        ProviderDecision d2{};
+        auto cand = va::analyzer::create_model_session(tryd, ctx, &d2);
+        std::string path = pick_path_for(prov);
+        if (path.empty()) continue;
         VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model")
-            << "open: model_path='" << chosen_path << "' provider_req='" << dec.requested
-            << "' device_id=" << desc.device_index;
-        if (!s->loadModel(chosen_path, /*use_gpu*/false)) {
-            VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "failed to load model: " << chosen_path;
-            return false;
+            << "open: model_path='" << path << "' provider_try='" << prov << "' device_id=" << tryd.device_index;
+        auto t0 = now_ms();
+        bool ok = cand->loadModel(path, /*use_gpu*/false);
+        auto t1 = now_ms();
+        va::analyzer::metrics::record_model_session_load(static_cast<double>(t1 - t0) / 1000.0, ok);
+        if (!ok) {
+            VA_LOG_C(::va::core::LogLevel::Warn, "ms.node_model") << "load failed provider='" << prov << "' path='" << path << "'";
+            continue; // try next
         }
-        // 若模型未声明任何输出，直接判定为配置/工件错误，避免下游误报 NMS 失败
+        // Validate outputs declared
         try {
-            auto out_names_probe = s->outputNames();
+            auto out_names_probe = cand->outputNames();
             if (out_names_probe.empty()) {
                 VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
-                    << "model has zero declared outputs (path='" << model_path_ << "'). Check ONNX graph outputs / export config (nms=False).";
-                return false;
+                    << "model has zero declared outputs (path='" << model_path_ << "'). Check ONNX export.";
+                continue;
             }
-        } catch (...) { /* ignore */ }
-
-        // 回填 EngineManager 的运行态（provider/gpu/io_binding/device_binding），用于 RuntimeSummary
-        if (ctx.engine_registry) {
-            try {
-                auto* em = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry);
-                auto ri = s->getRuntimeInfo();
-                va::core::EngineRuntimeStatus st;
-                st.provider = ri.provider;
-                st.gpu_active = ri.gpu_active;
-                st.io_binding = ri.io_binding;
-                st.device_binding = ri.device_binding;
-                st.cpu_fallback = ri.cpu_fallback;
-                em->updateRuntimeStatus(std::move(st));
-                VA_LOG_C(::va::core::LogLevel::Info, "app") << "[RuntimeSummary][post-open] provider=" << ri.provider
-                    << " gpu_active=" << std::boolalpha << ri.gpu_active
-                    << " io_binding=" << ri.io_binding
-                    << " device_binding=" << ri.device_binding;
-            } catch (...) { /* best-effort */ }
-        }
-        // 输出名统计
-        try {
-            auto names = s->outputNames();
-            VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model") << "outputs_declared=" << names.size();
         } catch (...) {}
+        loaded = std::move(cand); used_provider = prov; break;
     }
-    session_ = std::move(s);
+    if (!loaded) {
+        VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "all providers failed after fallback chain";
+        return false;
+    }
+
+    // 回填 EngineManager 的运行态（provider/gpu/io_binding/device_binding），用于 RuntimeSummary
+    if (ctx.engine_registry) {
+        try {
+            auto* em = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry);
+            auto ri = loaded->getRuntimeInfo();
+            va::core::EngineRuntimeStatus st;
+            st.provider = ri.provider;
+            st.gpu_active = ri.gpu_active;
+            st.io_binding = ri.io_binding;
+            st.device_binding = ri.device_binding;
+            st.cpu_fallback = ri.cpu_fallback;
+            em->updateRuntimeStatus(std::move(st));
+            VA_LOG_C(::va::core::LogLevel::Info, "app") << "[RuntimeSummary][post-open] provider=" << ri.provider
+                << " gpu_active=" << std::boolalpha << ri.gpu_active
+                << " io_binding=" << ri.io_binding
+                << " device_binding=" << ri.device_binding;
+        } catch (...) { /* best-effort */ }
+    }
+    // 输出名统计
+    try {
+        auto names = loaded->outputNames();
+        VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model") << "outputs_declared=" << names.size();
+    } catch (...) {}
+
+    session_ = std::move(loaded);
     return true;
 }
 

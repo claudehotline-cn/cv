@@ -215,6 +215,34 @@ int main(int argc, char** argv) {
       }
       // VA runtime
       os << "\"runtime\":{\"provider\":\""<<provider<<"\",\"gpu_active\":"<<(gpu?"true":"false")<<",\"io_binding\":"<<(iob?"true":"false")<<"},";
+      // Subscriptions quotas (source: env or defaults)
+      {
+        auto envInt = [](const char* k, int defv){ const char* v = std::getenv(k); if (!v || !*v) return defv; try { return std::stoi(v); } catch (...) { return defv; } };
+        auto srcOf = [](const char* k){ const char* v = std::getenv(k); return (v && *v) ? "env" : "defaults"; };
+        int heavy = envInt("CP_SUBS_HEAVY_SLOTS", 2);
+        int model = envInt("CP_SUBS_MODEL_SLOTS", 2);
+        int rtsp  = envInt("CP_SUBS_RTSP_SLOTS", 4);
+        int maxq  = envInt("CP_SUBS_MAX_QUEUE", 1024);
+        int ttl   = envInt("CP_SUBS_TTL_SECONDS", 900);
+        const char* s_heavy = srcOf("CP_SUBS_HEAVY_SLOTS");
+        const char* s_model = srcOf("CP_SUBS_MODEL_SLOTS");
+        const char* s_rtsp  = srcOf("CP_SUBS_RTSP_SLOTS");
+        const char* s_maxq  = srcOf("CP_SUBS_MAX_QUEUE");
+        const char* s_ttl   = srcOf("CP_SUBS_TTL_SECONDS");
+        os << "\"subscriptions\":{"
+              "\"heavy_slots\":" << heavy << ","
+              "\"model_slots\":" << model << ","
+              "\"rtsp_slots\":"  << rtsp  << ","
+              "\"max_queue\":"    << maxq  << ","
+              "\"ttl_seconds\":"  << ttl   << ","
+              "\"source\":{"
+                "\"heavy_slots\":\"" << s_heavy << "\","
+                "\"model_slots\":\"" << s_model << "\","
+                "\"rtsp_slots\":\""  << s_rtsp  << "\","
+                "\"max_queue\":\""    << s_maxq  << "\","
+                "\"ttl_seconds\":\""  << s_ttl   << "\"}"
+            "},";
+      }
       // VSM summary
       os << "\"vsm\":{\"streams\":"<<vsm_streams<<"}";
       os << "}}";

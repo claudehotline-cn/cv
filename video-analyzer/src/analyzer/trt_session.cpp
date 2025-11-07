@@ -291,6 +291,34 @@ bool TensorRTModelSession::loadModel(const std::string& model_path, bool /*use_g
         // Build engine
         impl_->engine = impl_->builder->buildEngineWithConfig(*impl_->network, *impl_->config);
         if (!impl_->engine) throw std::runtime_error("buildEngineWithConfig failed");
+        // Optional: serialize built engine
+        try {
+            if (impl_->options.serialize_on_build && impl_->engine) {
+                std::string dir = impl_->options.engine_out_dir;
+                if (dir.empty()) {
+                    if (const char* e = std::getenv("VA_TRT_ENGINE_DIR")) dir = e;
+                }
+                if (dir.empty()) {
+                    std::string base = "/app/.trt_native_cache";
+                    if (const char* c = std::getenv("VA_TRT_CACHE_DIR")) base = c;
+                    dir = base + "/engines";
+                }
+                std::error_code ec; std::filesystem::create_directories(dir, ec);
+                std::string stem; try { stem = std::filesystem::path(model_path).stem().string(); } catch (...) { stem = "model"; }
+                int dev=0; int maj=0, min=0; try { cudaDeviceProp prop{}; cudaGetDevice(&dev); if (cudaGetDeviceProperties(&prop, dev)==cudaSuccess) { maj=prop.major; min=prop.minor; } } catch (...) {}
+                std::ostringstream oss; oss << dir << "/" << stem << "_sm" << maj << min << (impl_->options.fp16? "_fp16" : "_fp32") << ".engine";
+                auto* mem = impl_->engine->serialize();
+                if (mem && mem->size() > 0) {
+                    std::ofstream ofs(oss.str(), std::ios::binary);
+                    ofs.write(static_cast<const char*>(mem->data()), mem->size());
+                    ofs.close();
+                    VA_LOG_C(::va::core::LogLevel::Info, "analyzer.trt") << "serialize: saved engine '" << oss.str() << "' bytes=" << mem->size();
+#if NV_TENSORRT_MAJOR < 10
+                    mem->destroy();
+#endif
+                }
+            }
+        } catch (...) { /* ignore serialization errors */ }
         // Save timing cache for next runs
         try {
             auto* tc = impl_->config->getTimingCache();
@@ -371,6 +399,34 @@ bool TensorRTModelSession::loadModel(const std::string& model_path, bool /*use_g
         // Build engine
         impl_->engine = impl_->builder->buildEngineWithConfig(*impl_->network, *impl_->config);
         if (!impl_->engine) throw std::runtime_error("buildEngineWithConfig failed");
+        // Optional: serialize built engine
+        try {
+            if (impl_->options.serialize_on_build && impl_->engine) {
+                std::string dir = impl_->options.engine_out_dir;
+                if (dir.empty()) {
+                    if (const char* e = std::getenv("VA_TRT_ENGINE_DIR")) dir = e;
+                }
+                if (dir.empty()) {
+                    std::string base = "/app/.trt_native_cache";
+                    if (const char* c = std::getenv("VA_TRT_CACHE_DIR")) base = c;
+                    dir = base + "/engines";
+                }
+                std::error_code ec; std::filesystem::create_directories(dir, ec);
+                std::string stem; try { stem = std::filesystem::path(model_path).stem().string(); } catch (...) { stem = "model"; }
+                int dev=0; int maj=0, min=0; try { cudaDeviceProp prop{}; cudaGetDevice(&dev); if (cudaGetDeviceProperties(&prop, dev)==cudaSuccess) { maj=prop.major; min=prop.minor; } } catch (...) {}
+                std::ostringstream oss; oss << dir << "/" << stem << "_sm" << maj << min << (impl_->options.fp16? "_fp16" : "_fp32") << ".engine";
+                auto* mem = impl_->engine->serialize();
+                if (mem && mem->size() > 0) {
+                    std::ofstream ofs(oss.str(), std::ios::binary);
+                    ofs.write(static_cast<const char*>(mem->data()), mem->size());
+                    ofs.close();
+                    VA_LOG_C(::va::core::LogLevel::Info, "analyzer.trt") << "serialize: saved engine '" << oss.str() << "' bytes=" << mem->size();
+#if NV_TENSORRT_MAJOR < 10
+                    mem->destroy();
+#endif
+                }
+            }
+        } catch (...) { /* ignore serialization errors */ }
         impl_->context = impl_->engine->createExecutionContext();
         if (!impl_->context) throw std::runtime_error("createExecutionContext failed");
         impl_->nbBindings = impl_->engine->getNbBindings();

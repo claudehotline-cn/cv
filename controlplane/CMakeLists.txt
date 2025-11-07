@@ -54,7 +54,17 @@ if (EXISTS "${YAML_LOCAL_ROOT}/CMakeLists.txt")
   add_subdirectory("${YAML_LOCAL_ROOT}" "${CMAKE_BINARY_DIR}/yaml-cpp" EXCLUDE_FROM_ALL)
 else()
   find_package(yaml-cpp REQUIRED)
-  set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+  # Robustly detect exported target name across distros
+  if (TARGET yaml-cpp::yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+  elseif (TARGET yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp)
+  elseif (TARGET YAML::yaml-cpp)
+    set(YAML_CPP_TARGET YAML::yaml-cpp)
+  else()
+    # As a last resort, fall back to plain library name; caller must ensure include dirs
+    set(YAML_CPP_TARGET yaml-cpp)
+  endif()
 endif()
 
 # Proto sources from VA/VSM projects

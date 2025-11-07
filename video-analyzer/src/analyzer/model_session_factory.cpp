@@ -74,6 +74,9 @@ create_model_session(const va::core::EngineDescriptor& engine,
         if (topt.workspace_mb <= 0) topt.workspace_mb = parse_int(opts, "tensorrt_workspace_mb", 0);
         topt.device_output_views = parse_bool(opts, "device_output_views", true);
         topt.stage_device_outputs = parse_bool(opts, "stage_device_outputs", false);
+        // Optional engine serialization
+        topt.serialize_on_build = parse_bool(opts, "trt_serialize_on_build", false) || parse_bool(opts, "serialize_on_build", false);
+        if (auto it = opts.find("trt_engine_dir"); it != opts.end()) topt.engine_out_dir = it->second;
         trt->setOptions(topt);
         return trt;
     }

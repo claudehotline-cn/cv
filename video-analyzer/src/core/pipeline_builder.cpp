@@ -18,6 +18,7 @@
 // For multistage analyzer pre-open/preload
 #include "analyzer/multistage/runner.hpp"
 #include "utils/cuda_ctx_guard.hpp"
+#include "analyzer/load_metrics.hpp"
 
 namespace va::core {
 
@@ -120,6 +121,8 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
                             bool ok = ms2->graph().open_all(ctx);
                             auto t1 = std::chrono::steady_clock::now();
                             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+                            // Metrics: record background graph open duration
+                            try { va::analyzer::metrics::record_graph_open_duration(static_cast<double>(ms)/1000.0, ok); } catch (...) {}
                             if (ok) {
                                 auto lvl = (ms > timeout_ms) ? ::va::core::LogLevel::Warn : ::va::core::LogLevel::Info;
                                 VA_LOG_C(lvl, "composition") << "[Preload] graph opened in background, ms=" << ms;
@@ -129,8 +132,10 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
                         }
                     } catch (const std::exception& ex) {
                         VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] background threw: " << ex.what();
+                        try { va::analyzer::metrics::record_graph_open_duration(static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count())/1000.0, false); } catch (...) {}
                     } catch (...) {
                         VA_LOG_C(::va::core::LogLevel::Warn, "composition") << "[Preload] background unknown error";
+                        try { va::analyzer::metrics::record_graph_open_duration(static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count())/1000.0, false); } catch (...) {}
                     }
                     preopen_inflight.fetch_sub(1, std::memory_order_relaxed);
                 }).detach();

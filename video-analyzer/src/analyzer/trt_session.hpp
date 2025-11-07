@@ -20,6 +20,9 @@ public:
         int builder_opt_level {1};        // 0..5
         int min_timing_iterations {1};    // reduce search
         int avg_timing_iterations {1};
+        // Optional: serialize .engine after ONNX build
+        bool serialize_on_build {false};
+        std::string engine_out_dir; // if empty, derive from VA_TRT_ENGINE_DIR or VA_TRT_CACHE_DIR/engines
     };
 
     TensorRTModelSession();
