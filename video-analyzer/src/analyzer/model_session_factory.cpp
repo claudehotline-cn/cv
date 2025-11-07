@@ -59,7 +59,7 @@ create_model_session(const va::core::EngineDescriptor& engine,
 
     if (decision) {
         decision->requested = req;
-        decision->resolved = chosen; // final resolution may be updated by session load
+        decision->resolved = chosen; // may be updated below (e.g., Triton fallback)
     }
 
     // tensorrt-native path (prefer when available and explicitly requested)
@@ -106,6 +106,7 @@ create_model_session(const va::core::EngineDescriptor& engine,
 #else
         VA_LOG_C(::va::core::LogLevel::Warn, "analyzer") << "provider='triton' requested but Triton client disabled; falling back to cuda";
         chosen = "cuda";
+        if (decision) { decision->resolved = chosen; }
 #endif
     }
 
@@ -156,6 +157,7 @@ create_model_session(const va::core::EngineDescriptor& engine,
     // 默认不强制 RTX：仅当 require_rtx=true 时才严格要求
     opt.require_rtx_when_requested = parse_bool(opts, "require_rtx", false);
     session->setOptions(opt);
+    if (decision) { decision->resolved = chosen; }
 #endif
     return session;
 }
