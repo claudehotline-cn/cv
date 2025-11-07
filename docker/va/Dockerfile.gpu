@@ -109,7 +109,7 @@ RUN set -eux; \
     rm -rf /tmp/ixwebsocket
 
 ARG ORT_VERSION=1.23.2
-ARG ORT_JOBS=24
+ARG ORT_JOBS=32
 # 手动缓存键：若要强制重建 ORT，可变更此值
 ARG ORT_BUILD_TAG="ort-${ORT_VERSION}-cuda13-sm120-trt"
 ARG ORT_REBUILD=0

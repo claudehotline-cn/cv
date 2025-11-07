@@ -183,7 +183,13 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         const char* aqs  = env_aqs  ? env_aqs  : "0";
         av_opt_set(codec_ctx_->priv_data, "spatial_aq", spaq, 0);
         av_opt_set(codec_ctx_->priv_data, "temporal_aq", taq, 0);
-        av_opt_set(codec_ctx_->priv_data, "aq-strength", aqs, 0);
+        // 仅在有效范围 [1,15] 时设置 aq-strength；默认(0)不设置，避免 FFmpeg 报错
+        try {
+            int aqi = std::stoi(aqs);
+            if (aqi >= 1 && aqi <= 15) {
+                av_opt_set(codec_ctx_->priv_data, "aq-strength", aqs, 0);
+            }
+        } catch (...) { /* ignore invalid */ }
         if (settings.zero_latency) {
             // NVENC low-latency settings
             av_opt_set(codec_ctx_->priv_data, "rc-lookahead", "0", 0);
@@ -191,7 +197,7 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
         }
         VA_LOG_INFO() << "[Encoder][nvenc] mapped preset=" << nv_preset
                       << " rc=" << rc
-                      << " sp_aq=" << spaq << " tm_aq=" << taq << " aq_strength=" << aqs
+                      << " sp_aq=" << spaq << " tm_aq=" << taq
                       << (settings.zero_latency ? " lookahead=0 delay=0" : "");
         if (!settings.profile.empty()) {
             av_opt_set(codec_ctx_->priv_data, "profile", settings.profile.c_str(), 0);

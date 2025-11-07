@@ -15,16 +15,8 @@ services:
         STRICT_TRT: "ON"                        # 缺少 TRT 头/库直接失败
         STRICT_CUDA_MINOR: "OFF"                 # 开启次版本严格校验（要求 13.0）
     image: cv/va:latest-gpu
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: ["gpu"]
-    runtime: nvidia
-    # 对于新版 compose，可使用：
-    # deploy: { resources: { reservations: { devices: [ { driver: nvidia, count: all, capabilities: [gpu] } ] } } }
-    # 或者：
-    #    gpus: all
+    # Docker Compose v2 建议方式：明确声明使用全部 GPU 设备
+    gpus: all
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
