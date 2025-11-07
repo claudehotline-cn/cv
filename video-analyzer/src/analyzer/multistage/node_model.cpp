@@ -70,7 +70,9 @@ bool NodeModel::open(NodeContext& ctx) {
         va::core::EngineDescriptor tryd = desc; tryd.provider = prov;
         ProviderDecision d2{};
         auto cand = va::analyzer::create_model_session(tryd, ctx, &d2);
-        std::string path = pick_path_for(prov);
+        // 根据会话“实际解析后的 provider”选择模型路径，避免 Triton 客户端未启用时仍使用“__triton__”占位路径
+        std::string prov_resolved = d2.resolved.empty() ? prov : d2.resolved;
+        std::string path = pick_path_for(prov_resolved);
         // 对于本地会话，空路径视为配置错误；Triton 使用占位路径允许继续
         if (path.empty() && prov != "triton") continue;
         VA_LOG_C(::va::core::LogLevel::Info, "ms.node_model")
@@ -92,7 +94,7 @@ bool NodeModel::open(NodeContext& ctx) {
                 continue;
             }
         } catch (...) {}
-        loaded = std::move(cand); used_provider = prov; break;
+        loaded = std::move(cand); used_provider = prov_resolved; break;
     }
     if (!loaded) {
         VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model") << "all providers failed after fallback chain";

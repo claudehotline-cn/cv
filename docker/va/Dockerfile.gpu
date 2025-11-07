@@ -3,6 +3,9 @@
 # Parameterize Ubuntu and NGC TensorRT tag
 ARG UBUNTU_VER=22.04
 ARG NGC_TRT_TAG=25.08-py3
+
+# Provide Triton C++ client headers/libs via a helper stage
+FROM nvcr.io/nvidia/tritonserver:25.08-py3 AS tritonclient
 # Use NGC TensorRT tag directly (no -devel/-runtime suffix in tags)
 FROM nvcr.io/nvidia/tensorrt:${NGC_TRT_TAG} AS build
 # Re-declare build args inside the stage so they are available to RUN
@@ -16,6 +19,10 @@ RUN apt-get update && apt-get install -y \
     libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
     libgrpc++-dev protobuf-compiler protobuf-compiler-grpc libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
+
+## Bring in Triton client headers/libs for optional gRPC client build
+COPY --from=tritonclient /opt/tritonserver/include /opt/tritonclient/include
+COPY --from=tritonclient /opt/tritonserver/lib /opt/tritonclient/lib
 
 
 # Upgrade CMake to >=3.28 via Kitware APT (ORT 1.23.2 requires it)
@@ -193,6 +200,7 @@ RUN set -eux; \
     cmake -S video-analyzer -B build -G Ninja \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
       -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
+      -DUSE_TRITON_CLIENT=ON -DTRITON_CLIENT_ROOT=/opt/tritonclient \
       -DCMAKE_CUDA_ARCHITECTURES="120" \
       -DONNXRUNTIME_ROOT=/opt/onnxruntime \
       -DONNXRUNTIME_INCLUDE_DIR=/opt/onnxruntime/include/onnxruntime/core/session \
@@ -213,11 +221,12 @@ RUN set -eux; \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:${LD_LIBRARY_PATH}
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
 COPY --from=build /app/build/bin/trt_cache_builder /app/bin/trt_cache_builder
 COPY --from=build /app/build/bin/trt_engine_exporter /app/bin/trt_engine_exporter
 COPY --from=build /opt/onnxruntime /opt/onnxruntime
+COPY --from=build /opt/tritonclient /opt/tritonclient
 COPY --from=build /usr/local /usr/local
 COPY video-analyzer/config /app/config
 RUN mkdir -p /app/logs
@@ -225,6 +234,6 @@ RUN mkdir -p /app/logs
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV VA_PROM_ENDPOINT=0.0.0.0:9090
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
 EXPOSE 8082 9090 50051
 ENTRYPOINT ["/app/bin/VideoAnalyzer","/app/config"]
