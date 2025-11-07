@@ -1,6 +1,6 @@
 engine:
-  type: tensorrt
-  provider: tensorrt-native
+  type: triton
+  provider: triton
   device: 0
   options:
     use_ffmpeg_source: false
@@ -36,6 +36,14 @@ engine:
     trt_force_sequential: false
     trt_auxiliary_streams: 0
     trt_detailed_build_log: false
+    # Triton 连接参数（与 compose 中 triton 服务对应）
+    triton_url: triton:8001
+    triton_model: yolov12x
+    triton_model_version: ""
+    triton_input: images
+    triton_outputs: dets
+    triton_timeout_ms: 2000
+    triton_shm_cuda: false
 sfu:
   whip_base: ""
   whep_base: ""

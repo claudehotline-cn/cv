@@ -7,7 +7,7 @@ services:
         ORT_REBUILD: "0"                # 默认不重建 ORT（需要时可临时改为 1）
         ORT_BUILD_TAG: "ort-1.23.2-cuda13-sm120-trt"
         UBUNTU_VER: "22.04"                    # 与 NGC 镜像 ubuntu 版本一致
-        NGC_TRT_TAG: "${NGC_TRT_TAG}"         # 由环境变量指定，需对应 CUDA 13.0 的标签
+        NGC_TRT_TAG: "${NGC_TRT_TAG:-25.08-py3}"         # 未显式提供时使用默认 25.08-py3
         EXPECTED_CUDA_MAJOR: "13"               # 严格版本校验：CUDA 主版本（13）
         EXPECTED_CUDA_MINOR: "0"                # 严格版本校验：CUDA 次版本（13.0 -> 0）
         EXPECTED_CUDNN_MAJOR: "9"               # 严格版本校验：cuDNN 主版本
