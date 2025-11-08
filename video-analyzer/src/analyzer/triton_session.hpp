@@ -49,6 +49,7 @@ private:
     // CUDA SHM（T1）：输入区域占位（当前仅占位与降级日志）
     std::string in_shm_name_ {"va_in"};
     size_t in_shm_bytes_ {0};
+    const void* last_shm_ptr_ {nullptr};
 #endif
 };
 

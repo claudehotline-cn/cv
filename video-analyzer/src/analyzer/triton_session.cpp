@@ -4,6 +4,23 @@
 #include "analyzer/logging_util.hpp"
 
 #if defined(USE_TRITON_CLIENT)
+// Ensure CUDA runtime is included before Triton ipc to avoid typedef conflicts
+#if defined(USE_CUDA)
+#  if defined(__has_include)
+#    if __has_include(<cuda_runtime.h>)
+#      include <cuda_runtime.h>
+#      define VA_TRITON_HAVE_CUDA_RUNTIME 1
+#    else
+#      define VA_TRITON_HAVE_CUDA_RUNTIME 0
+#    endif
+#  else
+#    include <cuda_runtime.h>
+#    define VA_TRITON_HAVE_CUDA_RUNTIME 1
+#  endif
+#else
+#  define VA_TRITON_HAVE_CUDA_RUNTIME 0
+#endif
+
 #include <grpc_client.h>
 #if defined(__has_include)
 #  if __has_include(<grpc_service.pb.h>)
@@ -139,7 +156,46 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
             return false;
         }
         inps_owner.emplace_back(raw); // managed by shared_ptr (delete on scope exit)
-        if (!raw->AppendRaw(host_ptr, bytes).IsOk()) return false;
+
+        bool shm_bound = false;
+#if VA_TRITON_HAVE_CUDA_RUNTIME
+        if (opt_.use_cuda_shm && input.on_gpu) {
+            // Re-register SHM when pointer changes or capacity不足
+            if (last_shm_ptr_ != input.data || in_shm_bytes_ < bytes) {
+                // Unregister previous region (best-effort)
+                if (in_shm_bytes_ > 0) {
+                    (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
+                }
+                cudaIpcMemHandle_t ipc{};
+                cudaError_t cerr = cudaIpcGetMemHandle(&ipc, const_cast<void*>(input.data));
+                if (cerr != cudaSuccess) {
+                    VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "cudaIpcGetMemHandle failed: " << cudaGetErrorString(cerr);
+                    va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
+                } else {
+                    auto er = client_->RegisterCudaSharedMemory(in_shm_name_, &ipc, bytes, opt_.device_id);
+                    if (!er.IsOk()) {
+                        VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "RegisterCudaSharedMemory failed: " << er.Message();
+                        va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register");
+                    } else {
+                        last_shm_ptr_ = input.data;
+                        in_shm_bytes_ = bytes;
+                    }
+                }
+            }
+            if (in_shm_bytes_ >= bytes) {
+                auto er2 = raw->SetSharedMemory(in_shm_name_, bytes, /*offset*/0);
+                if (!er2.IsOk()) {
+                    VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "SetSharedMemory failed: " << er2.Message();
+                    va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_bind");
+                } else {
+                    shm_bound = true;
+                }
+            }
+        }
+#endif
+        if (!shm_bound) {
+            if (!raw->AppendRaw(host_ptr, bytes).IsOk()) return false;
+        }
         inps.push_back(raw);
     }
 
