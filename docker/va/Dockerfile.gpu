@@ -240,8 +240,8 @@ RUN set -eux; \
          || { echo 'ERROR: libgrpcclient linkage missing. Check Triton client detection.'; ldd build/bin/VideoAnalyzer || true; exit 90; }; }
 
 ARG UBUNTU_VER=22.04
-# Use the same NGC TensorRT tag for runtime; it includes TRT runtime libs
-FROM nvcr.io/nvidia/tensorrt:${NGC_TRT_TAG} AS runtime
+# Runtime: 使用 TritonServer 作为基础运行镜像
+FROM nvcr.io/nvidia/tritonserver:25.08-py3 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -261,11 +261,13 @@ COPY --from=build /opt/onnxruntime /opt/onnxruntime
 COPY --from=build /opt/tritonclient /opt/tritonclient
 COPY --from=build /usr/local /usr/local
 COPY video-analyzer/config /app/config
-RUN mkdir -p /app/logs
+COPY docker/va/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && mkdir -p /app/logs /models
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV VA_PROM_ENDPOINT=0.0.0.0:9090
+ENV TRITON_HTTP_PORT=8000 TRITON_GRPC_PORT=8001 TRITON_METRICS_PORT=8002 TRITON_MODEL_REPO=/models
 ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
-EXPOSE 8082 9090 50051
-ENTRYPOINT ["/app/bin/VideoAnalyzer","/app/config"]
+EXPOSE 8082 9090 50051 8000 8001 8002
+ENTRYPOINT ["/app/entrypoint.sh"]

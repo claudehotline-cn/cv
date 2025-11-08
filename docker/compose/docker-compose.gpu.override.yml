@@ -35,19 +35,9 @@ services:
       - ../../.ort_trt_cache:/app/.ort_trt_cache
       # 持久化原生 TensorRT (tensorrt-native) timing/engine 缓存
       - ../../.trt_native_cache:/app/.trt_native_cache
-  triton:
-    image: nvcr.io/nvidia/tritonserver:25.08-py3
-    # 同上：服务端通过 UUID 约束，保持 ordinal=0 一致
-    gpus: all
-    # 为 CUDA IPC 共享内存开启共享 IPC 命名空间（与 VA 同一 IPC NS）
-    ipc: host
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=GPU-699cd883-5517-6d7d-9dfd-db488fe13ec5
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
-      - CUDA_VISIBLE_DEVICES=0
-    command: ["tritonserver", "--model-repository=/models", "--grpc-port=8001", "--http-port=8000"]
-    volumes:
+      # Triton 模型仓库（同容器内 /models）
       - ../../docker/model:/models:ro
     ports:
-      - "8001:8001"
-      - "8000:8000"
+      - "8001:8001"   # Triton gRPC
+      - "8000:8000"   # Triton HTTP
+  # triton 服务已并入 va 容器，由 va 的 entrypoint.sh 启动

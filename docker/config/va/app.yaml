@@ -39,7 +39,7 @@ engine:
     # 强制仅使用 Triton provider，便于定位路径
     force_provider: triton
     # Triton 连接参数（与 compose 中 triton 服务对应）
-    triton_url: triton:8001
+    triton_url: localhost:8001
     triton_model: yolov12x
     triton_model_version: ""
     triton_input: images
