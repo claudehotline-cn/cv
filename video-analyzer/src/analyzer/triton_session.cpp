@@ -336,9 +336,9 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
                 }
             }
             if (out_registered_[idx]) {
-                // 绑定按需字节数（小于等于容量），避免超配导致 "invalid args"
+                // 在 Infer 前无法获知确切输出字节数，这里绑定预留容量；
+                // Infer 后按 need_bytes 判定是否能直接返回设备 TensorView。
                 size_t bind_bytes = out_capacity_[idx];
-                if (bind_bytes == 0 || bind_bytes > need_bytes) bind_bytes = need_bytes;
                 auto er2 = out_raw->SetSharedMemory(out_shm_names_[idx], bind_bytes, /*offset*/0);
                 if (!er2.IsOk()) { va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_bind"); }
             }

@@ -5,14 +5,14 @@ ARG UBUNTU_VER=22.04
 ARG NGC_TRT_TAG=25.08-py3
 ARG TRITON_CLIENT_TAG=25.08-py3-sdk
 ARG TRITON_TAG=25.08-py3
-ARG ORT_PREBUILT_IMAGE
+ARG ORT_PREBUILT_IMAGE=cv/va-ort:1.23.2-cuda13
 ARG VA_USE_TRT_INPROC=OFF
 # Provide Triton C++ client headers/libs via the SDK image (contains grpc_client.h & libgrpcclient.so)
 FROM nvcr.io/nvidia/tritonserver:${TRITON_CLIENT_TAG} AS tritonclient
 # Separate runtime stage for server headers/libs used at build time
 FROM nvcr.io/nvidia/tritonserver:${TRITON_TAG} AS tritonrt
 
-# Optional prebuilt ORT provider stage (defaults to TRITON_TAG image if not provided)
+# Optional prebuilt ORT provider stage（默认使用本地构建的 cv/va-ort:1.23.2-cuda13；若不存在再回退到 NGC Triton 基础镜像）
 ARG ORT_PREBUILT_IMAGE
 FROM ${ORT_PREBUILT_IMAGE:-nvcr.io/nvidia/tritonserver:${TRITON_TAG}} AS ortprebuilt
 RUN mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include || true

@@ -29,7 +29,9 @@ RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
       libnvinfer-dev libnvonnxparsers-dev libnvinfer-plugin-dev libnvinfer-bin || true
 
-# 方便宿主编译器找到 CUDA 头
+# 方便宿主编译器找到 CUDA 头（避免 UndefinedVar 告警，先声明可为空的 ARG）
+ARG CPLUS_INCLUDE_PATH
+ARG CPATH
 ENV CPLUS_INCLUDE_PATH=/usr/local/cuda/include:${CPLUS_INCLUDE_PATH}
 ENV CPATH=/usr/local/cuda/include:${CPATH}
 
