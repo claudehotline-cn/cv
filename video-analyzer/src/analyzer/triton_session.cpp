@@ -75,6 +75,13 @@ bool TritonGrpcModelSession::loadModel(const std::string&, bool) {
     client_ = std::move(client);
     loaded_ = true;
     VA_LOG_C(::va::core::LogLevel::Info, "analyzer.triton") << "init: url='" << opt_.url << "' model='" << opt_.model_name << "'";
+#if VA_TRITON_HAVE_CUDA_RUNTIME
+    // 固定 CUDA 设备，确保后续 cudaMalloc/cudaIpc* 在期望 device 上创建句柄
+    {
+        int cur=-1; (void)cudaGetDevice(&cur);
+        if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id);
+    }
+#endif
 
 #if VA_HAS_TRT_GRPC_PB
     // 元数据自适配：尝试拉取 ModelMetadata，自动填充 IO 名称（避免配置不一致）
@@ -191,6 +198,8 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
         bool shm_bound = false;
 #if VA_TRITON_HAVE_CUDA_RUNTIME
         if (opt_.use_cuda_shm && input.on_gpu) {
+            // 确保当前 device 正确
+            { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
             // 使用稳定的设备缓冲避免每帧更换指针造成重复注册
             if (shm_capacity_ < bytes) {
                 if (shm_dev_buf_) cudaFree(shm_dev_buf_);
@@ -214,7 +223,7 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
                             shm_failures_++;
                             VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "analyzer.triton", 2000) << "RegisterCudaSharedMemory failed: " << er.Message();
                             va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register");
-                            if (shm_failures_ >= 5) { opt_.use_cuda_shm = false; VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "disable CUDA SHM for this session (repeated register failure)"; }
+                            // 不自动关闭 CUDA SHM；继续按 Host 路径绑定本帧，后续帧重试注册
                         } else {
                             in_shm_bytes_ = shm_capacity_;
                             shm_registered_ = true; shm_failures_ = 0;
@@ -223,6 +232,8 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
                 }
                 // 将输入复制到稳定缓冲（D2D），然后绑定 SHM
                 if (shm_registered_) {
+                    // D2D 前再次确认 device
+                    { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
                     if (cudaSuccess == cudaMemcpy(shm_dev_buf_, input.data, bytes, cudaMemcpyDeviceToDevice)) {
                         auto er2 = raw->SetSharedMemory(in_shm_name_, bytes, /*offset*/0);
                         if (er2.IsOk()) shm_bound = true; else va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_bind");
@@ -265,6 +276,7 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
             }
             if (out_capacity_[idx] < need_cap) {
                 if (out_dev_bufs_[idx]) cudaFree(out_dev_bufs_[idx]);
+                { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
                 if (cudaSuccess == cudaMalloc(&out_dev_bufs_[idx], need_cap)) {
                     out_capacity_[idx] = need_cap; out_registered_[idx] = false;
                 } else {

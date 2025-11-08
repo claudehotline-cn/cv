@@ -1,18 +1,14 @@
-# 项目上下文（2025‑11‑07｜VA/CP/VSM/Web + Docker + TensorRT）
+# 项目上下文（2025‑11‑08｜VA/CP/VSM/Web + Docker + Triton）
 
-本文汇总当前实现状态与关键决策，仅描述“已落地”的能力与配置，便于排障与扩展。
+本文汇总当前实现、关键决策与运行要点；面向排障、扩展与后续迭代。
 
 ## 一、架构与数据流
 - VA：RTSP 拉流 → 预处理（NVDEC→CUDA Letterbox） → 推理（ORT CUDA/ORT‑TRT/原生 TensorRT） → 后处理（YOLO NMS：GPU/CPU） → 叠加（CUDA） → 编码（NVENC） → WHEP。
 - CP：对外 REST（/api/subscriptions、/api/control/pipeline_mode、/api/control/hotswap），代理 WHEP；VSM：RTSP 源管理；Web：通过 CP 与 VA 交互。
 
 ## 二、运行与部署
-- Compose（GPU）：
-  - 使用 `gpus: all` 注入 GPU（解决 `libcuda.so.1` 加载问题）。
-  - 暴露 8082（REST）/9090（Prom）/50051（gRPC）；卷挂载 `/app/models`、`/logs`、（可选）`/app/.trt_native_cache`。
-- 构建：
-  - 基于 `nvidia/cuda:<ver>-cudnn-devel-ubuntu22.04`；容器内构建 ORT v1.23.x（启用 CUDA，按镜像条件启用 TRT EP）。
-  - 统一 `CMAKE_CUDA_ARCHITECTURES="90;120"`；安装至 `/opt/onnxruntime` 并补全链接。
+- Compose（GPU）：`triton` 服务（HTTP:8000/gRPC:8001；`docker/model → /models`），`va/cp/vsm/web` 同网段；`gpus: all`；暴露 8082/9090/50051。
+- 构建：Dockerfile.gpu 注入 SDK `/workspace/install`；`-DUSE_TRITON_CLIENT=ON`；OpenSSL 链接顺序修复；构建后 `ldd` 校验 `libgrpcclient.so`；yaml-cpp/gRPC/Protobuf 链接策略已兼容 Ubuntu。
 
 ## 三、图与模型路径（多阶段）
 - `docker/config/va/graphs/analyzer_multistage_example.yaml` 的 `det` 节点支持双路径：
@@ -21,12 +17,14 @@
 - NodeModel 会根据 Engine.provider 自动选择路径（tensorrt‑native→优先 .engine；否则→优先 .onnx；均为空时回退 `model_path`）。
 
 ## 四、已落地的推理侧能力
-- 原生 TensorRT（tensorrt‑native）：
-  - 直接读取 `.engine/.plan` 反序列化为 `ICudaEngine`，创建 `IExecutionContext` 在统一 CUDA 流上推理。
-  - 输出 dtype 自适应（FP16/FP32），避免将 FP16 误按 FP32 解析导致置信度被阈值过滤。
-  - 显存管理：输入/输出设备缓冲在帧间按需回收，避免显存持续增长。
-- ORT 路径：
-  - 启用 CUDA/（镜像具备时）TRT EP；GPU 场景默认开启零拷贝链路（IoBinding 与统一计算流）。
+- 原生 TensorRT（tensorrt‑native）：反序列化 `.engine/.plan`，输出 dtype 自适应，设备缓冲按需回收。
+- ORT：CUDA/（具备时）TRT EP；GPU 场景可用 IoBinding 零拷贝链路。
+- Triton（T0/T1）：
+  - gRPC 客户端已接入；`ModelSessionFactory` 映射 `triton|triton-grpc`。
+  - 元数据自适配：可用时自动填充 I/O 名；遇到 batch-size 报错自动从“去 batch”切换为“保留 batch”并重试一次。
+  - CUDA SHM（初版）：
+    - 输入侧：稳定设备缓冲（cudaMalloc）+ IPC 注册，一次注册、帧间 D2D + 绑定；失败自动回退与熔断。
+    - 输出侧：为每个输出分配稳定设备缓冲并注册 SHM，Infer 后优先返回设备侧 `TensorView`，不足则回退 Host。
 
 ## 五、异步预热（订阅时后台加载）
 - 订阅创建后，后台异步执行 `open_all()` 预热模型/引擎，不阻塞订阅接口返回。
@@ -39,10 +37,9 @@
 - NVENC 参数合规：仅当 `VA_NVENC_AQ_STRENGTH ∈ [1,15]` 时设置 `aq-strength`，避免 FFmpeg 报错；保持 `preset`/`rc` 等映射稳定。
 
 ## 七、日志与指标（当前可用）
-- TensorRT：`analyzer.trt load: ... (engine) outputs=N`（可见加载成功与输出个数）。
-- 推理/后处理：`ms.node_model`（输出个数与前几路形状，按节流打印）、`ms.nms boxes=…`。
-- 控制：`analysis mode -> ON/OFF`、`/api/control/pipeline_mode` 返回状态码。
-- 指标：Prom 基础指标（帧数、编码/传输相关）便于可用性观测。
+- 直方图：`va_triton_rpc_seconds`、`va_model_session_load_seconds`、`va_graph_open_duration_seconds`。
+- 失败计数：`va_triton_rpc_failed_total{reason=…}`（create/invalid_input/mk_input/mk_output/infer/no_output/timeout/unavailable/other 及 shm_ipc/shm_register/shm_bind）。
+- 日志节流：`analyzer.triton` 的 `run in_shape=…` 默认 1000ms；`ms.node_model/ms.nms/ms.overlay` 支持模块节流与级别覆盖（env）。
 
 ## 八、控制流程
 - 订阅：
@@ -53,8 +50,8 @@
   - `POST /api/control/hotswap { pipeline_name, node, model_uri }` 更换模型。
 
 ## 九、风险与注意
-- 驱动/工具链不匹配：`libcuda.so.1`/NVENC 打开失败 → 使用 `gpus: all` 与镜像自检；
-- 预热与第一帧竞争：通过并发限制与一次性 open 降低二次加载；
-- 模型/布局差异导致 boxes=0：先临时降低 `conf` 验证；
-- 大文件推送：避免把 `.engine` 等二进制纳入 Git（使用 .gitignore/LFS）；
-- 路径与权限：统一 `models/…` 相对路径；确保宿主卷权限与大小写一致。
+- 驱动/工具链不匹配：`libcuda.so.1`/NVENC 打开失败 → `gpus: all` 与镜像自检。
+- SHM 注册失败：命名冲突/残留或 IPC 不可用；已唯一化命名并在注册前反注册，仍失败自动回退与熔断。
+- 批/动态形状差异：已提供自适应重试与 `triton_no_batch`；建议通过 Metadata/Config 校验。
+- 模型布局导致 `boxes=0`：临时降低 `conf` 验证，必要时调整后处理布局。
+- 大文件与权限：避免提交 `.engine`；统一 `models/…` 路径与权限大小写。

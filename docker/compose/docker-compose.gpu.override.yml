@@ -17,9 +17,12 @@ services:
     image: cv/va:latest-gpu
     # Docker Compose v2 建议方式：明确声明使用全部 GPU 设备
     gpus: all
+    # 为 CUDA IPC 共享内存（Triton CUDA SHM）开启共享 IPC 命名空间
+    ipc: host
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - CUDA_VISIBLE_DEVICES=0
       # ORT 日志等级：2=WARNING，仅警告及以上
       - ORT_LOG_SEVERITY_LEVEL=2
       # Speed up native TensorRT engine build (tensorrt-native)
@@ -35,6 +38,12 @@ services:
   triton:
     image: nvcr.io/nvidia/tritonserver:25.08-py3
     gpus: all
+    # 为 CUDA IPC 共享内存开启共享 IPC 命名空间（与 VA 同一 IPC NS）
+    ipc: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - CUDA_VISIBLE_DEVICES=0
     command: ["tritonserver", "--model-repository=/models", "--grpc-port=8001", "--http-port=8000"]
     volumes:
       - ../../docker/model:/models:ro
