@@ -50,6 +50,10 @@ private:
     std::string in_shm_name_ {"va_in"};
     size_t in_shm_bytes_ {0};
     const void* last_shm_ptr_ {nullptr};
+    void* shm_dev_buf_ {nullptr};
+    size_t shm_capacity_ {0};
+    bool shm_registered_ {false};
+    unsigned shm_failures_ {0};
 #endif
 };
 

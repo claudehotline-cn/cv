@@ -42,7 +42,20 @@ using triton::client::InferResult;
 namespace va::analyzer {
 
 TritonGrpcModelSession::TritonGrpcModelSession(const Options& opt) : opt_(opt) {}
-TritonGrpcModelSession::~TritonGrpcModelSession() = default;
+TritonGrpcModelSession::~TritonGrpcModelSession() {
+#if defined(USE_TRITON_CLIENT)
+#if VA_TRITON_HAVE_CUDA_RUNTIME
+    if (shm_dev_buf_) {
+        cudaFree(shm_dev_buf_);
+        shm_dev_buf_ = nullptr; shm_capacity_ = 0;
+    }
+#endif
+    if (in_shm_bytes_ > 0 && client_) {
+        (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
+        in_shm_bytes_ = 0; shm_registered_ = false;
+    }
+#endif
+}
 
 bool TritonGrpcModelSession::loadModel(const std::string&, bool) {
 #if defined(USE_TRITON_CLIENT)
@@ -160,35 +173,41 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
         bool shm_bound = false;
 #if VA_TRITON_HAVE_CUDA_RUNTIME
         if (opt_.use_cuda_shm && input.on_gpu) {
-            // Re-register SHM when pointer changes or capacity不足
-            if (last_shm_ptr_ != input.data || in_shm_bytes_ < bytes) {
-                // Unregister previous region (best-effort)
-                if (in_shm_bytes_ > 0) {
-                    (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
-                }
-                cudaIpcMemHandle_t ipc{};
-                cudaError_t cerr = cudaIpcGetMemHandle(&ipc, const_cast<void*>(input.data));
-                if (cerr != cudaSuccess) {
-                    VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "cudaIpcGetMemHandle failed: " << cudaGetErrorString(cerr);
-                    va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
+            // 使用稳定的设备缓冲避免每帧更换指针造成重复注册
+            if (shm_capacity_ < bytes) {
+                if (shm_dev_buf_) cudaFree(shm_dev_buf_);
+                if (cudaSuccess != cudaMalloc(&shm_dev_buf_, bytes)) {
+                    shm_dev_buf_ = nullptr; shm_capacity_ = 0;
                 } else {
-                    auto er = client_->RegisterCudaSharedMemory(in_shm_name_, ipc, bytes, opt_.device_id);
-                    if (!er.IsOk()) {
-                        VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "RegisterCudaSharedMemory failed: " << er.Message();
-                        va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register");
-                    } else {
-                        last_shm_ptr_ = input.data;
-                        in_shm_bytes_ = bytes;
-                    }
+                    shm_capacity_ = bytes; shm_registered_ = false;
                 }
             }
-            if (in_shm_bytes_ >= bytes) {
-                auto er2 = raw->SetSharedMemory(in_shm_name_, bytes, /*offset*/0);
-                if (!er2.IsOk()) {
-                    VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "SetSharedMemory failed: " << er2.Message();
-                    va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_bind");
-                } else {
-                    shm_bound = true;
+            if (shm_dev_buf_) {
+                // 注册一次（容量变化时重注）
+                if (!shm_registered_) {
+                    cudaIpcMemHandle_t ipc{};
+                    if (cudaSuccess != cudaIpcGetMemHandle(&ipc, shm_dev_buf_)) {
+                        va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
+                    } else {
+                        if (in_shm_bytes_ > 0) (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
+                        auto er = client_->RegisterCudaSharedMemory(in_shm_name_, ipc, shm_capacity_, opt_.device_id);
+                        if (!er.IsOk()) {
+                            shm_failures_++;
+                            VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "analyzer.triton", 2000) << "RegisterCudaSharedMemory failed: " << er.Message();
+                            va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register");
+                            if (shm_failures_ >= 5) { opt_.use_cuda_shm = false; VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "disable CUDA SHM for this session (repeated register failure)"; }
+                        } else {
+                            in_shm_bytes_ = shm_capacity_;
+                            shm_registered_ = true; shm_failures_ = 0;
+                        }
+                    }
+                }
+                // 将输入复制到稳定缓冲（D2D），然后绑定 SHM
+                if (shm_registered_) {
+                    if (cudaSuccess == cudaMemcpy(shm_dev_buf_, input.data, bytes, cudaMemcpyDeviceToDevice)) {
+                        auto er2 = raw->SetSharedMemory(in_shm_name_, bytes, /*offset*/0);
+                        if (er2.IsOk()) shm_bound = true; else va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_bind");
+                    }
                 }
             }
         }
