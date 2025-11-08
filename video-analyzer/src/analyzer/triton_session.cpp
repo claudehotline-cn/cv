@@ -44,20 +44,18 @@ bool TritonGrpcModelSession::loadModel(const std::string&, bool) {
 #if VA_HAS_TRT_GRPC_PB
     // 元数据自适配：尝试拉取 ModelMetadata，自动填充 IO 名称（避免配置不一致）
     if (!opt_.model_name.empty()) {
-        std::unique_ptr<inference::ModelMetadataResponse> md;
-        inference::ModelMetadataResponse* raw_md = nullptr;
-        auto st_md = client_->ModelMetadata(&raw_md, opt_.model_name, opt_.model_version);
-        if (st_md.IsOk() && raw_md) {
-            md.reset(raw_md);
+        inference::ModelMetadataResponse md;
+        auto st_md = client_->ModelMetadata(&md, opt_.model_name, opt_.model_version);
+        if (st_md.IsOk()) {
             try {
-                if (opt_.input_name.empty() && md->inputs_size() > 0) {
-                    opt_.input_name = md->inputs(0).name();
+                if (opt_.input_name.empty() && md.inputs_size() > 0) {
+                    opt_.input_name = md.inputs(0).name();
                     VA_LOG_C(::va::core::LogLevel::Info, "analyzer.triton") << "autofill input_name='" << opt_.input_name << "' from metadata";
                 }
-                if (opt_.output_names.empty() && md->outputs_size() > 0) {
+                if (opt_.output_names.empty() && md.outputs_size() > 0) {
                     opt_.output_names.clear();
-                    const int n = md->outputs_size();
-                    for (int i = 0; i < n; ++i) opt_.output_names.push_back(md->outputs(i).name());
+                    const int n = md.outputs_size();
+                    for (int i = 0; i < n; ++i) opt_.output_names.push_back(md.outputs(i).name());
                     VA_LOG_C(::va::core::LogLevel::Info, "analyzer.triton") << "autofill outputs (n=" << n << ") from metadata";
                 }
             } catch (...) { /* ignore metadata parse errors */ }
