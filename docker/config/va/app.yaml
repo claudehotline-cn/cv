@@ -45,7 +45,7 @@ engine:
     triton_input: images
     triton_outputs: output0
     triton_timeout_ms: 2000
-    triton_shm_cuda: false
+    triton_shm_cuda: true
 sfu:
   whip_base: ""
   whep_base: ""

@@ -172,7 +172,7 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
                     VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "cudaIpcGetMemHandle failed: " << cudaGetErrorString(cerr);
                     va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
                 } else {
-                    auto er = client_->RegisterCudaSharedMemory(in_shm_name_, &ipc, bytes, opt_.device_id);
+                    auto er = client_->RegisterCudaSharedMemory(in_shm_name_, ipc, bytes, opt_.device_id);
                     if (!er.IsOk()) {
                         VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "RegisterCudaSharedMemory failed: " << er.Message();
                         va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register");
