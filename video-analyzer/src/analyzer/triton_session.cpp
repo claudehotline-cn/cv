@@ -130,15 +130,47 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
 
     // Triton 25.08 API: Infer(InferResult** ...)
     InferResult* result_raw = nullptr;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    // Triton 25.08: batch size inferred from input tensor shape; no explicit field in InferOptions
-    auto st = client_->Infer(&result_raw, options, inps, outs_req);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    double sec = std::chrono::duration_cast<std::chrono::duration<double>>(t1 - t0).count();
-    va::analyzer::metrics::triton_record_rpc(sec, st.IsOk());
+    auto do_infer = [&](InferResult** out_res) {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        auto st = client_->Infer(out_res, options, inps, outs_req);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        double sec = std::chrono::duration_cast<std::chrono::duration<double>>(t1 - t0).count();
+        va::analyzer::metrics::triton_record_rpc(sec, st.IsOk(), st.IsOk()? nullptr : "infer");
+        return st;
+    };
+
+    auto st = do_infer(&result_raw);
     if (!st.IsOk()) {
-        VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "infer failed: " << st.Message();
-        return false;
+        std::string msg = st.Message();
+        VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "infer failed: " << msg;
+        // 自适配：若报 batch-size 相关错误且当前假定为无 batch，则切换为保留 batch 再重试一次
+        bool will_retry = false;
+        if (opt_.assume_no_batch) {
+            std::string m = msg; for (auto& c : m) c = (char)std::tolower((unsigned char)c);
+            if (m.find("batch-size") != std::string::npos || m.find("batch size") != std::string::npos) {
+                VA_LOG_C(::va::core::LogLevel::Info, "analyzer.triton") << "retry with batch dimension kept (auto-adapt)";
+                opt_.assume_no_batch = false;
+                will_retry = true;
+            }
+        }
+        if (will_retry) {
+            // rebuild inputs with batch kept
+            inps_owner.clear(); inps.clear();
+            InferInput* raw = nullptr;
+            if (!InferInput::Create(&raw, opt_.input_name, input.shape, "FP32").IsOk()) {
+                return false;
+            }
+            inps_owner.emplace_back(raw);
+            if (!raw->AppendRaw(host_ptr, bytes).IsOk()) return false;
+            inps.push_back(raw);
+            result_raw = nullptr; st = do_infer(&result_raw);
+            if (!st.IsOk()) {
+                VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "infer failed after retry: " << st.Message();
+                return false;
+            }
+        } else {
+            return false;
+        }
     }
     std::unique_ptr<InferResult> result(result_raw); // manage lifetime
 
