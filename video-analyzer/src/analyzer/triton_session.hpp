@@ -54,6 +54,14 @@ private:
     size_t shm_capacity_ {0};
     bool shm_registered_ {false};
     unsigned shm_failures_ {0};
+
+    // 输出侧 CUDA SHM（T1）
+    std::vector<std::string> out_shm_names_;
+    std::vector<void*> out_dev_bufs_;
+    std::vector<size_t> out_capacity_;
+    std::vector<size_t> out_bytes_; // last bytes
+    std::vector<bool> out_registered_;
+    unsigned out_register_failures_ {0};
 #endif
 };
 

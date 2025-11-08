@@ -41,7 +41,14 @@ using triton::client::InferResult;
 
 namespace va::analyzer {
 
-TritonGrpcModelSession::TritonGrpcModelSession(const Options& opt) : opt_(opt) {}
+TritonGrpcModelSession::TritonGrpcModelSession(const Options& opt) : opt_(opt) {
+#if defined(USE_TRITON_CLIENT)
+    // 生成唯一的共享内存区名称，避免跨会话/跨流冲突
+    std::ostringstream oss;
+    oss << "va_in_dev" << opt_.device_id << "_" << std::hex << reinterpret_cast<std::uintptr_t>(this);
+    in_shm_name_ = oss.str();
+#endif
+}
 TritonGrpcModelSession::~TritonGrpcModelSession() {
 #if defined(USE_TRITON_CLIENT)
 #if VA_TRITON_HAVE_CUDA_RUNTIME
@@ -50,10 +57,8 @@ TritonGrpcModelSession::~TritonGrpcModelSession() {
         shm_dev_buf_ = nullptr; shm_capacity_ = 0;
     }
 #endif
-    if (in_shm_bytes_ > 0 && client_) {
-        (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
-        in_shm_bytes_ = 0; shm_registered_ = false;
-    }
+    if (client_) { (void)client_->UnregisterCudaSharedMemory(in_shm_name_); }
+    in_shm_bytes_ = 0; shm_registered_ = false;
 #endif
 }
 
@@ -94,6 +99,19 @@ bool TritonGrpcModelSession::loadModel(const std::string&, bool) {
         }
     }
 #endif
+    // 准备输出 SHM 名称（唯一定名），缓冲区延后按需分配
+    try {
+        const size_t n = opt_.output_names.size();
+        out_shm_names_.resize(n);
+        out_dev_bufs_.assign(n, nullptr);
+        out_capacity_.assign(n, 0);
+        out_bytes_.assign(n, 0);
+        out_registered_.assign(n, false);
+        for (size_t i=0;i<n;++i) {
+            std::ostringstream oss; oss << in_shm_name_ << "_out" << i;
+            out_shm_names_[i] = oss.str();
+        }
+    } catch (...) {}
     return true;
 #else
     VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton")
@@ -189,7 +207,8 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
                     if (cudaSuccess != cudaIpcGetMemHandle(&ipc, shm_dev_buf_)) {
                         va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
                     } else {
-                        if (in_shm_bytes_ > 0) (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
+                        // 先尝试反注册（即使不存在也忽略错误），避免服务端残留
+                        (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
                         auto er = client_->RegisterCudaSharedMemory(in_shm_name_, ipc, shm_capacity_, opt_.device_id);
                         if (!er.IsOk()) {
                             shm_failures_++;
@@ -230,6 +249,44 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
             return false;
         }
         outs_owner.emplace_back(out_raw);
+        // 若启用输出 SHM，绑定共享内存区；初始容量使用 triton_cuda_shm_bytes 或 8MB
+#if VA_TRITON_HAVE_CUDA_RUNTIME
+        size_t idx = &name - &opt_.output_names[0];
+        if (opt_.use_cuda_shm) {
+            size_t need_cap = (opt_.cuda_shm_bytes > 0 ? (size_t)opt_.cuda_shm_bytes : (size_t)8*1024*1024);
+            if (out_capacity_.size() <= idx) {
+                // 防御：resize 到位
+                const size_t n = opt_.output_names.size();
+                out_dev_bufs_.resize(n, nullptr);
+                out_capacity_.resize(n, 0);
+                out_bytes_.resize(n, 0);
+                out_registered_.resize(n, false);
+                out_shm_names_.resize(n);
+            }
+            if (out_capacity_[idx] < need_cap) {
+                if (out_dev_bufs_[idx]) cudaFree(out_dev_bufs_[idx]);
+                if (cudaSuccess == cudaMalloc(&out_dev_bufs_[idx], need_cap)) {
+                    out_capacity_[idx] = need_cap; out_registered_[idx] = false;
+                } else {
+                    out_dev_bufs_[idx] = nullptr; out_capacity_[idx] = 0; out_registered_[idx] = false;
+                }
+            }
+            if (out_dev_bufs_[idx] && !out_registered_[idx]) {
+                cudaIpcMemHandle_t ipc{};
+                if (cudaSuccess == cudaIpcGetMemHandle(&ipc, out_dev_bufs_[idx])) {
+                    (void)client_->UnregisterCudaSharedMemory(out_shm_names_[idx]);
+                    auto er = client_->RegisterCudaSharedMemory(out_shm_names_[idx], ipc, out_capacity_[idx], opt_.device_id);
+                    if (er.IsOk()) out_registered_[idx] = true; else { out_register_failures_++; va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register"); }
+                } else {
+                    va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
+                }
+            }
+            if (out_registered_[idx]) {
+                auto er2 = out_raw->SetSharedMemory(out_shm_names_[idx], out_capacity_[idx], /*offset*/0);
+                if (!er2.IsOk()) { va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_bind"); }
+            }
+        }
+#endif
         outs_req.push_back(out_raw);
     }
 
@@ -283,18 +340,16 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
     }
     std::unique_ptr<InferResult> result(result_raw); // manage lifetime
 
-    // Extract outputs
+    // Extract outputs（优先输出 SHM 的设备侧；若容量不足或未注册则回退 Host RawData）
     host_out_bufs_.clear();
     host_out_shapes_.clear();
     outputs.clear();
     size_t ok_out = 0;
-    for (const auto& name : opt_.output_names) {
+    for (size_t i=0; i<opt_.output_names.size(); ++i) {
+        const auto& name = opt_.output_names[i];
         const uint8_t* buf = nullptr; size_t nbytes = 0;
         auto rd = result->RawData(name, &buf, &nbytes);
-        if (!rd.IsOk() || !buf || nbytes == 0) {
-            VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "no raw data for output '" << name << "' (ok=" << rd.IsOk() << ", bytes=" << nbytes << ")";
-            continue;
-        }
+        // 读取 shape
         std::vector<int64_t> shape;
         (void)result->Shape(name, &shape);
         // 若返回未包含 batch 维但我们输入含 batch=1，则前置一维 1 以与下游一致
@@ -304,15 +359,35 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
             with_batch.insert(with_batch.end(), shape.begin(), shape.end());
             shape.swap(with_batch);
         }
-        host_out_bufs_.emplace_back(buf, buf + nbytes);
-        host_out_shapes_.emplace_back(shape);
-        va::core::TensorView tv;
-        tv.on_gpu = false;
-        tv.dtype = va::core::DType::F32; // 先按 FP32；后续可从 metadata 解析
-        tv.data = host_out_bufs_.back().data();
-        tv.shape = host_out_shapes_.back();
-        outputs.push_back(tv);
-        ++ok_out;
+        size_t need_bytes = 0; for (auto d: shape) need_bytes = need_bytes ? need_bytes * (size_t)d : (size_t)d; need_bytes *= sizeof(float);
+#if VA_TRITON_HAVE_CUDA_RUNTIME
+        bool used_dev = false;
+        if (opt_.use_cuda_shm && i < out_dev_bufs_.size() && out_registered_[i] && out_capacity_[i] >= need_bytes) {
+            va::core::TensorView tv;
+            tv.on_gpu = true;
+            tv.dtype = va::core::DType::F32;
+            tv.data = out_dev_bufs_[i];
+            tv.shape = shape;
+            outputs.push_back(tv);
+            ok_out++; used_dev = true;
+        }
+        if (!used_dev)
+#endif
+        {
+            if (!rd.IsOk() || !buf || nbytes == 0) {
+                VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "no raw data for output '" << name << "' (ok=" << rd.IsOk() << ", bytes=" << nbytes << ")";
+                continue;
+            }
+            host_out_bufs_.emplace_back(buf, buf + nbytes);
+            host_out_shapes_.emplace_back(shape);
+            va::core::TensorView tv;
+            tv.on_gpu = false;
+            tv.dtype = va::core::DType::F32;
+            tv.data = host_out_bufs_.back().data();
+            tv.shape = host_out_shapes_.back();
+            outputs.push_back(tv);
+            ++ok_out;
+        }
     }
     if (ok_out == 0) {
         VA_LOG_C(::va::core::LogLevel::Error, "analyzer.triton") << "infer returned no outputs for requested names (n=" << opt_.output_names.size() << ")";
