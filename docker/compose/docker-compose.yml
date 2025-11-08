@@ -11,6 +11,8 @@ services:
       - "9090:9090"
       - "50051:50051"
       - "10000-10100:10000-10100/udp"
+    # 为 CUDA IPC 共享内存（Triton CUDA SHM）开启共享 IPC 命名空间（GPU 覆盖已包含，此处在基础 compose 同步）
+    ipc: host
     environment:
       - VA_PROM_ENDPOINT=0.0.0.0:9090
       - VA_ICE_PORT_RANGE=10000-10100

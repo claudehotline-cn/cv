@@ -1,16 +1,27 @@
 # Video Analyzer (GPU) — requires NVIDIA Container Toolkit on host
 
-# Parameterize Ubuntu and NGC TensorRT tag
+# Parameterize base tags (declare before any FROM for compatibility with older builders)
 ARG UBUNTU_VER=22.04
 ARG NGC_TRT_TAG=25.08-py3
-
+ARG TRITON_CLIENT_TAG=25.08-py3-sdk
+ARG TRITON_TAG=25.08-py3
+ARG ORT_PREBUILT_IMAGE
+ARG VA_USE_TRT_INPROC=OFF
 # Provide Triton C++ client headers/libs via the SDK image (contains grpc_client.h & libgrpcclient.so)
-FROM nvcr.io/nvidia/tritonserver:25.08-py3-sdk AS tritonclient
+FROM nvcr.io/nvidia/tritonserver:${TRITON_CLIENT_TAG} AS tritonclient
+# Separate runtime stage for server headers/libs used at build time
+FROM nvcr.io/nvidia/tritonserver:${TRITON_TAG} AS tritonrt
+
+# Optional prebuilt ORT provider stage (defaults to TRITON_TAG image if not provided)
+ARG ORT_PREBUILT_IMAGE
+FROM ${ORT_PREBUILT_IMAGE:-nvcr.io/nvidia/tritonserver:${TRITON_TAG}} AS ortprebuilt
+RUN mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include || true
 # Use NGC TensorRT tag directly (no -devel/-runtime suffix in tags)
 FROM nvcr.io/nvidia/tensorrt:${NGC_TRT_TAG} AS build
 # Re-declare build args inside the stage so they are available to RUN
 ARG UBUNTU_VER
 ARG NGC_TRT_TAG
+ARG VA_USE_TRT_INPROC
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     build-essential cmake ninja-build git pkg-config curl ca-certificates \
@@ -21,11 +32,28 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 ## Bring in Triton client headers/libs for optional gRPC client build (robust to SDK layout)
-# Prefer SDK's installed clients under /workspace/install
+# 复制 SDK 镜像内的 /opt 目录，后续在 RUN 中自适配不同布局并拷贝到 /opt/tritonclient
+COPY --from=tritonclient /opt /opt/_tc
+# Prefer SDK's installed clients under /workspace/install (if available in SDK)
 COPY --from=tritonclient /workspace/install/include /opt/tritonclient/include
 COPY --from=tritonclient /workspace/install/lib /opt/tritonclient/lib
-# Fallbacks for older SDK layouts
-COPY --from=tritonclient /opt /opt/_tc
+# Provide tritonserver headers/libs for in-process build detection/linkage
+COPY --from=tritonrt /opt/tritonserver/include /opt/tritonserver/include
+COPY --from=tritonrt /opt/tritonserver/lib /opt/tritonserver/lib
+## Provide DCGM runtime library required by libtritonserver (resolve at link-time)
+COPY --from=tritonrt /usr/lib/x86_64-linux-gnu/libdcgm.so* /opt/tritonserver/lib
+RUN set -eux; ls -l /opt/tritonserver/lib || true
+
+# If a prebuilt ORT image was provided, copy its /opt/onnxruntime (else copies empty dirs created above)
+COPY --from=ortprebuilt /opt/onnxruntime /opt/onnxruntime
+RUN set -eux; \
+    # If runtime image didn't contain headers/libs, try to source from SDK layout
+    if [ ! -f /opt/tritonserver/include/triton/core/tritonserver.h ] && [ -f /opt/_tc/tritonserver/include/triton/core/tritonserver.h ]; then \
+      mkdir -p /opt/tritonserver/include && cp -rv /opt/_tc/tritonserver/include/* /opt/tritonserver/include/; \
+    fi; \
+    if [ ! -f /opt/tritonserver/lib/libtritonserver.so ] && [ -d /opt/_tc/tritonserver/lib ]; then \
+      mkdir -p /opt/tritonserver/lib && cp -rv /opt/_tc/tritonserver/lib/* /opt/tritonserver/lib/; \
+    fi
 RUN set -eux; \
     mkdir -p /opt/tritonclient/include /opt/tritonclient/lib; \
     if [ ! -f /opt/tritonclient/include/grpc_client.h ]; then \
@@ -60,7 +88,7 @@ RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends cmake && \
     cmake --version
 
-# Ensure destination for locally built ONNX Runtime exists early (defensive)
+# Ensure destination for locally built ONNX Runtime exists (prebuilt may already have populated it)
 RUN mkdir -p /opt/onnxruntime/lib /opt/onnxruntime/include
 
 # Self-checks: ensure CUDA/cuDNN/TRT availability and (optionally) exact versions
@@ -146,12 +174,15 @@ ARG ORT_JOBS=24
 # 手动缓存键：若要强制重建 ORT，可变更此值
 ARG ORT_BUILD_TAG="ort-${ORT_VERSION}-cuda13-sm120-trt"
 ARG ORT_REBUILD=0
-RUN set -eux; \
+  RUN set -eux; \
     echo "ORT_BUILD_TAG=${ORT_BUILD_TAG} ORT_REBUILD=${ORT_REBUILD}"; \
-    if [ -f /opt/onnxruntime/.build.tag ] \
+    if [ -f /opt/onnxruntime/lib/libonnxruntime.so ] && [ -f /opt/onnxruntime/.build.tag ] \
        && grep -q "^${ORT_BUILD_TAG}$" /opt/onnxruntime/.build.tag \
        && [ "${ORT_REBUILD}" != "1" ]; then \
-      echo "Reusing cached ONNX Runtime in /opt/onnxruntime (tag matched)"; \
+      echo "Using prebuilt ONNX Runtime in /opt/onnxruntime (tag matched)"; \
+    elif [ -f /opt/onnxruntime/lib/libonnxruntime.so ] && [ "${ORT_REBUILD}" != "1" ]; then \
+      echo "Using prebuilt ONNX Runtime in /opt/onnxruntime (no rebuild requested)"; \
+      echo "${ORT_BUILD_TAG}" > /opt/onnxruntime/.build.tag; \
     else \
       apt-get update && apt-get install -y python3 python3-pip python3-dev ccache && \
       python3 -m pip install --upgrade pip wheel setuptools psutil packaging --break-system-packages || true && \
@@ -229,6 +260,7 @@ RUN set -eux; \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
       -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
       -DUSE_TRITON_CLIENT=ON -DTRITON_CLIENT_ROOT=/opt/tritonclient \
+      -DUSE_TRITON_INPROCESS=${VA_USE_TRT_INPROC:-OFF} \
       -DTRITON_CLIENT_INCLUDE_DIR=/opt/tritonclient/include \
       -DTRITON_CLIENT_GRPC_LIB=/opt/tritonclient/lib/libgrpcclient.so \
       -DCMAKE_CUDA_ARCHITECTURES="120" \
@@ -241,7 +273,7 @@ RUN set -eux; \
 
 ARG UBUNTU_VER=22.04
 # Runtime: 使用 TritonServer 作为基础运行镜像
-FROM nvcr.io/nvidia/tritonserver:25.08-py3 AS runtime
+FROM nvcr.io/nvidia/tritonserver:${TRITON_TAG} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \

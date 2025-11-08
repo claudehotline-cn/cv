@@ -7,13 +7,19 @@ services:
         ORT_REBUILD: "0"                # 默认不重建 ORT（需要时可临时改为 1）
         ORT_BUILD_TAG: "ort-1.23.2-cuda13-sm120-trt"
         UBUNTU_VER: "22.04"                    # 与 NGC 镜像 ubuntu 版本一致
-        NGC_TRT_TAG: "${NGC_TRT_TAG:-25.08-py3}"         # 未显式提供时使用默认 25.08-py3
-        EXPECTED_CUDA_MAJOR: "13"               # 严格版本校验：CUDA 主版本（13）
-        EXPECTED_CUDA_MINOR: "0"                # 严格版本校验：CUDA 次版本（13.0 -> 0）
+        # TensorRT 基础镜像（与 25.08 对齐）
+        NGC_TRT_TAG: "${NGC_TRT_TAG:-25.08-py3}"
+        # Triton Runtime & Client SDK tag（25.08，对齐 CUDA13 按你环境）
+        TRITON_TAG: "${TRITON_TAG:-25.08-py3}"
+        TRITON_CLIENT_TAG: "${TRITON_CLIENT_TAG:-25.08-py3-sdk}"
+        EXPECTED_CUDA_MAJOR: "13"               # 对齐 CUDA 13.0
+        EXPECTED_CUDA_MINOR: "0"
         EXPECTED_CUDNN_MAJOR: "9"               # 严格版本校验：cuDNN 主版本
         STRICT_VERSION: "ON"                    # 不匹配直接失败
         STRICT_TRT: "ON"                        # 缺少 TRT 头/库直接失败
-        STRICT_CUDA_MINOR: "OFF"                 # 开启次版本严格校验（要求 13.0）
+        STRICT_CUDA_MINOR: "OFF"                 # 如需锁死 13.0，可临时改为 ON
+        # 启用 In-Process Triton（libtritonserver）构建
+        VA_USE_TRT_INPROC: "ON"
     image: cv/va:latest-gpu
     # Docker Compose 要求：此处使用 all，由 NVIDIA_VISIBLE_DEVICES 控制暴露设备（UUID）
     gpus: all
@@ -23,6 +29,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=GPU-699cd883-5517-6d7d-9dfd-db488fe13ec5
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - CUDA_VISIBLE_DEVICES=0
+      # In-Process 模式：不启动外部 tritonserver 子进程
+      - VA_TRITON_EXTERNAL=0
       # ORT 日志等级：2=WARNING，仅警告及以上
       - ORT_LOG_SEVERITY_LEVEL=2
       # Speed up native TensorRT engine build (tensorrt-native)
@@ -35,8 +43,10 @@ services:
       - ../../.ort_trt_cache:/app/.ort_trt_cache
       # 持久化原生 TensorRT (tensorrt-native) timing/engine 缓存
       - ../../.trt_native_cache:/app/.trt_native_cache
-      # Triton 模型仓库（同容器内 /models）
-      - ../../docker/model:/models:ro
+      # Triton 模型仓库（同容器内 /models）。允许写入以支持子路径文件绑定与引擎缓存
+      - ../../docker/model:/models
+      # 显式将 ONNX 文件映射为该版本的默认模型文件，绕过旧 plan 文件
+      - ../../docker/model/yolov12x.onnx:/models/yolov12x/1/model.onnx:ro
     ports:
       - "8001:8001"   # Triton gRPC
       - "8000:8000"   # Triton HTTP

@@ -137,6 +137,7 @@ find_library(JSONCPP_LIBRARY NAMES jsoncpp PATHS /usr/local/lib /usr/lib)
 
 # Optional: Triton C++ gRPC client (disabled by default)
 option(USE_TRITON_CLIENT "Enable Triton gRPC client integration" OFF)
+option(USE_TRITON_INPROCESS "Enable Triton in-process integration (libtritonserver)" OFF)
 if (USE_TRITON_CLIENT)
     set(TRITON_CLIENT_ROOT "$ENV{TRITON_CLIENT_ROOT}" CACHE PATH "Root of Triton C++ client install")
     if (TRITON_CLIENT_ROOT)
@@ -160,6 +161,34 @@ if (USE_TRITON_CLIENT)
     else()
         message(WARNING "Triton client headers not found; disabling USE_TRITON_CLIENT")
         set(USE_TRITON_CLIENT OFF)
+    endif()
+endif()
+
+# In-Process Triton (libtritonserver)
+if (USE_TRITON_INPROCESS)
+    # Allow hint via TRITON_SERVER_ROOT (default /opt/tritonserver)
+    set(TRITON_SERVER_ROOT $ENV{TRITON_SERVER_ROOT})
+    if (NOT TRITON_SERVER_ROOT)
+        set(TRITON_SERVER_ROOT "/opt/tritonserver")
+    endif()
+    if (EXISTS "${TRITON_SERVER_ROOT}/include/triton/core/tritonserver.h")
+        add_definitions(-DUSE_TRITON_INPROCESS)
+        # Only add include path to the inproc sources to avoid polluting global include dirs
+        set_source_files_properties(
+            src/analyzer/triton_inproc_server_host.cpp
+            src/analyzer/triton_inproc_session.cpp
+            PROPERTIES
+                COMPILE_OPTIONS "-I${TRITON_SERVER_ROOT}/include"
+        )
+        # Defer linking to after add_executable
+        find_library(TRITONSERVER_LIB NAMES tritonserver PATHS ${TRITON_SERVER_ROOT}/lib)
+        set(TRITONSERVER_LIB_RESOLVED ${TRITONSERVER_LIB})
+        if (NOT TRITONSERVER_LIB_RESOLVED)
+            message(WARNING "libtritonserver.so not found under ${TRITON_SERVER_ROOT}/lib; ensure runtime LD_LIBRARY_PATH contains it")
+        endif()
+    else()
+        message(WARNING "tritonserver.h not found under ${TRITON_SERVER_ROOT}/include; disabling USE_TRITON_INPROCESS")
+        set(USE_TRITON_INPROCESS OFF)
     endif()
 endif()
 
@@ -303,8 +332,17 @@ if (USE_TRITON_CLIENT AND TRITON_CLIENT_GRPC_LIB)
     )
 endif()
 
+# Link libtritonserver after target is defined (if in-process enabled)
+if (USE_TRITON_INPROCESS AND TRITONSERVER_LIB_RESOLVED)
+    # Ensure linker can resolve transitive deps (e.g., libdcgm) at link time
+    target_link_directories(${PROJECT_NAME} PRIVATE ${TRITON_SERVER_ROOT}/lib)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${TRITONSERVER_LIB_RESOLVED})
+endif()
+
 # 全局开启 TRITON_ENABLE_GPU，确保 Triton ipc.h 使用 CUDA 路径（避免与 stub 冲突）
 add_definitions(-DTRITON_ENABLE_GPU)
+# Ensure HTTP/GRPC function prototypes are visible when building against libtritonserver
+add_definitions(-DTRITON_ENABLE_HTTP -DTRITON_ENABLE_GRPC)
 
 # 将 OpenSSL 放在链接尾部（如需静态对象解析）
 find_package(OpenSSL)

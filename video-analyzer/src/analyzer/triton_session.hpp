@@ -26,6 +26,11 @@ public:
         bool use_cuda_shm{false};
         size_t cuda_shm_bytes{0};
         int device_id{0};
+        // 当 Triton Server 进程与本进程的 CUDA 设备可见序号映射不一致（例如不同 CUDA_VISIBLE_DEVICES）时，
+        // 需要指定服务端的设备序号用于 CUDA SHM 注册；默认 <0 表示沿用本地 device_id。
+        int shm_server_device_id{-1};
+        // 连续注册失败的阈值；达到后本会话禁用 CUDA SHM，避免每帧反复报错。
+        unsigned shm_fail_disable_threshold{3};
         // Heuristic: treat model as batched (keep NCHW) unless explicitly told otherwise
         bool assume_no_batch{false};
     };
@@ -55,7 +60,9 @@ private:
     void* shm_dev_buf_ {nullptr};
     size_t shm_capacity_ {0};
     bool shm_registered_ {false};
-    unsigned shm_failures_ {0};
+    // 输入侧 SHM 状态
+    unsigned in_register_failures_ {0};
+    bool in_shm_disabled_ {false};
 
     // 输出侧 CUDA SHM（T1）
     std::vector<std::string> out_shm_names_;
@@ -64,6 +71,7 @@ private:
     std::vector<size_t> out_bytes_; // last bytes
     std::vector<bool> out_registered_;
     unsigned out_register_failures_ {0};
+    bool out_shm_disabled_ {false};
 #endif
 };
 

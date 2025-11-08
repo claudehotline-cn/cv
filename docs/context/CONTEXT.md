@@ -1,45 +1,44 @@
-# 项目上下文（2025‑11‑08｜VA + Triton 合容器｜CUDA/ORT/TRT）
+# 项目上下文（2025‑11‑08｜VA ↔ Triton｜元数据自适配 + CUDA SHM + 指标）
 
-本文基于当前对话全面重构：聚焦合容器部署、Triton 客户端接入、CUDA SHM 规范化与环境限制下的稳定策略。
+本文梳理本轮对齐与落地：Triton gRPC 客户端集成、ModelMetadata 自适配、输入/输出 CUDA 共享内存、失败原因指标、构建链与文档。用于后续 ROADMAP 与测试复用。
 
-## 1. 架构与数据流
-- VA：RTSP → NVDEC/CUDA 预处理 → 推理（ORT CUDA/ORT‑TRT/原生 TRT/Triton gRPC）→ YOLO 后处理（GPU/CPU）→ CUDA 叠加 → NVENC → WHEP。
-- Triton：同容器运行（HTTP:8000/gRPC:8001/Metrics:8002），模型仓库 `/models`（挂载 `docker/model`）。
+## 架构与数据流
+- VA：RTSP → NVDEC/CUDA 预处理 → 推理（优先序：tensorrt-native → triton → ORT-TRT → ORT-CUDA）→ NMS/后处理 → 叠加 → 编码/推流（WHEP）。
+- Triton：HTTP:8000 / gRPC:8001 / Metrics:8002，模型仓库 `/models`（compose 挂载 `docker/model`）。
 
-## 2. 关键改动（本轮）
-- 启用 Triton C++ 客户端：构建期 `-DUSE_TRITON_CLIENT=ON`，从 `tritonserver:25.08-py3-sdk` 引入 `grpc_client.h/libgrpcclient.so`，运行期注入 `/opt/tritonclient/lib`。
-- 合容器运行：`entrypoint.sh` 先起 Triton 并轮询 Ready(HTTP 200)，再启动 VA，避免 *connection refused*。
-- CUDA SHM 规范化：
-  - 仅对 `cudaMalloc` 的 device 指针注册；复制用 `cudaMemcpyD2D`；
-  - 在 `cudaMalloc / cudaIpcGetMemHandle / cudaMemcpy` 前固定 `cudaSetDevice(opt.device_id)`；
-  - 输出端注册前以 `cudaPointerGetAttributes` 校正 `device_id`；
-  - 会话互斥；析构时反注册输入与所有输出 SHM；失败本帧退回 Host，后续持续重试（不自动关闭 SHM）。
-- 设备映射/IPC：Compose 以 GPU UUID 绑定同一物理卡（容器内 `CUDA_VISIBLE_DEVICES=0`），两服务 `ipc: host`。
+## 关键实现
+- Provider 映射与回退链：NodeModel 支持 `force_provider`/`providers` 覆盖；自动按序回退，保障可用性。
+- 元数据自适配：若可用 `grpc_service.pb.h`，加载时拉取 ModelMetadata，自动填充 input/output 名称；批次维异常时自动改用/移除 batch=1 重试一次。
+- CUDA SHM：
+  - 输入：稳定设备缓冲（cudaMalloc）→ cudaIpcGetMemHandle → RegisterCudaSharedMemory（容量变化重注）→ 每帧 D2D → Infer 前 SetSharedMemory 绑定；多次失败仅禁用“输入侧”SHM。
+  - 输出：每个输出稳定设备缓冲 + 独立 SHM 名；Infer 后若容量满足，直接返回 device TensorView（on_gpu=true），否则回退 Host RawData。多次失败仅禁用“输出侧”。
+  - 设备号映射：支持 `shm_server_device_id`，用于 Triton 容器与本进程 CUDA 设备序号不一致时的注册设备号对齐。
+- 可观测性：
+  - 指标：`va_triton_rpc_seconds`、`va_triton_rpc_failed_total{reason=…}`（create/invalid_input/mk_input/mk_output/infer/no_output/shm_ipc/shm_register/shm_bind…）。
+  - 日志：analyzer.triton“run in_shape…”/SHM 注册失败日志节流（默认 1000ms），支持 `VA_LOG_THROTTLE_MS/VA_LOG_THROTTLED_LEVEL`。
 
-## 3. 构建与缓存
-- ORT 1.23.2（`CMAKE_CUDA_ARCHITECTURES=120`），`NGC_TRT_TAG=25.08-py3`；ORT 层以 `/opt/onnxruntime/.build.tag` 控制复用，源码改动不触发重建；可用 `ORT_REBUILD=1` 强制重建。
+## 构建/部署
+- 修复 grpc 与 OpenSSL 链接：避免静态 libgrpc*.a，优先 `libgrpcclient.so`；增加 ldd 检查。
+- `docker/va/Dockerfile.ort` 重写为单一多阶段，ORT 1.23.2 + CUDA 13，必要时启用 TRT EP；导出 `/opt/onnxruntime`（含 `.build.tag`）。
 
-## 4. 运行与配置
-- 端口：VA 8082/9090/50051；Triton 8000/8001/8002。
-- app.yaml：
-  - `engine: { type: triton, provider: triton, device: 0 }`
-  - `options.triton_url: localhost:8001`（合容器）
-  - `options.triton_model: yolov12x`；`triton_input: images`；`triton_outputs: output0`
-  - 可选 SHM：`triton_shm_cuda: true`、`triton_shm_outputs: true`（环境不支持时自动按帧回退 Host）
-- 模型 `config.pbtxt`：`tensorrt_plan`，input `images[3,640,640]`，output `output0[84,8400]`，`instance_group{gpus:[0]}`。
+## 运行配置
+- app.yaml 常用项：
+  - `triton_url`, `triton_model(_version)`, `triton_input`, `triton_outputs`；
+  - `triton_no_batch`(默认 false，对应 assume_no_batch)；
+  - `triton_shm_cuda`(启用 SHM)，`triton_cuda_shm_bytes`(默认 8MB)，`triton_shm_server_device_id`；
+  - `force_provider/providers` 节点级覆盖。
+- 健康检查：`curl http://triton:8000/v2/health/ready`（容器内）或 `host.docker.internal:8000`（宿主）。
 
-## 5. 现状与结论（Triton + CUDA SHM）
-- 同容器 + UUID 绑定 + 设备防守后，仍可能在 WSL2/Docker Desktop 下出现服务器端 `invalid device context/invalid resource handle`（宿主限制）。
-- 本实现坚持“SHM 常开、失败本帧回退 Host、后续重试”，保证业务稳定；在纯 Linux 宿主上通常可获得成功的 CUDA IPC。
+## 问题复盘
+- 构建：`cudaIpcMemHandle_t` 重复定义 → 先包含 `cuda_runtime.h`；静态 GRPC 触发 OpenSSL DSO → 改为共享库并补 `libssl/libcrypto` 链接。
+- 运行：
+  1) 早期 VA 未命中 Triton；
+  2) `batch-size must be <= 1` → 批次维自适配后恢复；
+  3) `RegisterCudaSharedMemory invalid args` → 增加 Unregister-then-Register、唯一 SHM 名、server device id、输入/输出分侧禁用；
+  4) 输出仍为 (cpu) → 因输入侧禁用被联动；现已解耦，输出可独立启用。
 
-## 6. 快速排障
-- Triton Ready：`curl http://127.0.0.1:8000/v2/health/ready` ⇒ 200。
-- I/O 名：`curl http://127.0.0.1:8000/v2/models/yolov12x/config`。
-- 设备核对：容器内 `echo $NVIDIA_VISIBLE_DEVICES; nvidia-smi -L`（UUID 与 ordinal=0 一致）。
-- 常见报错：
-  - `connection refused` → 需等待 `ready` 再启动 VA（已修复于 entrypoint）。
-  - `invalid device context/resource handle` → 环境限制；确认 UUID/IPC/setDevice/attrs，必要时在纯 Linux 验证。
-
-## 7. 建议
-- 若必须启用 CUDA SHM，请在纯 Linux 宿主验证；否则保留当前策略（SHM 常开 + Host 兜底）即可交付。
-- 可引入 `VA_TRITON_SHM_DEBUG` 开关，失败时打印指针属性与注册 device_id 以供现场定位。
+## 待办（下一阶段）
+1) 深化自适配：解析 ModelConfig，严格校验 dtype/shape/max_batch_size；更精准批次维处理。
+2) 输出 SHM 绑定按需字节数（必要时 offset 复用）。
+3) 性能验证：Host vs SHM P50/P95 对比脚本与文档；确认 NMS GPU 路径直连 device Tensor。
+4) 文档完善：Triton 部署、模型准备、常见错误与排查流程、示例与基线指标。

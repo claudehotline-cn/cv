@@ -270,6 +270,18 @@ AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_d
             put_int("triton_timeout_ms");
             put_bool("triton_shm_cuda");
             put_int("triton_cuda_shm_bytes");
+            // CUDA SHM 设备映射与降级控制
+            put_int("triton_shm_server_device_id");
+            put_int("triton_shm_fail_threshold");
+            // In-process 开关与参数（可选）
+            put_bool("triton_inproc");
+            put_str("triton_repo");
+            put_bool("triton_enable_http");
+            put_int("triton_http_port");
+            put_bool("triton_enable_grpc");
+            put_int("triton_grpc_port");
+            put_bool("triton_strict_config");
+            put_str("triton_model_control");
             // Provider chain override
             put_str("force_provider");
             put_str("providers");

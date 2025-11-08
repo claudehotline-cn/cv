@@ -38,15 +38,28 @@ engine:
     trt_detailed_build_log: false
     # 强制仅使用 Triton provider，便于定位路径
     force_provider: triton
-    # Triton 连接参数（与 compose 中 triton 服务对应）
+    # 可选：启用 In‑Process Triton（不改 provider，减少 gRPC/IPC 开销）
+    triton_inproc: true
+    # In‑Process GPU I/O（避免拷贝）：
+    triton_gpu_input: true
+    triton_gpu_output: true
+    triton_repo: /models
+    triton_enable_http: false
+    triton_enable_grpc: false
+    # Triton 连接参数（与 compose 中 triton 服务对应
     triton_url: localhost:8001
     triton_model: yolov12x
     triton_model_version: ""
     triton_input: images
     triton_outputs: output0
     triton_timeout_ms: 2000
-    triton_shm_cuda: true
-    triton_shm_outputs: true
+    # In-Process 模式下禁用 CUDA SHM（仅 gRPC 需要）
+    triton_shm_cuda: false
+    triton_shm_outputs: false
+    # 为 CUDA SHM 显式指定服务端设备序号（与 Triton 进程看到的一致，常见为 0）
+    triton_shm_server_device_id: "0"
+    # 连续失败降级阈值（避免日志刷屏）
+    triton_shm_fail_threshold: "3"
 sfu:
   whip_base: ""
   whep_base: ""

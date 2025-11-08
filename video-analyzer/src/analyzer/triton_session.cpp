@@ -202,7 +202,7 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
 
         bool shm_bound = false;
 #if VA_TRITON_HAVE_CUDA_RUNTIME
-        if (opt_.use_cuda_shm && input.on_gpu) {
+        if (opt_.use_cuda_shm && !in_shm_disabled_ && input.on_gpu) {
             // 确保当前 device 正确
             { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
             // 使用稳定的设备缓冲避免每帧更换指针造成重复注册
@@ -223,15 +223,25 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
                     } else {
                         // 先尝试反注册（即使不存在也忽略错误），避免服务端残留
                         (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
-                        auto er = client_->RegisterCudaSharedMemory(in_shm_name_, ipc, shm_capacity_, opt_.device_id);
+                        const int dev_for_reg = (opt_.shm_server_device_id >= 0 ? opt_.shm_server_device_id : opt_.device_id);
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.triton", 2000)
+                            << "register input CUDA SHM name='" << in_shm_name_ << "' bytes=" << shm_capacity_
+                            << " dev_for_reg=" << dev_for_reg << " local_dev=" << opt_.device_id;
+                        auto er = client_->RegisterCudaSharedMemory(in_shm_name_, ipc, shm_capacity_, dev_for_reg);
                         if (!er.IsOk()) {
-                            shm_failures_++;
+                            in_register_failures_++;
                             VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "analyzer.triton", 2000) << "RegisterCudaSharedMemory failed: " << er.Message();
                             va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register");
                             // 不自动关闭 CUDA SHM；继续按 Host 路径绑定本帧，后续帧重试注册
+                            if (opt_.shm_fail_disable_threshold > 0 && in_register_failures_ >= opt_.shm_fail_disable_threshold) {
+                                in_shm_disabled_ = true;
+                                VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton")
+                                    << "disable CUDA SHM for inputs after " << in_register_failures_
+                                    << " failures; falling back to host path. Hint: align CUDA_VISIBLE_DEVICES mapping or set 'triton_shm_server_device_id' in config.";
+                            }
                         } else {
                             in_shm_bytes_ = shm_capacity_;
-                            shm_registered_ = true; shm_failures_ = 0;
+                            shm_registered_ = true; in_register_failures_ = 0;
                         }
                     }
                 }
@@ -268,7 +278,7 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
         // 若启用输出 SHM，绑定共享内存区；初始容量使用 triton_cuda_shm_bytes 或 8MB
 #if VA_TRITON_HAVE_CUDA_RUNTIME
         size_t idx = &name - &opt_.output_names[0];
-        if (opt_.use_cuda_shm) {
+        if (opt_.use_cuda_shm && !out_shm_disabled_) {
             size_t need_cap = (opt_.cuda_shm_bytes > 0 ? (size_t)opt_.cuda_shm_bytes : (size_t)8*1024*1024);
             if (out_capacity_.size() <= idx) {
                 // 防御：resize 到位
@@ -294,22 +304,42 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
                 { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
                 if (cudaSuccess == cudaIpcGetMemHandle(&ipc, out_dev_bufs_[idx])) {
                     (void)client_->UnregisterCudaSharedMemory(out_shm_names_[idx]);
-                    // 以指针归属设备为准决定注册 device_id（与 CUDA 文档一致）
-                    int dev_for_reg = opt_.device_id;
-#if VA_TRITON_HAVE_CUDA_RUNTIME
-                    cudaPointerAttributes attr{};
-                    if (cudaPointerGetAttributes(&attr, out_dev_bufs_[idx]) == cudaSuccess && attr.device >= 0) {
-                        dev_for_reg = attr.device;
+                    // 以配置优先：若指定 shm_server_device_id 则使用；否则回退到指针归属设备或本地 device_id
+                    int dev_for_reg = (opt_.shm_server_device_id >= 0 ? opt_.shm_server_device_id : opt_.device_id);
+                    // 若未指定覆盖，则尝试读取指针归属设备（同进程物理 ID），仅作保底
+                    if (opt_.shm_server_device_id < 0) {
+                        cudaPointerAttributes attr{};
+                        if (cudaPointerGetAttributes(&attr, out_dev_bufs_[idx]) == cudaSuccess && attr.device >= 0) {
+                            dev_for_reg = attr.device;
+                        }
                     }
-#endif
+                    VA_LOG_THROTTLED(::va::core::LogLevel::Debug, "analyzer.triton", 2000)
+                        << "register output CUDA SHM name='" << out_shm_names_[idx] << "' bytes=" << out_capacity_[idx]
+                        << " dev_for_reg=" << dev_for_reg << " local_dev=" << opt_.device_id;
                     auto er = client_->RegisterCudaSharedMemory(out_shm_names_[idx], ipc, out_capacity_[idx], dev_for_reg);
-                    if (er.IsOk()) out_registered_[idx] = true; else { out_register_failures_++; va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register"); }
+                    if (er.IsOk()) {
+                        out_registered_[idx] = true;
+                    } else {
+                        out_register_failures_++;
+                        va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register");
+                        VA_LOG_THROTTLED(::va::core::LogLevel::Warn, "analyzer.triton", 2000)
+                            << "RegisterCudaSharedMemory(out) failed: " << er.Message();
+                        if (opt_.shm_fail_disable_threshold > 0 && out_register_failures_ >= opt_.shm_fail_disable_threshold) {
+                            out_shm_disabled_ = true;
+                            VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton")
+                                << "disable CUDA SHM for outputs after " << out_register_failures_
+                                << " failures; falling back to host path. Hint: align CUDA_VISIBLE_DEVICES mapping or set 'triton_shm_server_device_id' in config.";
+                        }
+                    }
                 } else {
                     va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
                 }
             }
             if (out_registered_[idx]) {
-                auto er2 = out_raw->SetSharedMemory(out_shm_names_[idx], out_capacity_[idx], /*offset*/0);
+                // 绑定按需字节数（小于等于容量），避免超配导致 "invalid args"
+                size_t bind_bytes = out_capacity_[idx];
+                if (bind_bytes == 0 || bind_bytes > need_bytes) bind_bytes = need_bytes;
+                auto er2 = out_raw->SetSharedMemory(out_shm_names_[idx], bind_bytes, /*offset*/0);
                 if (!er2.IsOk()) { va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_bind"); }
             }
         }

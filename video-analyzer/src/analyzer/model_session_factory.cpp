@@ -3,6 +3,9 @@
 #if defined(USE_TENSORRT)
 #include "analyzer/trt_session.hpp"
 #endif
+#if defined(USE_TRITON_INPROCESS)
+#include "analyzer/triton_inproc_session.hpp"
+#endif
 #include "core/logger.hpp"
 
 #include <algorithm>
@@ -83,7 +86,7 @@ create_model_session(const va::core::EngineDescriptor& engine,
     }
 #endif
 
-    // Triton gRPC path (best-effort when enabled)
+    // Triton (gRPC or In-Process) path (best-effort when enabled)
     if (chosen == "triton") {
 #if defined(USE_TRITON_CLIENT)
         va::analyzer::TritonGrpcModelSession::Options topt;
@@ -104,6 +107,37 @@ create_model_session(const va::core::EngineDescriptor& engine,
         topt.use_cuda_shm = parse_bool(opts, "triton_shm_cuda", false);
         topt.cuda_shm_bytes = parse_int(opts, "triton_cuda_shm_bytes", 0);
         topt.device_id = engine.device_index;
+        // 服务器侧设备序号（可用于修正 CUDA_VISIBLE_DEVICES 映射差异）
+        topt.shm_server_device_id = parse_int(opts, "triton_shm_server_device_id", -1);
+        // 连续失败阈值（达到后禁用 CUDA SHM）
+        topt.shm_fail_disable_threshold = (unsigned)parse_int(opts, "triton_shm_fail_threshold", 3);
+        // Prefer in-process when requested and available
+        bool use_inproc = parse_bool(opts, "triton_inproc", false);
+#if defined(USE_TRITON_INPROCESS)
+        if (use_inproc) {
+            // Map options
+            va::analyzer::TritonInprocModelSession::Options iopt;
+            iopt.model_name = topt.model_name;
+            iopt.model_version = topt.model_version;
+            iopt.input_name = topt.input_name;
+            iopt.output_names = topt.output_names;
+            iopt.timeout_ms = topt.timeout_ms;
+            iopt.device_id = engine.device_index;
+            iopt.assume_no_batch = topt.assume_no_batch;
+            // I/O GPU 直通开关（默认开启）
+            iopt.use_gpu_input = parse_bool(opts, "triton_gpu_input", true);
+            iopt.use_gpu_output = parse_bool(opts, "triton_gpu_output", true);
+            // server host extras (optional)
+            if (auto it = opts.find("triton_repo"); it != opts.end()) iopt.repo_path = it->second; else iopt.repo_path = "/models";
+            if (parse_bool(opts, "triton_enable_http", false)) { iopt.enable_http = true; iopt.http_port = parse_int(opts, "triton_http_port", 8000); }
+            if (parse_bool(opts, "triton_enable_grpc", false)) { iopt.enable_grpc = true; iopt.grpc_port = parse_int(opts, "triton_grpc_port", 8001); }
+            if (auto it = opts.find("triton_model_control"); it != opts.end()) iopt.model_control = it->second;
+            iopt.strict_config = parse_bool(opts, "triton_strict_config", false);
+            auto inps = std::make_shared<va::analyzer::TritonInprocModelSession>(iopt);
+            if (decision) { decision->resolved = "triton-inproc"; }
+            return inps;
+        }
+#endif
         auto s = std::make_shared<va::analyzer::TritonGrpcModelSession>(topt);
         if (decision) { decision->resolved = "triton"; }
         return s;
