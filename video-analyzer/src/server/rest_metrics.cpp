@@ -279,7 +279,7 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             mb.sample("va_graph_open_failed_total", "{}", static_cast<uint64_t>(gs.failed_total));
         } catch (...) {}
 
-        // Triton RPC latency histogram + failures (global)
+        // Triton RPC latency histogram + failures(by reason)
         try {
             auto ts = va::analyzer::metrics::triton_snapshot_rpc();
             mb.header("va_triton_rpc_seconds", "histogram", "Triton gRPC inference latency (s)");
@@ -288,8 +288,15 @@ HttpResponse RestServer::Impl::handleMetrics(const HttpRequest& /*req*/) {
             { std::ostringstream lsi; lsi << "{le=\"+Inf\"}"; mb.sample("va_triton_rpc_seconds_bucket", lsi.str(), static_cast<uint64_t>(ts.count)); }
             mb.sample("va_triton_rpc_seconds_sum", "{}", ts.sum_seconds);
             mb.sample("va_triton_rpc_seconds_count", "{}", static_cast<uint64_t>(ts.count));
-            mb.header("va_triton_rpc_failed_total", "counter", "Triton RPC failures");
+            mb.header("va_triton_rpc_failed_total", "counter", "Triton RPC failures by reason");
+            // total
             mb.sample("va_triton_rpc_failed_total", "{}", static_cast<uint64_t>(ts.failed_total));
+            // by reason (low cardinality)
+            for (const auto& it : ts.failed_by_reason) {
+                if (it.reason.empty()) continue;
+                std::ostringstream ls; ls << "{reason=\"" << it.reason << "\"}";
+                mb.sample("va_triton_rpc_failed_total", ls.str(), static_cast<uint64_t>(it.value));
+            }
         } catch (...) {}
 
         // Codec registry metrics (optional; metrics-only, no caching)

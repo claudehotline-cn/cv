@@ -37,7 +37,9 @@
   - `triton_input: images`                # 输入名称
   - `triton_outputs: dets,proto`          # 输出名称（逗号分隔）
   - `triton_timeout_ms: 2000`             # RPC 超时
-  - `triton_shm_cuda: false`              # 首期关闭；后续开启
+  - `triton_no_batch: false`              # 默认保留 batch 维（与 max_batch_size 对齐）
+  - `triton_shm_cuda: false`              # T1 开启 CUDA Shared Memory（降低拷贝）
+  - `triton_cuda_shm_bytes: 0`            # 预留容量（0=按首次输入推断）
   - `triton_cuda_shm_bytes: 0`            # 0=按首次输入推断
   - `device: 0`                           # 与 VA 设备一致
 - NodeModel YAML 无需调整；仍通过 `model` 节点承载，路径字段在 Triton 模式下可忽略（由 Engine.options 指定模型信息）。
@@ -60,7 +62,7 @@
 
 - 指标（Prom）：
   - `va_triton_rpc_seconds`（直方图：请求耗时；可加标签 model/op）
-  - `va_triton_rpc_failed_total`（失败计数，标签：reason=timeout/unavailable/invalid）
+  - `va_triton_rpc_failed_total`（失败计数，标签：reason=create/invalid_input/mk_input/mk_output/infer/no_output/timeout/unavailable/other）
 - 日志：
   - `[triton] call model=<name> bytes_in=<n> bytes_out=<m> ms=<x>`（节流，Warn 打印失败 fingerprints）
 
@@ -105,4 +107,3 @@ services:
 ---
 
 附：未来可选将 `provider: triton-inproc` 对接 Triton C API（进程内），但优先级低于 gRPC 方案。
-
