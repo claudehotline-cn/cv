@@ -15,12 +15,12 @@ services:
         STRICT_TRT: "ON"                        # 缺少 TRT 头/库直接失败
         STRICT_CUDA_MINOR: "OFF"                 # 开启次版本严格校验（要求 13.0）
     image: cv/va:latest-gpu
-    # Docker Compose v2 建议方式：明确声明使用全部 GPU 设备
-    gpus: all
+    # 固定到同一物理 GPU（使用 UUID，确保两容器 ordinal=0 对齐）
+    gpus: "device=${GPU_UUID:-0}"
     # 为 CUDA IPC 共享内存（Triton CUDA SHM）开启共享 IPC 命名空间
     ipc: host
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_VISIBLE_DEVICES=${GPU_UUID:-0}
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - CUDA_VISIBLE_DEVICES=0
       # ORT 日志等级：2=WARNING，仅警告及以上
@@ -37,11 +37,11 @@ services:
       - ../../.trt_native_cache:/app/.trt_native_cache
   triton:
     image: nvcr.io/nvidia/tritonserver:25.08-py3
-    gpus: all
+    gpus: "device=${GPU_UUID:-0}"
     # 为 CUDA IPC 共享内存开启共享 IPC 命名空间（与 VA 同一 IPC NS）
     ipc: host
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_VISIBLE_DEVICES=${GPU_UUID:-0}
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
       - CUDA_VISIBLE_DEVICES=0
     command: ["tritonserver", "--model-repository=/models", "--grpc-port=8001", "--http-port=8000"]

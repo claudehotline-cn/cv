@@ -57,7 +57,12 @@ TritonGrpcModelSession::~TritonGrpcModelSession() {
         shm_dev_buf_ = nullptr; shm_capacity_ = 0;
     }
 #endif
-    if (client_) { (void)client_->UnregisterCudaSharedMemory(in_shm_name_); }
+    if (client_) {
+        (void)client_->UnregisterCudaSharedMemory(in_shm_name_);
+        for (const auto& nm : out_shm_names_) {
+            (void)client_->UnregisterCudaSharedMemory(nm);
+        }
+    }
     in_shm_bytes_ = 0; shm_registered_ = false;
 #endif
 }
@@ -285,9 +290,19 @@ bool TritonGrpcModelSession::run(const core::TensorView& input, std::vector<core
             }
             if (out_dev_bufs_[idx] && !out_registered_[idx]) {
                 cudaIpcMemHandle_t ipc{};
+                // 取句柄前固定 device，防止被外部切换
+                { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
                 if (cudaSuccess == cudaIpcGetMemHandle(&ipc, out_dev_bufs_[idx])) {
                     (void)client_->UnregisterCudaSharedMemory(out_shm_names_[idx]);
-                    auto er = client_->RegisterCudaSharedMemory(out_shm_names_[idx], ipc, out_capacity_[idx], opt_.device_id);
+                    // 以指针归属设备为准决定注册 device_id（与 CUDA 文档一致）
+                    int dev_for_reg = opt_.device_id;
+#if VA_TRITON_HAVE_CUDA_RUNTIME
+                    cudaPointerAttributes attr{};
+                    if (cudaPointerGetAttributes(&attr, out_dev_bufs_[idx]) == cudaSuccess && attr.device >= 0) {
+                        dev_for_reg = attr.device;
+                    }
+#endif
+                    auto er = client_->RegisterCudaSharedMemory(out_shm_names_[idx], ipc, out_capacity_[idx], dev_for_reg);
                     if (er.IsOk()) out_registered_[idx] = true; else { out_register_failures_++; va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_register"); }
                 } else {
                     va::analyzer::metrics::triton_record_rpc(0.0, /*ok=*/false, "shm_ipc");
