@@ -46,6 +46,9 @@ private:
     // 持久化输出缓冲，保证 run() 返回的 TensorView 生命周期
     std::vector<std::vector<uint8_t>> host_out_bufs_;
     std::vector<std::vector<int64_t>> host_out_shapes_;
+    // CUDA SHM（T1）：输入区域占位（当前仅占位与降级日志）
+    std::string in_shm_name_ {"va_in"};
+    size_t in_shm_bytes_ {0};
 #endif
 };
 
