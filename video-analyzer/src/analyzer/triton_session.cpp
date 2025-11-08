@@ -5,6 +5,16 @@
 
 #if defined(USE_TRITON_CLIENT)
 #include <grpc_client.h>
+#if defined(__has_include)
+#  if __has_include(<grpc_service.pb.h>)
+#    include <grpc_service.pb.h>
+#    define VA_HAS_TRT_GRPC_PB 1
+#  else
+#    define VA_HAS_TRT_GRPC_PB 0
+#  endif
+#else
+#  define VA_HAS_TRT_GRPC_PB 0
+#endif
 using triton::client::InferenceServerGrpcClient;
 using triton::client::InferInput;
 using triton::client::InferOptions;
@@ -30,6 +40,32 @@ bool TritonGrpcModelSession::loadModel(const std::string&, bool) {
     client_ = std::move(client);
     loaded_ = true;
     VA_LOG_C(::va::core::LogLevel::Info, "analyzer.triton") << "init: url='" << opt_.url << "' model='" << opt_.model_name << "'";
+
+#if VA_HAS_TRT_GRPC_PB
+    // 元数据自适配：尝试拉取 ModelMetadata，自动填充 IO 名称（避免配置不一致）
+    if (!opt_.model_name.empty()) {
+        std::unique_ptr<inference::ModelMetadataResponse> md;
+        inference::ModelMetadataResponse* raw_md = nullptr;
+        auto st_md = client_->ModelMetadata(&raw_md, opt_.model_name, opt_.model_version);
+        if (st_md.IsOk() && raw_md) {
+            md.reset(raw_md);
+            try {
+                if (opt_.input_name.empty() && md->inputs_size() > 0) {
+                    opt_.input_name = md->inputs(0).name();
+                    VA_LOG_C(::va::core::LogLevel::Info, "analyzer.triton") << "autofill input_name='" << opt_.input_name << "' from metadata";
+                }
+                if (opt_.output_names.empty() && md->outputs_size() > 0) {
+                    opt_.output_names.clear();
+                    const int n = md->outputs_size();
+                    for (int i = 0; i < n; ++i) opt_.output_names.push_back(md->outputs(i).name());
+                    VA_LOG_C(::va::core::LogLevel::Info, "analyzer.triton") << "autofill outputs (n=" << n << ") from metadata";
+                }
+            } catch (...) { /* ignore metadata parse errors */ }
+        } else {
+            VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton") << "metadata fetch failed: " << st_md.Message();
+        }
+    }
+#endif
     return true;
 #else
     VA_LOG_C(::va::core::LogLevel::Warn, "analyzer.triton")
