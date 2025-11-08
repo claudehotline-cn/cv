@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <mutex>
 
 #if defined(USE_TRITON_CLIENT)
 // 前置声明，避免在头文件包含 grpc_client.h 造成全局依赖扩散
@@ -41,6 +42,7 @@ private:
     Options opt_;
     bool loaded_{false};
 #if defined(USE_TRITON_CLIENT)
+    std::mutex mu_;
     // 持久化 gRPC 客户端，避免每帧创建失败导致静默回退
     std::unique_ptr<triton::client::InferenceServerGrpcClient> client_;
     // 持久化输出缓冲，保证 run() 返回的 TensorView 生命周期
