@@ -14,7 +14,7 @@ fi
 mkdir -p "${TRITON_MODEL_REPO}"
 
 echo "[entrypoint] starting tritonserver..."
-/opt/tritonserver/bin/tritonserver \
+"/opt/tritonserver/bin/tritonserver" \
   --model-repository="${TRITON_MODEL_REPO}" \
   --http-port="${TRITON_HTTP_PORT}" \
   --grpc-port="${TRITON_GRPC_PORT}" \
@@ -22,7 +22,23 @@ echo "[entrypoint] starting tritonserver..."
   --log-info=1 --log-verbose=0 &
 TRITON_PID=$!
 
-sleep 1
+# Wait for Triton HTTP health ready (max 120s)
+READY_TIMEOUT=${VA_WAIT_TRITON_READY_TIMEOUT:-120}
+echo "[entrypoint] waiting Triton ready on http://127.0.0.1:${TRITON_HTTP_PORT}/v2/health/ready (timeout=${READY_TIMEOUT}s)"
+for i in $(seq 1 ${READY_TIMEOUT}); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${TRITON_HTTP_PORT}/v2/health/ready || true)
+  if [ "${code}" = "200" ]; then
+    echo "[entrypoint] Triton is ready (http 200)"
+    break
+  fi
+  if ! kill -0 ${TRITON_PID} 2>/dev/null; then
+    echo "[entrypoint] Triton process exited unexpectedly" >&2
+    wait ${TRITON_PID} || true
+    exit 1
+  fi
+  sleep 1
+done
+
 
 echo "[entrypoint] starting VideoAnalyzer..."
 /app/bin/VideoAnalyzer /app/config &
