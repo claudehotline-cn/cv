@@ -1,7 +1,6 @@
-version: "3.9"
 services:
   minio:
-    image: minio/minio:RELEASE.2024-09-29T22-22-51Z
+    image: minio/minio:latest
     container_name: minio
     command: server --console-address ":9001" /data
     ports:
@@ -12,18 +11,27 @@ services:
       MINIO_ROOT_PASSWORD: "minioadmin123"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL","curl -fsS http://localhost:9000/minio/health/ready >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
 
   minio-mc:
-    image: minio/mc:RELEASE.2024-09-20T01-06-25Z
+    image: minio/mc:latest
     container_name: minio-mc
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     entrypoint: ["/bin/sh","-c"]
     environment:
       MINIO_ROOT_USER: "minioadmin"
       MINIO_ROOT_PASSWORD: "minioadmin123"
     command: |
       set -eux;
+      # wait for minio readiness (extra guard)
+      for i in $(seq 1 60); do
+        if wget -qO- http://minio:9000/minio/health/ready >/dev/null 2>&1; then break; fi; sleep 1; done;
       mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD";
       mc mb -p local/cv-models || true;
       echo "[mc] bucket cv-models ready";
@@ -76,7 +84,7 @@ services:
       retries: 5
     depends_on:
       minio:
-        condition: service_started
+        condition: service_healthy
       minio-mc:
         condition: service_started
 
