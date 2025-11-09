@@ -20,6 +20,10 @@ service AnalyzerControl {
   rpc ListPipelines(ListPipelinesRequest) returns (ListPipelinesReply);
   // Watch phases of a subscription or stream (prototype)
   rpc Watch(WatchRequest) returns (stream PhaseEvent);
+  // P1: Minimal Triton repository controls for in-process embedding
+  rpc RepoLoad(RepoLoadRequest) returns (RepoLoadReply);
+  rpc RepoUnload(RepoUnloadRequest) returns (RepoUnloadReply);
+  rpc RepoPoll(RepoPollRequest) returns (RepoPollReply);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -146,3 +150,11 @@ message PhaseEvent {
   int64 ts_ms = 3;
   string reason = 4; // optional
 }
+
+// Repository control messages
+message RepoLoadRequest  { string model = 1; }
+message RepoLoadReply    { bool ok = 1; string msg = 2; }
+message RepoUnloadRequest{ string model = 1; }
+message RepoUnloadReply  { bool ok = 1; string msg = 2; }
+message RepoPollRequest  {}
+message RepoPollReply    { bool ok = 1; string msg = 2; }

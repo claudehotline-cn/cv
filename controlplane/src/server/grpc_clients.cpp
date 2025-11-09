@@ -382,6 +382,41 @@ bool va_drain(const std::string& addr,
   }
 }
 
+bool va_repo_load(const std::string& addr, const std::string& model, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoLoadRequest req; req.set_model(model);
+    va::v1::RepoLoadReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoLoad(&ctx, req, &rep); }, true, 0, "RepoLoad");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; } catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
+bool va_repo_unload(const std::string& addr, const std::string& model, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoUnloadRequest req; req.set_model(model);
+    va::v1::RepoUnloadReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoUnload(&ctx, req, &rep); }, true, 0, "RepoUnload");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; } catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
+bool va_repo_poll(const std::string& addr, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoPollRequest req; va::v1::RepoPollReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoPoll(&ctx, req, &rep); }, true, 0, "RepoPoll");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; } catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
 } // namespace controlplane
 
 

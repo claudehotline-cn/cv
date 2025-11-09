@@ -124,6 +124,18 @@ create_model_session(const va::core::EngineDescriptor& engine,
             iopt.timeout_ms = topt.timeout_ms;
             iopt.device_id = engine.device_index;
             iopt.assume_no_batch = topt.assume_no_batch;
+            // warmup_runs: 复用 ORT 分支解析逻辑：auto/-1=自动；off/0=禁用；其他数值
+            {
+                int wu = 0; // 默认不额外预热
+                auto it = opts.find("warmup_runs");
+                if (it != opts.end()) {
+                    auto v = to_lower(it->second);
+                    if (v == "auto" || v == "-1") { wu = -1; }
+                    else if (v == "off" || v == "false" || v == "0" || v == "no") { wu = 0; }
+                    else { try { wu = std::stoi(v); } catch (...) { wu = 0; } }
+                }
+                iopt.warmup_runs = wu;
+            }
             // I/O GPU 直通开关（默认开启）
             iopt.use_gpu_input = parse_bool(opts, "triton_gpu_input", true);
             iopt.use_gpu_output = parse_bool(opts, "triton_gpu_output", true);
@@ -133,6 +145,21 @@ create_model_session(const va::core::EngineDescriptor& engine,
             if (parse_bool(opts, "triton_enable_grpc", false)) { iopt.enable_grpc = true; iopt.grpc_port = parse_int(opts, "triton_grpc_port", 8001); }
             if (auto it = opts.find("triton_model_control"); it != opts.end()) iopt.model_control = it->second;
             iopt.strict_config = parse_bool(opts, "triton_strict_config", false);
+            // advanced ServerOptions
+            if (auto it = opts.find("triton_backend_dir"); it != opts.end()) iopt.backend_dir = it->second;
+            {
+                int mb = parse_int(opts, "triton_pinned_mem_mb", 0); if (mb > 0) iopt.pinned_mem_pool_mb = static_cast<size_t>(mb);
+            }
+            iopt.cuda_pool_device_id = parse_int(opts, "triton_cuda_pool_device_id", engine.device_index);
+            if (auto it = opts.find("triton_cuda_pool_bytes"); it != opts.end()) {
+                try { iopt.cuda_pool_bytes = static_cast<size_t>(std::stoull(it->second)); } catch (...) {}
+            }
+            if (auto it = opts.find("triton_backend_configs"); it != opts.end()) {
+                std::string v = it->second; std::string cur;
+                for (char c : v) { if (c==';' || c==',') { if(!cur.empty()){ iopt.backend_configs.push_back(cur); cur.clear(); } }
+                                   else cur.push_back(c); }
+                if (!cur.empty()) iopt.backend_configs.push_back(cur);
+            }
             auto inps = std::make_shared<va::analyzer::TritonInprocModelSession>(iopt);
             if (decision) { decision->resolved = "triton-inproc"; }
             return inps;

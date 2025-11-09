@@ -193,6 +193,49 @@ elseif (TARGET unofficial::mysql-connector-cpp::connector)
   target_compile_definitions(controlplane PRIVATE HAVE_MYSQLX=1)
 endif()
 
+# Minimal client CLI for VA release workflow
+add_executable(va_release
+  src/cli/va_release.cpp)
+target_include_directories(va_release PRIVATE "${GEN_DIR}")
+if (TARGET gRPC::grpc++)
+  target_link_libraries(va_release PRIVATE cp_proto_objs gRPC::grpc++ protobuf::libprotobuf)
+else()
+  if (DEFINED GRPC_INCLUDE_DIRS)
+    target_include_directories(va_release PRIVATE ${GRPC_INCLUDE_DIRS})
+  endif()
+  if (TARGET protobuf::libprotobuf)
+    target_link_libraries(va_release PRIVATE cp_proto_objs ${GRPC_LIBRARIES} protobuf::libprotobuf)
+  else()
+    target_link_libraries(va_release PRIVATE cp_proto_objs ${GRPC_LIBRARIES} ${Protobuf_LIBRARIES})
+    if (DEFINED Protobuf_INCLUDE_DIRS)
+      target_include_directories(va_release PRIVATE ${Protobuf_INCLUDE_DIRS})
+    endif()
+  endif()
+endif()
+
+add_executable(va_repo
+  src/cli/va_repo.cpp
+  # Reuse client helpers and their dependencies
+  src/server/grpc_clients.cpp
+  src/server/metrics.cpp
+  src/server/circuit_breaker.cpp)
+target_include_directories(va_repo PRIVATE "${GEN_DIR}" include)
+if (TARGET gRPC::grpc++)
+  target_link_libraries(va_repo PRIVATE cp_proto_objs gRPC::grpc++ protobuf::libprotobuf)
+else()
+  if (DEFINED GRPC_INCLUDE_DIRS)
+    target_include_directories(va_repo PRIVATE ${GRPC_INCLUDE_DIRS})
+  endif()
+  if (TARGET protobuf::libprotobuf)
+    target_link_libraries(va_repo PRIVATE cp_proto_objs ${GRPC_LIBRARIES} protobuf::libprotobuf)
+  else()
+    target_link_libraries(va_repo PRIVATE cp_proto_objs ${GRPC_LIBRARIES} ${Protobuf_LIBRARIES})
+    if (DEFINED Protobuf_INCLUDE_DIRS)
+      target_include_directories(va_repo PRIVATE ${Protobuf_INCLUDE_DIRS})
+    endif()
+  endif()
+endif()
+
 # Optional: use bundled MySQL Connector/C++ (classic JDBC API) under third_party
 set(MYSQL_LOCAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mysql-connector-c++-9.4.0-winx64")
 if (EXISTS "${MYSQL_LOCAL_ROOT}/include/mysql/jdbc.h")

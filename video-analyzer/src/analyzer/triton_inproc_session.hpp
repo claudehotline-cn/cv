@@ -20,6 +20,7 @@ public:
         int timeout_ms{2000};
         int device_id{0};
         bool assume_no_batch{false};
+        int warmup_runs{0};
         // GPU I/O（in‑process 下无需 CUDA IPC/SHM，可直接传递设备指针与自定义分配器）
         bool use_gpu_input{true};
         bool use_gpu_output{true};
@@ -31,6 +32,12 @@ public:
         int grpc_port{8001};
         bool strict_config{false};
         std::string model_control{"none"};
+        // ServerOptions 补充（可从配置或环境注入）
+        std::string backend_dir{};
+        size_t pinned_mem_pool_mb{0};
+        int cuda_pool_device_id{0};
+        size_t cuda_pool_bytes{0};
+        std::vector<std::string> backend_configs; // 形如 "tensorrt:coalesce_request_input=1"
     };
 
     explicit TritonInprocModelSession(const Options& opt);
@@ -44,6 +51,8 @@ public:
 private:
     Options opt_;
     bool loaded_{false};
+    bool warmed_{false};
+    bool in_warmup_{false};
     std::shared_ptr<TritonInprocServerHost> host_;
     // host-side output buffers to keep lifetime
     std::vector<std::vector<uint8_t>> host_out_bufs_;

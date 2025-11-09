@@ -1,0 +1,35 @@
+# Sample ONNX Runtime model with TensorRT EP via execution_accelerators
+name: "det_onnx_trtep"
+backend: "onnxruntime"
+max_batch_size: 8
+
+input [
+  { name: "images" data_type: TYPE_FP32 dims: [3, 640, 640] }
+]
+output [
+  { name: "output0" data_type: TYPE_FP32 dims: [NMS, 84] }
+]
+
+dynamic_batching {
+  preferred_batch_size: [1, 4, 8]
+  max_queue_delay_microseconds: 2000
+}
+
+instance_group [
+  { kind: KIND_GPU count: 1 gpus: [0] }
+]
+
+optimization {
+  execution_accelerators {
+    gpu_execution_accelerator : [
+      {
+        name : "tensorrt"
+        parameters : {
+          key: "precision_mode"
+          value: "FP16"
+        }
+      }
+    ]
+  }
+}
+

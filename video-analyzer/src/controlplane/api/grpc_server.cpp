@@ -20,6 +20,9 @@
 #include "media/whep_session.hpp"
 #include "pipeline.pb.h"
 #include "core/error_codes.hpp"
+#if defined(USE_TRITON_INPROCESS)
+#include "analyzer/triton_inproc_server_host.hpp"
+#endif
 
 namespace va { namespace control {
 
@@ -318,6 +321,68 @@ public:
         }
     }
 
+    // P1: In-Process Triton repository controls (best-effort)
+    ::grpc::Status RepoLoad(::grpc::ServerContext*, const va::v1::RepoLoadRequest* req,
+                            va::v1::RepoLoadReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            hopt.model_control = "explicit"; // require explicit loading
+            auto host = va::analyzer::TritonInprocServerHost::instance(hopt);
+            bool ok = (host && host->isReady()) ? host->loadModel(req->model()) : false;
+            resp->set_ok(ok); resp->set_msg(ok?"":std::string("load failed: ")+req->model());
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) {
+            resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK;
+        } catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
+    }
+
+    ::grpc::Status RepoUnload(::grpc::ServerContext*, const va::v1::RepoUnloadRequest* req,
+                              va::v1::RepoUnloadReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            hopt.model_control = "explicit";
+            auto host = va::analyzer::TritonInprocServerHost::instance(hopt);
+            bool ok = (host && host->isReady()) ? host->unloadModel(req->model()) : false;
+            resp->set_ok(ok); resp->set_msg(ok?"":std::string("unload failed: ")+req->model());
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) {
+            resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK;
+        } catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
+    }
+
+    ::grpc::Status RepoPoll(::grpc::ServerContext*, const va::v1::RepoPollRequest* /*req*/,
+                            va::v1::RepoPollReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            auto host = va::analyzer::TritonInprocServerHost::instance(hopt);
+            bool ok = (host && host->isReady()) ? host->pollRepository() : false;
+            resp->set_ok(ok); resp->set_msg(ok?"":"poll failed");
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) {
+            resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK;
+        } catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
+    }
     // Streaming phases for a subscription or (stream_id, profile) tuple.
     // Minimal implementation: poll Application pipelines and emit phase snapshots.
     ::grpc::Status Watch(::grpc::ServerContext* ctx,

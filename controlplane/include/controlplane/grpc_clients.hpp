@@ -94,6 +94,11 @@ bool va_drain(const std::string& addr,
               bool* drained,
               std::string* err);
 
+// Triton repository controls (in-process)
+bool va_repo_load(const std::string& addr, const std::string& model, std::string* err);
+bool va_repo_unload(const std::string& addr, const std::string& model, std::string* err);
+bool va_repo_poll(const std::string& addr, std::string* err);
+
 // Helpers to create stubs with configured TLS credentials
 std::unique_ptr<::va::v1::AnalyzerControl::Stub> make_va_stub(const std::string& addr);
 std::unique_ptr<::vsm::v1::SourceControl::Stub> make_vsm_stub(const std::string& addr);

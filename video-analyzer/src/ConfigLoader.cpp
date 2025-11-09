@@ -282,6 +282,12 @@ AppConfigPayload parseAppConfig(const YAML::Node& v, const std::string& config_d
             put_int("triton_grpc_port");
             put_bool("triton_strict_config");
             put_str("triton_model_control");
+            // In-process 高级 ServerOptions
+            put_str("triton_backend_dir");
+            put_int("triton_pinned_mem_mb");
+            put_int("triton_cuda_pool_device_id");
+            put_str("triton_cuda_pool_bytes");
+            put_str("triton_backend_configs");
             // Provider chain override
             put_str("force_provider");
             put_str("providers");

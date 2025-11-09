@@ -13,6 +13,17 @@
 #endif
 #endif
 
+namespace {
+// 近似 size-class：向上取 2 的幂，降低频繁重分配带来的碎片与抖动
+static inline size_t next_pow2(size_t v) {
+    if (v == 0) return 0; v--; v |= v >> 1; v |= v >> 2; v |= v >> 4; v |= v >> 8; v |= v >> 16;
+#if SIZE_MAX > 0xFFFFFFFFu
+    v |= v >> 32;
+#endif
+    return v + 1;
+}
+}
+
 namespace va::analyzer {
 
 TritonInprocModelSession::TritonInprocModelSession(const Options& opt) : opt_(opt) {}
@@ -30,6 +41,12 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
     hopt.enable_http = opt_.enable_http; hopt.http_port = opt_.http_port;
     hopt.enable_grpc = opt_.enable_grpc; hopt.grpc_port = opt_.grpc_port;
     hopt.strict_config = opt_.strict_config; hopt.model_control = opt_.model_control;
+    // 透传 ServerOptions 增强项
+    hopt.backend_dir = opt_.backend_dir;
+    hopt.pinned_mem_pool_mb = opt_.pinned_mem_pool_mb;
+    hopt.cuda_pool_device_id = opt_.cuda_pool_device_id;
+    hopt.cuda_pool_bytes = opt_.cuda_pool_bytes;
+    hopt.backend_configs = opt_.backend_configs;
     auto host = TritonInprocServerHost::instance(hopt);
     if (!host || !host->isReady()) {
         VA_LOG_WARN() << "[inproc.triton] server not ready";
@@ -60,6 +77,13 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
 bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<core::TensorView>& outputs) {
     outputs.clear();
 #if defined(USE_TRITON_INPROCESS)
+    // Lazy warmup based on first real input's shape
+    if (!warmed_ && !in_warmup_ && opt_.warmup_runs != 0) {
+        int n = (opt_.warmup_runs < 0) ? 1 : opt_.warmup_runs;
+        in_warmup_ = true;
+        for (int i=0;i<n;i++) { std::vector<va::core::TensorView> toss; (void)this->run(input, toss); }
+        in_warmup_ = false; warmed_ = true;
+    }
     if (!host_ || !host_->isReady()) {
         TritonInprocServerHost::Options hopt; hopt.repo = opt_.repo_path;
         host_ = TritonInprocServerHost::instance(hopt);
@@ -185,12 +209,13 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         if (self->opt_.use_gpu_output) {
             { int cur=-1; (void)cudaGetDevice(&cur); if (cur != self->opt_.device_id) (void)cudaSetDevice(self->opt_.device_id); }
             if (self->out_capacity_.size() <= idx) { self->out_capacity_.resize(self->opt_.output_names.size(), 0); self->out_dev_bufs_.resize(self->opt_.output_names.size(), nullptr); }
-            if (self->out_capacity_[idx] < byte_size || self->out_dev_bufs_[idx] == nullptr) {
+            size_t alloc_size = next_pow2(byte_size);
+            if (self->out_capacity_[idx] < alloc_size || self->out_dev_bufs_[idx] == nullptr) {
                 if (self->out_dev_bufs_[idx]) cudaFree(self->out_dev_bufs_[idx]);
-                if (cudaSuccess != cudaMalloc(&self->out_dev_bufs_[idx], byte_size)) {
+                if (cudaSuccess != cudaMalloc(&self->out_dev_bufs_[idx], alloc_size)) {
                     self->out_dev_bufs_[idx] = nullptr; self->out_capacity_[idx] = 0;
                 } else {
-                    self->out_capacity_[idx] = byte_size;
+                    self->out_capacity_[idx] = alloc_size;
                 }
             }
             if (self->out_dev_bufs_[idx]) {
