@@ -43,7 +43,8 @@ engine:
     # In‑Process GPU I/O（避免拷贝）：
     triton_gpu_input: true
     triton_gpu_output: true
-    triton_repo: s3://cv-models/models
+    # 在 In-Process 模式下，建议将 MinIO 端点内嵌到 S3 URL，避免不同构建对环境端点解析差异
+    triton_repo: s3://http://minio:9000/cv-models/models
     triton_enable_http: false
     triton_enable_grpc: false
     # Triton 连接参数（与 compose 中 triton 服务对应

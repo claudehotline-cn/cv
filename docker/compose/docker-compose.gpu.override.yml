@@ -29,8 +29,9 @@ services:
       - NVIDIA_VISIBLE_DEVICES=GPU-699cd883-5517-6d7d-9dfd-db488fe13ec5
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - CUDA_VISIBLE_DEVICES=0
-      # In-Process 模式：不启动外部 tritonserver 子进程
-      - VA_TRITON_EXTERNAL=0
+      # 启动外部 tritonserver 子进程（原生 S3：外部进程路径更稳）
+      - VA_TRITON_EXTERNAL=1
+      - TRITON_MODEL_REPO=s3://cv-models/models
       # S3 (MinIO) for Triton model repository
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin123
