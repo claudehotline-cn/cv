@@ -27,6 +27,16 @@ TritonInprocServerHost::TritonInprocServerHost(const Options& opt) {
 
 bool TritonInprocServerHost::init(const Options& opt) {
 #if defined(USE_TRITON_INPROCESS)
+    // Debug small prints for S3 env (minimal and safe)
+    const char* s3_ep = std::getenv("S3_ENDPOINT");
+    const char* aws_ep = std::getenv("AWS_ENDPOINT_URL");
+    const char* aws_ep_s3 = std::getenv("AWS_ENDPOINT_URL_S3");
+    const char* s3_region = std::getenv("S3_REGION");
+    const char* aws_region = std::getenv("AWS_REGION");
+    VA_LOG_INFO() << "[inproc.triton] repo='" << opt.repo << "' s3_ep='" << (s3_ep? s3_ep: "<unset>")
+                  << "' aws_ep='" << (aws_ep? aws_ep: "<unset>")
+                  << "' aws_ep_s3='" << (aws_ep_s3? aws_ep_s3: "<unset>")
+                  << "' region='" << (s3_region? s3_region: (aws_region? aws_region: "<unset>")) << "'";
     TRITONSERVER_ServerOptions* options = nullptr;
     if (TRITONSERVER_ServerOptionsNew(&options) != nullptr) {
         VA_LOG_ERROR() << "[inproc.triton] ServerOptionsNew failed";
