@@ -406,6 +406,35 @@ int main(int argc, char** argv) {
       nlohmann::json out; out["code"]="OK"; out["data"]=j;
       r.status = 200; r.body = out.dump(); emit("/api/ui/schema/engine", r.status); return r;
     }
+    if (path == "/api/control/set_engine" && method == "POST") {
+      std::string provider; int device=0; std::unordered_map<std::string,std::string> options;
+      if (!body.empty()) {
+        try {
+          nlohmann::json j = nlohmann::json::parse(body);
+          if (j.contains("provider") && j["provider"].is_string()) provider = j["provider"].get<std::string>();
+          if (j.contains("device") && j["device"].is_number_integer()) device = j["device"].get<int>();
+          if (j.contains("options") && j["options"].is_object()) {
+            for (auto it = j["options"].begin(); it != j["options"].end(); ++it) { options[it.key()] = it.value().is_string()? it.value().get<std::string>() : it.value().dump(); }
+          } else {
+            // 扁平键值（容错）：将非保留字段视为 options
+            for (auto it = j.begin(); it != j.end(); ++it) {
+              const std::string k = it.key(); if (k=="provider"||k=="device") continue; options[k] = it.value().is_string()? it.value().get<std::string>() : it.value().dump();
+            }
+          }
+        } catch (...) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/control/set_engine", r.status); return r; }
+      }
+      try {
+        auto stub = controlplane::make_va_stub(cfg.va_addr);
+        va::v1::SetEngineRequest req; va::v1::SetEngineReply rep; grpc::ClientContext ctx;
+        if (!provider.empty()) req.set_provider(provider);
+        if (device != 0) req.set_device(device);
+        for (const auto& kv : options) (*req.mutable_options())[kv.first] = kv.second;
+        auto s = stub->SetEngine(&ctx, req, &rep);
+        if (!s.ok() || !rep.ok()) { auto mm=cp_map_err(s.error_message()); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(s.ok()? rep.msg(): s.error_message())+"\"}"; emit("/api/control/set_engine", r.status); return r; }
+        nlohmann::json out; out["code"]="OK"; out["data"]={ {"provider", rep.provider()}, {"gpu_active", rep.gpu_active()}, {"io_binding", rep.io_binding()}, {"device_binding", rep.device_binding()} };
+        r.status=200; r.body = out.dump(); emit("/api/control/set_engine", r.status); return r;
+      } catch (const std::exception& ex) { r.status=500; r.body=std::string("{\"code\":\"INTERNAL\",\"msg\":\"")+ex.what()+"\"}"; emit("/api/control/set_engine", r.status); return r; }
+    }
     if (path.rfind("/api/subscriptions", 0) == 0) {
       auto pos = std::string::npos;
       if (method == "POST" && path.rfind("/api/subscriptions",0)==0) {

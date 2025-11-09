@@ -6,34 +6,12 @@
           <div class="card-header">
             <div>
               <div class="title">引擎参数</div>
-              <div class="subtitle">POST /api/engine/set</div>
+              <div class="subtitle">Schema: GET /api/ui/schema/engine · 保存: POST /api/control/set_engine</div>
             </div>
             <el-button type="primary" size="small" @click="apply" :loading="loading">保存配置</el-button>
           </div>
         </template>
-        <el-form :model="engine" label-width="140px" size="small">
-          <el-form-item label="启用 NVDEC">
-            <el-switch v-model="engine.use_nvdec" />
-          </el-form-item>
-          <el-form-item label="启用 NVENC">
-            <el-switch v-model="engine.use_nvenc" />
-          </el-form-item>
-          <el-form-item label="多阶段流水线">
-            <el-switch v-model="engine.use_multistage" />
-          </el-form-item>
-          <el-form-item label="CUDA 渲染">
-            <el-switch v-model="engine.render_cuda" />
-          </el-form-item>
-          <el-form-item label="CUDA NMS">
-            <el-switch v-model="engine.use_cuda_nms" />
-          </el-form-item>
-          <el-form-item label="叠加线宽">
-            <el-input-number v-model="engine.overlay_thickness" :min="1" :max="6" :step="1" />
-          </el-form-item>
-          <el-form-item label="叠加透明度">
-            <el-input-number v-model="engine.overlay_alpha" :min="0" :max="1" :step="0.05" />
-          </el-form-item>
-        </el-form>
+        <EngineForm ref="ef" />
       </el-card>
     </el-col>
 
@@ -85,24 +63,18 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { setEngine, applyPipeline as cpApply, applyPipelines as cpApplyBatch } from '@/api/cp'
+import { setEngineControl, applyPipeline as cpApply, applyPipelines as cpApplyBatch } from '@/api/cp'
+import EngineForm from '@/components/forms/EngineForm.vue'
 import { http } from '@/api/http'
 
 const loading = ref(false)
-const engine = ref({
-  use_nvdec: true,
-  use_nvenc: true,
-  use_multistage: true,
-  render_cuda: true,
-  use_cuda_nms: true,
-  overlay_thickness: 3,
-  overlay_alpha: 0.25
-})
+const ef = ref<any>(null)
 
 async function apply(){
   loading.value = true
   try {
-    await setEngine(engine.value as any)
+    const vals = (ef.value?.getValues && ef.value.getValues()) || {}
+    await setEngineControl(vals as any)
     ElMessage.success('配置已更新')
   } catch (e:any) {
     ElMessage.error(e?.message || '更新失败')

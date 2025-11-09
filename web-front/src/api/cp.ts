@@ -25,6 +25,15 @@ export function listProfiles() { return http.get<{ data: any[] }>('/api/profiles
 export function setEngine(options: Record<string, any>) {
   return http.post('/api/engine/set', options)
 }
+// Prefer new control route; fallback to legacy when unavailable
+export async function setEngineControl(options: Record<string, any>) {
+  try {
+    return await http.post('/api/control/set_engine', options)
+  } catch (e: any) {
+    // fallback legacy
+    return await setEngine(options)
+  }
+}
 
 // --- Async subscriptions API ---
 export async function createSubscription(stream_id: string, profile: string, source_uri: string, model_id?: string, opts?: { useExisting?: boolean, source_id?: string }): Promise<string> {
