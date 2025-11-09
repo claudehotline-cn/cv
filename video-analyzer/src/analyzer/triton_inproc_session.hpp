@@ -7,6 +7,8 @@
 
 namespace va::analyzer {
 
+class TritonInprocServerHost; // fwd
+
 // 仅当构建开启 USE_TRITON_INPROCESS 时实现；否则工厂不会选择本实现
 class TritonInprocModelSession : public IModelSession {
 public:
@@ -42,6 +44,7 @@ public:
 private:
     Options opt_;
     bool loaded_{false};
+    std::shared_ptr<TritonInprocServerHost> host_;
     // host-side output buffers to keep lifetime
     std::vector<std::vector<uint8_t>> host_out_bufs_;
     std::vector<std::vector<int64_t>> host_out_shapes_;

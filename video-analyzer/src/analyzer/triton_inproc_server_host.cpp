@@ -34,7 +34,9 @@ bool TritonInprocServerHost::init(const Options& opt) {
     }
     TRITONSERVER_ServerOptionsSetModelRepositoryPath(options, opt.repo.c_str());
     TRITONSERVER_ServerOptionsSetStrictReadiness(options, true);
-    TRITONSERVER_ServerOptionsSetExitOnError(options, true);
+    // In in-process embedding, exiting on any server error will bring down the host process.
+    // Keep it disabled so that inference/model errors are surfaced to callers instead of aborting.
+    TRITONSERVER_ServerOptionsSetExitOnError(options, false);
     TRITONSERVER_ServerOptionsSetStrictModelConfig(options, opt.strict_config);
     if (opt.model_control == "explicit") {
         TRITONSERVER_ServerOptionsSetModelControlMode(options, TRITONSERVER_MODEL_CONTROL_EXPLICIT);

@@ -35,6 +35,17 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
         VA_LOG_WARN() << "[inproc.triton] server not ready";
         loaded_ = false; return false;
     }
+    // MODE_EXPLICIT: 主动加载；否则依赖模型仓库预加载
+    if (opt_.model_control == std::string("explicit")) {
+        auto* server = host->server();
+        if (!server) { VA_LOG_WARN() << "[inproc.triton] null server"; return false; }
+        if (auto* e = TRITONSERVER_ServerLoadModel(server, opt_.model_name.c_str()); e != nullptr) {
+            VA_LOG_WARN() << "[inproc.triton] LoadModel('" << opt_.model_name << "') failed: " << TRITONSERVER_ErrorMessage(e);
+            TRITONSERVER_ErrorDelete(e);
+            loaded_ = false; return false;
+        }
+    }
+    host_ = host;
     // Phase 1：依赖模型仓库已预加载模型（MODE_NONE/auto）
     loaded_ = true;
     VA_LOG_INFO() << "[inproc.triton] init model='" << opt_.model_name << "'";
@@ -49,10 +60,12 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
 bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<core::TensorView>& outputs) {
     outputs.clear();
 #if defined(USE_TRITON_INPROCESS)
-    TritonInprocServerHost::Options hopt; hopt.repo = opt_.repo_path;
-    auto host = TritonInprocServerHost::instance(hopt);
-    if (!host || !host->isReady()) return false;
-    auto* server = host->server();
+    if (!host_ || !host_->isReady()) {
+        TritonInprocServerHost::Options hopt; hopt.repo = opt_.repo_path;
+        host_ = TritonInprocServerHost::instance(hopt);
+    }
+    if (!host_ || !host_->isReady()) return false;
+    auto* server = host_->server();
     if (!server) return false;
 
     // Prepare input (支持 GPU 直通)
@@ -66,6 +79,18 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         use_gpu_input = true;
         // ensure device
         { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
+        // Validate that the device pointer matches the configured device
+        cudaPointerAttributes attrs{};
+        if (cudaSuccess == cudaPointerGetAttributes(&attrs, input.data)) {
+#if CUDART_VERSION >= 10000
+            int ptr_dev = attrs.device;
+#else
+            int ptr_dev = attrs.device;
+#endif
+            if (ptr_dev != opt_.device_id) {
+                VA_LOG_WARN() << "[inproc.triton] input device pointer on GPU " << ptr_dev << ", expected GPU " << opt_.device_id;
+            }
+        }
 #else
         VA_LOG_WARN() << "[inproc.triton] input.on_gpu=true but CUDA not enabled";
         return false;
@@ -92,25 +117,53 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
     const int64_t ver = (opt_.model_version.empty() ? -1 : std::strtoll(opt_.model_version.c_str(), nullptr, 10));
     TRITONSERVER_Error* err_req = TRITONSERVER_InferenceRequestNew(&req, server, opt_.model_name.c_str(), ver);
     if (err_req != nullptr || !req) {
-        VA_LOG_WARN() << "[inproc.triton] InferenceRequestNew failed"; return false;
+        const char* msg = err_req ? TRITONSERVER_ErrorMessage(err_req) : "null request";
+        VA_LOG_WARN() << "[inproc.triton] InferenceRequestNew failed: " << msg;
+        if (err_req) TRITONSERVER_ErrorDelete(err_req);
+        return false;
     }
     TRITONSERVER_InferenceRequestSetId(req, "va-inproc");
     TRITONSERVER_InferenceRequestSetTimeoutMicroseconds(req, static_cast<uint64_t>(opt_.timeout_ms) * 1000ull);
+    // Ensure server owns request lifetime once enqueued; we won't call Delete after InferAsync
+    auto req_release = [](TRITONSERVER_InferenceRequest* /*request*/, unsigned int /*release_flags*/, void* /*userp*/) {
+        // no-op: buffers are managed by this session and remain valid until run() completes
+    };
+    TRITONSERVER_InferenceRequestSetReleaseCallback(req, req_release, nullptr);
 
     // Input
     TRITONSERVER_DataType dtype = TRITONSERVER_TYPE_FP32;
-    TRITONSERVER_InferenceRequestAddInput(req, opt_.input_name.c_str(), dtype, send_shape.data(), send_shape.size());
+    if (auto* e = TRITONSERVER_InferenceRequestAddInput(req, opt_.input_name.c_str(), dtype, send_shape.data(), send_shape.size()); e != nullptr) {
+        VA_LOG_WARN() << "[inproc.triton] AddInput failed: " << TRITONSERVER_ErrorMessage(e);
+        TRITONSERVER_ErrorDelete(e);
+        TRITONSERVER_InferenceRequestDelete(req);
+        return false;
+    }
     if (use_gpu_input) {
 #if defined(USE_CUDA)
-        TRITONSERVER_InferenceRequestAppendInputData(req, opt_.input_name.c_str(), input.data, bytes, TRITONSERVER_MEMORY_GPU, opt_.device_id);
+        if (auto* e = TRITONSERVER_InferenceRequestAppendInputData(req, opt_.input_name.c_str(), input.data, bytes, TRITONSERVER_MEMORY_GPU, opt_.device_id); e != nullptr) {
+            VA_LOG_WARN() << "[inproc.triton] AppendInputData(GPU) failed: " << TRITONSERVER_ErrorMessage(e);
+            TRITONSERVER_ErrorDelete(e);
+            TRITONSERVER_InferenceRequestDelete(req);
+            return false;
+        }
 #endif
     } else {
-        TRITONSERVER_InferenceRequestAppendInputData(req, opt_.input_name.c_str(), host_ptr, bytes, TRITONSERVER_MEMORY_CPU, 0 /*id*/);
+        if (auto* e = TRITONSERVER_InferenceRequestAppendInputData(req, opt_.input_name.c_str(), host_ptr, bytes, TRITONSERVER_MEMORY_CPU, 0 /*id*/); e != nullptr) {
+            VA_LOG_WARN() << "[inproc.triton] AppendInputData(CPU) failed: " << TRITONSERVER_ErrorMessage(e);
+            TRITONSERVER_ErrorDelete(e);
+            TRITONSERVER_InferenceRequestDelete(req);
+            return false;
+        }
     }
 
     // Outputs
     for (const auto& name : opt_.output_names) {
-        TRITONSERVER_InferenceRequestAddRequestedOutput(req, name.c_str());
+        if (auto* e = TRITONSERVER_InferenceRequestAddRequestedOutput(req, name.c_str()); e != nullptr) {
+            VA_LOG_WARN() << "[inproc.triton] AddRequestedOutput('" << name << "') failed: " << TRITONSERVER_ErrorMessage(e);
+            TRITONSERVER_ErrorDelete(e);
+            TRITONSERVER_InferenceRequestDelete(req);
+            return false;
+        }
     }
 
     // 准备输出分配器（可将输出直接放在 GPU）
@@ -161,7 +214,12 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         if (memory_type == TRITONSERVER_MEMORY_CPU && buffer_userp == buffer && buffer) std::free(buffer);
         return nullptr;
     };
-    (void)TRITONSERVER_ResponseAllocatorNew(&allocator, alloc_fn, release_fn, nullptr);
+    if (auto* e = TRITONSERVER_ResponseAllocatorNew(&allocator, alloc_fn, release_fn, nullptr); e != nullptr || allocator == nullptr) {
+        VA_LOG_WARN() << "[inproc.triton] ResponseAllocatorNew failed: " << (e ? TRITONSERVER_ErrorMessage(e) : "null allocator");
+        if (e) TRITONSERVER_ErrorDelete(e);
+        TRITONSERVER_InferenceRequestDelete(req);
+        return false;
+    }
 
     // Sync via promise
     std::promise<TRITONSERVER_InferenceResponse*> prom;
@@ -171,23 +229,55 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         (void)flags; p->set_value(response);
     };
     // 设置响应回调与分配器
-    TRITONSERVER_InferenceRequestSetResponseCallback(req, allocator, &actx, resp_cb, &prom);
+    if (auto* e = TRITONSERVER_InferenceRequestSetResponseCallback(req, allocator, &actx, resp_cb, &prom); e != nullptr) {
+        VA_LOG_WARN() << "[inproc.triton] SetResponseCallback failed: " << TRITONSERVER_ErrorMessage(e);
+        TRITONSERVER_ErrorDelete(e);
+        TRITONSERVER_ResponseAllocatorDelete(allocator);
+        return false;
+    }
 
     TRITONSERVER_Error* err_inf = TRITONSERVER_ServerInferAsync(server, req, nullptr);
     if (err_inf != nullptr) {
-        VA_LOG_WARN() << "[inproc.triton] ServerInferAsync failed"; return false;
+        const char* msg = TRITONSERVER_ErrorMessage(err_inf);
+        VA_LOG_WARN() << "[inproc.triton] ServerInferAsync failed: " << msg;
+        TRITONSERVER_ErrorDelete(err_inf);
+        return false;
     }
 
     TRITONSERVER_InferenceResponse* resp = fut.get();
-    if (!resp) { VA_LOG_WARN() << "[inproc.triton] null response"; return false; }
+    if (!resp) {
+        VA_LOG_WARN() << "[inproc.triton] null response";
+        return false;
+    }
+
+    // Check response error explicitly to avoid undefined behavior and hard crashes
+    if (auto* rerr = TRITONSERVER_InferenceResponseError(resp); rerr != nullptr) {
+        const char* emsg = TRITONSERVER_ErrorMessage(rerr);
+        VA_LOG_WARN() << "[inproc.triton] response error: " << (emsg ? emsg : "<unknown>");
+        TRITONSERVER_ErrorDelete(rerr);
+        TRITONSERVER_InferenceResponseDelete(resp);
+        if (allocator) TRITONSERVER_ResponseAllocatorDelete(allocator);
+        return false;
+    }
 
     // Parse outputs；优先返回 GPU 视图（若由分配器给出 GPU 指针），否则复制到 host_out_bufs_
-    uint32_t outc = 0; TRITONSERVER_InferenceResponseOutputCount(resp, &outc);
+    uint32_t outc = 0; 
+    if (auto* e = TRITONSERVER_InferenceResponseOutputCount(resp, &outc); e != nullptr) {
+        VA_LOG_WARN() << "[inproc.triton] OutputCount failed: " << TRITONSERVER_ErrorMessage(e);
+        TRITONSERVER_ErrorDelete(e);
+        TRITONSERVER_InferenceResponseDelete(resp);
+        if (allocator) TRITONSERVER_ResponseAllocatorDelete(allocator);
+        return false;
+    }
     host_out_bufs_.clear(); host_out_shapes_.clear(); outputs.clear();
     for (uint32_t i=0;i<outc;i++) {
         const char* oname = nullptr; TRITONSERVER_DataType odt; const int64_t* odims=nullptr; uint64_t odimc=0;
         const void* base = nullptr; size_t bsize = 0; TRITONSERVER_MemoryType mtype; int64_t mid=0; void* userp=nullptr;
-        TRITONSERVER_InferenceResponseOutput(resp, i, &oname, &odt, &odims, &odimc, &base, &bsize, &mtype, &mid, &userp);
+        if (auto* e = TRITONSERVER_InferenceResponseOutput(resp, i, &oname, &odt, &odims, &odimc, &base, &bsize, &mtype, &mid, &userp); e != nullptr) {
+            VA_LOG_WARN() << "[inproc.triton] ResponseOutput[" << i << "] failed: " << TRITONSERVER_ErrorMessage(e);
+            TRITONSERVER_ErrorDelete(e);
+            continue;
+        }
         (void)oname; (void)odt; // 假定为 FP32
         if (!base || bsize == 0) continue;
         std::vector<int64_t> shape(odims, odims + odimc);
@@ -200,9 +290,27 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
             // 设备侧输出（由会话持久化），直接暴露 device TensorView
             va::core::TensorView tv; tv.on_gpu=true; tv.dtype=va::core::DType::F32; tv.data=const_cast<void*>(base); tv.shape=shape; outputs.push_back(tv);
         } else {
-            host_out_bufs_.emplace_back(reinterpret_cast<const uint8_t*>(base), reinterpret_cast<const uint8_t*>(base) + bsize);
-            host_out_shapes_.push_back(shape);
-            va::core::TensorView tv; tv.on_gpu=false; tv.dtype=va::core::DType::F32; tv.data=host_out_bufs_.back().data(); tv.shape=host_out_shapes_.back(); outputs.push_back(tv);
+            if (mtype == TRITONSERVER_MEMORY_GPU) {
+                // Stage device buffer to host when allocator returned GPU but session expects CPU view
+#if defined(USE_CUDA)
+                std::vector<uint8_t> cpu; cpu.resize(bsize);
+                auto cerr = cudaMemcpy(cpu.data(), base, bsize, cudaMemcpyDeviceToHost);
+                if (cerr != cudaSuccess) {
+                    VA_LOG_WARN() << "[inproc.triton] cudaMemcpy output D2H failed: " << cudaGetErrorString(cerr);
+                    continue;
+                }
+                host_out_bufs_.emplace_back(std::move(cpu));
+                host_out_shapes_.push_back(shape);
+                va::core::TensorView tv; tv.on_gpu=false; tv.dtype=va::core::DType::F32; tv.data=host_out_bufs_.back().data(); tv.shape=host_out_shapes_.back(); outputs.push_back(tv);
+#else
+                VA_LOG_WARN() << "[inproc.triton] output on GPU but CUDA not enabled; skipping";
+                continue;
+#endif
+            } else {
+                host_out_bufs_.emplace_back(reinterpret_cast<const uint8_t*>(base), reinterpret_cast<const uint8_t*>(base) + bsize);
+                host_out_shapes_.push_back(shape);
+                va::core::TensorView tv; tv.on_gpu=false; tv.dtype=va::core::DType::F32; tv.data=host_out_bufs_.back().data(); tv.shape=host_out_shapes_.back(); outputs.push_back(tv);
+            }
         }
     }
     TRITONSERVER_InferenceResponseDelete(resp);
