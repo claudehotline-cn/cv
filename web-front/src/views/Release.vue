@@ -57,11 +57,10 @@ async function doRelease(){
   loading.value = true
   try {
     if (form.value.use_triton) {
-      await setEngineControl({ triton_model: form.value.triton_model, triton_model_version: form.value.triton_version || '' })
-      await cp.hotswap(form.value.pipeline_name, form.value.node, '__triton__')
+      await cp.release({ pipeline_name: form.value.pipeline_name, node: form.value.node, triton_model: form.value.triton_model, triton_model_version: form.value.triton_version || '' })
     } else {
       if (!form.value.model_uri) { ElMessage.warning('请填写模型 URI'); return }
-      await cp.hotswap(form.value.pipeline_name, form.value.node, form.value.model_uri)
+      await cp.release({ pipeline_name: form.value.pipeline_name, node: form.value.node, model_uri: form.value.model_uri })
     }
     ElMessage.success('发布成功')
   } catch (e:any) {
@@ -82,4 +81,3 @@ function reset(){
 .subtitle{ font-size:12px; color: var(--va-text-2); margin-left:6px; }
 .form{ max-width: 720px }
 </style>
-

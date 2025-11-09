@@ -451,6 +451,35 @@ int main(int argc, char** argv) {
       std::string err; if (!va_repo_poll(cfg.va_addr, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/poll", r.status); return r; }
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/poll", r.status); return r;
     }
+    if (path == "/api/control/release" && method == "POST") {
+      std::string pipeline_name, node, triton_model, triton_version, model_uri;
+      if (!body.empty()) {
+        try {
+          nlohmann::json j = nlohmann::json::parse(body);
+          if (j.contains("pipeline_name")&&j["pipeline_name"].is_string()) pipeline_name=j["pipeline_name"].get<std::string>();
+          if (j.contains("node")&&j["node"].is_string()) node=j["node"].get<std::string>();
+          if (j.contains("triton_model")&&j["triton_model"].is_string()) triton_model=j["triton_model"].get<std::string>();
+          if (j.contains("triton_model_version")&&j["triton_model_version"].is_string()) triton_version=j["triton_model_version"].get<std::string>();
+          if (j.contains("model_uri")&&j["model_uri"].is_string()) model_uri=j["model_uri"].get<std::string>();
+        } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/control/release", r.status); return r; }
+      }
+      if (pipeline_name.empty() || node.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/control/release", r.status); return r; }
+      try {
+        auto stub = controlplane::make_va_stub(cfg.va_addr);
+        if (!triton_model.empty()) {
+          va::v1::SetEngineRequest sreq; va::v1::SetEngineReply srep; grpc::ClientContext sctx;
+          (*sreq.mutable_options())["triton_model"] = triton_model;
+          if (!triton_version.empty()) (*sreq.mutable_options())["triton_model_version"] = triton_version;
+          auto st = stub->SetEngine(&sctx, sreq, &srep);
+          if (!st.ok() || !srep.ok()) { auto mm=cp_map_err(st.error_message()); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(st.ok()? srep.msg(): st.error_message())+"\"}"; emit("/api/control/release", r.status); return r; }
+          std::string errh; if (!va_hotswap_model(cfg.va_addr, pipeline_name, node, "__triton__", &errh)) { auto mm=cp_map_err(errh); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+errh+"\"}"; emit("/api/control/release", r.status); return r; }
+        } else {
+          if (model_uri.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model_uri required\"}"; emit("/api/control/release", r.status); return r; }
+          std::string errh; if (!va_hotswap_model(cfg.va_addr, pipeline_name, node, model_uri, &errh)) { auto mm=cp_map_err(errh); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+errh+"\"}"; emit("/api/control/release", r.status); return r; }
+        }
+        r.status=202; r.body="{\"code\":\"ACCEPTED\"}"; emit("/api/control/release", r.status); return r;
+      } catch (const std::exception& ex) { r.status=500; r.body=std::string("{\"code\":\"INTERNAL\",\"msg\":\"" )+ex.what()+"\"}"; emit("/api/control/release", r.status); return r; }
+    }
     if (path.rfind("/api/subscriptions", 0) == 0) {
       auto pos = std::string::npos;
       if (method == "POST" && path.rfind("/api/subscriptions",0)==0) {

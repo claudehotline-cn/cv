@@ -160,4 +160,10 @@ export const cp = {
   async repoLoad(model: string) { return http.post('/api/repo/load', { model }) },
   async repoUnload(model: string) { return http.post('/api/repo/unload', { model }) },
   async repoPoll() { return http.post('/api/repo/poll', {}) }
+  ,
+  // Unified release endpoint
+  async release(payload: { pipeline_name:string; node:string; triton_model?:string; triton_model_version?:string; model_uri?:string }) {
+    try { return await http.post('/api/control/release', payload) }
+    catch (e:any) { throw e }
+  }
 }
