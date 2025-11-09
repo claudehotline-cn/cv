@@ -24,6 +24,7 @@
 
     <el-menu-item index="/sources"><el-icon><Connection/></el-icon><span>Sources</span></el-menu-item>
     <el-menu-item index="/models"><el-icon><Box/></el-icon><span>Models</span></el-menu-item>
+    <el-menu-item index="/release"><el-icon><DataLine/></el-icon><span>Release</span></el-menu-item>
 
     <el-sub-menu index="/observability">
       <template #title><el-icon><Monitor/></el-icon><span>Observability</span></template>
