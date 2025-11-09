@@ -1,6 +1,10 @@
 #include "controlplane/cache.hpp"
+#include <atomic>
 
 namespace controlplane::cache {
+
+static std::atomic<unsigned long long> g_hits{0};
+static std::atomic<unsigned long long> g_misses{0};
 
 static long long now_ms_impl() {
   using namespace std::chrono;
@@ -34,7 +38,3 @@ SimpleCache::Stats SimpleCache::stats() {
 }
 
 } // namespace controlplane::cache
-
-
-static std::atomic<unsigned long long> g_hits{0};
-static std::atomic<unsigned long long> g_misses{0};
