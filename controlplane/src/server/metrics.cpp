@@ -99,6 +99,27 @@ std::string render_prometheus() {
   return os.str();
 }
 
+std::string render_json_summary() {
+  // Produce a tiny JSON object without bringing a JSON library here
+  unsigned long long req_total = 0;
+  unsigned long long routes = 0;
+  unsigned long long be_errs = 0;
+  {
+    std::lock_guard<std::mutex> lk(g_mu);
+    for (const auto& kv : g_counts) req_total += kv.second;
+    routes = g_counts.size();
+    for (const auto& kv2 : g_backend_errs) be_errs += kv2.second;
+  }
+  std::ostringstream os;
+  os << "{\"requests_total\":" << req_total
+     << ",\"routes\":" << routes
+     << ",\"backend_errors_total\":" << be_errs
+     << ",\"sse_connections\":" << g_sse_conns.load()
+     << ",\"sse_reconnects\":" << g_sse_reconnects.load()
+     << "}";
+  return os.str();
+}
+
 void sse_on_open() {
   g_sse_conns.fetch_add(1, std::memory_order_relaxed);
   g_sse_reconnects.fetch_add(1, std::memory_order_relaxed);

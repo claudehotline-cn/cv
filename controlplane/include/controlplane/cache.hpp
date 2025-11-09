@@ -15,6 +15,8 @@ class SimpleCache {
   // Get cached json if not expired (ttl_ms). Returns true when hit.
   bool get(const std::string& key, long long ttl_ms, std::string* out);
   void put(const std::string& key, const std::string& val);
+  struct Stats { unsigned long long hits{0}, misses{0}; };
+  static Stats stats();
  private:
   static long long now_ms();
   std::mutex mu_;

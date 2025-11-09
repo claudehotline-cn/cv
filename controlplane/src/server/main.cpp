@@ -341,6 +341,38 @@ int main(int argc, char** argv) {
       nlohmann::json out; out["code"] = "OK"; out["data"] = data;
       r.status = 200; r.body = out.dump(); emit("/api/subscriptions/{id}", r.status); return r;
     }
+    if (path == "/api/_metrics/summary" && method == "GET") {
+      nlohmann::json out; out["code"] = "OK";
+      out["data"] = nlohmann::json::object();
+      try {
+        auto s = controlplane::metrics::render_json_summary();
+        out["data"]["cp"] = nlohmann::json::parse(s);
+      } catch (...) { out["data"]["cp"] = { {"error","metrics_summary_failed"} }; }
+      try {
+        auto st = controlplane::cache::SimpleCache::stats();
+        out["data"]["cache"] = { {"hits", st.hits}, {"misses", st.misses} };
+      } catch (...) { out["data"]["cache"] = { {"error","cache_stats_failed"} }; }
+      r.status = 200; r.body = out.dump(); emit("/api/_metrics/summary", r.status); return r;
+    }
+    if (path == "/api/va/runtime" && method == "GET") {
+      nlohmann::json out; out["code"] = "OK";
+      try {
+        auto stub = controlplane::make_va_stub(cfg.va_addr);
+        grpc::ClientContext ctx; ctx.set_deadline(std::chrono::system_clock::now()+std::chrono::milliseconds(1500));
+        va::v1::QueryRuntimeRequest req; va::v1::QueryRuntimeReply rep;
+        auto s = stub->QueryRuntime(&ctx, req, &rep);
+        if (s.ok()) {
+          out["data"] = { {"provider", rep.provider()}, {"gpu_active", rep.gpu_active()}, {"io_binding", rep.io_binding()}, {"device_binding", rep.device_binding()} };
+          r.status = 200; r.body = out.dump(); emit("/api/va/runtime", r.status); return r;
+        } else {
+          out["code"] = "BACKEND_ERROR"; out["msg"] = s.error_message(); r.status = 502; r.body = out.dump(); emit("/api/va/runtime", r.status); return r;
+        }
+      } catch (const std::exception& ex) {
+        out["code"]="EXCEPTION"; out["msg"]=ex.what(); r.status=500; r.body=out.dump(); emit("/api/va/runtime", r.status); return r;
+      } catch (...) {
+        out["code"]="EXCEPTION"; out["msg"]="unknown"; r.status=500; r.body=out.dump(); emit("/api/va/runtime", r.status); return r;
+      }
+    }
     if (path == "/api/ui/schema/engine" && method == "GET") {
       nlohmann::json j;
       j["title"] = "EngineOptionsSchema";

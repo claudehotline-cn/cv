@@ -19,6 +19,8 @@ void inc_request(const std::string& route, const std::string& method, int code);
 void inc_request_with_ms(const std::string& route, const std::string& method, int code, double duration_ms);
 
 std::string render_prometheus();
+// Minimal JSON summary for UI/debug
+std::string render_json_summary();
 
 // SSE metrics helpers
 void sse_on_open();
