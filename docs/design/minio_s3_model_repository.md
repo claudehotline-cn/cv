@@ -29,9 +29,10 @@ flowchart LR
 
 将以下变量注入 VideoAnalyzer 容器环境（MinIO 无 TLS 的开发环境示例）：
 
-- `AWS_ACCESS_KEY_ID=<minio_ak>`
-- `AWS_SECRET_ACCESS_KEY=<minio_sk>`
-- `AWS_DEFAULT_REGION=us-east-1`（任意非空）
+- `AWS_ACCESS_KEY_ID=<minio_ak>` / `S3_ACCESS_KEY_ID=<minio_ak>`
+- `AWS_SECRET_ACCESS_KEY=<minio_sk>` / `S3_SECRET_ACCESS_KEY=<minio_sk>`
+- `AWS_REGION=us-east-1` / `S3_REGION=us-east-1`（任意非空）
+- `AWS_EC2_METADATA_DISABLED=true`（避免凭据元数据探测）
 - `S3_ENDPOINT=http://minio:9000`
 - `S3_USE_HTTPS=0`
 - `S3_VERIFY_SSL=0`
@@ -146,4 +147,3 @@ cv-models/
 - 代码：无需修改业务逻辑；仅依赖环境变量与引擎配置。
 - 部署：为 Compose 增加 MinIO 与初始化服务；VideoAnalyzer 注入 S3 环境变量。
 - 运行：Triton 以 S3 为模型仓库来源，加载/切换由控制平面驱动。
-
