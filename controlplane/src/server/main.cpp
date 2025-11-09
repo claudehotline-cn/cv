@@ -341,6 +341,39 @@ int main(int argc, char** argv) {
       nlohmann::json out; out["code"] = "OK"; out["data"] = data;
       r.status = 200; r.body = out.dump(); emit("/api/subscriptions/{id}", r.status); return r;
     }
+    if (path == "/api/ui/schema/engine" && method == "GET") {
+      nlohmann::json j;
+      j["title"] = "EngineOptionsSchema";
+      j["version"] = 1;
+      nlohmann::json fields = nlohmann::json::array();
+      auto add = [&](const char* key, const char* type, const char* defv, const char* help, nlohmann::json extra = nlohmann::json::object()){
+        nlohmann::json f; f["key"]=key; f["type"]=type; if(defv&&*defv) f["default"]=defv; if(help&&*help) f["help"]=help; for(auto it=extra.begin(); it!=extra.end(); ++it){ f[it.key()] = it.value(); } fields.push_back(f);
+      };
+      // Core
+      add("provider", "enum", "triton", "推理提供方", { {"enum", nlohmann::json::array({"tensorrt","cuda","cpu","triton"}) } });
+      add("device", "int", "0", "GPU 设备号（若适用）");
+      add("warmup_runs", "string", "auto", "预热次数（auto/-1=1 次；0=禁用；或整数）");
+      // Triton connectivity
+      add("triton_inproc", "bool", "true", "启用 In-Process Triton 嵌入");
+      add("triton_repo", "string", "s3://http://minio:9000/cv-models/models", "模型仓库 URL（支持 MinIO）");
+      add("triton_model", "string", "ens_det_trt_full", "模型名称（可为 Ensemble）");
+      add("triton_model_version", "string", "", "模型版本（空=latest）");
+      add("triton_enable_grpc", "bool", "false", "暴露 gRPC 端口（便于 perf_analyzer）");
+      add("triton_enable_http", "bool", "false", "暴露 HTTP 端口（便于 perf_analyzer）");
+      // Triton ServerOptions
+      add("triton_backend_dir", "string", "", "后端目录（留空走默认/环境）");
+      add("triton_pinned_mem_mb", "int", "256", "Pinned 内存池大小（MB）");
+      add("triton_cuda_pool_device_id", "int", "0", "CUDA 内存池设备号");
+      add("triton_cuda_pool_bytes", "string", "268435456", "CUDA 内存池字节数（字符串避免溢出）");
+      add("triton_backend_configs", "string", "tensorrt:coalesce_request_input=1", "后端参数，分号分隔，如 backend:key=value");
+      // IO
+      add("triton_gpu_input", "bool", "true", "输入走 GPU 直通（In-Process）");
+      add("triton_gpu_output", "bool", "true", "输出走 GPU 直通（In-Process）");
+      // Output schema
+      j["fields"] = fields;
+      nlohmann::json out; out["code"]="OK"; out["data"]=j;
+      r.status = 200; r.body = out.dump(); emit("/api/ui/schema/engine", r.status); return r;
+    }
     if (path.rfind("/api/subscriptions", 0) == 0) {
       auto pos = std::string::npos;
       if (method == "POST" && path.rfind("/api/subscriptions",0)==0) {
