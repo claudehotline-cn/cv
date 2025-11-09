@@ -70,6 +70,8 @@ services:
       - S3_USE_HTTPS=0
       - S3_VERIFY_SSL=0
       - S3_ADDRESSING_STYLE=path
+      - S3_FORCE_PATH_STYLE=1
+      - AWS_S3_FORCE_PATH_STYLE=true
       # Speed up native TensorRT engine build (tensorrt-native)
       - VA_TRT_TACTIC_SOURCES=cublaslt,cublas,cudnn
       - VA_TRT_BUILDER_OPT=1

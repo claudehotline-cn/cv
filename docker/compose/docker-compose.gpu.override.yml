@@ -46,6 +46,8 @@ services:
       - S3_USE_HTTPS=0
       - S3_VERIFY_SSL=0
       - S3_ADDRESSING_STYLE=path
+      - S3_FORCE_PATH_STYLE=1
+      - AWS_S3_FORCE_PATH_STYLE=true
       # ORT 日志等级：2=WARNING，仅警告及以上
       - ORT_LOG_SEVERITY_LEVEL=2
       # Speed up native TensorRT engine build (tensorrt-native)

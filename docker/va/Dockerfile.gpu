@@ -285,7 +285,7 @@ RUN set -eux; \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:/opt/tritonserver/lib:${LD_LIBRARY_PATH}
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
 COPY --from=build /app/build/bin/trt_cache_builder /app/bin/trt_cache_builder
 COPY --from=build /app/build/bin/trt_engine_exporter /app/bin/trt_engine_exporter
@@ -300,6 +300,6 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV VA_PROM_ENDPOINT=0.0.0.0:9090
 ENV TRITON_HTTP_PORT=8000 TRITON_GRPC_PORT=8001 TRITON_METRICS_PORT=8002 TRITON_MODEL_REPO=/models
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:/opt/tritonserver/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
 EXPOSE 8082 9090 50051 8000 8001 8002
 ENTRYPOINT ["/app/entrypoint.sh"]
