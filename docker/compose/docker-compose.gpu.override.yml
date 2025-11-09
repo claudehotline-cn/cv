@@ -31,6 +31,14 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       # In-Process 模式：不启动外部 tritonserver 子进程
       - VA_TRITON_EXTERNAL=0
+      # S3 (MinIO) for Triton model repository
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin123
+      - AWS_DEFAULT_REGION=us-east-1
+      - S3_ENDPOINT=http://minio:9000
+      - S3_USE_HTTPS=0
+      - S3_VERIFY_SSL=0
+      - S3_ADDRESSING_STYLE=path
       # ORT 日志等级：2=WARNING，仅警告及以上
       - ORT_LOG_SEVERITY_LEVEL=2
       # Speed up native TensorRT engine build (tensorrt-native)
@@ -43,10 +51,7 @@ services:
       - ../../.ort_trt_cache:/app/.ort_trt_cache
       # 持久化原生 TensorRT (tensorrt-native) timing/engine 缓存
       - ../../.trt_native_cache:/app/.trt_native_cache
-      # Triton 模型仓库（同容器内 /models）。允许写入以支持子路径文件绑定与引擎缓存
-      - ../../docker/model:/models
-      # 显式将 ONNX 文件映射为该版本的默认模型文件，绕过旧 plan 文件
-      - ../../docker/model/yolov12x.onnx:/models/yolov12x/1/model.onnx:ro
+      # 使用 S3 仓库后，本地 /models 映射可选（保留为空以避免混淆）
     ports:
       - "8001:8001"   # Triton gRPC
       - "8000:8000"   # Triton HTTP

@@ -43,7 +43,7 @@ engine:
     # In‑Process GPU I/O（避免拷贝）：
     triton_gpu_input: true
     triton_gpu_output: true
-    triton_repo: /models
+    triton_repo: s3://cv-models/models
     triton_enable_http: false
     triton_enable_grpc: false
     # Triton 连接参数（与 compose 中 triton 服务对应
