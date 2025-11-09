@@ -32,6 +32,28 @@ if (NOT Protobuf_FOUND)
   find_package(Protobuf REQUIRED) # fallback to CMake module mode
 endif()
 
+# Minimal client: set engine provider/device/options
+add_executable(va_set_engine
+  src/cli/va_set_engine.cpp
+  src/server/grpc_clients.cpp
+  src/server/metrics.cpp
+  src/server/circuit_breaker.cpp)
+target_include_directories(va_set_engine PRIVATE "${GEN_DIR}" include)
+if (TARGET gRPC::grpc++)
+  target_link_libraries(va_set_engine PRIVATE cp_proto_objs gRPC::grpc++ protobuf::libprotobuf)
+else()
+  if (DEFINED GRPC_INCLUDE_DIRS)
+    target_include_directories(va_set_engine PRIVATE ${GRPC_INCLUDE_DIRS})
+  endif()
+  if (TARGET protobuf::libprotobuf)
+    target_link_libraries(va_set_engine PRIVATE cp_proto_objs ${GRPC_LIBRARIES} protobuf::libprotobuf)
+  else()
+    target_link_libraries(va_set_engine PRIVATE cp_proto_objs ${GRPC_LIBRARIES} ${Protobuf_LIBRARIES})
+    if (DEFINED Protobuf_INCLUDE_DIRS)
+      target_include_directories(va_set_engine PRIVATE ${Protobuf_INCLUDE_DIRS})
+    endif()
+  endif()
+endif()
 # Try gRPC via CMake config, then fall back to pkg-config
 find_package(gRPC CONFIG QUIET)
 if (NOT gRPC_FOUND)
