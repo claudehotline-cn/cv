@@ -1,44 +1,56 @@
-# 项目上下文（2025‑11‑08｜VA ↔ Triton｜元数据自适配 + CUDA SHM + 指标）
+# CONTEXT（In-Process Triton + MinIO 迁移与修复纪要）
 
-本文梳理本轮对齐与落地：Triton gRPC 客户端集成、ModelMetadata 自适配、输入/输出 CUDA 共享内存、失败原因指标、构建链与文档。用于后续 ROADMAP 与测试复用。
+## 背景
+- 组件：`video-analyzer` 以内嵌（In-Process）方式集成 Triton（`libtritonserver`），并计划将模型仓库迁移到 MinIO（S3 兼容）。
+- 相关代码与配置：
+  - 源码：`video-analyzer/src/analyzer/triton_inproc_session.cpp|.hpp`、`triton_inproc_server_host.cpp|.hpp`
+  - Compose：`docker/compose/docker-compose.yml`、`docker/compose/docker-compose.gpu.override.yml`
+  - 运行配置：`docker/config/va/app.yaml`
+  - 设计文档：`docs/design/minio_s3_model_repository.md`
 
-## 架构与数据流
-- VA：RTSP → NVDEC/CUDA 预处理 → 推理（优先序：tensorrt-native → triton → ORT-TRT → ORT-CUDA）→ NMS/后处理 → 叠加 → 编码/推流（WHEP）。
-- Triton：HTTP:8000 / gRPC:8001 / Metrics:8002，模型仓库 `/models`（compose 挂载 `docker/model`）。
+## 主要问题与修复
+1) 编译失败
+- 现象：`TRITONSERVER_InferenceRequestSetBatchSize` 未声明。
+- 根因：所用 Triton 头文件无该 API（或已废弃）。
+- 修复：删除该调用，批次由输入张量形状推断；保留“assume_no_batch 时去掉前导 1 维”。
 
-## 关键实现
-- Provider 映射与回退链：NodeModel 支持 `force_provider`/`providers` 覆盖；自动按序回退，保障可用性。
-- 元数据自适配：若可用 `grpc_service.pb.h`，加载时拉取 ModelMetadata，自动填充 input/output 名称；批次维异常时自动改用/移除 batch=1 重试一次。
-- CUDA SHM：
-  - 输入：稳定设备缓冲（cudaMalloc）→ cudaIpcGetMemHandle → RegisterCudaSharedMemory（容量变化重注）→ 每帧 D2D → Infer 前 SetSharedMemory 绑定；多次失败仅禁用“输入侧”SHM。
-  - 输出：每个输出稳定设备缓冲 + 独立 SHM 名；Infer 后若容量满足，直接返回 device TensorView（on_gpu=true），否则回退 Host RawData。多次失败仅禁用“输出侧”。
-  - 设备号映射：支持 `shm_server_device_id`，用于 Triton 容器与本进程 CUDA 设备序号不一致时的注册设备号对齐。
-- 可观测性：
-  - 指标：`va_triton_rpc_seconds`、`va_triton_rpc_failed_total{reason=…}`（create/invalid_input/mk_input/mk_output/infer/no_output/shm_ipc/shm_register/shm_bind…）。
-  - 日志：analyzer.triton“run in_shape…”/SHM 注册失败日志节流（默认 1000ms），支持 `VA_LOG_THROTTLE_MS/VA_LOG_THROTTLED_LEVEL`。
+2) In-Process 推理段错误
+- 现象：调用 `ServerInferAsync` 后崩溃。
+- 根因：异步入队后仍手动 `InferenceRequestDelete` 触发双重释放；释放回调签名不匹配（需三参）。
+- 修复：
+  - 使用 `TRITONSERVER_InferenceRequestSetReleaseCallback(req, fn(TRITONSERVER_InferenceRequest*, unsigned int, void*), userp)`；
+  - 入队成功后不再手动删除 request，仅在早期失败分支清理；
+  - 保留输出分配器（GPU 优先，CPU 回退）。
 
-## 构建/部署
-- 修复 grpc 与 OpenSSL 链接：避免静态 libgrpc*.a，优先 `libgrpcclient.so`；增加 ldd 检查。
-- `docker/va/Dockerfile.ort` 重写为单一多阶段，ORT 1.23.2 + CUDA 13，必要时启用 TRT EP；导出 `/opt/onnxruntime`（含 `.build.tag`）。
+3) 每帧后出现 30s 关停等待日志
+- 现象：打印“Waiting for in-flight requests… Timeout 30…”。
+- 根因：`TritonInprocServerHost` 仅被临时 `shared_ptr` 持有，`run()` 返回即析构，触发 `TRITONSERVER_ServerDelete`。
+- 修复：会话内持有 `shared_ptr<TritonInprocServerHost>` 成员，保证会话生命周期内 Server 常驻；移除会话析构时卸载模型的逻辑（避免误卸载）。
 
-## 运行配置
-- app.yaml 常用项：
-  - `triton_url`, `triton_model(_version)`, `triton_input`, `triton_outputs`；
-  - `triton_no_batch`(默认 false，对应 assume_no_batch)；
-  - `triton_shm_cuda`(启用 SHM)，`triton_cuda_shm_bytes`(默认 8MB)，`triton_shm_server_device_id`；
-  - `force_provider/providers` 节点级覆盖。
-- 健康检查：`curl http://triton:8000/v2/health/ready`（容器内）或 `host.docker.internal:8000`（宿主）。
+## MinIO（S3）模型仓库集成
+- Compose 新增服务：`minio`（9000/9001）与 `minio-mc`（初始化桶 `cv-models`，带健康检查与等待）。
+- VA 注入环境变量（同时支持多种解析路径）：
+  - `AWS_ACCESS_KEY_ID/SECRET`, `AWS_REGION/AWS_DEFAULT_REGION`, `AWS_EC2_METADATA_DISABLED=true`
+  - `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3`, `AWS_S3_ENDPOINT`, `AWS_S3_FORCE_PATH_STYLE=true`
+  - `S3_ACCESS_KEY_ID/SECRET`, `S3_REGION`, `S3_ENDPOINT`, `S3_USE_HTTPS=0`, `S3_VERIFY_SSL=0`, `S3_ADDRESSING_STYLE=path`, `S3_FORCE_PATH_STYLE=1`
+- VA 配置 `triton_repo`：为兼容 In-Process 构建对端点解析差异，采用内嵌端点 URL：
+  - `s3://http://minio:9000/cv-models/models`
+- 代码中增加最小调试日志打印 repo/endpoint/region，定位便捷。
 
-## 问题复盘
-- 构建：`cudaIpcMemHandle_t` 重复定义 → 先包含 `cuda_runtime.h`；静态 GRPC 触发 OpenSSL DSO → 改为共享库并补 `libssl/libcrypto` 链接。
-- 运行：
-  1) 早期 VA 未命中 Triton；
-  2) `batch-size must be <= 1` → 批次维自适配后恢复；
-  3) `RegisterCudaSharedMemory invalid args` → 增加 Unregister-then-Register、唯一 SHM 名、server device id、输入/输出分侧禁用；
-  4) 输出仍为 (cpu) → 因输入侧禁用被联动；现已解耦，输出可独立启用。
+## 容器内连通性与凭据验证
+- 健康检查：`GET http://minio:9000/minio/health/ready` 返回 200。
+- S3 签名（容器内 AK/SK）：
+  - `PUT /cv-models` → 200（桶创建成功）；
+  - `GET /cv-models?list-type=2&prefix=models/` → 200（KeyCount=0）。
+- 结论：网络/凭据/签名链路正常；此前报错主要因“桶不存在/端点解析差异”。
 
-## 待办（下一阶段）
-1) 深化自适配：解析 ModelConfig，严格校验 dtype/shape/max_batch_size；更精准批次维处理。
-2) 输出 SHM 绑定按需字节数（必要时 offset 复用）。
-3) 性能验证：Host vs SHM P50/P95 对比脚本与文档；确认 NMS GPU 路径直连 device Tensor。
-4) 文档完善：Triton 部署、模型准备、常见错误与排查流程、示例与基线指标。
+## 当前状态
+- In-Process 推理稳定；不会因会话生命周期导致 Server 频繁销毁。
+- MinIO 作为 S3 模型仓库已打通；可按 `models/<name>/<ver>/model.onnx` 上传并通过 `triton_model(_version)` 指定。
+- 所有变更已提交并推送至远程分支 `IOBinding`。
+
+## 后续建议
+- 如需更精细诊断，可临时加 `AWS_LOG_LEVEL=debug` 观察 AWS SDK 端点与区域解析。
+- 控制平面可提供“Load/Unload/切换版本”接口，`model_control=explicit` 下实现无停机切换；或开启仓库轮询。
+- 生产建议开启 MinIO TLS（`S3_USE_HTTPS=1`, `S3_VERIFY_SSL=1`，挂载 CA）。
+
