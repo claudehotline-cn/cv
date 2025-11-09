@@ -1,0 +1,34 @@
+name: "ens_det_onnx_full"
+platform: "ensemble"
+max_batch_size: 8
+
+input [
+  { name: "rgb8" data_type: TYPE_UINT8 dims: [ 3, 640, 640 ] }
+]
+output [
+  { name: "dets" data_type: TYPE_FP32 dims: [ -1, 7 ] }
+]
+
+ensemble_scheduling {
+  step [
+    {
+      model_name: "preproc_letterbox"
+      model_version: -1
+      input_map { key: "rgb8" value: "rgb8" }
+      output_map { key: "images" value: "images" }
+    },
+    {
+      model_name: "det_onnx_trt_ep"
+      model_version: -1
+      input_map { key: "images" value: "images" }
+      output_map { key: "output0" value: "raw" }
+    },
+    {
+      model_name: "yolo_nms"
+      model_version: -1
+      input_map { key: "raw" value: "raw" }
+      output_map { key: "dets" value: "dets" }
+    }
+  ]
+}
+
