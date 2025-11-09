@@ -28,6 +28,15 @@
       <el-table-column label="参数量" width="120">
         <template #default="{ row }">{{ row.params || '-' }}</template>
       </el-table-column>
+      <el-table-column label="操作" width="260" fixed="right">
+        <template #default="{ row }">
+          <el-space>
+            <el-button size="small" @click="repoLoad(row.id)">Load</el-button>
+            <el-button size="small" @click="repoUnload(row.id)">Unload</el-button>
+            <el-button size="small" text @click="repoPoll">Poll</el-button>
+          </el-space>
+        </template>
+      </el-table-column>
     </el-table>
 
     <div class="footer">
@@ -41,7 +50,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { listModels } from '@/api/cp'
+import { listModels, cp } from '@/api/cp'
 
 type ModelItem = { id:string; task?:string; family?:string; variant?:string; path?:string; input_shape?:string; params?:string }
 
@@ -72,6 +81,10 @@ const filtered = computed(() => {
 const tasks = computed(() => Array.from(new Set(filtered.value.map(r => r.task).filter(Boolean))) as string[])
 
 onMounted(load)
+
+async function repoLoad(id: string){ try { await cp.repoLoad(id); ElMessage.success('Load 已提交') } catch(e:any){ ElMessage.error(e?.message||'Load 失败') } }
+async function repoUnload(id: string){ try { await cp.repoUnload(id); ElMessage.success('Unload 已提交') } catch(e:any){ ElMessage.error(e?.message||'Unload 失败') } }
+async function repoPoll(){ try { await cp.repoPoll(); ElMessage.success('Poll 已提交') } catch(e:any){ ElMessage.error(e?.message||'Poll 失败') } }
 </script>
 
 <style scoped>

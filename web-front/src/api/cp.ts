@@ -151,5 +151,13 @@ export const cp = {
     return fetch(`${CP_BASE.replace(/\/+$/,'')}/sources:attach`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     }).then(r => { if(!r.ok) throw new Error('attachSource failed'); return r.json() })
-  }
+  },
+  // Release/hotswap
+  async hotswap(pipeline_name: string, node: string, model_uri: string) {
+    return http.post('/api/control/hotswap', { pipeline_name, node, model_uri })
+  },
+  // Repo operations
+  async repoLoad(model: string) { return http.post('/api/repo/load', { model }) },
+  async repoUnload(model: string) { return http.post('/api/repo/unload', { model }) },
+  async repoPoll() { return http.post('/api/repo/poll', {}) }
 }

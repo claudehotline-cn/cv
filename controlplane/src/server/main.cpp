@@ -435,6 +435,22 @@ int main(int argc, char** argv) {
         r.status=200; r.body = out.dump(); emit("/api/control/set_engine", r.status); return r;
       } catch (const std::exception& ex) { r.status=500; r.body=std::string("{\"code\":\"INTERNAL\",\"msg\":\"")+ex.what()+"\"}"; emit("/api/control/set_engine", r.status); return r; }
     }
+    if (path == "/api/repo/load" && method == "POST") {
+      std::string model; if (!body.empty()) { try { auto j=nlohmann::json::parse(body); if (j.contains("model")&&j["model"].is_string()) model=j["model"].get<std::string>(); } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/load", r.status); return r; } }
+      if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/repo/load", r.status); return r; }
+      std::string err; if (!va_repo_load(cfg.va_addr, model, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/load", r.status); return r; }
+      r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/load", r.status); return r;
+    }
+    if (path == "/api/repo/unload" && method == "POST") {
+      std::string model; if (!body.empty()) { try { auto j=nlohmann::json::parse(body); if (j.contains("model")&&j["model"].is_string()) model=j["model"].get<std::string>(); } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/unload", r.status); return r; } }
+      if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/repo/unload", r.status); return r; }
+      std::string err; if (!va_repo_unload(cfg.va_addr, model, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/unload", r.status); return r; }
+      r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/unload", r.status); return r;
+    }
+    if (path == "/api/repo/poll" && method == "POST") {
+      std::string err; if (!va_repo_poll(cfg.va_addr, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/poll", r.status); return r; }
+      r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/poll", r.status); return r;
+    }
     if (path.rfind("/api/subscriptions", 0) == 0) {
       auto pos = std::string::npos;
       if (method == "POST" && path.rfind("/api/subscriptions",0)==0) {

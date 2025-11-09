@@ -21,6 +21,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/orchestration', component: () => import('@/views/Orchestration.vue'), meta: { title: 'Orchestration' } },
   { path: '/settings', component: () => import('@/views/Settings.vue'), meta: { title: 'Settings' } },
   { path: '/about', component: () => import('@/views/About.vue'), meta: { title: 'About' } },
+  { path: '/release', component: () => import('@/views/Release.vue'), meta: { title: 'Release' } },
   { path: '/:pathMatch(.*)*', component: { template: '<div style="padding:24px"><h2>404 Not Found</h2><p>页面不存在</p></div>' }, meta: { title: '404' } }
 ]
 
