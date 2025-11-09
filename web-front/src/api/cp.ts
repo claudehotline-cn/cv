@@ -159,8 +159,9 @@ export const cp = {
   // Repo operations
   async repoLoad(model: string) { return http.post('/api/repo/load', { model }) },
   async repoUnload(model: string) { return http.post('/api/repo/unload', { model }) },
-  async repoPoll() { return http.post('/api/repo/poll', {}) }
-  ,
+  async repoPoll() { return http.post('/api/repo/poll', {}) },
+  // Repo models list (proxy to VA /api/models)
+  async repoList() { return http.get<any>('/api/repo/list') },
   // Unified release endpoint
   async release(payload: { pipeline_name:string; node:string; triton_model?:string; triton_model_version?:string; model_uri?:string }) {
     try { return await http.post('/api/control/release', payload) }

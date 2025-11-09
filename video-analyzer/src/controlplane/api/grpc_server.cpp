@@ -12,6 +12,11 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <filesystem>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
+#include <regex>
 
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
 #include <grpcpp/grpcpp.h>
@@ -331,7 +336,8 @@ public:
             va::analyzer::TritonInprocServerHost::Options hopt;
             if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
             hopt.model_control = "explicit"; // require explicit loading
-            auto host = va::analyzer::TritonInprocServerHost::instance(hopt);
+            triton_host_ = va::analyzer::TritonInprocServerHost::instance(hopt);
+            auto host = triton_host_;
             bool ok = (host && host->isReady()) ? host->loadModel(req->model()) : false;
             resp->set_ok(ok); resp->set_msg(ok?"":std::string("load failed: ")+req->model());
             return ::grpc::Status::OK;
@@ -352,7 +358,8 @@ public:
             va::analyzer::TritonInprocServerHost::Options hopt;
             if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
             hopt.model_control = "explicit";
-            auto host = va::analyzer::TritonInprocServerHost::instance(hopt);
+            triton_host_ = va::analyzer::TritonInprocServerHost::instance(hopt);
+            auto host = triton_host_;
             bool ok = (host && host->isReady()) ? host->unloadModel(req->model()) : false;
             resp->set_ok(ok); resp->set_msg(ok?"":std::string("unload failed: ")+req->model());
             return ::grpc::Status::OK;
@@ -372,7 +379,10 @@ public:
             auto eng = app_->currentEngine();
             va::analyzer::TritonInprocServerHost::Options hopt;
             if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
-            auto host = va::analyzer::TritonInprocServerHost::instance(hopt);
+            // Poll requires Triton poll mode; recreate host if needed
+            hopt.model_control = "poll";
+            triton_host_ = va::analyzer::TritonInprocServerHost::instance(hopt);
+            auto host = triton_host_;
             bool ok = (host && host->isReady()) ? host->pollRepository() : false;
             resp->set_ok(ok); resp->set_msg(ok?"":"poll failed");
             return ::grpc::Status::OK;
@@ -382,6 +392,110 @@ public:
         } catch (const std::exception& ex) {
             resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK;
         } catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
+    }
+
+    ::grpc::Status RepoList(::grpc::ServerContext*, const va::v1::RepoListRequest* /*req*/,
+                            va::v1::RepoListReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            // Try local FS listing when repo is a filesystem path
+            bool listed = false;
+            try {
+                if (!hopt.repo.empty() && (hopt.repo.rfind("/", 0) == 0 || hopt.repo.find("://") == std::string::npos)) {
+                    for (const auto& entry : std::filesystem::directory_iterator(hopt.repo)) {
+                        if (entry.is_directory()) {
+                            auto name = entry.path().filename().string();
+                            auto* m = resp->add_models(); m->set_id(name); m->set_path(entry.path().string());
+                        }
+                    }
+                    listed = true;
+                }
+            } catch (...) { /* ignore and fallback */ }
+            // If repo points to S3/minio, attempt ListObjectsV2 via curl with SigV4
+            if (!listed && hopt.repo.rfind("s3://", 0) == 0) {
+                auto repo = hopt.repo.substr(5); // strip 's3://'
+                std::string endpoint, bucket, prefix;
+                // Pattern 1: s3://http://host:port/bucket/prefix
+                if (repo.rfind("http://", 0) == 0 || repo.rfind("https://", 0) == 0) {
+                    auto pos = repo.find('/', repo.find("://") + 3);
+                    if (pos != std::string::npos) {
+                        endpoint = repo.substr(0, pos);
+                        auto rest = repo.substr(pos + 1);
+                        auto p2 = rest.find('/');
+                        if (p2 != std::string::npos) { bucket = rest.substr(0, p2); prefix = rest.substr(p2 + 1); }
+                        else { bucket = rest; prefix = std::string(); }
+                    }
+                } else {
+                    // Pattern 2: s3://bucket/prefix (endpoint from env)
+                    auto p = repo.find('/');
+                    if (p != std::string::npos) { bucket = repo.substr(0, p); prefix = repo.substr(p + 1); }
+                    else { bucket = repo; prefix.clear(); }
+                    const char* ep = std::getenv("AWS_ENDPOINT_URL_S3"); if (!ep) ep = std::getenv("AWS_S3_ENDPOINT"); if (!ep) ep = std::getenv("AWS_ENDPOINT_URL");
+                    if (ep) endpoint = ep;
+                }
+                if (!bucket.empty() && !endpoint.empty()) {
+                    if (!prefix.empty() && prefix.back() != '/') prefix.push_back('/');
+                    // Build URL for ListObjectsV2 with delimiter=/ to list immediate children
+                    auto url_encode = [](const std::string& s)->std::string{
+                        std::ostringstream os; for (unsigned char c : s) {
+                            if ((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_'||c=='.'||c=='~') os<<c; else { os<<'%'<<std::uppercase<<std::hex<<std::setw(2)<<std::setfill('0')<<(int)c<<std::nouppercase<<std::dec; }
+                        } return os.str(); };
+                    std::string region = std::getenv("AWS_REGION")? std::getenv("AWS_REGION"): (std::getenv("S3_REGION")? std::getenv("S3_REGION"): "us-east-1");
+                    const char* ak = std::getenv("AWS_ACCESS_KEY_ID"); if (!ak) ak = std::getenv("S3_ACCESS_KEY_ID");
+                    const char* sk = std::getenv("AWS_SECRET_ACCESS_KEY"); if (!sk) sk = std::getenv("S3_SECRET_ACCESS_KEY");
+                    std::ostringstream cmd;
+                    cmd << "curl -s --fail --connect-timeout 3 --max-time 8 ";
+                    cmd << "--aws-sigv4 \"aws:amz:" << region << ":s3\" ";
+                    if (ak && sk) { cmd << "-u '" << ak << ":" << sk << "' "; }
+                    cmd << "'" << endpoint << "/" << bucket << "?list-type=2&delimiter=%2F&prefix=" << url_encode(prefix) << "'";
+                    std::string out; out.reserve(8192);
+                    FILE* fp = popen(cmd.str().c_str(), "r");
+                    if (fp) {
+                        char buf[4096]; size_t n;
+                        while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) out.append(buf, n);
+                        pclose(fp);
+                    }
+                    if (!out.empty()) {
+                        // Parse XML for CommonPrefixes/Prefix elements
+                        try {
+                            std::regex re("<CommonPrefixes>\\s*<Prefix>([^<]+)</Prefix>\\s*</CommonPrefixes>");
+                            auto begin = std::sregex_iterator(out.begin(), out.end(), re);
+                            auto end = std::sregex_iterator();
+                            for (auto it = begin; it != end; ++it) {
+                                std::string full = (*it)[1].str();
+                                if (full.rfind(prefix, 0) == 0) {
+                                    std::string rest = full.substr(prefix.size());
+                                    if (!rest.empty() && rest.back() == '/') rest.pop_back();
+                                    if (rest.find('/') == std::string::npos && !rest.empty()) {
+                                        auto* m = resp->add_models(); m->set_id(rest); m->set_path(full);
+                                    }
+                                }
+                            }
+                            listed = resp->models_size() > 0;
+                        } catch (...) { /* ignore parse error */ }
+                    }
+                }
+            }
+            if (!listed) {
+                // Fallback: return currently known loaded models
+                triton_host_ = va::analyzer::TritonInprocServerHost::instance(hopt);
+                auto host = triton_host_;
+                if (host) {
+                    auto cur = host->currentLoadedModels();
+                    for (const auto& id : cur) { auto* m = resp->add_models(); m->set_id(id); }
+                }
+            }
+            resp->set_ok(true); resp->set_msg("");
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK; }
+        catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
     }
     // Streaming phases for a subscription or (stream_id, profile) tuple.
     // Minimal implementation: poll Application pipelines and emit phase snapshots.
@@ -472,6 +586,7 @@ public:
 private:
     PipelineController* ctl_ {nullptr};
     va::app::Application* app_ {nullptr};
+    std::shared_ptr<va::analyzer::TritonInprocServerHost> triton_host_;
 };
 
 class WhepControlServiceImpl final : public va::whep::WhepControl::Service {

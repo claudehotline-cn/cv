@@ -24,6 +24,10 @@ service AnalyzerControl {
   rpc RepoLoad(RepoLoadRequest) returns (RepoLoadReply);
   rpc RepoUnload(RepoUnloadRequest) returns (RepoUnloadReply);
   rpc RepoPoll(RepoPollRequest) returns (RepoPollReply);
+  // List models visible in the repository (best-effort). When the repository
+  // is remote (e.g., S3), this may return currently loaded models if full
+  // index is not available.
+  rpc RepoList(RepoListRequest) returns (RepoListReply);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -158,3 +162,14 @@ message RepoUnloadRequest{ string model = 1; }
 message RepoUnloadReply  { bool ok = 1; string msg = 2; }
 message RepoPollRequest  {}
 message RepoPollReply    { bool ok = 1; string msg = 2; }
+
+message RepoListRequest {}
+message RepoListReply {
+  bool ok = 1;
+  string msg = 2;
+  repeated RepoModel models = 3;
+}
+message RepoModel {
+  string id = 1;       // model directory name / identifier
+  string path = 2;     // optional path or uri
+}

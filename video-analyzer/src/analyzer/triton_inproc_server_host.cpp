@@ -19,7 +19,13 @@ std::weak_ptr<TritonInprocServerHost> g_host;
 std::shared_ptr<TritonInprocServerHost>
 TritonInprocServerHost::instance(const Options& opt) {
     auto locked = g_host.lock();
-    if (locked) return locked;
+    if (locked) {
+#if defined(USE_TRITON_INPROCESS)
+        if (locked->compatibleWith(opt)) return locked;
+#else
+        return locked;
+#endif
+    }
     auto h = std::shared_ptr<TritonInprocServerHost>(new TritonInprocServerHost(opt));
     g_host = h; return h;
 }
@@ -30,6 +36,7 @@ TritonInprocServerHost::TritonInprocServerHost(const Options& opt) {
 
 bool TritonInprocServerHost::init(const Options& opt) {
 #if defined(USE_TRITON_INPROCESS)
+    repo_ = opt.repo; model_control_ = opt.model_control;
     // Debug small prints for S3 env (minimal and safe)
     const char* s3_ep = std::getenv("S3_ENDPOINT");
     const char* aws_ep = std::getenv("AWS_ENDPOINT_URL");
@@ -53,6 +60,8 @@ bool TritonInprocServerHost::init(const Options& opt) {
     TRITONSERVER_ServerOptionsSetStrictModelConfig(options, opt.strict_config);
     if (opt.model_control == "explicit") {
         TRITONSERVER_ServerOptionsSetModelControlMode(options, TRITONSERVER_MODEL_CONTROL_EXPLICIT);
+    } else if (opt.model_control == "poll") {
+        TRITONSERVER_ServerOptionsSetModelControlMode(options, TRITONSERVER_MODEL_CONTROL_POLL);
     } else {
         TRITONSERVER_ServerOptionsSetModelControlMode(options, TRITONSERVER_MODEL_CONTROL_NONE);
     }
@@ -147,6 +156,9 @@ bool TritonInprocServerHost::loadModel(const std::string& name) {
         VA_LOG_WARN() << "[inproc.triton] LoadModel('" << name << "') failed: " << TRITONSERVER_ErrorMessage(e);
         TRITONSERVER_ErrorDelete(e); return false;
     }
+    {
+        std::lock_guard<std::mutex> lk(mu_); loaded_.insert(name);
+    }
     return true;
 #else
     (void)name; return false;
@@ -159,6 +171,9 @@ bool TritonInprocServerHost::unloadModel(const std::string& name) {
     if (auto* e = TRITONSERVER_ServerUnloadModel(server_, name.c_str()); e != nullptr) {
         VA_LOG_WARN() << "[inproc.triton] UnloadModel('" << name << "') failed: " << TRITONSERVER_ErrorMessage(e);
         TRITONSERVER_ErrorDelete(e); return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_); loaded_.erase(name);
     }
     return true;
 #else
@@ -176,6 +191,26 @@ bool TritonInprocServerHost::pollRepository() {
     return true;
 #else
     return false;
+#endif
+}
+
+std::vector<std::string> TritonInprocServerHost::currentLoadedModels() const {
+#if defined(USE_TRITON_INPROCESS)
+    std::lock_guard<std::mutex> lk(mu_);
+    return std::vector<std::string>(loaded_.begin(), loaded_.end());
+#else
+    return {};
+#endif
+}
+
+bool TritonInprocServerHost::compatibleWith(const Options& opt) const {
+#if defined(USE_TRITON_INPROCESS)
+    // Require same repo and control mode; more nuanced checks can be added later
+    if (repo_ != opt.repo) return false;
+    if (model_control_ != opt.model_control) return false;
+    return true;
+#else
+    (void)opt; return true;
 #endif
 }
 

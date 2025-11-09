@@ -417,6 +417,18 @@ bool va_repo_poll(const std::string& addr, std::string* err) {
   } catch (const std::exception& e) { if (err) *err = e.what(); return false; } catch (...) { if (err) *err = "unknown exception"; return false; }
 }
 
+bool va_repo_list(const std::string& addr, std::vector<std::string>* models, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoListRequest req; va::v1::RepoListReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoList(&ctx, req, &rep); }, true, 0, "RepoList");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    if (models) { models->clear(); for (const auto& m : rep.models()) models->push_back(m.id()); }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; } catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
 } // namespace controlplane
 
 

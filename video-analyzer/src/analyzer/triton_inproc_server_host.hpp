@@ -4,6 +4,8 @@
 #include <string>
 #include <atomic>
 #include <vector>
+#include <mutex>
+#include <unordered_set>
 
 namespace va { namespace core { class Logger; } }
 
@@ -35,11 +37,16 @@ public:
         std::vector<std::string> backend_configs;
     };
 
+    // Return a shared host instance. If an existing instance is incompatible
+    // with requested options (repo/model_control/backend dir/pools), it will
+    // be replaced with a new one created from 'opt'.
     static std::shared_ptr<TritonInprocServerHost> instance(const Options& opt);
 
 #if defined(USE_TRITON_INPROCESS)
     ::TRITONSERVER_Server* server() const { return server_; }
     bool isReady() const { return ready_.load(); }
+    const std::string& repo() const { return repo_; }
+    const std::string& modelControl() const { return model_control_; }
 #else
     void* server() const { return nullptr; }
     bool isReady() const { return false; }
@@ -49,17 +56,23 @@ public:
     bool loadModel(const std::string& name);
     bool unloadModel(const std::string& name);
     bool pollRepository();
+    std::vector<std::string> currentLoadedModels() const;
 
     ~TritonInprocServerHost();
 
 private:
     explicit TritonInprocServerHost(const Options& opt);
     bool init(const Options& opt);
+    bool compatibleWith(const Options& opt) const;
 
 private:
 #if defined(USE_TRITON_INPROCESS)
     ::TRITONSERVER_Server* server_{nullptr};
     std::atomic<bool> ready_{false};
+    mutable std::mutex mu_;
+    std::unordered_set<std::string> loaded_;
+    std::string repo_;
+    std::string model_control_;
 #endif
 };
 

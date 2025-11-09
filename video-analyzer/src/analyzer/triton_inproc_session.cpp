@@ -85,7 +85,18 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         in_warmup_ = false; warmed_ = true;
     }
     if (!host_ || !host_->isReady()) {
-        TritonInprocServerHost::Options hopt; hopt.repo = opt_.repo_path;
+        TritonInprocServerHost::Options hopt; 
+        hopt.repo = opt_.repo_path;
+        hopt.enable_http = opt_.enable_http; hopt.http_port = opt_.http_port;
+        hopt.enable_grpc = opt_.enable_grpc; hopt.grpc_port = opt_.grpc_port;
+        hopt.strict_config = opt_.strict_config; 
+        hopt.model_control = opt_.model_control; // honor session option (e.g., explicit)
+        // propagate advanced ServerOptions to keep host consistent
+        hopt.backend_dir = opt_.backend_dir;
+        hopt.pinned_mem_pool_mb = opt_.pinned_mem_pool_mb;
+        hopt.cuda_pool_device_id = opt_.cuda_pool_device_id;
+        hopt.cuda_pool_bytes = opt_.cuda_pool_bytes;
+        hopt.backend_configs = opt_.backend_configs;
         host_ = TritonInprocServerHost::instance(hopt);
     }
     if (!host_ || !host_->isReady()) return false;

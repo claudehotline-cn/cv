@@ -4,13 +4,18 @@
       <div class="card-header">
         <div>
           <span class="title">模型仓库</span>
-          <span class="subtitle">GET /api/models</span>
+          <span class="subtitle">GET /api/models · Repo: POST /api/repo/(load|unload|poll)</span>
         </div>
         <el-space>
           <el-input v-model="keyword" placeholder="按名称/任务筛选" size="small" clearable class="search">
             <template #prefix><el-icon><Search/></el-icon></template>
           </el-input>
           <el-button size="small" @click="load" :loading="loading">刷新</el-button>
+          <el-divider direction="vertical" />
+          <el-input v-model="modelId" placeholder="模型ID（Triton 仓库）" size="small" clearable class="model-id" />
+          <el-button size="small" type="primary" @click="repoLoadById" :disabled="!modelId">Load</el-button>
+          <el-button size="small" type="warning" @click="repoUnloadById" :disabled="!modelId">Unload</el-button>
+          <el-button size="small" text @click="repoPoll">Poll</el-button>
         </el-space>
       </div>
     </template>
@@ -57,12 +62,22 @@ type ModelItem = { id:string; task?:string; family?:string; variant?:string; pat
 const loading = ref(false)
 const rows = ref<ModelItem[]>([])
 const keyword = ref('')
+const modelId = ref('')
 
 async function load(){
   loading.value = true
   try{
-    const resp = await listModels()
-    rows.value = (resp as any).data || []
+    // Prefer Triton repo list via CP proxy; fallback to DB list
+    let items: any[] = []
+    try {
+      const repo = await cp.repoList()
+      items = (repo as any).data || (repo as any).items || []
+    } catch (_) { /* ignore and fallback */ }
+    if (!items.length) {
+      const resp = await listModels()
+      items = (resp as any).data || (resp as any).items || []
+    }
+    rows.value = items as any[]
   } catch (e:any){
     ElMessage.error(e?.message || '加载模型失败')
   } finally {
@@ -85,6 +100,9 @@ onMounted(load)
 async function repoLoad(id: string){ try { await cp.repoLoad(id); ElMessage.success('Load 已提交') } catch(e:any){ ElMessage.error(e?.message||'Load 失败') } }
 async function repoUnload(id: string){ try { await cp.repoUnload(id); ElMessage.success('Unload 已提交') } catch(e:any){ ElMessage.error(e?.message||'Unload 失败') } }
 async function repoPoll(){ try { await cp.repoPoll(); ElMessage.success('Poll 已提交') } catch(e:any){ ElMessage.error(e?.message||'Poll 失败') } }
+
+async function repoLoadById(){ if (!modelId.value) return; await repoLoad(modelId.value) }
+async function repoUnloadById(){ if (!modelId.value) return; await repoUnload(modelId.value) }
 </script>
 
 <style scoped>
@@ -92,6 +110,7 @@ async function repoPoll(){ try { await cp.repoPoll(); ElMessage.success('Poll �
 .title{ font-weight:600; color: var(--va-text-1); }
 .subtitle{ font-size:12px; color: var(--va-text-2); margin-left:4px; }
 .search{ width: 220px; }
+.model-id{ width: 260px; }
 .footer{ margin-top:12px; display:flex; gap:8px; }
 </style>
 

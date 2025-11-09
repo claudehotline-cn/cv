@@ -253,6 +253,15 @@ int main(int argc, char** argv) {
     }
     // Minimal list endpoints for front-end optional lists
     if (path == "/api/models" && method == "GET") {
+      // Prefer VA gRPC RepoList (Triton repo); fallback to DB-based list when empty/unavailable
+      try {
+        std::vector<std::string> models; std::string err;
+        if (va_repo_list(cfg.va_addr, &models, &err) && !models.empty()) {
+          std::ostringstream os; os << "{\"code\":\"OK\",\"data\":[";
+          for (size_t i=0;i<models.size();++i) { if (i) os << ","; os << "{\"id\":\""<<models[i]<<"\"}"; }
+          os << "]}"; r.status=200; r.body=os.str(); emit("/api/models", r.status); return r;
+        }
+      } catch (...) { /* ignore and fallback */ }
       std::string arr;
       if (controlplane::db::list_models_json(cfg, &arr)) {
         r.status = 200; r.body = std::string("{\"code\":\"OK\",\"data\":") + arr + "}";
@@ -450,6 +459,17 @@ int main(int argc, char** argv) {
     if (path == "/api/repo/poll" && method == "POST") {
       std::string err; if (!va_repo_poll(cfg.va_addr, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/poll", r.status); return r; }
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/poll", r.status); return r;
+    }
+    // List repo models via gRPC RepoList
+    if (path == "/api/repo/list" && method == "GET") {
+      try {
+        std::vector<std::string> models;
+        std::string err;
+        if (!va_repo_list(cfg.va_addr, &models, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/list", r.status); return r; }
+        std::ostringstream os; os << "{\"code\":\"OK\",\"data\":[";
+        for (size_t i=0;i<models.size();++i) { if (i) os << ","; os << "{\"id\":\""<<models[i]<<"\"}"; }
+        os << "]}"; r.status=200; r.body=os.str(); r.extraHeaders += "Access-Control-Allow-Origin: *\r\n"; emit("/api/repo/list", r.status); return r;
+      } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/list", r.status); return r; }
     }
     if (path == "/api/control/release" && method == "POST") {
       std::string pipeline_name, node, triton_model, triton_version, model_uri;
