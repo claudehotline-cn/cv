@@ -37,6 +37,9 @@ flowchart LR
 - `S3_USE_HTTPS=0`
 - `S3_VERIFY_SSL=0`
 - `S3_ADDRESSING_STYLE=path`
+（兼容某些 SDK 版本/构建）
+- `AWS_ENDPOINT_URL=http://minio:9000`
+- `AWS_ENDPOINT_URL_S3=http://minio:9000`
 
 生产环境建议：
 
