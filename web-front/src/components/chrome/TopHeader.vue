@@ -22,14 +22,15 @@
       </el-tooltip>
       <el-tag size="small" :type="online ? 'success' : 'info'" effect="plain">{{ online ? 'Online' : 'Offline' }}</el-tag>
       <el-tag size="small" type="success" effect="plain">GPU: {{ gpuStat }}</el-tag>
-      <el-tag size="small" type="warning" effect="plain">告警: {{ alerts }}</el-tag>
+      <el-tag size="small" type="info" effect="plain">Reqs: {{ reqTotal }}</el-tag>
+      <el-tag size="small" type="warning" effect="plain">Cache: {{ cacheHits }}/{{ cacheMisses }}</el-tag>
     </div>
   </div>
   <el-divider style="margin:0"/>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { VideoCameraFilled, Search } from '@element-plus/icons-vue'
@@ -76,7 +77,16 @@ const route = useRoute()
 const app = useAppStore()
 const online = computed(() => app.online)
 const gpuStat = computed(() => app.system?.engine_runtime?.gpu_active ?? 'N/A')
-const alerts = ref(0)
+const reqTotal = computed(() => app.system?.metrics_summary?.requests_total ?? 0)
+const cacheHits = computed(() => app.system?.metrics_summary?.cache?.hits ?? 0)
+const cacheMisses = computed(() => app.system?.metrics_summary?.cache?.misses ?? 0)
+
+let timer: any = null
+onMounted(() => {
+  app.refresh()
+  timer = setInterval(() => app.refresh(), 5000)
+})
+onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <style scoped>

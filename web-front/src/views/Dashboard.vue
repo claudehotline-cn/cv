@@ -4,7 +4,7 @@
       <el-card shadow="hover"><StatCard title="Pipeline 总数" :value="pipelineCount" :sub="`运行中 ${runningCount}`" trend="flat"/></el-card>
       <el-card shadow="hover" style="margin-top:12px"><StatCard title="运行中" :value="runningCount" :sub="`异常 ${errorCount}`" :trend="errorCount>0?'down':'up'"/></el-card>
       <el-card shadow="hover" style="margin-top:12px"><StatCard title="平均 FPS" :value="avgFps" sub="最近 30min" trend="flat"/></el-card>
-      <el-card shadow="hover" style="margin-top:12px"><StatCard title="告警条目" :value="alertCount" sub="今日累计" :trend="alertCount>0?'down':'flat'"/></el-card>
+      <el-card shadow="hover" style="margin-top:12px"><StatCard title="请求总数" :value="reqTotal" sub="CP 汇总" trend="flat"/></el-card>
     </el-col>
     <el-col :span="18">
       <div class="filter-bar">
@@ -63,6 +63,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+import { useAppStore } from '@/stores/app'
 import { useRouter } from 'vue-router'
 import StatCard from '@/components/analytics/StatCard.vue'
 import MetricsTimeseries from '@/components/analytics/MetricsTimeseries.vue'
@@ -74,6 +75,7 @@ import { dataProvider } from '@/api/dataProvider'
 type PipelineItem = { name: string; status: 'Running'|'Stopped'|'Error'; fps: number; alerts: number; input: string }
 
 const pipelines = ref<PipelineItem[]>([])
+const app = useAppStore()
 const chosenPipeline = ref<string>('')
 const router = useRouter()
 
@@ -104,7 +106,7 @@ const pipelineNames = computed(() => pipelines.value.map(p => p.name))
 const pipelineCount = computed(() => pipelines.value.length)
 const runningCount = computed(() => pipelines.value.filter(p => p.status === 'Running').length)
 const errorCount = computed(() => pipelines.value.filter(p => p.status === 'Error').length)
-const alertCount = computed(() => pipelines.value.reduce((sum, p) => sum + p.alerts, 0))
+const reqTotal = computed(() => app.system?.metrics_summary?.requests_total ?? 0)
 const avgFps = computed(() => {
   if (!pipelines.value.length) return '0'
   const mean = pipelines.value.reduce((sum, p) => sum + p.fps, 0) / pipelines.value.length

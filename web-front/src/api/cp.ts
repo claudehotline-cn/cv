@@ -78,6 +78,18 @@ export function setPipelineMode(stream_id: string, profile: string, analysis_ena
 // 设计文档中的 CP 封装（基于 VITE_CP_BASE_URL）
 const CP_BASE = ((import.meta as any).env?.DEV ? '' : ((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || ''))
 export const cp = {
+  // New: Engine schema for dynamic form
+  async getEngineSchema() {
+    return http.get<any>('/api/ui/schema/engine')
+  },
+  // New: Control-plane summary (requests/errors/cache)
+  async getMetricsSummary() {
+    return http.get<any>('/api/_metrics/summary')
+  },
+  // New: VA runtime (provider/gpu/io/device)
+  async getVaRuntime() {
+    return http.get<any>('/api/va/runtime')
+  },
   async metricsQuery(params: { metric:string; from:number; to:number; stepSec:number; pipeline?:string }) {
     const q = new URLSearchParams({
       m: params.metric,

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { getSystemInfo } from '@/api/cp'
+import { cp } from '@/api/cp'
 
 export const useAppStore = defineStore('app', {
   state: () => ({
@@ -11,8 +11,14 @@ export const useAppStore = defineStore('app', {
   actions: {
     async refresh() {
       try {
-        const resp = await getSystemInfo()
-        this.system = resp?.data || null
+        const [runtime, summary] = await Promise.allSettled([
+          cp.getVaRuntime(),
+          cp.getMetricsSummary()
+        ])
+        const sys: any = {}
+        if (runtime.status === 'fulfilled') sys.engine_runtime = runtime.value?.data || runtime.value
+        if (summary.status === 'fulfilled') sys.metrics_summary = summary.value?.data || summary.value
+        this.system = sys
         this.online = true
       } catch {
         this.online = false
