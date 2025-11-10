@@ -68,13 +68,26 @@
       <el-tag v-if="tasks.length" type="success" size="small" effect="plain">任务覆盖：{{ tasks.join(', ') }}</el-tag>
     </div>
   </el-card>
-  <el-drawer v-model="drawer" title="模型配置（config.pbtxt）" size="50%">
-    <template #default>
-      <div class="cfg-header">
-        <el-tag type="info" size="small">{{ currentModel }}</el-tag>
-        <el-button size="small" text v-if="configText" @click="copyConfig">复制</el-button>
+  <el-drawer v-model="drawer" size="55%">
+    <template #header>
+      <div class="cfg-drawer-title">
+        <span>模型配置</span>
+        <el-tag type="info" effect="plain" size="small">{{ currentModel }}/config.pbtxt</el-tag>
       </div>
-      <pre class="cfg-text" v-if="configText"><code>{{ configText }}</code></pre>
+    </template>
+    <template #default>
+      <div class="cfg-toolbar">
+        <el-space>
+          <el-button size="small" @click="copyConfig" :disabled="!configText">复制</el-button>
+          <el-button size="small" @click="downloadConfig" :disabled="!configText">下载</el-button>
+          <el-divider direction="vertical" />
+          <el-switch v-model="wrapOn" active-text="自动换行" inactive-text="不换行" />
+          <el-input-number v-model="fontSize" :min="10" :max="18" size="small" />
+        </el-space>
+      </div>
+      <div v-if="configText" class="cfg-container">
+        <pre class="cfg-text" :class="{ wrap: wrapOn }" :style="{ fontSize: fontSize + 'px' }"><code>{{ configText }}</code></pre>
+      </div>
       <el-empty v-else description="未获取到配置或模型无配置文件" />
     </template>
   </el-drawer>
@@ -95,6 +108,8 @@ const modelId = ref('')
 const drawer = ref(false)
 const currentModel = ref('')
 const configText = ref('')
+const wrapOn = ref(true)
+const fontSize = ref(13)
 
 async function load(){
   loading.value = true
@@ -150,6 +165,16 @@ async function openConfig(id: string){
   }catch(e:any){ ElMessage.error(e?.message || '获取配置失败') }
 }
 async function copyConfig(){ try{ await navigator.clipboard.writeText(configText.value); ElMessage.success('已复制') } catch{ ElMessage.error('复制失败') } }
+async function downloadConfig(){
+  try{
+    const blob = new Blob([configText.value || ''], { type: 'text/plain;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${currentModel.value || 'model'}.config.pbtxt`
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(a.href)
+  }catch{ ElMessage.error('下载失败') }
+}
 </script>
 
 <style scoped>
@@ -159,7 +184,10 @@ async function copyConfig(){ try{ await navigator.clipboard.writeText(configText
 .search{ width: 220px; }
 .model-id{ width: 260px; }
 .footer{ margin-top:12px; display:flex; gap:8px; }
-.cfg-header{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.cfg-text{ white-space:pre-wrap; background:#111; color:#ddd; padding:12px; border-radius:6px; max-height:60vh; overflow:auto; }
+.cfg-drawer-title{ display:flex; align-items:center; gap:8px; font-weight:600; }
+.cfg-toolbar{ display:flex; justify-content:space-between; align-items:center; padding:8px 0 12px; }
+.cfg-container{ border:1px solid #eaecef; border-radius:6px; background:#f6f8fa; }
+.cfg-text{ margin:0; padding:12px; color:#24292e; line-height:1.5; max-height:65vh; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space:pre; }
+.cfg-text.wrap{ white-space:pre-wrap; word-break:break-word; }
 </style>
 
