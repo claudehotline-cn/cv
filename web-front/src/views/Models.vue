@@ -110,6 +110,7 @@ const currentModel = ref('')
 const configText = ref('')
 const wrapOn = ref(true)
 const fontSize = ref(13)
+const truncated = ref(false)
 const highlightedConfig = computed(() => highlightPbtxt(configText.value || ''))
 
 async function load(){
@@ -162,6 +163,7 @@ async function openConfig(id: string){
     currentModel.value = id
     const r:any = await cp.repoConfig(id)
     configText.value = (r?.data?.content || '') as string
+    truncated.value = false
     drawer.value = true
   }catch(e:any){ ElMessage.error(e?.message || '获取配置失败') }
 }
@@ -178,41 +180,34 @@ async function downloadConfig(){
 }
 
 function highlightPbtxt(src: string): string {
-  // escape HTML
+  const MAX_LEN = 200000; const MAX_LINES = 2000;
   const esc = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  let raw = src
+  if (raw.length > MAX_LEN) { raw = raw.slice(0, MAX_LEN); truncated.value = true }
+  let lines = raw.split(/\r?\n/)
+  if (lines.length > MAX_LINES) { lines = lines.slice(0, MAX_LINES); truncated.value = true }
   const kw = ['name','platform','max_batch_size','version_policy','input','output','dims','data_type','format','instance_group','count','kind','backend','parameters','optimization','graph_level','dynamic_batching']
   const consts = ['KIND_GPU','KIND_CPU','FORMAT_NCHW','FORMAT_NHWC','TYPE_FP32','TYPE_FP16','TYPE_INT8','TYPE_INT32','TYPE_UINT8']
   const kwRe = new RegExp('\\b(' + kw.join('|') + ')\\b','g')
   const cstRe = new RegExp('\\b(' + consts.join('|') + ')\\b','g')
   const numRe = /\b\d+(?:\.\d+)?\b/g
   const strRe = /"(?:[^"\\]|\\.)*"/g
-  const lineRe = /.*?(\n|$)/g
-  let out = ''
-  const srcEsc = esc(src)
-  let m: RegExpExecArray | null
-  while ((m = lineRe.exec(srcEsc)) !== null) {
-    let line = m[0]
-    // separate comments (#... or //...)
-    let commentIdx = -1
-    const hash = line.indexOf('#')
-    const sl = line.indexOf('//')
-    if (hash >= 0 && sl >= 0) commentIdx = Math.min(hash, sl)
-    else commentIdx = (hash >= 0 ? hash : sl)
-    let codePart = line
-    let commentPart = ''
-    if (commentIdx >= 0) { codePart = line.slice(0, commentIdx); commentPart = line.slice(commentIdx) }
-    // strings
-    codePart = codePart.replace(strRe, (s) => `<span class=tok-str>${s}</span>`)
-    // numbers
-    codePart = codePart.replace(numRe, (s) => `<span class=tok-num>${s}</span>`)
-    // constants and keywords
-    codePart = codePart.replace(cstRe, (s) => `<span class=tok-const>${s}</span>`)
-    codePart = codePart.replace(kwRe, (s) => `<span class=tok-key>${s}</span>`)
-    // comment
-    if (commentPart) codePart += `<span class=tok-comment>${commentPart}</span>`
-    out += codePart
+  const out: string[] = []
+  for (let i=0;i<lines.length;i++) {
+    const ln = lines[i]
+    let code = esc(ln)
+    code = code.replace(strRe, (s) => `<span class=tok-str>${s}</span>`)
+    code = code.replace(numRe, (s) => `<span class=tok-num>${s}</span>`)
+    code = code.replace(cstRe, (s) => `<span class=tok-const>${s}</span>`)
+    code = code.replace(kwRe, (s) => `<span class=tok-key>${s}</span>`)
+    const idxHash = code.indexOf('#')
+    const idxSl = code.indexOf('//')
+    let idx = -1
+    if (idxHash >=0 && idxSl >=0) idx = Math.min(idxHash, idxSl); else idx = (idxHash>=0? idxHash: idxSl)
+    if (idx >= 0) code = code.slice(0, idx) + `<span class=tok-comment>${code.slice(idx)}</span>`
+    out.push(code)
   }
-  return out
+  return out.join('\n')
 }
 </script>
 
