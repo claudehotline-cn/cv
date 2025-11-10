@@ -574,6 +574,31 @@ int main(int argc, char** argv) {
         }
         std::string err;
         if (!fake_mode) {
+          // 允许使用 Triton 仓库模型名作为 "model_id"：
+          // 若传入的 model_id 命中 /api/repo/list（VA RepoList），则先全局切换引擎至 provider=triton 且 triton_model=model_id，
+          // 随后将订阅的 model_id 置空，避免 VA 侧按“检测模型 ID”查表失败。
+          if (!model_id.empty()) {
+            try {
+              std::vector<std::string> repo_models; std::string e2;
+              if (va_repo_list(cfg.va_addr, &repo_models, &e2)) {
+                bool is_triton_repo_id = false;
+                for (const auto& m : repo_models) { if (m == model_id) { is_triton_repo_id = true; break; } }
+                if (is_triton_repo_id) {
+                  auto stub = controlplane::make_va_stub(cfg.va_addr);
+                  va::v1::SetEngineRequest sreq; va::v1::SetEngineReply srep; grpc::ClientContext sctx;
+                  sreq.set_provider("triton");
+                  (*sreq.mutable_options())["triton_model"] = model_id;
+                  auto st = stub->SetEngine(&sctx, sreq, &srep);
+                  if (!st.ok() || !srep.ok()) {
+                    auto mm=cp_map_err(st.error_message()); r.status=mm.code;
+                    r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(st.ok()? srep.msg(): st.error_message())+"\"}"; return r;
+                  }
+                  // 清空 model_id，避免 VA 按检测模型索引校验失败
+                  model_id.clear();
+                }
+              }
+            } catch (...) { /* best-effort */ }
+          }
           if (!va_subscribe(cfg.va_addr, stream_id, profile, source_uri, model_id, &va_id, &err)) {
             auto mm = cp_map_err(err);
             r.status = mm.code; r.body = std::string("{\"code\":\"") + mm.text + "\",\"msg\":\"" + err + "\"}"; return r;
