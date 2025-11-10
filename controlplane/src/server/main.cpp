@@ -551,7 +551,7 @@ int main(int argc, char** argv) {
         os << "]}"; r.status=200; r.body=os.str(); emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", true);}catch(...){} return r;
       } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/list", r.status); return r; }
     }
-    if (path == "/api/repo/config" && method == "GET") {
+    if (path.rfind("/api/repo/config", 0) == 0 && method == "GET") {
       try {
         // allow query ?model=xxx
         auto qpos = path.find('?'); std::string model;
