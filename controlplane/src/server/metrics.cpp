@@ -27,6 +27,10 @@ static std::unordered_map<RMKey, unsigned long long, RMHash> g_cnt;
 struct BEKey { std::string svc; std::string op; int code; bool operator==(const BEKey& o) const noexcept { return code==o.code && svc==o.svc && op==o.op; } };
 struct BEHash { size_t operator()(const BEKey& k) const noexcept { std::hash<std::string> h; return (h(k.svc) ^ (h(k.op)<<1)) ^ (std::hash<int>{}(k.code)<<2); } };
 static std::unordered_map<BEKey, unsigned long long, BEHash> g_backend_errs;
+// Repo ops
+static std::mutex g_repo_mu;
+static std::unordered_map<std::string, unsigned long long> g_repo_ok;   // op -> count
+static std::unordered_map<std::string, unsigned long long> g_repo_fail; // op -> count
 
 size_t KeyHash::operator()(const Key& k) const noexcept {
   std::hash<std::string> h;
@@ -104,11 +108,23 @@ std::string render_json_summary() {
   unsigned long long req_total = 0;
   unsigned long long routes = 0;
   unsigned long long be_errs = 0;
+  // snapshot repo ops
+  unsigned long long repo_load_ok=0, repo_unload_ok=0, repo_poll_ok=0, repo_list_ok=0;
+  unsigned long long repo_load_fail=0, repo_unload_fail=0, repo_poll_fail=0, repo_list_fail=0;
   {
     std::lock_guard<std::mutex> lk(g_mu);
     for (const auto& kv : g_counts) req_total += kv.second;
     routes = g_counts.size();
     for (const auto& kv2 : g_backend_errs) be_errs += kv2.second;
+  }
+  {
+    std::lock_guard<std::mutex> lk(g_repo_mu);
+    auto get = [&](const std::unordered_map<std::string,unsigned long long>& m, const char* k)->unsigned long long{
+      auto it = m.find(k); return it==m.end()? 0ULL : it->second; };
+    repo_load_ok   = get(g_repo_ok,   "load");   repo_load_fail   = get(g_repo_fail,   "load");
+    repo_unload_ok = get(g_repo_ok,   "unload"); repo_unload_fail = get(g_repo_fail, "unload");
+    repo_poll_ok   = get(g_repo_ok,   "poll");   repo_poll_fail   = get(g_repo_fail,   "poll");
+    repo_list_ok   = get(g_repo_ok,   "list");   repo_list_fail   = get(g_repo_fail,   "list");
   }
   std::ostringstream os;
   os << "{\"requests_total\":" << req_total
@@ -116,6 +132,8 @@ std::string render_json_summary() {
      << ",\"backend_errors_total\":" << be_errs
      << ",\"sse_connections\":" << g_sse_conns.load()
      << ",\"sse_reconnects\":" << g_sse_reconnects.load()
+     << ",\"repo\":{\"ok\":{\"load\":" << repo_load_ok << ",\"unload\":" << repo_unload_ok << ",\"poll\":" << repo_poll_ok << ",\"list\":" << repo_list_ok << "},"
+     << "\"fail\":{\"load\":" << repo_load_fail << ",\"unload\":" << repo_unload_fail << ",\"poll\":" << repo_poll_fail << ",\"list\":" << repo_list_fail << "}}"
      << "}";
   return os.str();
 }
@@ -135,6 +153,11 @@ void inc_backend_error(const std::string& service, int grpc_code) {
 void inc_backend_error(const std::string& service, const std::string& method, int grpc_code) {
   std::lock_guard<std::mutex> lk(g_mu);
   g_backend_errs[BEKey{service, method, grpc_code}]++;
+}
+
+void inc_repo_op(const std::string& op, bool ok) {
+  std::lock_guard<std::mutex> lk(g_repo_mu);
+  if (ok) g_repo_ok[op]++; else g_repo_fail[op]++;
 }
 
 } // namespace controlplane::metrics

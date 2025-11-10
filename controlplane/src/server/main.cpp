@@ -502,17 +502,23 @@ int main(int argc, char** argv) {
     if (path == "/api/repo/load" && method == "POST") {
       std::string model; if (!body.empty()) { try { auto j=nlohmann::json::parse(body); if (j.contains("model")&&j["model"].is_string()) model=j["model"].get<std::string>(); } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/load", r.status); return r; } }
       if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/repo/load", r.status); return r; }
-      std::string err; if (!va_repo_load(cfg.va_addr, model, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/load", r.status); return r; }
+      std::string err; bool ok = va_repo_load(cfg.va_addr, model, &err);
+      if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/load", r.status); try{ controlplane::metrics::inc_repo_op("load", false);}catch(...){} return r; }
+      try{ controlplane::metrics::inc_repo_op("load", true);}catch(...){}
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/load", r.status); return r;
     }
     if (path == "/api/repo/unload" && method == "POST") {
       std::string model; if (!body.empty()) { try { auto j=nlohmann::json::parse(body); if (j.contains("model")&&j["model"].is_string()) model=j["model"].get<std::string>(); } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/unload", r.status); return r; } }
       if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/repo/unload", r.status); return r; }
-      std::string err; if (!va_repo_unload(cfg.va_addr, model, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/unload", r.status); return r; }
+      std::string err; bool ok = va_repo_unload(cfg.va_addr, model, &err);
+      if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/unload", r.status); try{ controlplane::metrics::inc_repo_op("unload", false);}catch(...){} return r; }
+      try{ controlplane::metrics::inc_repo_op("unload", true);}catch(...){}
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/unload", r.status); return r;
     }
     if (path == "/api/repo/poll" && method == "POST") {
-      std::string err; if (!va_repo_poll(cfg.va_addr, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/poll", r.status); return r; }
+      std::string err; bool ok = va_repo_poll(cfg.va_addr, &err);
+      if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/poll", r.status); try{ controlplane::metrics::inc_repo_op("poll", false);}catch(...){} return r; }
+      try{ controlplane::metrics::inc_repo_op("poll", true);}catch(...){}
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/poll", r.status); return r;
     }
     // List repo models via gRPC RepoList
@@ -520,10 +526,10 @@ int main(int argc, char** argv) {
       try {
         std::vector<std::string> models;
         std::string err;
-        if (!va_repo_list(cfg.va_addr, &models, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/list", r.status); return r; }
+        if (!va_repo_list(cfg.va_addr, &models, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", false);}catch(...){} return r; }
         std::ostringstream os; os << "{\"code\":\"OK\",\"data\":[";
         for (size_t i=0;i<models.size();++i) { if (i) os << ","; os << "{\"id\":\""<<models[i]<<"\"}"; }
-        os << "]}"; r.status=200; r.body=os.str(); r.extraHeaders += "Access-Control-Allow-Origin: *\r\n"; emit("/api/repo/list", r.status); return r;
+        os << "]}"; r.status=200; r.body=os.str(); r.extraHeaders += "Access-Control-Allow-Origin: *\r\n"; emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", true);}catch(...){} return r;
       } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/list", r.status); return r; }
     }
     if (path == "/api/control/release" && method == "POST") {

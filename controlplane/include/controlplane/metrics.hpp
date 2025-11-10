@@ -30,6 +30,9 @@ void sse_on_close();
 void inc_backend_error(const std::string& service, int grpc_code);
 void inc_backend_error(const std::string& service, const std::string& method, int grpc_code);
 
+// Triton 仓库操作计数（最小）：op in {load,unload,poll,list}
+void inc_repo_op(const std::string& op, bool ok);
+
 } // namespace controlplane::metrics
 
 
