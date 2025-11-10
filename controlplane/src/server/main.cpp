@@ -527,7 +527,7 @@ int main(int argc, char** argv) {
       } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/list", r.status); return r; }
     }
     if (path == "/api/control/release" && method == "POST") {
-      std::string pipeline_name, node, triton_model, triton_version, model_uri;
+      std::string pipeline_name, node, triton_model, triton_version, model_uri, alias;
       if (!body.empty()) {
         try {
           nlohmann::json j = nlohmann::json::parse(body);
@@ -536,10 +536,22 @@ int main(int argc, char** argv) {
           if (j.contains("triton_model")&&j["triton_model"].is_string()) triton_model=j["triton_model"].get<std::string>();
           if (j.contains("triton_model_version")&&j["triton_model_version"].is_string()) triton_version=j["triton_model_version"].get<std::string>();
           if (j.contains("model_uri")&&j["model_uri"].is_string()) model_uri=j["model_uri"].get<std::string>();
+          if (j.contains("alias")&&j["alias"].is_string()) alias=j["alias"].get<std::string>();
         } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/control/release", r.status); return r; }
       }
       if (pipeline_name.empty() || node.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/control/release", r.status); return r; }
       try {
+        // Resolve alias → triton_model[/version] if provided
+        if (!alias.empty()) {
+          try {
+            load_aliases();
+            auto it = g_aliases.find(alias);
+            if (it != g_aliases.end()) {
+              if (triton_model.empty()) triton_model = it->second.first;
+              if (triton_version.empty()) triton_version = it->second.second;
+            }
+          } catch (...) { /* ignore */ }
+        }
         auto stub = controlplane::make_va_stub(cfg.va_addr);
         if (!triton_model.empty()) {
           va::v1::SetEngineRequest sreq; va::v1::SetEngineReply srep; grpc::ClientContext sctx;
