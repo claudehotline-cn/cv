@@ -11,6 +11,8 @@ analyzer:
           outs: "tensor:det_raw"
           model_path_trt: "models/yolov12x_sm120_fp16.engine"
           model_path_ort: "models/yolov12x.onnx"
+          # Triton 仓库模型目录名（与 triton_repo 组合使用）
+          model_path_triton: "yolov12x"
           model_path: "models/yolov12x_sm120_fp16.engine"
       - name: nms
         type: post.yolo.nms

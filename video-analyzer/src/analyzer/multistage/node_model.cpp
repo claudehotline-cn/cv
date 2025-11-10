@@ -27,6 +27,7 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
     auto itPath = cfg.find("model_path"); if (itPath != cfg.end()) model_path_ = itPath->second;
     if (auto itT = cfg.find("model_path_trt"); itT != cfg.end()) model_path_trt_ = itT->second;
     if (auto itO = cfg.find("model_path_ort"); itO != cfg.end()) model_path_ort_ = itO->second;
+    if (auto itTi = cfg.find("model_path_triton"); itTi != cfg.end()) model_path_triton_ = itTi->second;
 }
 
 bool NodeModel::open(NodeContext& ctx) {
@@ -37,6 +38,10 @@ bool NodeModel::open(NodeContext& ctx) {
     if (ctx.engine_registry) {
         try { desc = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry)->currentEngine(); }
         catch (...) { /* ignore */ }
+    }
+    // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_model（按模型目录名）
+    if (!model_path_triton_.empty()) {
+        try { desc.options["triton_model"] = model_path_triton_; } catch (...) { /* ignore */ }
     }
 
     auto now_ms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); };

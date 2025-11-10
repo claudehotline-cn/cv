@@ -1,13 +1,13 @@
 profiles:
   det_720p:
     task: det
-    model:
-      id: "det:yolo:v12x"
-      family: yolo
-      variant: v12x
-      onnx: "/models/yolov12x.onnx"
-      input_width: 640
-      input_height: 640
+    # model:
+    #   id: "det:yolo:v12x"
+    #   family: yolo
+    #   variant: v12x
+    #   onnx: "/models/yolov12x.onnx"
+    #   input_width: 640
+    #   input_height: 640
     encoder:
       width: 1280
       height: 720
@@ -23,13 +23,13 @@ profiles:
       whip_url_template: ""
   seg_720p:
     task: seg
-    model:
-      id: "seg:yolo:v12s_seg"
-      family: yolo
-      variant: v12s_seg
-      onnx: "model/yolov12s-seg.onnx"
-      input_width: 640
-      input_height: 640
+    # model:
+    #   id: "seg:yolo:v12s_seg"
+    #   family: yolo
+    #   variant: v12s_seg
+    #   onnx: "model/yolov12s-seg.onnx"
+    #   input_width: 640
+    #   input_height: 640
     encoder:
       width: 1280
       height: 720

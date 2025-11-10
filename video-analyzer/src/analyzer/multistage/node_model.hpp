@@ -22,8 +22,9 @@ namespace va { namespace analyzer { namespace multistage {
     std::vector<std::string> out_keys_ {"tensor:det_raw"};
     std::shared_ptr<va::analyzer::IModelSession> session_;
     std::string model_path_;      // 默认/通用路径（兼容旧配置）
-    std::string model_path_trt_; // 原生 TensorRT 路径（.engine）
-    std::string model_path_ort_; // ORT/ORT-TRT/CUDA 路径（.onnx）
+    std::string model_path_trt_;    // 原生 TensorRT 路径（.engine）
+    std::string model_path_ort_;    // ORT/ORT-TRT/CUDA 路径（.onnx）
+    std::string model_path_triton_; // Triton 仓库模型名（目录名），如 "yolov12x"
     std::atomic<uint64_t> infer_fail_count_{0};
   };
 
