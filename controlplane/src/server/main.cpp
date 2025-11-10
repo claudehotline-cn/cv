@@ -270,6 +270,61 @@ int main(int argc, char** argv) {
       }
       emit("/api/models", r.status); return r;
     }
+
+    // --- Model aliases (M1) -------------------------------------------------
+    static std::unordered_map<std::string, std::pair<std::string,std::string>> g_aliases; // alias -> {model_id, version}
+    static bool g_aliases_loaded = false;
+    auto aliases_file = []() -> std::string {
+      const char* p = std::getenv("CP_ALIASES_FILE");
+      if (p && *p) return std::string(p);
+      return std::string("logs/model_aliases.json");
+    };
+    auto load_aliases = [&](){
+      if (g_aliases_loaded) return; g_aliases_loaded = true;
+      try {
+        std::ifstream ifs(aliases_file()); if (!ifs.good()) return; nlohmann::json j; ifs >> j;
+        if (j.is_array()) {
+          for (auto& it : j) {
+            std::string alias = it.value("alias", ""); std::string model_id = it.value("model_id", ""); std::string version = it.value("version", "");
+            if (!alias.empty() && !model_id.empty()) g_aliases[alias] = {model_id, version};
+          }
+        }
+      } catch (...) { /* ignore */ }
+    };
+    auto save_aliases = [&](){
+      try {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& kv : g_aliases) {
+          nlohmann::json o; o["alias"] = kv.first; o["model_id"] = kv.second.first; if (!kv.second.second.empty()) o["version"] = kv.second.second; arr.push_back(o);
+        }
+        std::filesystem::create_directories("logs");
+        std::ofstream ofs(aliases_file()); if (!ofs.good()) return; ofs << arr.dump();
+      } catch (...) { /* ignore */ }
+    };
+
+    if (path == "/api/models/aliases" && method == "GET") {
+      load_aliases();
+      nlohmann::json arr = nlohmann::json::array();
+      for (const auto& kv : g_aliases) { nlohmann::json o; o["alias"]=kv.first; o["model_id"]=kv.second.first; if(!kv.second.second.empty()) o["version"]=kv.second.second; arr.push_back(o); }
+      nlohmann::json out; out["code"]="OK"; out["data"]=arr; r.status=200; r.body=out.dump(); emit("/api/models/aliases", r.status); return r;
+    }
+    if (path == "/api/models/aliases" && method == "POST") {
+      load_aliases();
+      try {
+        auto j = nlohmann::json::parse(body);
+        std::string alias = j.value("alias", ""); std::string model_id = j.value("model_id", ""); std::string version = j.value("version", "");
+        if (alias.empty() || model_id.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/models/aliases", r.status); return r; }
+        g_aliases[alias] = {model_id, version}; save_aliases();
+        r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/models/aliases", r.status); return r;
+      } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/models/aliases", r.status); return r; }
+    }
+    if (path.rfind("/api/models/aliases/", 0) == 0 && method == "DELETE") {
+      load_aliases();
+      auto alias = path.substr(std::string("/api/models/aliases/").size());
+      auto it = g_aliases.find(alias);
+      if (it != g_aliases.end()) { g_aliases.erase(it); save_aliases(); }
+      r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/models/aliases/{alias}", r.status); return r;
+    }
     if (path == "/api/pipelines" && method == "GET") {
       std::string arr;
       if (controlplane::db::list_pipelines_json(cfg, &arr)) {
