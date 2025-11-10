@@ -4,7 +4,7 @@
       <div class="card-header">
         <div>
           <span class="title">模型仓库</span>
-          <span class="subtitle">GET /api/models · Repo: POST /api/repo/(load|unload|poll)</span>
+          <span class="subtitle">GET /api/repo/list · 回退 /api/models · POST /api/repo/(load|unload|poll)</span>
         </div>
         <el-space>
           <el-input v-model="keyword" placeholder="按名称/任务筛选" size="small" clearable class="search">
@@ -27,6 +27,24 @@
       <el-table-column prop="family" label="系列" width="140" />
       <el-table-column prop="variant" label="版本" width="140" />
       <el-table-column prop="path" label="模型路径" show-overflow-tooltip />
+      <el-table-column label="状态" width="120">
+        <template #default="{ row }">
+          <el-tag v-if="typeof (row as any).ready !== 'undefined'" :type="(row as any).ready ? 'success' : 'info'" size="small">
+            {{ (row as any).ready ? 'ready' : 'unknown' }}
+          </el-tag>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="版本列表" width="220">
+        <template #default="{ row }">
+          <template v-if="(row as any).versions && (row as any).versions.length">
+            <el-space wrap>
+              <el-tag v-for="v in (row as any).versions" :key="v" size="small" effect="plain" :type="(row as any).active_version === v ? 'success' : 'info'">{{ v }}</el-tag>
+            </el-space>
+          </template>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="输入尺寸" width="140">
         <template #default="{ row }">{{ row.input_shape || '-' }}</template>
       </el-table-column>
@@ -88,9 +106,12 @@ async function load(){
 const filtered = computed(() => {
   if (!keyword.value) return rows.value
   const k = keyword.value.toLowerCase()
-  return rows.value.filter(r =>
-    [`${r.id}`, r.task || '', r.family || '', r.variant || ''].some(v => v.toLowerCase().includes(k))
-  )
+  return rows.value.filter((r:any) => {
+    const fields = [`${r.id}`, r.task || '', r.family || '', r.variant || '']
+    if (Array.isArray(r.versions)) fields.push(...r.versions.map((x:string)=>String(x)))
+    if (r.active_version) fields.push(String(r.active_version))
+    return fields.some(v => String(v).toLowerCase().includes(k))
+  })
 })
 
 const tasks = computed(() => Array.from(new Set(filtered.value.map(r => r.task).filter(Boolean))) as string[])
