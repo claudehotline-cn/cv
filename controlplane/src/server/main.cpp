@@ -529,7 +529,7 @@ int main(int argc, char** argv) {
         if (!va_repo_list(cfg.va_addr, &models, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", false);}catch(...){} return r; }
         std::ostringstream os; os << "{\"code\":\"OK\",\"data\":[";
         for (size_t i=0;i<models.size();++i) { if (i) os << ","; os << "{\"id\":\""<<models[i]<<"\"}"; }
-        os << "]}"; r.status=200; r.body=os.str(); r.extraHeaders += "Access-Control-Allow-Origin: *\r\n"; emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", true);}catch(...){} return r;
+        os << "]}"; r.status=200; r.body=os.str(); emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", true);}catch(...){} return r;
       } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/list", r.status); return r; }
     }
     if (path == "/api/control/release" && method == "POST") {
