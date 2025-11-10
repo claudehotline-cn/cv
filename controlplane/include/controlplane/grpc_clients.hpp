@@ -110,6 +110,9 @@ struct RepoModelInfo {
 };
 bool va_repo_list_detail(const std::string& addr, std::vector<RepoModelInfo>* models, std::string* err);
 
+// Fetch Triton model config.pbtxt (best-effort)
+bool va_repo_get_config(const std::string& addr, const std::string& model, std::string* content, std::string* err);
+
 // Helpers to create stubs with configured TLS credentials
 std::unique_ptr<::va::v1::AnalyzerControl::Stub> make_va_stub(const std::string& addr);
 std::unique_ptr<::vsm::v1::SourceControl::Stub> make_vsm_stub(const std::string& addr);

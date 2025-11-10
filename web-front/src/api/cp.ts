@@ -162,6 +162,11 @@ export const cp = {
   async repoPoll() { return http.post('/api/repo/poll', {}) },
   // Repo models list (proxy to VA /api/models)
   async repoList() { return http.get<any>('/api/repo/list') },
+  // Repo model config
+  async repoConfig(model: string) {
+    const q = new URLSearchParams({ model })
+    return http.get<any>('/api/repo/config?'+q.toString())
+  },
   // Unified release endpoint
   async release(payload: { pipeline_name:string; node:string; triton_model?:string; triton_model_version?:string; model_uri?:string }) {
     try { return await http.post('/api/control/release', payload) }

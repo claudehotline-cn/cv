@@ -450,6 +450,20 @@ bool va_repo_list_detail(const std::string& addr, std::vector<RepoModelInfo>* mo
   catch (...) { if (err) *err = "unknown exception"; return false; }
 }
 
+bool va_repo_get_config(const std::string& addr, const std::string& model, std::string* content, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoGetConfigRequest req; req.set_model(model);
+    va::v1::RepoGetConfigReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoGetConfig(&ctx, req, &rep); }, true, 0, "RepoGetConfig");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    if (content) *content = rep.content();
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; }
+  catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
 } // namespace controlplane
 
 

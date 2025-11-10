@@ -28,6 +28,8 @@ service AnalyzerControl {
   // is remote (e.g., S3), this may return currently loaded models if full
   // index is not available.
   rpc RepoList(RepoListRequest) returns (RepoListReply);
+  // Get a model's config.pbtxt content (best-effort)
+  rpc RepoGetConfig(RepoGetConfigRequest) returns (RepoGetConfigReply);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -176,3 +178,6 @@ message RepoModel {
   repeated string versions = 4; // optional: discovered versions (best-effort)
   string active_version = 5;    // optional: active version (best-effort)
 }
+
+message RepoGetConfigRequest { string model = 1; }
+message RepoGetConfigReply   { bool ok = 1; string msg = 2; string content = 3; }

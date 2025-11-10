@@ -551,6 +551,26 @@ int main(int argc, char** argv) {
         os << "]}"; r.status=200; r.body=os.str(); emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", true);}catch(...){} return r;
       } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/list", r.status); return r; }
     }
+    if (path == "/api/repo/config" && method == "GET") {
+      try {
+        // allow query ?model=xxx
+        auto qpos = path.find('?'); std::string model;
+        if (qpos != std::string::npos) {
+          auto qs = path.substr(qpos+1);
+          auto p = qs.find("model="); if (p != std::string::npos) {
+            p += 6; auto e = qs.find('&', p); model = qs.substr(p, e==std::string::npos? std::string::npos : e-p);
+          }
+        }
+        if (model.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model required\"}"; emit("/api/repo/config", r.status); return r; }
+        // URL decode %xx
+        auto url_decode = [](const std::string& s){ std::string o; o.reserve(s.size()); for(size_t i=0;i<s.size();++i){ char c=s[i]; if(c=='%' && i+2<s.size()){ char h1=s[i+1], h2=s[i+2]; auto hex=[&](char x){ if(x>='0'&&x<='9') return x-'0'; if(x>='a'&&x<='f') return 10+(x-'a'); if(x>='A'&&x<='F') return 10+(x-'A'); return 0; }; o.push_back((char)((hex(h1)<<4)|hex(h2))); i+=2; } else if(c=='+') o.push_back(' '); else o.push_back(c);} return o; };
+        model = url_decode(model);
+        std::string err, content;
+        if (!va_repo_get_config(cfg.va_addr, model, &content, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()?std::string("repo get config failed"):err)+"\"}"; emit("/api/repo/config", r.status); return r; }
+        nlohmann::json out; out["code"]="OK"; nlohmann::json data; data["model"]=model; data["content"]=content; out["data"]=data;
+        r.status=200; r.body=out.dump(); emit("/api/repo/config", r.status); return r;
+      } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/config", r.status); return r; }
+    }
     if (path == "/api/control/release" && method == "POST") {
       std::string pipeline_name, node, triton_model, triton_version, model_uri, alias;
       if (!body.empty()) {

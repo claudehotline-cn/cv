@@ -51,12 +51,13 @@
       <el-table-column v-if="!isRepoMode" label="参数量" width="120">
         <template #default="{ row }">{{ row.params || '-' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="260" fixed="right">
+      <el-table-column label="操作" width="360" fixed="right">
         <template #default="{ row }">
           <el-space>
             <el-button size="small" @click="repoLoad(row.id)">Load</el-button>
             <el-button size="small" @click="repoUnload(row.id)">Unload</el-button>
             <el-button size="small" text @click="repoPoll">Poll</el-button>
+            <el-button size="small" text type="primary" @click="openConfig(row.id)" :disabled="!isRepoMode">查看配置</el-button>
           </el-space>
         </template>
       </el-table-column>
@@ -67,6 +68,16 @@
       <el-tag v-if="tasks.length" type="success" size="small" effect="plain">任务覆盖：{{ tasks.join(', ') }}</el-tag>
     </div>
   </el-card>
+  <el-drawer v-model="drawer" title="模型配置（config.pbtxt）" size="50%">
+    <template #default>
+      <div class="cfg-header">
+        <el-tag type="info" size="small">{{ currentModel }}</el-tag>
+        <el-button size="small" text v-if="configText" @click="copyConfig">复制</el-button>
+      </div>
+      <pre class="cfg-text" v-if="configText"><code>{{ configText }}</code></pre>
+      <el-empty v-else description="未获取到配置或模型无配置文件" />
+    </template>
+  </el-drawer>
 </template>
 
 <script setup lang="ts">
@@ -81,6 +92,9 @@ const loading = ref(false)
 const rows = ref<ModelItem[]>([])
 const keyword = ref('')
 const modelId = ref('')
+const drawer = ref(false)
+const currentModel = ref('')
+const configText = ref('')
 
 async function load(){
   loading.value = true
@@ -126,6 +140,16 @@ async function repoPoll(){ try { await cp.repoPoll(); ElMessage.success('Poll �
 
 async function repoLoadById(){ if (!modelId.value) return; await repoLoad(modelId.value) }
 async function repoUnloadById(){ if (!modelId.value) return; await repoUnload(modelId.value) }
+
+async function openConfig(id: string){
+  try{
+    currentModel.value = id
+    const r:any = await cp.repoConfig(id)
+    configText.value = (r?.data?.content || '') as string
+    drawer.value = true
+  }catch(e:any){ ElMessage.error(e?.message || '获取配置失败') }
+}
+async function copyConfig(){ try{ await navigator.clipboard.writeText(configText.value); ElMessage.success('已复制') } catch{ ElMessage.error('复制失败') } }
 </script>
 
 <style scoped>
@@ -135,5 +159,7 @@ async function repoUnloadById(){ if (!modelId.value) return; await repoUnload(mo
 .search{ width: 220px; }
 .model-id{ width: 260px; }
 .footer{ margin-top:12px; display:flex; gap:8px; }
+.cfg-header{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.cfg-text{ white-space:pre-wrap; background:#111; color:#ddd; padding:12px; border-radius:6px; max-height:60vh; overflow:auto; }
 </style>
 
