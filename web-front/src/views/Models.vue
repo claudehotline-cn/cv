@@ -68,7 +68,7 @@
       <el-tag v-if="tasks.length" type="success" size="small" effect="plain">任务覆盖：{{ tasks.join(', ') }}</el-tag>
     </div>
   </el-card>
-  <el-drawer v-model="drawer" size="40%">
+  <el-drawer v-model="drawer" size="30%">
     <template #header>
       <div class="cfg-drawer-title">
         <span>模型配置</span>
