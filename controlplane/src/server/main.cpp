@@ -586,7 +586,7 @@ int main(int argc, char** argv) {
                 if (is_triton_repo_id) {
                   auto stub = controlplane::make_va_stub(cfg.va_addr);
                   va::v1::SetEngineRequest sreq; va::v1::SetEngineReply srep; grpc::ClientContext sctx;
-                  sreq.set_provider("triton");
+                  // 仅设置 triton_model 选项，不改变 provider（引擎已在配置中指定为 triton）
                   (*sreq.mutable_options())["triton_model"] = model_id;
                   auto st = stub->SetEngine(&sctx, sreq, &srep);
                   if (!st.ok() || !srep.ok()) {
