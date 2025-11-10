@@ -6,6 +6,7 @@
 #include <vector>
 #include <mutex>
 #include <unordered_set>
+#include <thread>
 
 namespace va { namespace core { class Logger; } }
 
