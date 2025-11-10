@@ -36,7 +36,7 @@ TritonInprocServerHost::TritonInprocServerHost(const Options& opt) {
 
 bool TritonInprocServerHost::init(const Options& opt) {
 #if defined(USE_TRITON_INPROCESS)
-    repo_ = opt.repo; model_control_ = opt.model_control;
+    repo_ = opt.repo; model_control_ = opt.model_control; poll_secs_ = opt.repository_poll_secs;
     // Debug small prints for S3 env (minimal and safe)
     const char* s3_ep = std::getenv("S3_ENDPOINT");
     const char* aws_ep = std::getenv("AWS_ENDPOINT_URL");
@@ -134,7 +134,28 @@ bool TritonInprocServerHost::init(const Options& opt) {
         if (ready) { ready_.store(true); break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-    return ready_.load();
+    if (!ready_.load()) return false;
+    // Start background poll if requested and in poll mode
+    if (poll_secs_ > 0 && model_control_ == std::string("poll")) {
+        stop_poll_.store(false);
+        try {
+            poll_thread_ = std::thread([this]() {
+                while (!stop_poll_.load()) {
+                    {
+                        std::lock_guard<std::mutex> lk(mu_);
+                        if (server_) {
+                            if (auto* e = TRITONSERVER_ServerPollModelRepository(server_); e != nullptr) {
+                                VA_LOG_WARN() << "[inproc.triton] background PollModelRepository failed: " << TRITONSERVER_ErrorMessage(e);
+                                TRITONSERVER_ErrorDelete(e);
+                            }
+                        }
+                    }
+                    for (int i=0; i<poll_secs_ && !stop_poll_.load(); ++i) std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+            });
+        } catch (...) { /* ignore */ }
+    }
+    return true;
 #else
     (void)opt; return false;
 #endif
@@ -142,6 +163,9 @@ bool TritonInprocServerHost::init(const Options& opt) {
 
 TritonInprocServerHost::~TritonInprocServerHost() {
 #if defined(USE_TRITON_INPROCESS)
+    // Stop background poll
+    try { stop_poll_.store(true); } catch (...) {}
+    try { if (poll_thread_.joinable()) poll_thread_.join(); } catch (...) {}
     if (server_) {
         TRITONSERVER_ServerDelete(server_);
         server_ = nullptr; ready_.store(false);
@@ -152,13 +176,12 @@ TritonInprocServerHost::~TritonInprocServerHost() {
 bool TritonInprocServerHost::loadModel(const std::string& name) {
 #if defined(USE_TRITON_INPROCESS)
     if (!server_) return false;
+    std::lock_guard<std::mutex> lk(mu_);
     if (auto* e = TRITONSERVER_ServerLoadModel(server_, name.c_str()); e != nullptr) {
         VA_LOG_WARN() << "[inproc.triton] LoadModel('" << name << "') failed: " << TRITONSERVER_ErrorMessage(e);
         TRITONSERVER_ErrorDelete(e); return false;
     }
-    {
-        std::lock_guard<std::mutex> lk(mu_); loaded_.insert(name);
-    }
+    loaded_.insert(name);
     return true;
 #else
     (void)name; return false;
@@ -168,13 +191,12 @@ bool TritonInprocServerHost::loadModel(const std::string& name) {
 bool TritonInprocServerHost::unloadModel(const std::string& name) {
 #if defined(USE_TRITON_INPROCESS)
     if (!server_) return false;
+    std::lock_guard<std::mutex> lk(mu_);
     if (auto* e = TRITONSERVER_ServerUnloadModel(server_, name.c_str()); e != nullptr) {
         VA_LOG_WARN() << "[inproc.triton] UnloadModel('" << name << "') failed: " << TRITONSERVER_ErrorMessage(e);
         TRITONSERVER_ErrorDelete(e); return false;
     }
-    {
-        std::lock_guard<std::mutex> lk(mu_); loaded_.erase(name);
-    }
+    loaded_.erase(name);
     return true;
 #else
     (void)name; return false;
@@ -184,6 +206,7 @@ bool TritonInprocServerHost::unloadModel(const std::string& name) {
 bool TritonInprocServerHost::pollRepository() {
 #if defined(USE_TRITON_INPROCESS)
     if (!server_) return false;
+    std::lock_guard<std::mutex> lk(mu_);
     if (auto* e = TRITONSERVER_ServerPollModelRepository(server_); e != nullptr) {
         VA_LOG_WARN() << "[inproc.triton] PollModelRepository failed: " << TRITONSERVER_ErrorMessage(e);
         TRITONSERVER_ErrorDelete(e); return false;

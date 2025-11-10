@@ -41,6 +41,7 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
     hopt.enable_http = opt_.enable_http; hopt.http_port = opt_.http_port;
     hopt.enable_grpc = opt_.enable_grpc; hopt.grpc_port = opt_.grpc_port;
     hopt.strict_config = opt_.strict_config; hopt.model_control = opt_.model_control;
+    hopt.repository_poll_secs = opt_.repository_poll_secs;
     // 透传 ServerOptions 增强项
     hopt.backend_dir = opt_.backend_dir;
     hopt.pinned_mem_pool_mb = opt_.pinned_mem_pool_mb;

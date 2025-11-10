@@ -32,6 +32,7 @@ public:
         int grpc_port{8001};
         bool strict_config{false};
         std::string model_control{"none"};
+        int repository_poll_secs{0};
         // ServerOptions 补充（可从配置或环境注入）
         std::string backend_dir{};
         size_t pinned_mem_pool_mb{0};

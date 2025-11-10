@@ -23,6 +23,7 @@ public:
         std::string repo{ "/models" };
         bool strict_config{false};
         std::string model_control{ "none" }; // none / explicit
+        int repository_poll_secs{0};         // >0 启动后台自动 poll，仅当 model_control=="poll" 生效
         bool enable_http{false};
         int http_port{8000};
         bool enable_grpc{false};
@@ -73,6 +74,10 @@ private:
     std::unordered_set<std::string> loaded_;
     std::string repo_;
     std::string model_control_;
+    // Auto-poll
+    std::thread poll_thread_;
+    std::atomic<bool> stop_poll_{false};
+    int poll_secs_{0};
 #endif
 };
 

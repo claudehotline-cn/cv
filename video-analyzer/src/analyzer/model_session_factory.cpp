@@ -145,6 +145,8 @@ create_model_session(const va::core::EngineDescriptor& engine,
             if (parse_bool(opts, "triton_enable_grpc", false)) { iopt.enable_grpc = true; iopt.grpc_port = parse_int(opts, "triton_grpc_port", 8001); }
             if (auto it = opts.find("triton_model_control"); it != opts.end()) iopt.model_control = it->second;
             iopt.strict_config = parse_bool(opts, "triton_strict_config", false);
+            // repository auto-poll interval (seconds), only effective when model_control=poll
+            iopt.repository_poll_secs = parse_int(opts, "triton_repository_poll_secs", 0);
             // advanced ServerOptions
             if (auto it = opts.find("triton_backend_dir"); it != opts.end()) iopt.backend_dir = it->second;
             {
@@ -161,7 +163,7 @@ create_model_session(const va::core::EngineDescriptor& engine,
                 if (!cur.empty()) iopt.backend_configs.push_back(cur);
             }
             auto inps = std::make_shared<va::analyzer::TritonInprocModelSession>(iopt);
-            if (decision) { decision->resolved = "triton-inproc"; }
+        if (decision) { decision->resolved = "triton-inproc"; }
             return inps;
         }
 #endif
