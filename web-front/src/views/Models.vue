@@ -23,11 +23,11 @@
     <el-empty v-if="!loading && !filtered.length" description="暂无模型" />
     <el-table v-else :data="filtered" height="480" size="small" stripe>
       <el-table-column prop="id" label="模型 ID" width="220" />
-      <el-table-column prop="task" label="任务" width="140" />
-      <el-table-column prop="family" label="系列" width="140" />
-      <el-table-column prop="variant" label="版本" width="140" />
+      <el-table-column v-if="!isRepoMode" prop="task" label="任务" width="140" />
+      <el-table-column v-if="!isRepoMode" prop="family" label="系列" width="140" />
+      <el-table-column v-if="!isRepoMode" prop="variant" label="版本" width="140" />
       <el-table-column prop="path" label="模型路径" show-overflow-tooltip />
-      <el-table-column label="状态" width="120">
+      <el-table-column v-if="isRepoMode" label="状态" width="120">
         <template #default="{ row }">
           <el-tag v-if="typeof (row as any).ready !== 'undefined'" :type="(row as any).ready ? 'success' : 'info'" size="small">
             {{ (row as any).ready ? 'ready' : 'unknown' }}
@@ -35,7 +35,7 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="版本列表" width="220">
+      <el-table-column v-if="isRepoMode" label="版本列表" width="220">
         <template #default="{ row }">
           <template v-if="(row as any).versions && (row as any).versions.length">
             <el-space wrap>
@@ -45,10 +45,10 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="输入尺寸" width="140">
+      <el-table-column v-if="!isRepoMode" label="输入尺寸" width="140">
         <template #default="{ row }">{{ row.input_shape || '-' }}</template>
       </el-table-column>
-      <el-table-column label="参数量" width="120">
+      <el-table-column v-if="!isRepoMode" label="参数量" width="120">
         <template #default="{ row }">{{ row.params || '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
@@ -102,6 +102,8 @@ async function load(){
     loading.value = false
   }
 }
+
+const isRepoMode = computed(() => rows.value.some((r:any) => typeof (r as any).ready !== 'undefined' || (r as any).versions))
 
 const filtered = computed(() => {
   if (!keyword.value) return rows.value
