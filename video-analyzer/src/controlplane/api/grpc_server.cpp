@@ -402,6 +402,12 @@ public:
             auto eng = app_->currentEngine();
             va::analyzer::TritonInprocServerHost::Options hopt;
             if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            // Determine currently loaded models for ready flag
+            std::unordered_set<std::string> loaded;
+            try {
+                auto host = va::analyzer::TritonInprocServerHost::instance(hopt);
+                if (host) { auto cur = host->currentLoadedModels(); loaded.insert(cur.begin(), cur.end()); }
+            } catch (...) {}
             // Try local FS listing when repo is a filesystem path
             bool listed = false;
             try {
@@ -410,6 +416,18 @@ public:
                         if (entry.is_directory()) {
                             auto name = entry.path().filename().string();
                             auto* m = resp->add_models(); m->set_id(name); m->set_path(entry.path().string());
+                            m->set_ready(loaded.count(name) > 0);
+                            // best-effort versions: numeric sub-dirs
+                            try {
+                                for (const auto& sub : std::filesystem::directory_iterator(entry.path())) {
+                                    if (sub.is_directory()) {
+                                        auto v = sub.path().filename().string();
+                                        if (!v.empty() && std::all_of(v.begin(), v.end(), [](char c){ return c>='0'&&c<='9'; })) {
+                                            m->add_versions(v);
+                                        }
+                                    }
+                                }
+                            } catch (...) { /* ignore */ }
                         }
                     }
                     listed = true;
@@ -471,7 +489,8 @@ public:
                                     std::string rest = full.substr(prefix.size());
                                     if (!rest.empty() && rest.back() == '/') rest.pop_back();
                                     if (rest.find('/') == std::string::npos && !rest.empty()) {
-                                        auto* m = resp->add_models(); m->set_id(rest); m->set_path(full);
+                                        auto* m = resp->add_models();
+                                        m->set_id(rest); m->set_path(full); m->set_ready(loaded.count(rest) > 0);
                                     }
                                 }
                             }
@@ -482,12 +501,7 @@ public:
             }
             if (!listed) {
                 // Fallback: return currently known loaded models
-                triton_host_ = va::analyzer::TritonInprocServerHost::instance(hopt);
-                auto host = triton_host_;
-                if (host) {
-                    auto cur = host->currentLoadedModels();
-                    for (const auto& id : cur) { auto* m = resp->add_models(); m->set_id(id); }
-                }
+                for (const auto& id : loaded) { auto* m = resp->add_models(); m->set_id(id); m->set_ready(true); }
             }
             resp->set_ok(true); resp->set_msg("");
             return ::grpc::Status::OK;

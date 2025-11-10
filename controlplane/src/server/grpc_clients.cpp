@@ -429,6 +429,27 @@ bool va_repo_list(const std::string& addr, std::vector<std::string>* models, std
   } catch (const std::exception& e) { if (err) *err = e.what(); return false; } catch (...) { if (err) *err = "unknown exception"; return false; }
 }
 
+bool va_repo_list_detail(const std::string& addr, std::vector<RepoModelInfo>* models, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoListRequest req; va::v1::RepoListReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoList(&ctx, req, &rep); }, true, 0, "RepoList");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    if (models) {
+      models->clear(); models->reserve(rep.models_size());
+      for (const auto& m : rep.models()) {
+        RepoModelInfo info; info.id = m.id(); info.path = m.path(); info.ready = m.ready();
+        info.active_version = m.active_version();
+        for (const auto& v : m.versions()) info.versions.push_back(v);
+        models->push_back(std::move(info));
+      }
+    }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; }
+  catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
 } // namespace controlplane
 
 

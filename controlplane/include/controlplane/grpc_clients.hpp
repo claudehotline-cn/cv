@@ -100,6 +100,16 @@ bool va_repo_unload(const std::string& addr, const std::string& model, std::stri
 bool va_repo_poll(const std::string& addr, std::string* err);
 bool va_repo_list(const std::string& addr, std::vector<std::string>* models, std::string* err);
 
+// Detailed repo model info (best-effort)
+struct RepoModelInfo {
+  std::string id;
+  std::string path;            // optional
+  bool ready{false};           // optional
+  std::vector<std::string> versions; // optional
+  std::string active_version;  // optional
+};
+bool va_repo_list_detail(const std::string& addr, std::vector<RepoModelInfo>* models, std::string* err);
+
 // Helpers to create stubs with configured TLS credentials
 std::unique_ptr<::va::v1::AnalyzerControl::Stub> make_va_stub(const std::string& addr);
 std::unique_ptr<::vsm::v1::SourceControl::Stub> make_vsm_stub(const std::string& addr);

@@ -521,11 +521,30 @@ int main(int argc, char** argv) {
       try{ controlplane::metrics::inc_repo_op("poll", true);}catch(...){}
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/poll", r.status); return r;
     }
-    // List repo models via gRPC RepoList
+    // List repo models via gRPC RepoList（尽量返回详细字段）
     if (path == "/api/repo/list" && method == "GET") {
       try {
-        std::vector<std::string> models;
         std::string err;
+        std::vector<controlplane::RepoModelInfo> detail;
+        if (va_repo_list_detail(cfg.va_addr, &detail, &err) && !detail.empty()) {
+          std::ostringstream os; os << "{\"code\":\"OK\",\"data\":[";
+          for (size_t i=0;i<detail.size();++i) {
+            if (i) os << ",";
+            os << "{\"id\":\""<<detail[i].id<<"\"";
+            if (!detail[i].path.empty()) os << ",\"path\":\""<<detail[i].path<<"\"";
+            os << ",\"ready\":" << (detail[i].ready? "true":"false");
+            if (!detail[i].versions.empty()) {
+              os << ",\"versions\":[";
+              for (size_t j=0;j<detail[i].versions.size();++j) { if (j) os << ","; os << "\""<<detail[i].versions[j]<<"\""; }
+              os << "]";
+            }
+            if (!detail[i].active_version.empty()) os << ",\"active_version\":\""<<detail[i].active_version<<"\"";
+            os << "}";
+          }
+          os << "]}"; r.status=200; r.body=os.str(); emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", true);}catch(...){} return r;
+        }
+        // fallback: id only
+        std::vector<std::string> models;
         if (!va_repo_list(cfg.va_addr, &models, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/list", r.status); try{ controlplane::metrics::inc_repo_op("list", false);}catch(...){} return r; }
         std::ostringstream os; os << "{\"code\":\"OK\",\"data\":[";
         for (size_t i=0;i<models.size();++i) { if (i) os << ","; os << "{\"id\":\""<<models[i]<<"\"}"; }

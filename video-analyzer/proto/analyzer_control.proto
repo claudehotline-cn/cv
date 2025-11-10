@@ -172,4 +172,7 @@ message RepoListReply {
 message RepoModel {
   string id = 1;       // model directory name / identifier
   string path = 2;     // optional path or uri
+  bool ready = 3;      // optional: whether model is currently loaded/ready
+  repeated string versions = 4; // optional: discovered versions (best-effort)
+  string active_version = 5;    // optional: active version (best-effort)
 }
