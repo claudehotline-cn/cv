@@ -68,7 +68,7 @@
       <el-tag v-if="tasks.length" type="success" size="small" effect="plain">任务覆盖：{{ tasks.join(', ') }}</el-tag>
     </div>
   </el-card>
-  <el-drawer v-model="drawer" size="55%">
+  <el-drawer v-model="drawer" size="40%">
     <template #header>
       <div class="cfg-drawer-title">
         <span>模型配置</span>
@@ -86,7 +86,7 @@
         </el-space>
       </div>
       <div v-if="configText" class="cfg-container">
-        <pre class="cfg-text" :class="{ wrap: wrapOn }" :style="{ fontSize: fontSize + 'px' }"><code>{{ configText }}</code></pre>
+        <pre class="cfg-text" :class="{ wrap: wrapOn }" :style="{ fontSize: fontSize + 'px' }"><code v-html="highlightedConfig"></code></pre>
       </div>
       <el-empty v-else description="未获取到配置或模型无配置文件" />
     </template>
@@ -110,6 +110,7 @@ const currentModel = ref('')
 const configText = ref('')
 const wrapOn = ref(true)
 const fontSize = ref(13)
+const highlightedConfig = computed(() => highlightPbtxt(configText.value || ''))
 
 async function load(){
   loading.value = true
@@ -175,6 +176,44 @@ async function downloadConfig(){
     URL.revokeObjectURL(a.href)
   }catch{ ElMessage.error('下载失败') }
 }
+
+function highlightPbtxt(src: string): string {
+  // escape HTML
+  const esc = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  const kw = ['name','platform','max_batch_size','version_policy','input','output','dims','data_type','format','instance_group','count','kind','backend','parameters','optimization','graph_level','dynamic_batching']
+  const consts = ['KIND_GPU','KIND_CPU','FORMAT_NCHW','FORMAT_NHWC','TYPE_FP32','TYPE_FP16','TYPE_INT8','TYPE_INT32','TYPE_UINT8']
+  const kwRe = new RegExp('\\b(' + kw.join('|') + ')\\b','g')
+  const cstRe = new RegExp('\\b(' + consts.join('|') + ')\\b','g')
+  const numRe = /\b\d+(?:\.\d+)?\b/g
+  const strRe = /"(?:[^"\\]|\\.)*"/g
+  const lineRe = /.*?(\n|$)/g
+  let out = ''
+  const srcEsc = esc(src)
+  let m: RegExpExecArray | null
+  while ((m = lineRe.exec(srcEsc)) !== null) {
+    let line = m[0]
+    // separate comments (#... or //...)
+    let commentIdx = -1
+    const hash = line.indexOf('#')
+    const sl = line.indexOf('//')
+    if (hash >= 0 && sl >= 0) commentIdx = Math.min(hash, sl)
+    else commentIdx = (hash >= 0 ? hash : sl)
+    let codePart = line
+    let commentPart = ''
+    if (commentIdx >= 0) { codePart = line.slice(0, commentIdx); commentPart = line.slice(commentIdx) }
+    // strings
+    codePart = codePart.replace(strRe, (s) => `<span class=tok-str>${s}</span>`)
+    // numbers
+    codePart = codePart.replace(numRe, (s) => `<span class=tok-num>${s}</span>`)
+    // constants and keywords
+    codePart = codePart.replace(cstRe, (s) => `<span class=tok-const>${s}</span>`)
+    codePart = codePart.replace(kwRe, (s) => `<span class=tok-key>${s}</span>`)
+    // comment
+    if (commentPart) codePart += `<span class=tok-comment>${commentPart}</span>`
+    out += codePart
+  }
+  return out
+}
 </script>
 
 <style scoped>
@@ -189,5 +228,10 @@ async function downloadConfig(){
 .cfg-container{ border:1px solid #eaecef; border-radius:6px; background:#f6f8fa; }
 .cfg-text{ margin:0; padding:12px; color:#24292e; line-height:1.5; max-height:65vh; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space:pre; }
 .cfg-text.wrap{ white-space:pre-wrap; word-break:break-word; }
+.tok-key{ color:#005cc5; font-weight:600; }
+.tok-const{ color:#6f42c1; }
+.tok-num{ color:#e36209; }
+.tok-str{ color:#032f62; }
+.tok-comment{ color:#6a737d; }
 </style>
 
