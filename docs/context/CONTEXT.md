@@ -1,65 +1,81 @@
-# CONTEXT（In‑Process Triton + MinIO + 控制/前端一体化）
+# Triton 模型仓库管理与订阅改造（对话要点汇总）
 
-## 背景与范围
-- 核心：`video-analyzer` 以内嵌（In‑Process）方式集成 Triton（libtritonserver），模型仓库迁移到 MinIO（S3 兼容）。
-- 控制与前端：统一通过 Controlplane HTTP 暴露最小集（Schema/发布/仓库/观测），`web-front` 提供发布、配置、观测 UI。
-- 主要目录：
-  - VA 源码：`video-analyzer/src/analyzer/triton_inproc_*.cpp|.hpp`
-  - CP 服务：`controlplane/src/server/*.cpp`、CLI：`controlplane/src/cli/*.cpp`
-  - 前端：`web-front/`（Vue3 + Vite + Element Plus）
-  - 文档与脚本：`docs/examples/*`、`tools/*`
+本文汇聚本轮对话中已落地的设计、代码改动、接口与前端行为，作为持续迭代的上下文依据。
 
-## In‑Process Triton 修复与增强
-1) 编译与崩溃修复
-- 移除废弃的 `TRITONSERVER_InferenceRequestSetBatchSize`；批次由输入形状推断（支持 assume_no_batch 去前导 1 维）。
-- 使用三参释放回调 `TRITONSERVER_InferenceRequestSetReleaseCallback`，异步入队后不再手动 Delete，避免双重释放。
-- 生命周期修复：会话持有 `shared_ptr<TritonInprocServerHost>`，避免每帧析构导致 30s 等待日志。
+## 一、架构边界与通信
 
-2) ServerOptions 系统化（Host）
-- 支持：`backend_dir`、Pinned/CUDA 内存池（设备粒度）、`backend-config` 注入（等价 `--backend-config=backend:key=value`）。
-- 读取相关环境变量（如 `TRITON_BACKEND_DIR`、`TRITON_PINNED_MEM_MB`、`TRITON_CUDA_MEM_POOL_BYTES`、`TRITON_BACKEND_CONFIGS`）。
+- 前端 → 控制平面（CP）：HTTP（/api/...）。
+- 控制平面（CP） → 视频分析器（VA）：gRPC（AnalyzerControl）。
+- VA 内部：Triton In‑Process Server（可选自动轮询、显示加载/卸载）。
 
-3) I/O 与 Warmup（Session）
-- 输入支持 GPU 直通；输出分配器实现 size‑class 显存池（`next_pow2` 上取整复用），CPU 回退保留。
-- 懒加载 Warmup：首帧按 `warmup_runs`（auto/-1=1 次）执行预热，避免冷启动抖动。
+## 二、核心能力与接口
 
-## MinIO（S3）仓库接入
-- 端点与变量：兼容 AWS/S3 多前缀，推荐内嵌端点 URL：`s3://http://minio:9000/cv-models/models`；容器内健康检查与 AK/SK 签名验证通过。
-- VA 配置字段：`triton_repo`、`triton_model(_version)`、`S3_*`/`AWS_*` 环境变量。
-- Host 封装：In‑Process 提供 `loadModel/unloadModel/pollRepository` 包装，CP 映射 HTTP 路由。
+1) 仓库列表与管理
+- gRPC 新增/增强（video-analyzer/proto/analyzer_control.proto）
+  - RepoList(RepoListRequest) → RepoListReply{ ok,msg, models[] }
+    - RepoModel 字段扩展：id, path?, ready?, versions?[], active_version?
+  - RepoLoad/RepoUnload/RepoPoll 保持可用。
+  - RepoGetConfig/RepoSaveConfig：读取/写入 config.pbtxt（FS/MinIO S3，SigV4）。
+- CP HTTP 路由（controlplane/src/server/main.cpp）
+  - GET  /api/repo/list           → 优先详细字段，失败回退 id-only。
+  - POST /api/repo/load|unload|poll
+  - GET  /api/repo/config?model=… → 读取 config.pbtxt
+  - POST /api/repo/config         → 保存 config.pbtxt
+  - CORS 统一在入口设置，去除了局部重复头（修复 "'*, *'" 问题）。
 
-## Controlplane：HTTP 最小集与可观测
-- 配置 Schema：GET `/api/ui/schema/engine`（字段：provider/device/warmup/triton_* 等）。
-- 发布/切换：
-  - POST `/api/control/set_engine` → AnalyzerControl.SetEngine。
-  - POST `/api/repo/load|/unload|/poll` → RepoLoad/RepoUnload/RepoPoll。
-  - POST `/api/control/release` → Triton：SetEngine(triton_model/version)+HotSwap("__triton__")；非 Triton：HotSwap(model_uri)。
-- 可观测：
-  - GET `/api/_metrics/summary`（请求总数、后端错误、SSE 连接、缓存命中/未命中）。
-  - GET `/metrics`（Prometheus 文本）。
-  - GET `/api/va/runtime`（provider/gpu_active/io_binding/device_binding）。
+2) 订阅使用仓库模型名
+- CP /api/subscriptions（POST）：若 body.model_id 命中 RepoList（即仓库模型名），则仅设置 VA SetEngine.options.triton_model=model_id，并清空 model_id 后转发订阅；不切换 provider（provider=triton 已由配置确定）。
 
-## 前端（web-front）对接
-- M1：接入 Runtime/Summary（顶栏 5s 刷新）；Dashboard 请求总数接入。
-- M2：EngineForm（Schema→表单）与 Settings 保存（优先 `/api/control/set_engine`）。
-- M3：Release 页面（Triton/非 Triton 路径）与统一发布端点 `/api/control/release`。
-- M4：Models 页面仓库 Load/Unload/Poll 按钮。
-- Dev 代理：Vite proxy 将 `/api`、`/metrics` 指向 CP（18080）。
+3) 别名治理（最小可用）
+- /api/models/aliases：GET/POST/DELETE，内存 + 文件持久化（logs/model_aliases.json；CP_ALIASES_FILE 可覆盖）。
+- /api/control/release：支持 alias 字段，解析为 triton_model[/version]（显式值优先）。
 
-## Ensemble 示例与取舍
-- 单步封装：`ens_det_trt`/`ens_det_onnx`（仅转发到子模型）。
-- 全链路示例：`ens_det_*_full`（Python Backend 前处理/后处理：`preproc_letterbox`、`yolo_nms`；演示用途，CPU 实现）。
-- Overlay 不建议纳入 Ensemble（渲染/推流在 VA，更高效）；生产推荐将 NMS 融合至 TRT 插件（EfficientNMS）。
+4) 可观测与指标
+- /api/_metrics/summary 中新增 repo 操作计数（ok/fail for load/unload/poll/list）。
+- 统一请求计数/直方图/下游 gRPC 错误统计。
 
-## 调优与验收
-- 压测工具：`tools/triton/perf_analyze.sh`（封装 perf_analyzer），`tools/triton/suggest_dynamic_batch.py`（从 CSV 生成 `preferred_batch_size`）。
-- 风险脚本：`tools/release/va_fallback.sh`（降级至 CUDA），`tools/release/va_restore_triton.sh`（恢复 Triton 并 HotSwap）。
-- 验收：`tools/validate/e2e_smoke.sh`；`docs/examples/acceptance_checklist.md`。
+## 三、VA Host 与会话
 
-## 现状与下一步
-- In‑Process 稳定（生命周期/释放/显存池/预热）；MinIO 仓库打通；控制/前端发布链路闭环；可观测接口到位。
-- 建议：
-  - 生产启用 MinIO TLS 与凭据管理；
-  - 优化 EngineForm 字段分组与提示；
-  - 扩展 model_analyzer 自动搜索；
-  - 将 NMS 融入主干引擎或 C++ Backend（GPU）。
+- TritonInprocServerHost（video-analyzer/src/analyzer/triton_inproc_server_host.*）
+  - 新增 repository_poll_secs 选项；当 model_control=poll 且 >0 时，后台线程周期性 PollModelRepository。
+  - load/unload/poll 加锁串行化；currentLoadedModels() 提供 ready 标记依据。
+- TritonInprocModelSession/Factory 支持 triton_repository_poll_secs 选项透传。
+
+## 四、前端改造（web-front）
+
+- 模型页（src/views/Models.vue）
+  - 数据源：优先 /api/repo/list（仓库），回退 /api/models（检测模型）。
+  - 列展示：仓库模式显示 ready/versions/active_version，隐藏任务/系列/变体/输入尺寸/参数量；检测模型模式反之。
+  - 操作：Load/Unload/Poll；“查看配置”按钮打开 Drawer。
+  - 配置 Drawer：
+    - 宽度 30%；浅色容器；换行/字号控制；复制/下载；
+    - 语法高亮（关键词/常量/数字/字符串/注释），200KB/2000 行上限，避免卡顿；
+    - 编辑模式（textarea）+ 保存/重载 → /api/repo/config（POST/GET）。
+- API 封装（src/api/cp.ts）
+  - repoList()/repoLoad()/repoUnload()/repoPoll()
+  - repoConfig(model)/repoSaveConfig(model, content)
+
+## 五、使用示例（HTTP）
+
+- 列表：GET /api/repo/list
+- 载入：POST /api/repo/load {"model":"yolov12x"}
+- 订阅：POST /api/subscriptions {"stream_id":"cam01","profile":"default","source_uri":"rtsp://…","model_id":"yolov12x"}
+- 配置：GET /api/repo/config?model=yolov12x；POST /api/repo/config {"model":"yolov12x","content":"…"}
+- 别名：POST /api/models/aliases {"alias":"prod","model_id":"yolov12x","version":"1"}
+- 发布：POST /api/control/release {"pipeline_name":"p","node":"det","alias":"prod"}
+
+## 六、分支与提交（IOBinding）
+
+- 关键提交：
+  - RepoList 细节返回：8b01da4
+  - CORS 修复：3767499
+  - 别名治理最小实现：c405173；Release 联动别名：7021d48
+  - VA Host 自动轮询与并发保护：62b5b7c；<thread> 构建修复：68965d8
+  - 前端模型页增强与 Drawer：eebf191/82f5e31/1fcc231/3b5930f/686f8ef
+  - 配置读写链路（VA/CP/前端）：6e65bcc/4354c8f/101d987
+
+## 七、注意事项
+
+- 订阅的 model_id 若为仓库模型名，将全局更新 triton_model；若需每订阅独立模型，需后续改 Pipeline 粒度注入。
+- S3 写入/读取依赖环境变量：AWS_ENDPOINT_URL_S3/AWS_ENDPOINT_URL、AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY、AWS_REGION（或 S3_* 同义）。
+- 大文件渲染采用行分割与长度上限，避免浏览器卡顿；必要时可进一步分页或虚拟化。
