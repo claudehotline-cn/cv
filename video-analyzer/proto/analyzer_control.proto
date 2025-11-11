@@ -32,6 +32,12 @@ service AnalyzerControl {
   rpc RepoGetConfig(RepoGetConfigRequest) returns (RepoGetConfigReply);
   // Save a model's config.pbtxt content (best-effort)
   rpc RepoSaveConfig(RepoSaveConfigRequest) returns (RepoSaveConfigReply);
+  // Upload a file into model repository (e.g., model.onnx or model.plan)
+  rpc RepoPutFile(RepoPutFileRequest) returns (RepoPutFileReply);
+  // Convert ONNX to TensorRT plan and upload into repository. Returns a job id.
+  rpc RepoConvertUpload(RepoConvertUploadRequest) returns (RepoConvertUploadReply);
+  // Stream conversion progress/logs for a job id.
+  rpc RepoConvertStream(RepoConvertStreamRequest) returns (stream RepoConvertEvent);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -185,3 +191,18 @@ message RepoGetConfigRequest { string model = 1; }
 message RepoGetConfigReply   { bool ok = 1; string msg = 2; string content = 3; }
 message RepoSaveConfigRequest { string model = 1; string content = 2; }
 message RepoSaveConfigReply   { bool ok = 1; string msg = 2; }
+
+// Upload artifact into repository
+message RepoPutFileRequest {
+  string model = 1;    // model id
+  string version = 2;  // optional; default "1"
+  string filename = 3; // file name within version dir
+  bytes content = 4;   // raw bytes
+}
+message RepoPutFileReply   { bool ok = 1; string msg = 2; }
+
+// Convert ONNX -> TensorRT plan
+message RepoConvertUploadRequest { string model = 1; string version = 2; bytes onnx = 3; string trtexec = 4; }
+message RepoConvertUploadReply   { bool ok = 1; string msg = 2; string job_id = 3; }
+message RepoConvertStreamRequest { string job_id = 1; }
+message RepoConvertEvent { string kind = 1; string line = 2; string phase = 3; }

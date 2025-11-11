@@ -170,6 +170,26 @@ export const cp = {
   async repoSaveConfig(model: string, content: string) {
     return http.post('/api/repo/config', { model, content })
   },
+  async repoUpload(params: { model: string; version?: string; file: File }) {
+    const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+    const q = new URLSearchParams({ model: params.model, filename: params.file.name, version: params.version || '1' })
+    const url = `${base}/api/repo/upload?${q.toString()}`
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: params.file })
+    if (!r.ok) { const t = await r.text().catch(()=> ''); throw new Error(t || 'repoUpload failed') }
+    return r.json()
+  },
+  async repoConvertUpload(params: { model: string; version?: string; file: File }) {
+    const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+    const q = new URLSearchParams({ model: params.model, filename: params.file.name, version: params.version || '1' })
+    const url = `${base}/api/repo/convert_upload?${q.toString()}`
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: params.file })
+    if (!r.ok) { const t = await r.text().catch(()=> ''); throw new Error(t || 'repoConvertUpload failed') }
+    return r.json()
+  },
+  // Repo add model (create config.pbtxt; optional autoload)
+  async repoAddModel(payload: { model: string; config?: string; load?: boolean }) {
+    return http.post('/api/repo/add', payload)
+  },
   // Unified release endpoint
   async release(payload: { pipeline_name:string; node:string; triton_model?:string; triton_model_version?:string; model_uri?:string }) {
     try { return await http.post('/api/control/release', payload) }

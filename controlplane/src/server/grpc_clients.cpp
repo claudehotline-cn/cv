@@ -27,6 +27,7 @@ static int g_vsm_retries = 0;
 static std::shared_ptr<grpc::Channel> make_channel(const std::string& addr, bool is_va) {
   grpc::ChannelArguments args;
   args.SetMaxReceiveMessageSize(-1);
+  args.SetMaxSendMessageSize(-1);
   // Force authority/SNI to localhost to match dev certificates SAN
   args.SetString("grpc.ssl_target_name_override", "localhost");
   args.SetString("grpc.default_authority", "localhost");
@@ -471,6 +472,35 @@ bool va_repo_save_config(const std::string& addr, const std::string& model, cons
     va::v1::RepoSaveConfigRequest req; req.set_model(model); req.set_content(content);
     va::v1::RepoSaveConfigReply rep;
     auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoSaveConfig(&ctx, req, &rep); }, true, 0, "RepoSaveConfig");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; }
+  catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
+bool va_repo_convert_upload(const std::string& addr, const std::string& model, const std::string& version, const std::string& onnx_bytes, std::string* job_id, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoConvertUploadRequest req; req.set_model(model); req.set_version(version); req.set_onnx(onnx_bytes);
+    // Optional: forward TRTEXEC path if present in CP env
+    const char* te = std::getenv("TRTEXEC"); if (te && *te) req.set_trtexec(te);
+    va::v1::RepoConvertUploadReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoConvertUpload(&ctx, req, &rep); }, true, 0, "RepoConvertUpload");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    if (job_id) *job_id = rep.job_id();
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; }
+  catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
+bool va_repo_put_file(const std::string& addr, const std::string& model, const std::string& version, const std::string& filename, const std::string& content, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoPutFileRequest req; req.set_model(model); req.set_version(version); req.set_filename(filename); req.set_content(content);
+    va::v1::RepoPutFileReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoPutFile(&ctx, req, &rep); }, true, 0, "RepoPutFile");
     if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
     return true;
   } catch (const std::exception& e) { if (err) *err = e.what(); return false; }

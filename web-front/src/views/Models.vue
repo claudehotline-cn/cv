@@ -11,6 +11,7 @@
             <template #prefix><el-icon><Search/></el-icon></template>
           </el-input>
           <el-button size="small" @click="load" :loading="loading">刷新</el-button>
+          <el-button size="small" type="success" @click="openAddDialog">添加模型</el-button>
           <el-divider direction="vertical" />
           <el-input v-model="modelId" placeholder="模型ID（Triton 仓库）" size="small" clearable class="model-id" />
           <el-button size="small" type="primary" @click="repoLoadById" :disabled="!modelId">Load</el-button>
@@ -104,10 +105,64 @@
       <el-empty v-else description="未获取到配置或模型无配置文件" />
     </template>
   </el-drawer>
+  <el-dialog v-model="addDlg" title="添加模型" width="640">
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      <el-form label-width="120px" size="small">
+        <el-form-item label="模型 ID">
+          <el-input v-model="addForm.model" placeholder="例如 yolov8n" />
+        </el-form-item>
+        <el-form-item label="平台">
+          <el-select v-model="addForm.platform" style="width:100%">
+            <el-option label="ONNX Runtime (onnxruntime_onnx)" value="onnxruntime_onnx" />
+            <el-option label="TensorRT Plan (tensorrt_plan)" value="tensorrt_plan" />
+            <el-option label="自定义（手写）" value="custom" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="config.pbtxt">
+          <el-input type="textarea" :rows="12" v-model="addForm.config" placeholder="配置内容（可自动生成后再调整）" />
+        </el-form-item>
+        <el-form-item label="版本号">
+          <el-input v-model="addForm.version" placeholder="默认 1" />
+        </el-form-item>
+        <el-form-item label="上传权重文件">
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <div>
+              <input type="file" @change="onPickFile" :disabled="convertInProgress || uploadInProgress || !addForm.model" />
+              <span v-if="addFileName" style="margin-left:8px;color:#666;">{{ addFileName }}</span>
+              <span v-if="!addForm.model" style="margin-left:8px;color:#999;">请先填写模型 ID</span>
+            </div>
+            <div v-if="addForm.platform==='tensorrt_plan' && addFileName && isOnnxFile(addFileName)">
+              <el-tag :type="convertPhase==='done' ? 'success' : (convertPhase==='failed' ? 'danger' : 'info')" size="small" effect="plain">
+                {{ convertPhase === 'running' ? '转换中…' : (convertPhase==='uploading' ? '上传中…' : convertPhase || '就绪') }}
+              </el-tag>
+              <pre class="cfg-text" style="max-height:32vh; overflow:auto; white-space:pre-wrap; background:#0b1020; color:#c7d3ff; padding:8px; border-radius:6px; margin-top:6px;" v-text="convertLogs"></pre>
+            </div>
+            <div v-else-if="addFileName">
+              <el-tag v-if="uploadInProgress" type="info" size="small" effect="plain">上传中…</el-tag>
+              <el-tag v-else-if="uploadStatus==='uploaded'" type="success" size="small" effect="plain">已上传</el-tag>
+              <el-tag v-else-if="uploadStatus==='failed'" type="danger" size="small" effect="plain">上传失败</el-tag>
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item label="创建后立即加载">
+          <el-switch v-model="addForm.load" />
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon
+        title="当前为最小实现：创建模型目录与 config.pbtxt。模型文件请通过外部方式放入仓库（FS 或 S3），再在此页面执行 Load。" />
+    </div>
+    <template #footer>
+      <span class="dialog-footer">
+        <el-button @click="addDlg=false">取消</el-button>
+        <el-button type="primary" :loading="adding" @click="submitAdd">提交</el-button>
+      </span>
+    </template>
+  </el-dialog>
+  
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { listModels, cp } from '@/api/cp'
@@ -127,6 +182,22 @@ const editMode = ref(false)
 const saving = ref(false)
 const truncated = ref(false)
 const highlightedConfig = computed(() => highlightPbtxt(configText.value || ''))
+
+// add model dialog state
+const addDlg = ref(false)
+const adding = ref(false)
+const addForm = reactive({ model: '', platform: 'onnxruntime_onnx', config: '', version: '1', load: false })
+const addFile = ref<File | null>(null)
+const addFileName = ref('')
+// convert progress (inline under upload widget)
+const convertLogs = ref('')
+const convertPhase = ref<'created'|'running'|'uploading'|'done'|'failed'|''>('')
+const convertInProgress = ref(false)
+// direct upload state (non-conversion)
+const uploadInProgress = ref(false)
+const uploadStatus = ref<'uploaded'|'failed'|''>('')
+let convertEs: EventSource | null = null
+let convertUploaded = false
 
 async function load(){
   loading.value = true
@@ -233,6 +304,136 @@ function highlightPbtxt(src: string): string {
     out.push(code)
   }
   return out.join('\n')
+}
+
+function openAddDialog(){
+  addForm.model = ''
+  addForm.platform = 'onnxruntime_onnx'
+  addForm.config = ''
+  addForm.version = '1'
+  addForm.load = false
+  addFile.value = null
+  addFileName.value = ''
+  addDlg.value = true
+}
+
+watch(() => addForm.platform, (p) => {
+  if (!addForm.config || addForm.config.trim().length === 0 || addForm.config.indexOf('name:') === 0) {
+    const name = addForm.model || '<model>'
+    if (p === 'onnxruntime_onnx') {
+      addForm.config = [
+        `name: "${name}"`,
+        `platform: "onnxruntime_onnx"`,
+        `max_batch_size: 1`,
+        `input: [ { name: "images", data_type: TYPE_FP32, dims: [ 3, -1, -1 ], format: FORMAT_NCHW } ]`,
+        `output: [ { name: "output", data_type: TYPE_FP32, dims: [ -1 ] } ]`
+      ].join('\n')
+    } else if (p === 'tensorrt_plan') {
+      addForm.config = [
+        `name: "${name}"`,
+        `platform: "tensorrt_plan"`,
+        `max_batch_size: 1`
+      ].join('\n')
+    } else {
+      addForm.config = `name: "${name}"\n# 自定义 config.pbtxt`
+    }
+  }
+})
+
+watch(() => addForm.model, (m) => {
+  if (addForm.config && addForm.config.startsWith('name:')) {
+    addForm.config = addForm.config.replace(/name:\s*\"[^\"]*\"/, `name: "${m}"`)
+  }
+})
+
+async function submitAdd(){
+  if (!addForm.model) { ElMessage.warning('请填写模型ID'); return }
+  try{
+    adding.value = true
+    await cp.repoAddModel({ model: addForm.model, config: addForm.config, load: false })
+    // Load only when requested and not during in-progress conversion
+    if (addForm.load) {
+      if (convertInProgress.value) {
+        ElMessage.info('转换未完成，稍后请在列表中执行 Load')
+      } else {
+        try { await cp.repoLoad(addForm.model); ElMessage.success('Load 已提交') } catch(e:any){ ElMessage.error(e?.message||'Load 失败') }
+      }
+    }
+    ElMessage.success('已创建模型配置')
+    addDlg.value = false
+    await load()
+  } catch(e:any) {
+    ElMessage.error(e?.message || '创建失败')
+  } finally {
+    adding.value = false
+  }
+}
+
+function onPickFile(e: Event){
+  const t = e.target as HTMLInputElement
+  const f = t.files && t.files[0]
+  if (f) {
+    addFile.value = f; addFileName.value = `${f.name} (${Math.round(f.size/1024)} KB)`
+    // Auto-convert when platform is TensorRT and file is ONNX
+    if (addForm.platform === 'tensorrt_plan' && isOnnxFile(f.name)) {
+      startConvertUpload()
+    } else {
+      startDirectUpload()
+    }
+  }
+}
+
+function isOnnxFile(name: string){ return /\.onnx$/i.test(name || '') }
+
+async function startConvertUpload(){
+  if (!addForm.model) { ElMessage.warning('请先填写模型ID'); return }
+  if (!addFile.value) return
+  try {
+    convertInProgress.value = true
+    convertUploaded = false
+    convertLogs.value = ''
+    convertPhase.value = 'running'
+    const r:any = await cp.repoConvertUpload({ model: addForm.model || '<model>', version: addForm.version || '1', file: addFile.value })
+    const events = (r?.data?.events || '') as string
+    if (!events) { convertPhase.value = 'failed'; ElMessage.error('转换任务创建失败'); convertInProgress.value = false; return }
+    const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+    const url = `${base}${events}`
+    convertEs && convertEs.close(); convertEs = new EventSource(url)
+    convertEs.addEventListener('log', (ev:any) => { try { const d = JSON.parse(ev.data); convertLogs.value += (d.line || '') + '\n' } catch { convertLogs.value += String(ev.data||'')+'\n' } })
+    convertEs.addEventListener('state', (ev:any) => { try { const d = JSON.parse(ev.data); convertPhase.value = (d.phase || convertPhase.value) as any } catch {} })
+    convertEs.addEventListener('done', async (ev:any) => {
+      try { const d = JSON.parse(ev.data); convertPhase.value = (d.phase || 'done') as any } catch { convertPhase.value = 'done' as any }
+      convertEs && convertEs.close(); convertEs = null
+      convertInProgress.value = false; convertUploaded = (convertPhase.value==='done')
+      await load()
+    })
+    convertEs.onerror = () => { /* ignore */ }
+  } catch (err:any) {
+    convertPhase.value = 'failed'
+    convertInProgress.value = false
+    ElMessage.error(err?.message || '转换启动失败')
+  }
+}
+
+async function startDirectUpload(){
+  if (!addFile.value) return
+  try {
+    uploadInProgress.value = true
+    uploadStatus.value = ''
+    await cp.repoUpload({ model: addForm.model, version: addForm.version || '1', file: addFile.value })
+    uploadStatus.value = 'uploaded'
+    ElMessage.success('文件已上传到模型仓库')
+  } catch (err:any) {
+    uploadStatus.value = 'failed'
+    ElMessage.error(err?.message || '上传失败')
+  } finally {
+    uploadInProgress.value = false
+  }
+}
+
+function closeConvert(){
+  convertEs && convertEs.close(); convertEs = null
+  convertDlg.value = false
 }
 </script>
 

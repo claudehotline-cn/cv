@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <regex>
+#include <unordered_map>
 
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
 #include <grpcpp/grpcpp.h>
@@ -30,6 +31,14 @@
 #endif
 
 namespace va { namespace control {
+
+#if defined(USE_TRITON_INPROCESS)
+namespace {
+struct VaConvJob { std::mutex mu; std::vector<std::string> logs; std::string phase; std::string model; std::string version; };
+static std::mutex g_va_conv_mu;
+static std::unordered_map<std::string, std::shared_ptr<VaConvJob>> g_va_conv_jobs;
+}
+#endif
 
 class AnalyzerControlServiceImpl final : public va::v1::AnalyzerControl::Service {
 public:
@@ -647,6 +656,235 @@ public:
         } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK; }
         catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
     }
+
+    ::grpc::Status RepoPutFile(::grpc::ServerContext*, const va::v1::RepoPutFileRequest* req,
+                                va::v1::RepoPutFileReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            std::string model = req->model();
+            std::string version = req->version().empty()? std::string("1") : req->version();
+            std::string filename = req->filename();
+            const std::string& content = req->content();
+            if (model.empty() || filename.empty()) { resp->set_ok(false); resp->set_msg("model/filename required"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            bool ok = false; std::string msg;
+            // FS path write: <repo>/<model>/<version>/<filename>
+            try {
+                if (!hopt.repo.empty() && (hopt.repo.rfind("/", 0) == 0 || hopt.repo.find("://") == std::string::npos)) {
+                    std::filesystem::path p = std::filesystem::path(hopt.repo) / model / version / filename;
+                    std::filesystem::create_directories(p.parent_path());
+                    std::ofstream ofs(p.string(), std::ios::binary | std::ios::trunc);
+                    if (ofs.good()) { ofs.write(content.data(), static_cast<std::streamsize>(content.size())); ofs.close(); ok = true; }
+                    else { msg = "cannot open file"; }
+                }
+            } catch (...) { /* ignore and try s3 */ }
+            if (!ok && hopt.repo.rfind("s3://", 0) == 0) {
+                // PUT to S3 via curl with SigV4 (upload temp file)
+                auto repo = hopt.repo.substr(5);
+                std::string endpoint, bucket, prefix;
+                if (repo.rfind("http://", 0) == 0 || repo.rfind("https://", 0) == 0) {
+                    auto pos = repo.find('/', repo.find("://") + 3);
+                    if (pos != std::string::npos) {
+                        endpoint = repo.substr(0, pos);
+                        auto rest = repo.substr(pos + 1);
+                        auto p2 = rest.find('/');
+                        if (p2 != std::string::npos) { bucket = rest.substr(0, p2); prefix = rest.substr(p2 + 1); }
+                        else { bucket = rest; prefix.clear(); }
+                    }
+                } else {
+                    auto p = repo.find('/');
+                    if (p != std::string::npos) { bucket = repo.substr(0, p); prefix = repo.substr(p + 1); }
+                    else { bucket = repo; prefix.clear(); }
+                    const char* ep = std::getenv("AWS_ENDPOINT_URL_S3"); if (!ep) ep = std::getenv("AWS_S3_ENDPOINT"); if (!ep) ep = std::getenv("AWS_ENDPOINT_URL");
+                    if (ep) endpoint = ep;
+                }
+                if (!bucket.empty() && !endpoint.empty()) {
+                    if (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+                    std::string key = prefix.empty()? (model+"/"+version+"/"+filename) : (prefix+"/"+model+"/"+version+"/"+filename);
+                    std::string region = std::getenv("AWS_REGION")? std::getenv("AWS_REGION"): (std::getenv("S3_REGION")? std::getenv("S3_REGION"): "us-east-1");
+                    const char* ak = std::getenv("AWS_ACCESS_KEY_ID"); if (!ak) ak = std::getenv("S3_ACCESS_KEY_ID");
+                    const char* sk = std::getenv("AWS_SECRET_ACCESS_KEY"); if (!sk) sk = std::getenv("S3_SECRET_ACCESS_KEY");
+                    // create temp file
+                    char tmpname[] = "/tmp/repoputXXXXXX";
+                    int fd = mkstemp(tmpname);
+                    if (fd >= 0) {
+                        FILE* tf = fdopen(fd, "wb"); if (tf) { fwrite(content.data(), 1, content.size(), tf); fclose(tf); }
+                        std::ostringstream cmd; cmd << "curl -s --fail --connect-timeout 3 --max-time 30 ";
+                        cmd << "--aws-sigv4 \"aws:amz:" << region << ":s3\" ";
+                        if (ak && sk) { cmd << "-u '" << ak << ":" << sk << "' "; }
+                        cmd << "-T '" << tmpname << "' '" << endpoint << "/" << bucket << "/" << key << "'";
+                        std::string out; FILE* fp = popen(cmd.str().c_str(), "r"); if (fp) { char b[256]; size_t n; while((n=fread(b,1,sizeof(b),fp))>0) out.append(b,n); int rc = pclose(fp); ok = (rc==0); if(!ok) msg = "s3 put failed"; }
+                        unlink(tmpname);
+                    } else { msg = "mkstemp failed"; }
+                } else { msg = "s3 endpoint/bucket missing"; }
+            }
+            resp->set_ok(ok); if (!ok) resp->set_msg(msg);
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK; }
+        catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
+    }
+
+    ::grpc::Status RepoConvertUpload(::grpc::ServerContext*, const va::v1::RepoConvertUploadRequest* req,
+                                     va::v1::RepoConvertUploadReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            std::string model = req->model(); if (model.empty()) { resp->set_ok(false); resp->set_msg("model required"); return ::grpc::Status::OK; }
+            std::string version = req->version().empty()? std::string("1") : req->version();
+            const std::string& onnx = req->onnx(); if (onnx.empty()) { resp->set_ok(false); resp->set_msg("onnx empty"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            // Create job and dump ONNX to temp
+            auto gen_id = [](){ auto now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); std::ostringstream os; os << std::hex << now; return os.str(); };
+            std::string job_id = gen_id();
+            // use global g_va_conv_jobs
+            auto append = [](std::shared_ptr<VaConvJob> j, const std::string& ln){ std::lock_guard<std::mutex> lk(j->mu); j->logs.push_back(ln); };
+            // Create job record
+            auto job = std::make_shared<VaConvJob>(); { std::lock_guard<std::mutex> lk(job->mu); job->phase = "created"; job->model = model; job->version = version; }
+            { std::lock_guard<std::mutex> lk(g_va_conv_mu); g_va_conv_jobs[job_id] = job; }
+            // Write onnx to tmp
+            char onnx_tmp[] = "/tmp/va_conv_onnxXXXXXX"; int fd = mkstemp(onnx_tmp);
+            if (fd < 0) { resp->set_ok(false); resp->set_msg("mkstemp failed"); return ::grpc::Status::OK; }
+            FILE* tf = fdopen(fd, "wb"); if (tf) { fwrite(onnx.data(), 1, onnx.size(), tf); fclose(tf); } else { close(fd); resp->set_ok(false); resp->set_msg("fdopen failed"); return ::grpc::Status::OK; }
+            std::string plan_tmp = std::string(onnx_tmp) + std::string(".plan");
+            std::string trtexec = req->trtexec().empty()? (std::getenv("TRTEXEC")? std::getenv("TRTEXEC"): "trtexec") : req->trtexec();
+            std::ostringstream cmd; cmd << trtexec << " --onnx='" << onnx_tmp << "' --saveEngine='" << plan_tmp << "' --fp16";
+            // Conversion thread
+            std::thread([job, job_id, onnx_path=std::string(onnx_tmp), plan_tmp, cmd_str=cmd.str(), hopt, model, version]() {
+                auto append_log = [&](const std::string& s){ std::lock_guard<std::mutex> lk(job->mu); job->logs.push_back(s); };
+                {
+                    std::lock_guard<std::mutex> lk(job->mu); job->phase = "running";
+                }
+                append_log(std::string("trtexec: ")+cmd_str);
+                FILE* fp = popen((cmd_str + " 2>&1").c_str(), "r");
+                int rc = -1;
+                if (fp) {
+                    char buf[1024];
+                    while (true) {
+                        size_t n = fread(buf, 1, sizeof(buf)-1, fp);
+                        if (n == 0) break; buf[n] = 0; std::string chunk(buf);
+                        size_t b = 0, p; while ((p = chunk.find('\n', b)) != std::string::npos) { append_log(chunk.substr(b, p-b)); b = p+1; }
+                        if (b < chunk.size()) append_log(chunk.substr(b));
+                    }
+                    rc = pclose(fp);
+                } else { append_log("failed to start trtexec"); }
+                if (rc != 0) {
+                    std::lock_guard<std::mutex> lk(job->mu); job->phase = "failed";
+                    try { std::filesystem::remove(onnx_path); } catch (...) {}
+                    try { std::filesystem::remove(plan_tmp); } catch (...) {}
+                    return;
+                }
+                {
+                    std::lock_guard<std::mutex> lk(job->mu); job->phase = "uploading";
+                }
+                // Read plan and write into repo path (FS or S3) as model.plan
+                std::string plan_bytes;
+                try { std::ifstream ifs(plan_tmp, std::ios::binary); plan_bytes.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>()); } catch (...) {}
+                bool ok = false; std::string msg;
+                try {
+                    if (!hopt.repo.empty() && (hopt.repo.rfind("/", 0) == 0 || hopt.repo.find("://") == std::string::npos)) {
+                        std::filesystem::path p = std::filesystem::path(hopt.repo) / model / version / "model.plan";
+                        std::filesystem::create_directories(p.parent_path());
+                        std::ofstream ofs(p.string(), std::ios::binary | std::ios::trunc);
+                        if (ofs.good()) { ofs.write(plan_bytes.data(), static_cast<std::streamsize>(plan_bytes.size())); ofs.close(); ok = true; }
+                        else { msg = "cannot open file"; }
+                    }
+                } catch (...) { }
+                if (!ok && hopt.repo.rfind("s3://", 0) == 0) {
+                    auto repo = hopt.repo.substr(5);
+                    std::string endpoint, bucket, prefix;
+                    if (repo.rfind("http://", 0) == 0 || repo.rfind("https://", 0) == 0) {
+                        auto pos = repo.find('/', repo.find("://") + 3);
+                        if (pos != std::string::npos) {
+                            endpoint = repo.substr(0, pos);
+                            auto rest = repo.substr(pos + 1);
+                            auto p2 = rest.find('/');
+                            if (p2 != std::string::npos) { bucket = rest.substr(0, p2); prefix = rest.substr(p2 + 1); }
+                            else { bucket = rest; prefix.clear(); }
+                        }
+                    } else {
+                        auto p = repo.find('/'); if (p != std::string::npos) { bucket = repo.substr(0, p); prefix = repo.substr(p + 1); } else { bucket = repo; prefix.clear(); }
+                        const char* ep = std::getenv("AWS_ENDPOINT_URL_S3"); if (!ep) ep = std::getenv("AWS_S3_ENDPOINT"); if (!ep) ep = std::getenv("AWS_ENDPOINT_URL");
+                        if (ep) endpoint = ep;
+                    }
+                    if (!bucket.empty() && !endpoint.empty()) {
+                        if (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+                        std::string key = prefix.empty()? (model+"/"+version+"/model.plan") : (prefix+"/"+model+"/"+version+"/model.plan");
+                        std::string region = std::getenv("AWS_REGION")? std::getenv("AWS_REGION"): (std::getenv("S3_REGION")? std::getenv("S3_REGION"): "us-east-1");
+                        const char* ak = std::getenv("AWS_ACCESS_KEY_ID"); if (!ak) ak = std::getenv("S3_ACCESS_KEY_ID");
+                        const char* sk = std::getenv("AWS_SECRET_ACCESS_KEY"); if (!sk) sk = std::getenv("S3_SECRET_ACCESS_KEY");
+                        // write plan to tmp
+                        char tmpname[] = "/tmp/va_planXXXXXX"; int fd2 = mkstemp(tmpname);
+                        if (fd2 >= 0) {
+                            FILE* tf2 = fdopen(fd2, "wb"); if (tf2) { fwrite(plan_bytes.data(), 1, plan_bytes.size(), tf2); fclose(tf2); }
+                            std::ostringstream cmd2; cmd2 << "curl -s --fail --connect-timeout 3 --max-time 30 ";
+                            cmd2 << "--aws-sigv4 \"aws:amz:" << region << ":s3\" ";
+                            if (ak && sk) { cmd2 << "-u '" << ak << ":" << sk << "' "; }
+                            cmd2 << "-T '" << tmpname << "' '" << endpoint << "/" << bucket << "/" << key << "'";
+                            FILE* fp2 = popen(cmd2.str().c_str(), "r"); int rc2 = -1; if (fp2) { char b[128]; while (fread(b,1,sizeof(b),fp2)>0){} rc2 = pclose(fp2); }
+                            unlink(tmpname); ok = (rc2==0);
+                        }
+                    }
+                }
+                {
+                    std::lock_guard<std::mutex> lk(job->mu);
+                    job->phase = ok? "done" : "failed";
+                }
+                try { std::filesystem::remove(onnx_path); } catch (...) {}
+                try { std::filesystem::remove(plan_tmp); } catch (...) {}
+            }).detach();
+            resp->set_ok(true); resp->set_msg(""); resp->set_job_id(job_id);
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK; }
+        catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
+    }
+
+    ::grpc::Status RepoConvertStream(::grpc::ServerContext* ctx, const va::v1::RepoConvertStreamRequest* req,
+                                     ::grpc::ServerWriter<va::v1::RepoConvertEvent>* writer) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            std::string job_id = req->job_id();
+            // use global g_va_conv_jobs
+            std::shared_ptr<VaConvJob> job;
+            {
+                std::lock_guard<std::mutex> lk(g_va_conv_mu);
+                auto it = g_va_conv_jobs.find(job_id);
+                if (it != g_va_conv_jobs.end()) job = it->second;
+            }
+            // If not found, just close stream
+            va::v1::RepoConvertEvent ev;
+            ev.set_kind("state"); ev.set_phase(job? job->phase : std::string("failed")); writer->Write(ev);
+            if (!job) return ::grpc::Status::OK;
+            size_t idx = 0; std::string last_phase;
+            for (;;) {
+                if (ctx->IsCancelled()) break;
+                bool finished = false; std::string phase;
+                {
+                    std::lock_guard<std::mutex> lk(job->mu);
+                    while (idx < job->logs.size()) { va::v1::RepoConvertEvent e; e.set_kind("log"); e.set_line(job->logs[idx++]); writer->Write(e); }
+                    phase = job->phase;
+                }
+                if (phase != last_phase) { va::v1::RepoConvertEvent e; e.set_kind("state"); e.set_phase(phase); writer->Write(e); last_phase = phase; }
+                if (phase == "done" || phase == "failed") { va::v1::RepoConvertEvent e; e.set_kind("done"); e.set_phase(phase); writer->Write(e); break; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            return ::grpc::Status::OK;
+#else
+            return ::grpc::Status(::grpc::StatusCode::UNAVAILABLE, "in-process disabled");
+#endif
+        } catch (const std::exception& ex) { return ::grpc::Status(::grpc::StatusCode::INTERNAL, ex.what()); }
+        catch (...) { return ::grpc::Status(::grpc::StatusCode::INTERNAL, "unknown"); }
+    }
     // Streaming phases for a subscription or (stream_id, profile) tuple.
     // Minimal implementation: poll Application pipelines and emit phase snapshots.
     ::grpc::Status Watch(::grpc::ServerContext* ctx,
@@ -777,6 +1015,9 @@ OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl) {
     auto* svc = new AnalyzerControlServiceImpl(ctl, nullptr);
     auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
+    // Allow large ONNX uploads
+    b.SetMaxReceiveMessageSize(256 * 1024 * 1024);
+    b.SetMaxSendMessageSize(256 * 1024 * 1024);
     auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
     std::shared_ptr<grpc::ServerCredentials> creds;
     {
@@ -808,6 +1049,9 @@ OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl, va::
     auto* svc = new AnalyzerControlServiceImpl(ctl, app);
     auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
+    // Allow large ONNX uploads
+    b.SetMaxReceiveMessageSize(256 * 1024 * 1024);
+    b.SetMaxSendMessageSize(256 * 1024 * 1024);
     auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
     std::shared_ptr<grpc::ServerCredentials> creds;
     {

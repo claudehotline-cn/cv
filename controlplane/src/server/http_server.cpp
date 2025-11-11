@@ -135,11 +135,12 @@ bool HttpServer::start(const std::string& listen_addr, RouteHandler handler) {
           }
         }
       }
-      // Streaming SSE detection: subscription events (endswith /events) or sources watch endpoints
+      // Streaming SSE detection (minimal heuristics)
       bool isSse = (method == "GET" && (
         (path.size() >= 7 && path.rfind("/events") == path.size()-7) ||
         (path.rfind("/api/sources/watch_sse", 0) == 0) ||
-        (path.rfind("/api/sources/watch", 0) == 0)
+        (path.rfind("/api/sources/watch", 0) == 0) ||
+        (path.rfind("/api/repo/convert/events", 0) == 0)
       ));
       if (isSse && impl->streamHandler) {
         SOCKET cli_copy = cli;
@@ -222,7 +223,8 @@ bool HttpServer::start(const std::string& listen_addr, RouteHandler handler) {
       bool isSse = (method == "GET" && (
         (path.size() >= 7 && path.rfind("/events") == path.size()-7) ||
         (path.rfind("/api/sources/watch_sse", 0) == 0) ||
-        (path.rfind("/api/sources/watch", 0) == 0)
+        (path.rfind("/api/sources/watch", 0) == 0) ||
+        (path.rfind("/api/repo/convert/events", 0) == 0)
       ));
       if (isSse && impl->streamHandler) {
         int cli_copy = cli;

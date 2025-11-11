@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
+#include <unordered_map>
+#include <atomic>
 
 #include "controlplane/config.hpp"
 #include "controlplane/http_server.hpp"
@@ -52,6 +54,93 @@ inline ErrMap cp_map_err(const std::string& emsg) {
   else if (has("already exists") || has("conflict") || has("busy") || has("in use")) { out = {409, "CONFLICT"}; }
   else if (has("not found") || has("no such") || has("unknown")) { out = {404, "NOT_FOUND"}; }
   return out;
+}
+
+// Minimal in-memory job store for ONNX->TensorRT plan conversion
+struct ConvertJob {
+  std::mutex mu;
+  std::vector<std::string> logs;
+  std::string phase; // created|running|uploading|done|failed
+  int exit_code{0};
+  bool uploaded{false};
+};
+static std::mutex g_conv_mu;
+static std::unordered_map<std::string, std::shared_ptr<ConvertJob>> g_conv_jobs;
+static std::string gen_job_id() {
+  auto now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  std::ostringstream os; os << std::hex << now; return os.str();
+}
+
+static void append_log(std::shared_ptr<ConvertJob> job, const std::string& line) {
+  std::lock_guard<std::mutex> lk(job->mu);
+  job->logs.push_back(line);
+}
+
+static int run_trtexec_and_upload(const std::string& trtexec_cmd,
+                                  const std::string& plan_path,
+                                  const std::string& va_addr,
+                                  const std::string& model,
+                                  const std::string& version,
+                                  std::shared_ptr<ConvertJob> job) {
+  {
+    std::lock_guard<std::mutex> lk(job->mu);
+    job->phase = "running";
+  }
+  FILE* fp = popen((trtexec_cmd + " 2>&1").c_str(), "r");
+  if (fp) {
+    char buf[1024];
+    while (true) {
+      size_t n = fread(buf, 1, sizeof(buf)-1, fp);
+      if (n == 0) break;
+      buf[n] = 0;
+      // split lines
+      std::string chunk(buf);
+      size_t start = 0; size_t pos;
+      while ((pos = chunk.find('\n', start)) != std::string::npos) {
+        append_log(job, chunk.substr(start, pos-start));
+        start = pos + 1;
+      }
+      if (start < chunk.size()) append_log(job, chunk.substr(start));
+    }
+    int rc = pclose(fp);
+    job->exit_code = rc;
+  } else {
+    append_log(job, "failed to start trtexec");
+    job->exit_code = -1;
+  }
+  if (job->exit_code != 0) {
+    std::lock_guard<std::mutex> lk(job->mu);
+    job->phase = "failed";
+    return job->exit_code;
+  }
+  {
+    std::lock_guard<std::mutex> lk(job->mu);
+    job->phase = "uploading";
+  }
+  // Read plan and upload via VA
+  std::string plan_bytes;
+  try {
+    std::ifstream ifs(plan_path, std::ios::binary);
+    plan_bytes.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+  } catch (...) {}
+  if (plan_bytes.empty()) {
+    append_log(job, "engine file missing");
+    std::lock_guard<std::mutex> lk(job->mu);
+    job->phase = "failed"; return -2;
+  }
+  std::string err;
+  bool ok = controlplane::va_repo_put_file(va_addr, model, version, "model.plan", plan_bytes, &err);
+  if (!ok) {
+    append_log(job, std::string("upload failed: ") + err);
+    std::lock_guard<std::mutex> lk(job->mu);
+    job->phase = "failed"; return -3;
+  }
+  {
+    std::lock_guard<std::mutex> lk(job->mu);
+    job->uploaded = true; job->phase = "done";
+  }
+  append_log(job, "upload ok: model.plan");
+  return 0;
 }
 }
 
@@ -520,6 +609,88 @@ int main(int argc, char** argv) {
       if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/poll", r.status); try{ controlplane::metrics::inc_repo_op("poll", false);}catch(...){} return r; }
       try{ controlplane::metrics::inc_repo_op("poll", true);}catch(...){}
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/poll", r.status); return r;
+    }
+    if (path.rfind("/api/repo/upload", 0) == 0 && method == "POST") {
+      auto qpos = path.find('?');
+      std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
+      auto url_decode = [&](const std::string& s){ std::string out; out.reserve(s.size()); for (size_t i=0;i<s.size();++i){ char c=s[i]; if (c=='+'){ out.push_back(' '); continue; } if (c=='%' && i+2<s.size()){ auto hex=[&](char x){ if (x>='0'&&x<='9') return x-'0'; if (x>='a'&&x<='f') return 10+(x-'a'); if (x>='A'&&x<='F') return 10+(x-'A'); return 0; }; out.push_back(static_cast<char>((hex(s[i+1])<<4)|hex(s[i+2]))); i+=2; } else out.push_back(c);} return out; };
+      auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return url_decode(qs.substr(p, e==std::string::npos? std::string::npos : e-p)); };
+      std::string model = getq("model");
+      std::string version = getq("version"); if (version.empty()) version = "1";
+      std::string filename = getq("filename");
+      auto ctype = get_header("Content-Type:");
+      std::string content; content.assign(body.begin(), body.end());
+      if (!(ctype.find("application/octet-stream") != std::string::npos)) {
+        try {
+          auto j = nlohmann::json::parse(body);
+          if (model.empty() && j.contains("model")) model = j["model"].get<std::string>();
+          if (version=="1" && j.contains("version") && j["version"].is_string()) version = j["version"].get<std::string>();
+          if (filename.empty() && j.contains("filename")) filename = j["filename"].get<std::string>();
+          auto b64 = j.contains("content_b64") ? j["content_b64"].get<std::string>() : std::string("");
+          if (!b64.empty()) {
+            auto decode = [](const std::string& s){
+              int T[256]; for (int i=0;i<256;++i) T[i] = -1;
+              for (int i=0;i<26;++i){ T['A'+i]=i; T['a'+i]=26+i; }
+              for (int i=0;i<10;++i){ T['0'+i]=52+i; }
+              T[(int)'+']=62; T[(int)'/']=63;
+              std::string out; out.reserve(s.size()*3/4);
+              int val=0, valb=-8; for (unsigned char c: s){ if(T[c]==-1){ if(c=='=') break; else continue; } val=(val<<6)+T[c]; valb+=6; if(valb>=0){ out.push_back(char((val>>valb)&0xFF)); valb-=8; } }
+              return out;
+            };
+            content = decode(b64);
+          }
+        } catch (...) { /* ignore */ }
+      }
+      if (model.empty() || filename.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model/filename required\"}"; emit("/api/repo/upload", r.status); return r; }
+      std::string err; bool ok = controlplane::va_repo_put_file(cfg.va_addr, model, version, filename, content, &err);
+      if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()? std::string("upload failed"): err)+"\"}"; emit("/api/repo/upload", r.status); return r; }
+      nlohmann::json out; out["code"]="CREATED"; out["data"]={{"model",model},{"version",version},{"filename",filename}};
+      r.status=201; r.body = out.dump(); emit("/api/repo/upload", r.status); return r;
+    }
+    // Convert ONNX -> TensorRT plan (on VA) : POST /api/repo/convert_upload?model=..&version=.. (body=onnx)
+    if (path.rfind("/api/repo/convert_upload", 0) == 0 && method == "POST") {
+      auto qpos = path.find('?');
+      std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
+      auto url_decode = [&](const std::string& s){ std::string out; out.reserve(s.size()); for (size_t i=0;i<s.size();++i){ char c=s[i]; if (c=='+'){ out.push_back(' '); continue; } if (c=='%' && i+2<s.size()){ auto hex=[&](char x){ if (x>='0'&&x<='9') return x-'0'; if (x>='a'&&x<='f') return 10+(x-'a'); if (x>='A'&&x<='F') return 10+(x-'A'); return 0; }; out.push_back(static_cast<char>((hex(s[i+1])<<4)|hex(s[i+2]))); i+=2; } else out.push_back(c);} return out; };
+      auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return url_decode(qs.substr(p, e==std::string::npos? std::string::npos : e-p)); };
+      std::string model = getq("model"); std::string version = getq("version"); if (version.empty()) version = "1";
+      if (model.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model required\"}"; emit("/api/repo/convert_upload", r.status); return r; }
+      if (body.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"ONNX bytes required in request body (Content-Type: application/octet-stream)\"}"; emit("/api/repo/convert_upload", r.status); return r; }
+      std::string job; std::string err;
+      if (!controlplane::va_repo_convert_upload(cfg.va_addr, model, version, body, &job, &err)) {
+        auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()? std::string("convert_upload failed"): err)+"\"}"; emit("/api/repo/convert_upload", r.status); return r; }
+      nlohmann::json out; out["code"]="ACCEPTED"; out["data"]={{"job",job},{"events","/api/repo/convert/events?job="+job}};
+      r.status=202; r.body=out.dump(); emit("/api/repo/convert_upload", r.status); return r;
+    }
+    // Add a new model to Triton repository by creating config.pbtxt (minimal skeleton). Optionally load immediately.
+    if (path == "/api/repo/add" && method == "POST") {
+      try {
+        std::string model; std::string content; bool autoload = false;
+        if (!body.empty()) {
+          auto j = nlohmann::json::parse(body);
+          if (j.contains("model") && j["model"].is_string()) model = j["model"].get<std::string>();
+          if (j.contains("config") && j["config"].is_string()) content = j["config"].get<std::string>();
+          if (j.contains("load") && (j["load"].is_boolean() || j["load"].is_number())) autoload = j["load"].get<bool>();
+        }
+        if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model required\"}"; emit("/api/repo/add", r.status); return r; }
+        // If config is empty, generate a minimal skeleton with name only. Users can edit later.
+        if (content.empty()) {
+          std::ostringstream os; os << "name: \"" << model << "\"\n"; content = os.str();
+        }
+        std::string err;
+        if (!va_repo_save_config(cfg.va_addr, model, content, &err)) {
+          auto mm = cp_map_err(err);
+          r.status = mm.code; r.body = std::string("{\"code\":\"") + mm.text + "\",\"msg\":\"" + (err.empty()? std::string("save failed"): err) + "\"}";
+          emit("/api/repo/add", r.status); return r;
+        }
+        if (autoload) {
+          std::string e2; (void)va_repo_load(cfg.va_addr, model, &e2); // best-effort; ignore failure here
+        }
+        nlohmann::json out; out["code"] = "CREATED"; nlohmann::json d; d["id"] = model; d["loaded"] = autoload; out["data"] = d;
+        r.status = 201; r.body = out.dump(); emit("/api/repo/add", r.status); return r;
+      } catch (...) {
+        r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/add", r.status); return r;
+      }
     }
     // List repo models via gRPC RepoList（尽量返回详细字段）
     if (path == "/api/repo/list" && method == "GET") {
@@ -1386,6 +1557,44 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Handle conversion progress SSE: /api/repo/convert/events?job=... -> proxy VA RepoConvertStream
+    if (path.rfind("/api/repo/convert/events", 0) == 0) {
+      auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
+      auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return qs.substr(p, e==std::string::npos? std::string::npos : e-p); };
+      std::string job_id = getq("job");
+      controlplane::sse::write_headers(writer);
+      controlplane::metrics::sse_on_open();
+      try {
+        auto stub = controlplane::make_va_stub(cfg.va_addr);
+        grpc::ClientContext ctx; // long-running stream
+        va::v1::RepoConvertStreamRequest req; req.set_job_id(job_id);
+        std::unique_ptr< grpc::ClientReader<va::v1::RepoConvertEvent> > reader(stub->RepoConvertStream(&ctx, req));
+        if (!reader) { controlplane::sse::write_event(writer, "error", "{\\\"code\\\":\\\"STREAM_OPEN_FAILED\\\"}"); controlplane::sse::close(writer); controlplane::metrics::sse_on_close(); return true; }
+        va::v1::RepoConvertEvent ev; long long last_keep = 0; auto nowms=[](){ using namespace std::chrono; return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(); };
+        while (reader->Read(&ev)) {
+          std::string kind = ev.kind();
+          if (kind == "log") {
+            std::string s = ev.line(); std::string esc; esc.reserve(s.size()+16);
+            for (char c : s) { if (c=='\\' || c=='\"') { esc.push_back('\\'); esc.push_back(c); } else if (c=='\r') {} else if (c=='\n') {} else { esc.push_back(c); } }
+            controlplane::sse::write_event(writer, "log", std::string("{\"line\":\"")+esc+"\"}");
+            last_keep = nowms();
+          } else if (kind == "state") {
+            controlplane::sse::write_event(writer, "state", std::string("{\"phase\":\"")+ev.phase()+"\"}");
+            last_keep = nowms();
+          } else if (kind == "done") {
+            controlplane::sse::write_event(writer, "done", std::string("{\"phase\":\"")+ev.phase()+"\"}");
+            break;
+          }
+          if (nowms() - last_keep > 8000) controlplane::sse::write_comment(writer, "keepalive");
+        }
+        controlplane::sse::close(writer); controlplane::metrics::sse_on_close();
+      } catch (...) {
+        controlplane::sse::write_event(writer, "error", "{\\\"code\\\":\\\"VA_STREAM_ERROR\\\"}");
+        controlplane::sse::close(writer); controlplane::metrics::sse_on_close();
+      }
+      return true;
+    }
+
     // Handle subscription events: /api/subscriptions/{id}/events
     if (path.size() >= 7 && path.rfind("/events") == path.size()-7) {
       // Extract cp_id between /api/subscriptions/ and /events
@@ -1421,5 +1630,3 @@ int main(int argc, char** argv) {
   while (true) std::this_thread::sleep_for(std::chrono::seconds(60));
   return 0;
 }
-
-
