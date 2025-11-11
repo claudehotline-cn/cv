@@ -81,12 +81,25 @@
           <el-button size="small" @click="copyConfig" :disabled="!configText">复制</el-button>
           <el-button size="small" @click="downloadConfig" :disabled="!configText">下载</el-button>
           <el-divider direction="vertical" />
+          <el-switch v-model="editMode" active-text="编辑" inactive-text="只读" />
+          <el-divider direction="vertical" />
           <el-switch v-model="wrapOn" active-text="自动换行" inactive-text="不换行" />
           <el-input-number v-model="fontSize" :min="10" :max="18" size="small" />
         </el-space>
+        <div class="cfg-actions" v-if="editMode">
+          <el-space>
+            <el-button type="primary" size="small" @click="saveConfig" :disabled="!configText || saving">保存</el-button>
+            <el-button size="small" @click="reloadConfig" :disabled="saving">重载</el-button>
+          </el-space>
+        </div>
       </div>
       <div v-if="configText" class="cfg-container">
-        <pre class="cfg-text" :class="{ wrap: wrapOn }" :style="{ fontSize: fontSize + 'px' }"><code v-html="highlightedConfig"></code></pre>
+        <template v-if="!editMode">
+          <pre class="cfg-text" :class="{ wrap: wrapOn }" :style="{ fontSize: fontSize + 'px' }"><code v-html="highlightedConfig"></code></pre>
+        </template>
+        <template v-else>
+          <el-input v-model="configText" type="textarea" :autosize="{ minRows: 20, maxRows: 36 }" class="cfg-editor" />
+        </template>
       </div>
       <el-empty v-else description="未获取到配置或模型无配置文件" />
     </template>
@@ -110,6 +123,8 @@ const currentModel = ref('')
 const configText = ref('')
 const wrapOn = ref(true)
 const fontSize = ref(13)
+const editMode = ref(false)
+const saving = ref(false)
 const truncated = ref(false)
 const highlightedConfig = computed(() => highlightPbtxt(configText.value || ''))
 
@@ -178,6 +193,16 @@ async function downloadConfig(){
     URL.revokeObjectURL(a.href)
   }catch{ ElMessage.error('下载失败') }
 }
+async function saveConfig(){
+  try{
+    saving.value = true
+    await cp.repoSaveConfig(currentModel.value, configText.value || '')
+    ElMessage.success('已保存')
+    editMode.value = false
+  }catch(e:any){ ElMessage.error(e?.message || '保存失败') }
+  finally{ saving.value = false }
+}
+async function reloadConfig(){ await openConfig(currentModel.value) }
 
 function highlightPbtxt(src: string): string {
   const MAX_LEN = 200000; const MAX_LINES = 2000;
@@ -223,6 +248,7 @@ function highlightPbtxt(src: string): string {
 .cfg-container{ border:1px solid #eaecef; border-radius:6px; background:#f6f8fa; }
 .cfg-text{ margin:0; padding:12px; color:#24292e; line-height:1.5; max-height:65vh; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space:pre; }
 .cfg-text.wrap{ white-space:pre-wrap; word-break:break-word; }
+.cfg-editor :deep(textarea){ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .tok-key{ color:#005cc5; font-weight:600; }
 .tok-const{ color:#6f42c1; }
 .tok-num{ color:#e36209; }

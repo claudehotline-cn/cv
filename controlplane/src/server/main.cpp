@@ -571,6 +571,18 @@ int main(int argc, char** argv) {
         r.status=200; r.body=out.dump(); emit("/api/repo/config", r.status); return r;
       } catch (...) { r.status=500; r.body="{\"code\":\"INTERNAL\"}"; emit("/api/repo/config", r.status); return r; }
     }
+    if (path == "/api/repo/config" && method == "POST") {
+      try {
+        std::string model, content;
+        auto j = nlohmann::json::parse(body);
+        if (j.contains("model") && j["model"].is_string()) model = j["model"].get<std::string>();
+        if (j.contains("content") && j["content"].is_string()) content = j["content"].get<std::string>();
+        if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model required\"}"; emit("/api/repo/config", r.status); return r; }
+        std::string err;
+        if (!va_repo_save_config(cfg.va_addr, model, content, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()?std::string("save failed"):err)+"\"}"; emit("/api/repo/config", r.status); return r; }
+        r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/config", r.status); return r;
+      } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/config", r.status); return r; }
+    }
     if (path == "/api/control/release" && method == "POST") {
       std::string pipeline_name, node, triton_model, triton_version, model_uri, alias;
       if (!body.empty()) {

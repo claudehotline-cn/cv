@@ -167,6 +167,9 @@ export const cp = {
     const q = new URLSearchParams({ model })
     return http.get<any>('/api/repo/config?'+q.toString())
   },
+  async repoSaveConfig(model: string, content: string) {
+    return http.post('/api/repo/config', { model, content })
+  },
   // Unified release endpoint
   async release(payload: { pipeline_name:string; node:string; triton_model?:string; triton_model_version?:string; model_uri?:string }) {
     try { return await http.post('/api/control/release', payload) }

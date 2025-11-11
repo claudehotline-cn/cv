@@ -577,6 +577,76 @@ public:
         } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK; }
         catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
     }
+
+    ::grpc::Status RepoSaveConfig(::grpc::ServerContext*, const va::v1::RepoSaveConfigRequest* req,
+                                  va::v1::RepoSaveConfigReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            std::string model = req->model(); std::string content = req->content();
+            if (model.empty()) { resp->set_ok(false); resp->set_msg("model required"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            bool ok = false; std::string msg;
+            // FS path write
+            try {
+                if (!hopt.repo.empty() && (hopt.repo.rfind("/", 0) == 0 || hopt.repo.find("://") == std::string::npos)) {
+                    std::filesystem::path p = std::filesystem::path(hopt.repo) / model / "config.pbtxt";
+                    std::filesystem::create_directories(p.parent_path());
+                    std::ofstream ofs(p.string(), std::ios::binary | std::ios::trunc);
+                    if (ofs.good()) { ofs.write(content.data(), static_cast<std::streamsize>(content.size())); ofs.close(); ok = true; }
+                    else { msg = "cannot open file"; }
+                }
+            } catch (...) { /* ignore and try s3 */ }
+            if (!ok && hopt.repo.rfind("s3://", 0) == 0) {
+                // PUT to S3 via curl with SigV4 (upload temp file)
+                auto repo = hopt.repo.substr(5);
+                std::string endpoint, bucket, prefix;
+                if (repo.rfind("http://", 0) == 0 || repo.rfind("https://", 0) == 0) {
+                    auto pos = repo.find('/', repo.find("://") + 3);
+                    if (pos != std::string::npos) {
+                        endpoint = repo.substr(0, pos);
+                        auto rest = repo.substr(pos + 1);
+                        auto p2 = rest.find('/');
+                        if (p2 != std::string::npos) { bucket = rest.substr(0, p2); prefix = rest.substr(p2 + 1); }
+                        else { bucket = rest; prefix.clear(); }
+                    }
+                } else {
+                    auto p = repo.find('/');
+                    if (p != std::string::npos) { bucket = repo.substr(0, p); prefix = repo.substr(p + 1); }
+                    else { bucket = repo; prefix.clear(); }
+                    const char* ep = std::getenv("AWS_ENDPOINT_URL_S3"); if (!ep) ep = std::getenv("AWS_S3_ENDPOINT"); if (!ep) ep = std::getenv("AWS_ENDPOINT_URL");
+                    if (ep) endpoint = ep;
+                }
+                if (!bucket.empty() && !endpoint.empty()) {
+                    if (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+                    std::string key = prefix.empty()? (model+"/config.pbtxt") : (prefix+"/"+model+"/config.pbtxt");
+                    std::string region = std::getenv("AWS_REGION")? std::getenv("AWS_REGION"): (std::getenv("S3_REGION")? std::getenv("S3_REGION"): "us-east-1");
+                    const char* ak = std::getenv("AWS_ACCESS_KEY_ID"); if (!ak) ak = std::getenv("S3_ACCESS_KEY_ID");
+                    const char* sk = std::getenv("AWS_SECRET_ACCESS_KEY"); if (!sk) sk = std::getenv("S3_SECRET_ACCESS_KEY");
+                    // create temp file
+                    char tmpname[] = "/tmp/cfgXXXXXX";
+                    int fd = mkstemp(tmpname);
+                    if (fd >= 0) {
+                        FILE* tf = fdopen(fd, "wb"); if (tf) { fwrite(content.data(), 1, content.size(), tf); fclose(tf); }
+                        std::ostringstream cmd; cmd << "curl -s --fail --connect-timeout 3 --max-time 10 ";
+                        cmd << "--aws-sigv4 \"aws:amz:" << region << ":s3\" ";
+                        if (ak && sk) { cmd << "-u '" << ak << ":" << sk << "' "; }
+                        cmd << "-T '" << tmpname << "' '" << endpoint << "/" << bucket << "/" << key << "'";
+                        std::string out; FILE* fp = popen(cmd.str().c_str(), "r"); if (fp) { char b[256]; size_t n; while((n=fread(b,1,sizeof(b),fp))>0) out.append(b,n); int rc = pclose(fp); ok = (rc==0); if(!ok) msg = "s3 put failed"; }
+                        unlink(tmpname);
+                    } else { msg = "mkstemp failed"; }
+                } else { msg = "s3 endpoint/bucket missing"; }
+            }
+            resp->set_ok(ok); if (!ok) resp->set_msg(msg);
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK; }
+        catch (...) { resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK; }
+    }
     // Streaming phases for a subscription or (stream_id, profile) tuple.
     // Minimal implementation: poll Application pipelines and emit phase snapshots.
     ::grpc::Status Watch(::grpc::ServerContext* ctx,

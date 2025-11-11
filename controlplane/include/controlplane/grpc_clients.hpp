@@ -112,6 +112,7 @@ bool va_repo_list_detail(const std::string& addr, std::vector<RepoModelInfo>* mo
 
 // Fetch Triton model config.pbtxt (best-effort)
 bool va_repo_get_config(const std::string& addr, const std::string& model, std::string* content, std::string* err);
+bool va_repo_save_config(const std::string& addr, const std::string& model, const std::string& content, std::string* err);
 
 // Helpers to create stubs with configured TLS credentials
 std::unique_ptr<::va::v1::AnalyzerControl::Stub> make_va_stub(const std::string& addr);

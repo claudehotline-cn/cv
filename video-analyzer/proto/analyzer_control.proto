@@ -30,6 +30,8 @@ service AnalyzerControl {
   rpc RepoList(RepoListRequest) returns (RepoListReply);
   // Get a model's config.pbtxt content (best-effort)
   rpc RepoGetConfig(RepoGetConfigRequest) returns (RepoGetConfigReply);
+  // Save a model's config.pbtxt content (best-effort)
+  rpc RepoSaveConfig(RepoSaveConfigRequest) returns (RepoSaveConfigReply);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -181,3 +183,5 @@ message RepoModel {
 
 message RepoGetConfigRequest { string model = 1; }
 message RepoGetConfigReply   { bool ok = 1; string msg = 2; string content = 3; }
+message RepoSaveConfigRequest { string model = 1; string content = 2; }
+message RepoSaveConfigReply   { bool ok = 1; string msg = 2; }
