@@ -122,4 +122,25 @@ CREATE TABLE IF NOT EXISTS `logs` (
   CHECK (JSON_VALID(`extra`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 8) Train Jobs: long-running training tasks (MLflow-integrated)
+CREATE TABLE IF NOT EXISTS `train_jobs` (
+  `id`                 VARCHAR(64)   NOT NULL,
+  `status`             VARCHAR(24)   NOT NULL,
+  `phase`              VARCHAR(24)   NULL,
+  `cfg`                JSON          NULL,
+  `mlflow_run_id`      VARCHAR(64)   NULL,
+  `registered_model`   VARCHAR(128)  NULL,
+  `registered_version` INT           NULL,
+  `metrics`            JSON          NULL,
+  `artifacts`          JSON          NULL,
+  `error`              VARCHAR(512)  NULL,
+  `created_at`         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  INDEX `idx_train_jobs_status_time` (`status`, `updated_at` DESC),
+  CHECK (JSON_VALID(`cfg`)),
+  CHECK (JSON_VALID(`metrics`)),
+  CHECK (JSON_VALID(`artifacts`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- End of schema

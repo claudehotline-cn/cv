@@ -68,6 +68,25 @@ find_package(mysql-concpp CONFIG QUIET)
 if (NOT mysql-concpp_FOUND)
   find_package(unofficial-mysql-connector-cpp CONFIG QUIET)
 endif()
+# Fallback manual discovery for MySQL Connector/C++ (classic JDBC API) and X DevAPI
+# Prefer config packages above; if missing, detect headers/libs directly.
+if (NOT mysql-concpp_FOUND AND NOT TARGET unofficial::mysql-connector-cpp::connector)
+  # Try X DevAPI header
+  find_path(MYSQLX_INCLUDE_DIR mysqlx/xdevapi.h PATH_SUFFIXES include)
+  # Try common library names for Connector/C++ 8
+  find_library(MYSQLX_LIBRARY NAMES mysqlcppconn8 mysqlcppconn)
+  if (MYSQLX_INCLUDE_DIR AND MYSQLX_LIBRARY)
+    message(STATUS "Found MySQL Connector/C++ (fallback): inc=${MYSQLX_INCLUDE_DIR} lib=${MYSQLX_LIBRARY}")
+    set(HAVE_MYSQLX_FALLBACK TRUE)
+  endif()
+  # Classic JDBC-like API header/lib
+  find_path(MYSQL_JDBC_INCLUDE_DIR mysql/jdbc.h PATH_SUFFIXES include)
+  find_library(MYSQL_JDBC_LIBRARY NAMES mysqlcppconn)
+  if (MYSQL_JDBC_INCLUDE_DIR AND MYSQL_JDBC_LIBRARY)
+    message(STATUS "Found MySQL Connector/C++ classic (fallback): inc=${MYSQL_JDBC_INCLUDE_DIR} lib=${MYSQL_JDBC_LIBRARY}")
+    set(HAVE_MYSQLJDBC_FALLBACK TRUE)
+  endif()
+endif()
 
 # YAML-CPP: reuse repo-bundled if present, otherwise try system
 set(YAML_LOCAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/yaml-cpp/yaml-cpp-0.8.0")
@@ -213,6 +232,15 @@ if (mysql-concpp_FOUND)
 elseif (TARGET unofficial::mysql-connector-cpp::connector)
   target_link_libraries(controlplane PRIVATE unofficial::mysql-connector-cpp::connector)
   target_compile_definitions(controlplane PRIVATE HAVE_MYSQLX=1)
+elseif (HAVE_MYSQLX_FALLBACK)
+  target_include_directories(controlplane PRIVATE ${MYSQLX_INCLUDE_DIR})
+  target_link_libraries(controlplane PRIVATE ${MYSQLX_LIBRARY})
+  target_compile_definitions(controlplane PRIVATE HAVE_MYSQLX=1)
+endif()
+if (HAVE_MYSQLJDBC_FALLBACK)
+  target_include_directories(controlplane PRIVATE ${MYSQL_JDBC_INCLUDE_DIR})
+  target_link_libraries(controlplane PRIVATE ${MYSQL_JDBC_LIBRARY})
+  target_compile_definitions(controlplane PRIVATE HAVE_MYSQL_JDBC=1)
 endif()
 
 # Minimal client CLI for VA release workflow

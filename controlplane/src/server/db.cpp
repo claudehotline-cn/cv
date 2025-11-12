@@ -383,4 +383,230 @@ bool list_graphs_json(const AppConfig& cfg, std::string* json_out) {
   if (json_out) *json_out = "[]"; return true;
 }
 
+// -------------------- train_jobs (CRUD) --------------------
+
+#ifdef HAVE_MYSQL_JDBC
+static std::unique_ptr<sql::Connection> jdbc_connect_train(const AppConfig& cfg) {
+  sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
+  std::unique_ptr<sql::Connection> con;
+  try {
+    std::ostringstream url; url << "tcp://" << cfg.db.host << ":" << cfg.db.port;
+    con.reset(driver->connect(url.str(), cfg.db.user, cfg.db.password));
+  } catch (const sql::SQLException& ex) {
+    err_put("jdbc", "connect_url", { {"code", ex.getErrorCode()}, {"state", ex.getSQLState()}, {"msg", ex.what()} });
+    sql::ConnectOptionsMap props;
+    props["hostName"] = cfg.db.host; props["port"] = (int)cfg.db.port; props["userName"] = cfg.db.user; props["password"] = cfg.db.password;
+    props["CLIENT_SSL"] = false; props["OPT_RECONNECT"] = true; props["OPT_GET_SERVER_PUBLIC_KEY"] = true;
+    props["OPT_CONNECT_TIMEOUT"] = 2; props["OPT_READ_TIMEOUT"] = 2; props["OPT_WRITE_TIMEOUT"] = 2;
+    try { con.reset(driver->connect(props)); } catch (const sql::SQLException& ex2) { err_put("jdbc", "connect_props", { {"code", ex2.getErrorCode()}, {"state", ex2.getSQLState()}, {"msg", ex2.what()} }); throw; }
+  }
+  con->setSchema(cfg.db.schema);
+  return con;
+}
+#endif
+
+bool train_job_create(const AppConfig& cfg,
+                      const std::string& id,
+                      const std::string& status,
+                      const std::string& phase,
+                      const nlohmann::json& cfg_json) {
+#ifdef HAVE_MYSQL_JDBC
+  if (use_odbc_mysql(cfg)) {
+    try {
+      auto con = jdbc_connect_train(cfg);
+      std::unique_ptr<sql::PreparedStatement> ps(con->prepareStatement(
+        "INSERT INTO train_jobs(id,status,phase,cfg) VALUES (?,?,?,?) "
+        "ON DUPLICATE KEY UPDATE status=VALUES(status), phase=VALUES(phase), cfg=VALUES(cfg), updated_at=CURRENT_TIMESTAMP"));
+      ps->setString(1, id);
+      ps->setString(2, status);
+      ps->setString(3, phase);
+      std::string cfgs = cfg_json.dump(); ps->setString(4, cfgs);
+      ps->execute();
+      return true;
+    } catch (const sql::SQLException& ex) { err_put("jdbc", "train_create", { {"code", ex.getErrorCode()}, {"state", ex.getSQLState()}, {"msg", ex.what()} }); return false; }
+      catch (const std::exception& ex) { err_put("jdbc", "train_create", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+#ifdef HAVE_MYSQLX
+  if (use_mysqlx(cfg)) {
+    try {
+      mysqlx::Session sess(cfg.db.mysqlx_uri);
+      auto stmt = sess.sql("INSERT INTO train_jobs(id,status,phase,cfg) VALUES(:id,:s,:p,:cfg) "
+                          "ON DUPLICATE KEY UPDATE status=VALUES(status), phase=VALUES(phase), cfg=VALUES(cfg), updated_at=CURRENT_TIMESTAMP");
+      stmt.bind("id", id).bind("s", status).bind("p", phase).bind("cfg", cfg_json.dump()).execute();
+      return true;
+    } catch (const std::exception& ex) { err_put("mysqlx", "train_create", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+  return false; // DB disabled
+}
+
+bool train_job_update(const AppConfig& cfg,
+                      const std::string& id,
+                      const nlohmann::json& fields) {
+  if (id.empty()) return false;
+  if (!fields.is_object() || fields.empty()) return true; // nothing to do
+#ifdef HAVE_MYSQL_JDBC
+  if (use_odbc_mysql(cfg)) {
+    try {
+      auto con = jdbc_connect_train(cfg);
+      std::ostringstream sql; sql << "UPDATE train_jobs SET ";
+      std::vector<std::string> cols;
+      bool has_reg_ver=false; int reg_ver=0;
+      if (fields.contains("status")) cols.push_back("status=?");
+      if (fields.contains("phase")) cols.push_back("phase=?");
+      if (fields.contains("mlflow_run_id")) cols.push_back("mlflow_run_id=?");
+      if (fields.contains("registered_model")) cols.push_back("registered_model=?");
+      if (fields.contains("registered_version")) { cols.push_back("registered_version=?"); has_reg_ver=true; reg_ver = fields["registered_version"].is_number()? fields["registered_version"].get<int>() : 0; }
+      if (fields.contains("metrics")) cols.push_back("metrics=?");
+      if (fields.contains("artifacts")) cols.push_back("artifacts=?");
+      if (fields.contains("error")) cols.push_back("error=?");
+      if (cols.empty()) return true;
+      for (size_t i=0;i<cols.size();++i){ if(i) sql<<","; sql<<cols[i]; }
+      sql << ", updated_at=CURRENT_TIMESTAMP WHERE id=?";
+      std::unique_ptr<sql::PreparedStatement> ps(con->prepareStatement(sql.str()));
+      int bind_i = 1;
+      if (fields.contains("status")) { ps->setString(bind_i++, fields["status"].get<std::string>()); }
+      if (fields.contains("phase")) { ps->setString(bind_i++, fields["phase"].get<std::string>()); }
+      if (fields.contains("mlflow_run_id")) { ps->setString(bind_i++, fields["mlflow_run_id"].get<std::string>()); }
+      if (fields.contains("registered_model")) { ps->setString(bind_i++, fields["registered_model"].get<std::string>()); }
+      if (has_reg_ver) { ps->setInt(bind_i++, reg_ver); }
+      if (fields.contains("metrics")) { std::string s = fields["metrics"].dump(); ps->setString(bind_i++, s); }
+      if (fields.contains("artifacts")) { std::string s = fields["artifacts"].dump(); ps->setString(bind_i++, s); }
+      if (fields.contains("error")) { ps->setString(bind_i++, fields["error"].get<std::string>()); }
+      ps->setString(bind_i++, id);
+      ps->execute();
+      return true;
+    } catch (const sql::SQLException& ex) { err_put("jdbc", "train_update", { {"code", ex.getErrorCode()}, {"state", ex.getSQLState()}, {"msg", ex.what()} }); return false; }
+      catch (const std::exception& ex) { err_put("jdbc", "train_update", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+#ifdef HAVE_MYSQLX
+  if (use_mysqlx(cfg)) {
+    try {
+      mysqlx::Session sess(cfg.db.mysqlx_uri);
+      std::ostringstream sql; sql << "UPDATE train_jobs SET ";
+      bool first=true;
+      auto add = [&](const char* col){ if(first) first=false; else sql << ", "; sql << col << "=:" << col; };
+      if (fields.contains("status")) add("status");
+      if (fields.contains("phase")) add("phase");
+      if (fields.contains("mlflow_run_id")) add("mlflow_run_id");
+      if (fields.contains("registered_model")) add("registered_model");
+      if (fields.contains("registered_version")) add("registered_version");
+      if (fields.contains("metrics")) add("metrics");
+      if (fields.contains("artifacts")) add("artifacts");
+      if (fields.contains("error")) add("error");
+      if (first) return true; // nothing
+      sql << ", updated_at=CURRENT_TIMESTAMP WHERE id=:id";
+      auto stmt = sess.sql(sql.str());
+      if (fields.contains("status")) stmt.bind("status", fields["status"].get<std::string>());
+      if (fields.contains("phase")) stmt.bind("phase", fields["phase"].get<std::string>());
+      if (fields.contains("mlflow_run_id")) stmt.bind("mlflow_run_id", fields["mlflow_run_id"].get<std::string>());
+      if (fields.contains("registered_model")) stmt.bind("registered_model", fields["registered_model"].get<std::string>());
+      if (fields.contains("registered_version")) stmt.bind("registered_version", fields["registered_version"].get<int>());
+      if (fields.contains("metrics")) stmt.bind("metrics", fields["metrics"].dump());
+      if (fields.contains("artifacts")) stmt.bind("artifacts", fields["artifacts"].dump());
+      if (fields.contains("error")) stmt.bind("error", fields["error"].get<std::string>());
+      stmt.bind("id", id).execute();
+      return true;
+    } catch (const std::exception& ex) { err_put("mysqlx", "train_update", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+  return false;
+}
+
+bool train_job_get_json(const AppConfig& cfg, const std::string& id, std::string* json_out) {
+#ifdef HAVE_MYSQL_JDBC
+  if (use_odbc_mysql(cfg)) {
+    try {
+      auto con = jdbc_connect_train(cfg);
+      std::unique_ptr<sql::PreparedStatement> ps(con->prepareStatement(
+        "SELECT id,status,phase,cfg,mlflow_run_id,registered_model,registered_version,metrics,artifacts,error,created_at,updated_at FROM train_jobs WHERE id=?"));
+      ps->setString(1, id);
+      std::unique_ptr<sql::ResultSet> rs(ps->executeQuery());
+      nlohmann::json o = nlohmann::json::object();
+      if (rs->next()) {
+        o["id"] = rs->getString(1);
+        { std::string v=rs->getString(2); if(!v.empty()) o["status"]=v; }
+        { std::string v=rs->getString(3); if(!v.empty()) o["phase"]=v; }
+        { std::string v=rs->getString(4); if(!v.empty()) { try { o["cfg"]=nlohmann::json::parse(v); } catch (...) {} } }
+        { std::string v=rs->getString(5); if(!v.empty()) o["mlflow_run_id"]=v; }
+        { std::string v=rs->getString(6); if(!v.empty()) o["registered_model"]=v; }
+        { int v=rs->getInt(7); if(!rs->wasNull()) o["registered_version"]=v; }
+        { std::string v=rs->getString(8); if(!v.empty()) { try { o["metrics"]=nlohmann::json::parse(v); } catch (...) {} } }
+        { std::string v=rs->getString(9); if(!v.empty()) { try { o["artifacts"]=nlohmann::json::parse(v); } catch (...) {} } }
+        { std::string v=rs->getString(10); if(!v.empty()) o["error"]=v; }
+        { std::string v=rs->getString(11); if(!v.empty()) o["created_at"]=v; }
+        { std::string v=rs->getString(12); if(!v.empty()) o["updated_at"]=v; }
+      }
+      if (json_out) *json_out = o.dump();
+      return true;
+    } catch (const sql::SQLException& ex) { err_put("jdbc", "train_get", { {"code", ex.getErrorCode()}, {"state", ex.getSQLState()}, {"msg", ex.what()} }); return false; }
+      catch (const std::exception& ex) { err_put("jdbc", "train_get", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+#ifdef HAVE_MYSQLX
+  if (use_mysqlx(cfg)) {
+    try {
+      mysqlx::Session sess(cfg.db.mysqlx_uri);
+      const char* q =
+        "SELECT COALESCE(JSON_OBJECT("
+        "'id', id, 'status', status, 'phase', phase, 'cfg', cfg, 'mlflow_run_id', mlflow_run_id,"
+        "'registered_model', registered_model, 'registered_version', registered_version,"
+        "'metrics', metrics, 'artifacts', artifacts, 'error', error,"
+        "'created_at', DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'), 'updated_at', DATE_FORMAT(updated_at,'%Y-%m-%d %H:%i:%s')"
+        "), JSON_OBJECT()) AS data FROM train_jobs WHERE id = :id";
+      auto res = sess.sql(q).bind("id", id).execute();
+      auto row = res.fetchOne();
+      std::string s = "{}"; if (row) s = std::string(row[0].get<mysqlx::string>());
+      if (s.empty()) s = "{}"; if (json_out) *json_out = s; return true;
+    } catch (const std::exception& ex) { err_put("mysqlx", "train_get", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+  if (json_out) *json_out = "{}"; return true;
+}
+
+bool list_train_jobs_json(const AppConfig& cfg, std::string* json_out) {
+#ifdef HAVE_MYSQL_JDBC
+  if (use_odbc_mysql(cfg)) {
+    try {
+      auto con = jdbc_connect_train(cfg);
+      std::unique_ptr<sql::Statement> stmt(con->createStatement());
+      std::unique_ptr<sql::ResultSet> rs(stmt->executeQuery(
+        "SELECT id,status,phase,mlflow_run_id,registered_model,registered_version,created_at,updated_at FROM train_jobs ORDER BY updated_at DESC LIMIT 500"));
+      nlohmann::json arr = nlohmann::json::array();
+      while (rs->next()) {
+        nlohmann::json o; o["id"]=rs->getString(1);
+        { std::string v=rs->getString(2); if(!v.empty()) o["status"]=v; }
+        { std::string v=rs->getString(3); if(!v.empty()) o["phase"]=v; }
+        { std::string v=rs->getString(4); if(!v.empty()) o["mlflow_run_id"]=v; }
+        { std::string v=rs->getString(5); if(!v.empty()) o["registered_model"]=v; }
+        { int v=rs->getInt(6); if(!rs->wasNull()) o["registered_version"]=v; }
+        { std::string v=rs->getString(7); if(!v.empty()) o["created_at"]=v; }
+        { std::string v=rs->getString(8); if(!v.empty()) o["updated_at"]=v; }
+        arr.push_back(o);
+      }
+      if (json_out) *json_out = arr.dump();
+      return true;
+    } catch (const sql::SQLException& ex) { err_put("jdbc", "train_list", { {"code", ex.getErrorCode()}, {"state", ex.getSQLState()}, {"msg", ex.what()} }); return false; }
+      catch (const std::exception& ex) { err_put("jdbc", "train_list", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+#ifdef HAVE_MYSQLX
+  if (use_mysqlx(cfg)) {
+    try {
+      mysqlx::Session sess(cfg.db.mysqlx_uri);
+      const char* q =
+        "SELECT COALESCE(JSON_ARRAYAGG(JSON_OBJECT("
+        "'id', id, 'status', status, 'phase', phase, 'mlflow_run_id', mlflow_run_id,"
+        "'registered_model', registered_model, 'registered_version', registered_version,"
+        "'created_at', DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'), 'updated_at', DATE_FORMAT(updated_at,'%Y-%m-%d %H:%i:%s')"
+        ")), JSON_ARRAY()) AS data FROM train_jobs ORDER BY updated_at DESC LIMIT 500";
+      if (sql_json_array(sess, q, json_out)) return true;
+    } catch (const std::exception& ex) { err_put("mysqlx", "train_list", { {"msg", ex.what()} }); return false; }
+  }
+#endif
+  if (json_out) *json_out = "[]"; return true;
+}
+
 } // namespace controlplane::db
