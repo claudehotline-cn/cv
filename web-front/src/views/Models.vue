@@ -131,7 +131,7 @@
               <span v-if="addFileName" style="margin-left:8px;color:#666;">{{ addFileName }}</span>
               <span v-if="!addForm.model" style="margin-left:8px;color:#999;">请先填写模型 ID</span>
             </div>
-            <div v-if="addForm.platform==='tensorrt_plan' && addFileName && isOnnxFile(addFileName)">
+            <div v-if="addForm.platform==='tensorrt_plan' && addIsOnnx">
               <el-tag :type="convertPhase==='done' ? 'success' : (convertPhase==='failed' ? 'danger' : 'info')" size="small" effect="plain">
                 {{ convertPhase === 'running' ? '转换中…' : (convertPhase==='uploading' ? '上传中…' : convertPhase || '就绪') }}
               </el-tag>
@@ -190,6 +190,7 @@ const addDlg = ref(false)
 const adding = ref(false)
 const addForm = reactive({ model: '', platform: 'onnxruntime_onnx', config: '', version: '1', load: false })
 const addFile = ref<File | null>(null)
+const addIsOnnx = computed(() => !!(addFile.value && isOnnxFile(addFile.value.name)))
 const addFileName = ref('')
 // convert progress (inline under upload widget)
 const convertLogs = ref('')
