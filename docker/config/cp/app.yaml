@@ -31,9 +31,9 @@ security:
   rate_limit:
     rps: 0
 db:
-  driver: mysql
-  host: host.docker.internal
-  port: 13306
+  driver: mysql           # 经典 MySQL 接口（libmysqlcppconn）
+  host: mysql            # 指向 compose 内的 mysql 服务名
+  port: 3306
   user: root
   password: 123456
   schema: cv_cp

@@ -1,4 +1,21 @@
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: "cv_cp"
+      MYSQL_TCP_PORT: 3306
+    ports:
+      - "13306:3306"   # 宿主端口 → 容器 3306，用于本机或外部访问
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ../../db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -108,6 +125,8 @@ services:
     environment:
       - VA_REST_BASE=va:8082
     depends_on:
+      mysql:
+        condition: service_healthy
       va:
         condition: service_healthy
       vsm:
@@ -158,3 +177,4 @@ networks:
 
 volumes:
   minio-data:
+  mysql-data:
