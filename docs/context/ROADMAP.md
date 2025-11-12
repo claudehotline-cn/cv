@@ -1,36 +1,44 @@
 # 路线图总览
 
-- M0｜可管可见的仓库与订阅
-  - 目标：打通 Triton 仓库管理（列出/加载/卸载/轮询）、订阅可直接使用仓库模型名、前端可视化与配置查看。
-  - 验收：/api/repo/* 可用；/api/subscriptions 接受仓库模型名；前端展示 ready/versions 并可查看/编辑/保存 config.pbtxt。
-- M1｜别名与发布治理
-  - 目标：以别名（alias）管理模型/版本，支持通过 alias 发布/回滚。
-  - 验收：/api/models/aliases CRUD；/api/control/release 支持 alias→triton_model[/version]；（可选）前端别名管理面板。
-- M2｜自动轮询/预热与可观测
-  - 目标：VA Host 自动 Poll，最小预热；CP 增强指标与错误画像；前端轻量运维视图。
-  - 验收：repository_poll_secs 生效；/_metrics/summary 暴露 repo 指标；（可选）前端展示健康度与最近错误。
+- M0「可用性修复」：平滑转换进度 + 本地仓库删除
+  - 目标：消除 5%→100% 跳变；提供“删除模型（FS 仓库）”。
+  - 验收：
+    - 进度在 running 阶段平滑至≈85%，uploading 阶段≥90%，完成 100%；SSE 稀疏时仍连续推进。
+    - 本地仓库模型删除成功（含最佳努力卸载），列表刷新；S3 删除返回明确错误。
+- M1「能力扩展」：运行阶段细粒度 + S3 删除
+  - 目标：解析 trtexec 输出细化进度（parse/build/tactics/serialize）；支持 S3/MinIO 批量删除。
+  - 验收：
+    - 子阶段可见且进度稳定；S3 删除可在 5s 内完成并返回成功。
+- M2「稳健与观测」：审计与指标 + 交互完善
+  - 目标：操作审计、指标（转换/删除成功率、SSE 质量）、统一确认弹窗、回滚策略完善。
+  - 验收：
+    - 指标可在 Grafana 可视化；E2E 用例通过；回滚可在 1 分钟内执行。
 
 # 分阶段计划（表格）
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 | ---- | ---------- | -------- | --------- | -------- |
-| M0 | RepoList/Load/Unload/Poll；订阅直用仓库名；配置读写 | RepoModel 扩展(ready/versions)；CP 订阅前探测 RepoList；config.pbtxt FS/S3 读写 | S3 权限/签名失败→回退FS/明确错误；CORS 冲突→统一入口设置 | /api/repo/* 成功率>99%；列表TTFB<300ms |
-| M0 | 前端模型页与 Drawer | 仓库/检测模式动态列；语法高亮与性能上限；复制/下载/编辑/保存 | 大文件渲染卡顿→按行处理+上限；样式干扰→隔离样式 | 2s 内渲染 200KB/2000 行 |
-| M1 | 别名 CRUD + 发布联动 | 内存+文件持久化；/api/control/release 解析 alias | 状态不一致→保存后回读校验；误发布→最小回滚路径 | alias CRUD 成功率>99%；发布 1 次点击 |
-| M2 | VA Host 自动轮询与预热 | repository_poll_secs；load/unload/poll 串行化；预热钩子 | 线程稳定性→有序退出；资源抖动→限频 | 轮询线程存活率≈100% |
-| M2 | 可观测与错误画像 | /api/_metrics/summary 增加 repo ok/fail；Prom 指标 | 指标漂移→归一口径；维度过细→分级聚合 | 指标开销<5% CPU |
+| M0 | 柔性进度、FS 删除 | 前端软推进、SSE 解析、VA/CP/前端全链路 | Proto 变更导致重建 → 预先全量构建脚本 | 进度≥90%覆盖中间时段；删除成功率≥99% |
+| M1 | 子阶段进度、S3 删除 | trtexec 日志解析；ListObjectsV2+BatchDelete | S3 权限/带宽波动 → 超时与重试 | S3 删除P95≤5s；子阶段误报率≤1% |
+| M1.5 | 前端交互完善 | ElementPlus 弹窗、错误提示与重试 | 用户误删 → 二次确认/撤销窗口 | 误删率→0；可用性满意度≥90% |
+| M2 | 审计与指标 | 操作日志、Prom 指标、Grafana 面板 | 指标采集开销 → 采样/聚合 | 指标采集开销<3% CPU |
+| M2.5 | 回滚与兼容 | Proto 版本标识、双写/灰度 | 兼容破坏 → 明确版本门槛与开关 | 回滚时间≤1min，失败≤1次/季度 |
 
 # 依赖矩阵
 
 - 内部依赖：
-  - CP metrics/cache/HTTP 栈；VA AnalyzerControl gRPC 服务；前端 Models.vue
+  - CP HTTP 服务与 gRPC 客户端（`/api/repo/remove`、SSE 转发）。
+  - VA gRPC 服务与 Proto（`RepoRemoveModel`、convert stream）。
+  - Web 前端（Models 页面、SSE 与软推进逻辑）。
 - 外部依赖（库/服务/硬件）：
-  - Triton Server In‑Process SDK；MinIO/S3（SigV4）；CUDA/NVENC；gRPC；浏览器运行环境
+  - TensorRT `trtexec`；Triton in-process 仓库；Element Plus；gRPC/Protobuf；S3/MinIO（后续）。
+  - 运行环境：GPU（可选）、本地/对象存储、浏览器 SSE 支持。
 
 # 风险清单（Top-5）
 
-- S3 读写失败/超时 → 凭证/端点错误或网络不稳 → /api/repo/config 失败率上升 → 回退到FS/明确错误、增加重试与告警。
-- 全局 triton_model 切换影响其他订阅 → 在高并发发布场景触发 → 现网订阅质量瞬时下降 → 明确“全局切换”提示，推进 Pipeline 级模型注入改造。
-- 大配置渲染卡顿 → 超大 pbtxt/低端机器 → 前端卡住/卡顿 → 行分割+上限、支持分页/下载离线查看。
-- 后台轮询线程异常退出 → 罕见崩溃/资源耗尽 → 仓库变更未生效 → 加入存活检查与限频、统一退出流程。
-- CORS/安全策略冲突 → 前端跨源访问策略调整 → 浏览器拒绝请求 → 入口统一 CORS，禁用路由层重复头，暴露必要头字段。
+- Proto 变更导致构建失败 → 子模块未重建 → CI 报错/二进制不匹配 → 全量重建脚本与版本钩子
+- SSE 稀疏或断连 → 进度停滞 → 进度长时间不变 → 前端软推进与超时提示
+- S3 删除权限不足 → 删除失败 → 403/签名错误 → 预检权限与重试/回退到人工介入
+- trtexec 行为差异 → 子阶段识别误差 → 进度抖动/误导 → 多特征匹配与阈值、回退到粗粒度
+- 误删模型 → 用户误操作 → 高危操作频发 → 二次确认/延迟删除与可撤销窗口
+

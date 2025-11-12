@@ -117,6 +117,9 @@ bool va_repo_save_config(const std::string& addr, const std::string& model, cons
 bool va_repo_put_file(const std::string& addr, const std::string& model, const std::string& version, const std::string& filename, const std::string& content, std::string* err);
 // Start conversion on VA (onnx -> plan) and get job id
 bool va_repo_convert_upload(const std::string& addr, const std::string& model, const std::string& version, const std::string& onnx_bytes, std::string* job_id, std::string* err);
+bool va_repo_convert_cancel(const std::string& addr, const std::string& job_id, std::string* err);
+// Remove model from repository
+bool va_repo_remove_model(const std::string& addr, const std::string& model, std::string* err);
 
 // Helpers to create stubs with configured TLS credentials
 std::unique_ptr<::va::v1::AnalyzerControl::Stub> make_va_stub(const std::string& addr);

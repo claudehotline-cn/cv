@@ -17,6 +17,10 @@
 #include <cstdlib>
 #include <sstream>
 #include <regex>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <unordered_map>
 
 #if defined(USE_GRPC) && defined(VA_ENABLE_GRPC_SERVER)
@@ -34,7 +38,7 @@ namespace va { namespace control {
 
 #if defined(USE_TRITON_INPROCESS)
 namespace {
-struct VaConvJob { std::mutex mu; std::vector<std::string> logs; std::string phase; std::string model; std::string version; float progress{0.f}; };
+struct VaConvJob { std::mutex mu; std::vector<std::string> logs; std::string phase; std::string model; std::string version; float progress{0.f}; int pid{-1}; bool cancel{false}; };
 static std::mutex g_va_conv_mu;
 static std::unordered_map<std::string, std::shared_ptr<VaConvJob>> g_va_conv_jobs;
 }
@@ -754,16 +758,48 @@ public:
             if (fd < 0) { resp->set_ok(false); resp->set_msg("mkstemp failed"); return ::grpc::Status::OK; }
             FILE* tf = fdopen(fd, "wb"); if (tf) { fwrite(onnx.data(), 1, onnx.size(), tf); fclose(tf); } else { close(fd); resp->set_ok(false); resp->set_msg("fdopen failed"); return ::grpc::Status::OK; }
             std::string plan_tmp = std::string(onnx_tmp) + std::string(".plan");
-            std::string trtexec = req->trtexec().empty()? (std::getenv("TRTEXEC")? std::getenv("TRTEXEC"): "trtexec") : req->trtexec();
+            std::string trtexec;
+            if (!req->trtexec().empty()) {
+                trtexec = req->trtexec();
+            } else if (const char* te = std::getenv("TRTEXEC"); te && *te) {
+                trtexec = te;
+            } else {
+                const char* candidates[] = { "/usr/src/tensorrt/bin/trtexec", "/usr/local/bin/trtexec", "/usr/bin/trtexec" };
+                for (const char* c : candidates) { if (access(c, X_OK) == 0) { trtexec = c; break; } }
+                if (trtexec.empty()) trtexec = "trtexec";
+            }
             std::ostringstream cmd; cmd << trtexec << " --onnx='" << onnx_tmp << "' --saveEngine='" << plan_tmp << "' --fp16";
             // Conversion thread
-            std::thread([job, job_id, onnx_path=std::string(onnx_tmp), plan_tmp, cmd_str=cmd.str(), hopt, model, version]() {
+            std::thread([job, job_id, onnx_path=std::string(onnx_tmp), plan_tmp, cmd_str=cmd.str(), hopt, model, version, trtexec]() {
                 auto set_phase = [&](const char* ph, float prog){ std::lock_guard<std::mutex> lk(job->mu); job->phase = ph; if (prog >= 0.f) job->progress = prog; };
                 set_phase("running", 5.f);
-                // run trtexec silently (no logs collected nor streamed)
-                FILE* fp = popen((cmd_str + " >/dev/null 2>&1").c_str(), "r");
+                // fork/exec trtexec silently, track pid for cancellation
+                int pid = fork();
+                if (pid == 0) {
+                    // child: redirect to /dev/null and exec
+                    int devnull = ::open("/dev/null", O_RDWR);
+                    if (devnull >= 0) { dup2(devnull, 1); dup2(devnull, 2); }
+                    std::string arg1 = std::string("--onnx=") + onnx_path;
+                    std::string arg2 = std::string("--saveEngine=") + plan_tmp;
+                    const char* argv0 = trtexec.c_str();
+                    const char* argvv[] = { argv0, arg1.c_str(), arg2.c_str(), "--fp16", nullptr };
+                    execvp(argv0, (char* const*)argvv);
+                    _exit(127);
+                }
                 int rc = -1;
-                if (fp) { rc = pclose(fp); } else { rc = -1; }
+                if (pid > 0) {
+                    {
+                        std::lock_guard<std::mutex> lk(job->mu); job->pid = pid;
+                    }
+                    // wait with cancel support
+                    for (;;) {
+                        int status = 0; int w = waitpid(pid, &status, WNOHANG);
+                        if (w == pid) { rc = (WIFEXITED(status) ? WEXITSTATUS(status) : -1); break; }
+                        bool want_cancel = false; { std::lock_guard<std::mutex> lk(job->mu); want_cancel = job->cancel; }
+                        if (want_cancel) { kill(pid, SIGTERM); std::this_thread::sleep_for(std::chrono::milliseconds(200)); kill(pid, SIGKILL); rc = -1; break; }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                    }
+                } else { rc = -1; }
                 if (rc != 0) {
                     set_phase("failed", -1.f);
                     try { std::filesystem::remove(onnx_path); } catch (...) {}
@@ -847,7 +883,7 @@ public:
             }
             // If not found, just close stream
             va::v1::RepoConvertEvent ev;
-            ev.set_kind("state"); ev.set_phase(job? job->phase : std::string("failed")); if (job) ev.set_progress(job->progress()); writer->Write(ev);
+            ev.set_kind("state"); ev.set_phase(job? job->phase : std::string("failed")); if (job) ev.set_progress(job->progress); writer->Write(ev);
             if (!job) return ::grpc::Status::OK;
             std::string last_phase; float last_prog = -1.f;
             for (;;) {
@@ -867,6 +903,79 @@ public:
 #endif
         } catch (const std::exception& ex) { return ::grpc::Status(::grpc::StatusCode::INTERNAL, ex.what()); }
         catch (...) { return ::grpc::Status(::grpc::StatusCode::INTERNAL, "unknown"); }
+    }
+
+    ::grpc::Status RepoConvertCancel(::grpc::ServerContext*, const va::v1::RepoConvertCancelRequest* req,
+                                     va::v1::RepoConvertCancelReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            std::string job_id = req->job_id();
+            std::shared_ptr<VaConvJob> job;
+            {
+                std::lock_guard<std::mutex> lk(g_va_conv_mu);
+                auto it = g_va_conv_jobs.find(job_id);
+                if (it != g_va_conv_jobs.end()) job = it->second;
+            }
+            if (!job) { resp->set_ok(false); resp->set_msg("job not found"); return ::grpc::Status::OK; }
+            int pid = -1; {
+                std::lock_guard<std::mutex> lk(job->mu);
+                job->cancel = true; pid = job->pid;
+            }
+            if (pid > 0) { kill(pid, SIGTERM); }
+            resp->set_ok(true); resp->set_msg(""); return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) { resp->set_ok(false); resp->set_msg(ex.what()); return ::grpc::Status::OK; }
+        catch (...) { resp->set_ok(false); resp->set_msg("unknown"); return ::grpc::Status::OK; }
+    }
+
+    // Remove model directory from repository (best-effort)
+    ::grpc::Status RepoRemoveModel(::grpc::ServerContext*, const va::v1::RepoRemoveModelRequest* req,
+                                   va::v1::RepoRemoveModelReply* resp) override {
+        try {
+#if defined(USE_TRITON_INPROCESS)
+            if (!app_) { resp->set_ok(false); resp->set_msg("no application"); return ::grpc::Status::OK; }
+            std::string model = req->model();
+            if (model.empty()) { resp->set_ok(false); resp->set_msg("model required"); return ::grpc::Status::OK; }
+            auto eng = app_->currentEngine();
+            va::analyzer::TritonInprocServerHost::Options hopt;
+            if (auto it = eng.options.find("triton_repo"); it != eng.options.end()) hopt.repo = it->second; else hopt.repo = "/models";
+            // Try best-effort unload to avoid in-use files
+            try {
+                hopt.model_control = "explicit";
+                triton_host_ = va::analyzer::TritonInprocServerHost::instance(hopt);
+                auto host = triton_host_;
+                if (host && host->isReady()) { host->unloadModel(model); }
+            } catch (...) { /* ignore */ }
+            // Remove from filesystem repository
+            if (!hopt.repo.empty() && (hopt.repo.rfind("/", 0) == 0 || hopt.repo.find("://") == std::string::npos)) {
+                try {
+                    std::filesystem::path dir = std::filesystem::path(hopt.repo) / model;
+                    if (std::filesystem::exists(dir)) {
+                        std::error_code ec; std::filesystem::remove_all(dir, ec);
+                        bool ok = !std::filesystem::exists(dir);
+                        resp->set_ok(ok); resp->set_msg(ok?"":"remove failed");
+                        return ::grpc::Status::OK;
+                    } else {
+                        resp->set_ok(true); resp->set_msg("not found");
+                        return ::grpc::Status::OK;
+                    }
+                } catch (const std::exception& ex) {
+                    resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK;
+                } catch (...) {
+                    resp->set_ok(false); resp->set_msg("unknown exception"); return ::grpc::Status::OK;
+                }
+            }
+            // S3/minio repo: not implemented (requires List+DeleteObjects V2)
+            resp->set_ok(false); resp->set_msg("s3 remove not implemented");
+            return ::grpc::Status::OK;
+#else
+            resp->set_ok(false); resp->set_msg("in-process disabled"); return ::grpc::Status::OK;
+#endif
+        } catch (const std::exception& ex) {
+            resp->set_ok(false); resp->set_msg(std::string("exception: ")+ex.what()); return ::grpc::Status::OK;
+        } catch (...) { resp->set_ok(false); resp->set_msg("unknown"); return ::grpc::Status::OK; }
     }
     // Streaming phases for a subscription or (stream_id, profile) tuple.
     // Minimal implementation: poll Application pipelines and emit phase snapshots.

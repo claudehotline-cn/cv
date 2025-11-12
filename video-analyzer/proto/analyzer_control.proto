@@ -38,6 +38,10 @@ service AnalyzerControl {
   rpc RepoConvertUpload(RepoConvertUploadRequest) returns (RepoConvertUploadReply);
   // Stream conversion progress/logs for a job id.
   rpc RepoConvertStream(RepoConvertStreamRequest) returns (stream RepoConvertEvent);
+  // Cancel a running conversion job (best-effort)
+  rpc RepoConvertCancel(RepoConvertCancelRequest) returns (RepoConvertCancelReply);
+  // Remove a model directory from repository (best-effort). Requires explicit unload before removal.
+  rpc RepoRemoveModel(RepoRemoveModelRequest) returns (RepoRemoveModelReply);
 }
 
 // 说明：为兼容当前阶段的 YAML 适配器，增加 graph_id/yaml_path 字段；
@@ -206,3 +210,9 @@ message RepoConvertUploadRequest { string model = 1; string version = 2; bytes o
 message RepoConvertUploadReply   { bool ok = 1; string msg = 2; string job_id = 3; }
 message RepoConvertStreamRequest { string job_id = 1; }
 message RepoConvertEvent { string kind = 1; string line = 2; string phase = 3; float progress = 4; }
+message RepoConvertCancelRequest { string job_id = 1; }
+message RepoConvertCancelReply   { bool ok = 1; string msg = 2; }
+
+// Remove a model completely from repository (all versions and files)
+message RepoRemoveModelRequest { string model = 1; }
+message RepoRemoveModelReply   { bool ok = 1; string msg = 2; }

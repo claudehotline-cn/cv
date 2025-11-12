@@ -618,6 +618,20 @@ int main(int argc, char** argv) {
       try{ controlplane::metrics::inc_repo_op("poll", true);}catch(...){}
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/poll", r.status); return r;
     }
+    if (path == "/api/repo/remove" && method == "POST") {
+      std::string model;
+      if (!body.empty()) {
+        try { auto j=nlohmann::json::parse(body); if (j.contains("model") && j["model"].is_string()) model = j["model"].get<std::string>(); }
+        catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/remove", r.status); return r; }
+      }
+      if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/repo/remove", r.status); return r; }
+      // best-effort unload first
+      try { std::string err; va_repo_unload(cfg.va_addr, model, &err); } catch (...) {}
+      std::string err;
+      bool ok = controlplane::va_repo_remove_model(cfg.va_addr, model, &err);
+      if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/remove", r.status); try{ controlplane::metrics::inc_repo_op("remove", false);}catch(...){} return r; }
+      r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/remove", r.status); try{ controlplane::metrics::inc_repo_op("remove", true);}catch(...){} return r;
+    }
     if (path.rfind("/api/repo/upload", 0) == 0 && method == "POST") {
       auto qpos = path.find('?');
       std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
@@ -669,6 +683,16 @@ int main(int argc, char** argv) {
         auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()? std::string("convert_upload failed"): err)+"\"}"; emit("/api/repo/convert_upload", r.status); return r; }
       nlohmann::json out; out["code"]="ACCEPTED"; out["data"]={{"job",job},{"events","/api/repo/convert/events?job="+job}};
       r.status=202; r.body=out.dump(); emit("/api/repo/convert_upload", r.status); return r;
+    }
+    if (path == "/api/repo/convert/cancel" && method == "POST") {
+      try {
+        std::string job;
+        if (!body.empty()) { auto j = nlohmann::json::parse(body); if (j.contains("job") && j["job"].is_string()) job = j["job"].get<std::string>(); }
+        if (job.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"job required\"}"; emit("/api/repo/convert/cancel", r.status); return r; }
+        std::string err;
+        if (!controlplane::va_repo_convert_cancel(cfg.va_addr, job, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()? std::string("cancel failed"): err)+"\"}"; emit("/api/repo/convert/cancel", r.status); return r; }
+        r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/repo/convert/cancel", r.status); return r;
+      } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/convert/cancel", r.status); return r; }
     }
     // Add a new model to Triton repository by creating config.pbtxt (minimal skeleton). Optionally load immediately.
     if (path == "/api/repo/add" && method == "POST") {

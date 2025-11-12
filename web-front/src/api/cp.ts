@@ -161,6 +161,7 @@ export const cp = {
   async repoLoad(model: string) { return http.post('/api/repo/load', { model }) },
   async repoUnload(model: string) { return http.post('/api/repo/unload', { model }) },
   async repoPoll() { return http.post('/api/repo/poll', {}) },
+  async repoRemove(model: string) { return http.post('/api/repo/remove', { model }) },
   // Repo models list (proxy to VA /api/models)
   async repoList() { return http.get<any>('/api/repo/list') },
   // Repo model config
@@ -192,6 +193,9 @@ export const cp = {
       if (ev && ev.startsWith('/')) (j.data as any).events_abs = `${base}${ev}`
     } catch { /* ignore */ }
     return j
+  },
+  async repoConvertCancel(job: string) {
+    return http.post('/api/repo/convert/cancel', { job })
   },
   // Repo add model (create config.pbtxt; optional autoload)
   async repoAddModel(payload: { model: string; config?: string; load?: boolean }) {

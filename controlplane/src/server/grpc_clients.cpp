@@ -494,6 +494,19 @@ bool va_repo_convert_upload(const std::string& addr, const std::string& model, c
   catch (...) { if (err) *err = "unknown exception"; return false; }
 }
 
+bool va_repo_convert_cancel(const std::string& addr, const std::string& job_id, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoConvertCancelRequest req; req.set_job_id(job_id);
+    va::v1::RepoConvertCancelReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoConvertCancel(&ctx, req, &rep); }, true, 0, "RepoConvertCancel");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; }
+  catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
 bool va_repo_put_file(const std::string& addr, const std::string& model, const std::string& version, const std::string& filename, const std::string& content, std::string* err) {
   try {
     auto ch = make_channel(addr, true);
@@ -505,6 +518,18 @@ bool va_repo_put_file(const std::string& addr, const std::string& model, const s
     return true;
   } catch (const std::exception& e) { if (err) *err = e.what(); return false; }
   catch (...) { if (err) *err = "unknown exception"; return false; }
+}
+
+bool va_repo_remove_model(const std::string& addr, const std::string& model, std::string* err) {
+  try {
+    auto ch = make_channel(addr, true);
+    auto stub = va::v1::AnalyzerControl::NewStub(ch);
+    va::v1::RepoRemoveModelRequest req; req.set_model(model);
+    va::v1::RepoRemoveModelReply rep;
+    auto status = call_with_retry([&](grpc::ClientContext& ctx){ return stub->RepoRemoveModel(&ctx, req, &rep); }, true, 0, "RepoRemoveModel");
+    if (!status.ok() || !rep.ok()) { if (err) *err = status.ok()? rep.msg() : status.error_message(); return false; }
+    return true;
+  } catch (const std::exception& e) { if (err) *err = e.what(); return false; } catch (...) { if (err) *err = "unknown exception"; return false; }
 }
 
 } // namespace controlplane

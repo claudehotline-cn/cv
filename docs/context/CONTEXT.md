@@ -1,81 +1,68 @@
-# Triton 模型仓库管理与订阅改造（对话要点汇总）
+# CONTEXT（2025-11-12）
 
-本文汇聚本轮对话中已落地的设计、代码改动、接口与前端行为，作为持续迭代的上下文依据。
+## 背景
+- 前端页面“模型仓库/添加模型”在进行 ONNX→TensorRT 转换时，进度长期停留 5%，完成瞬间跳到 100%，缺少中间进度反馈，影响可用性与感知。
+- 新需求：在“模型仓库”中支持“删除模型”（仓库移除模型目录）。
 
-## 一、架构边界与通信
+## 变更总览
+- 前端（web-front）
+  - 改进转换进度显示（“柔性推进”）：在后端事件稀疏时由前端小步推进，运行阶段上限 85%，上传阶段上限 99%；完成至 100%。兼容 progress 为 0–1 或 0–100 两种上报。
+  - 事件处理：SSE state/done 事件更新 phase 与 progress；uploading 阶段进度基线≥90%。
+  - 修正模板变量：补充 `convertLogs` 占位，避免引用未定义。
+  - 新增“删除模型”按钮（列表行与按 ID 操作栏），调用 CP `POST /api/repo/remove`。
+- 控制平面（controlplane）
+  - 新增路由：`POST /api/repo/remove { model }`，先尝试卸载（best-effort），再通过 gRPC 调用 VA 删除仓库目录。
+  - 新增 gRPC 客户端封装：`va_repo_remove_model`。
+- Video Analyzer（video-analyzer）
+  - Proto 扩展：新增 `RepoRemoveModel` RPC 及消息定义。
+  - gRPC 服务实现：`RepoRemoveModel` 在本地 FS 仓库删除 `<repo>/<model>` 目录（S3 删除暂未实现）。
 
-- 前端 → 控制平面（CP）：HTTP（/api/...）。
-- 控制平面（CP） → 视频分析器（VA）：gRPC（AnalyzerControl）。
-- VA 内部：Triton In‑Process Server（可选自动轮询、显示加载/卸载）。
+## 关键细节
+- 转换阶段（convert_upload）
+  - phase：created → running → uploading → done/failed。
+  - 控制面 SSE 转发：`/api/repo/convert/events?job=...`，事件 kind=state/done，字段：phase、progress（float）。
+- 运行阶段细化（建议，未落地）
+  - 可通过解析 trtexec 日志（当前被重定向到 /dev/null）细分 parse/build/tactics/serialize 等子阶段；保持 `phase=running`，仅细化 progress 与可选 detail 字段。
+- 删除模型的限制
+  - 仅支持本地文件系统仓库路径；S3/MinIO 删除未实现，返回错误提示。
+  - 删除前会尝试 `Unload`，避免 in-use 文件，失败不阻塞删除流程（best-effort）。
 
-## 二、核心能力与接口
+## API 与路由
+- 新增
+  - CP HTTP：`POST /api/repo/remove { model }`
+  - VA gRPC：`RepoRemoveModel(RepoRemoveModelRequest) returns (RepoRemoveModelReply)`
+- 既有
+  - `POST /api/repo/convert_upload`
+  - `GET  /api/repo/convert/events?job=...`（SSE）
+  - `POST /api/repo/(load|unload|poll)`
 
-1) 仓库列表与管理
-- gRPC 新增/增强（video-analyzer/proto/analyzer_control.proto）
-  - RepoList(RepoListRequest) → RepoListReply{ ok,msg, models[] }
-    - RepoModel 字段扩展：id, path?, ready?, versions?[], active_version?
-  - RepoLoad/RepoUnload/RepoPoll 保持可用。
-  - RepoGetConfig/RepoSaveConfig：读取/写入 config.pbtxt（FS/MinIO S3，SigV4）。
-- CP HTTP 路由（controlplane/src/server/main.cpp）
-  - GET  /api/repo/list           → 优先详细字段，失败回退 id-only。
-  - POST /api/repo/load|unload|poll
-  - GET  /api/repo/config?model=… → 读取 config.pbtxt
-  - POST /api/repo/config         → 保存 config.pbtxt
-  - CORS 统一在入口设置，去除了局部重复头（修复 "'*, *'" 问题）。
+## 受影响文件（摘录）
+- 前端
+  - `web-front/src/views/Models.vue`：进度柔性推进、UI 删除按钮与确认、事件处理优化。
+  - `web-front/src/api/cp.ts`：新增 `cp.repoRemove(model)`。
+- 控制平面
+  - `controlplane/src/server/main.cpp`：新增 `/api/repo/remove` 路由。
+  - `controlplane/include/controlplane/grpc_clients.hpp`、`controlplane/src/server/grpc_clients.cpp`：`va_repo_remove_model`。
+- VA 与 Proto
+  - `video-analyzer/proto/analyzer_control.proto`：`RepoRemoveModel` 定义。
+  - `video-analyzer/src/controlplane/api/grpc_server.cpp`：`RepoRemoveModel` 实现。
+- 备忘
+  - `docs/memo/2025-11-12.md`：记录进度优化与删除能力改动与测试建议。
 
-2) 订阅使用仓库模型名
-- CP /api/subscriptions（POST）：若 body.model_id 命中 RepoList（即仓库模型名），则仅设置 VA SetEngine.options.triton_model=model_id，并清空 model_id 后转发订阅；不切换 provider（provider=triton 已由配置确定）。
+## 构建与运行
+- 需全量重建 VA/CP（Proto 变更）。
+- 前端在 `web-front` 下 `npm run dev` 运行即可。
 
-3) 别名治理（最小可用）
-- /api/models/aliases：GET/POST/DELETE，内存 + 文件持久化（logs/model_aliases.json；CP_ALIASES_FILE 可覆盖）。
-- /api/control/release：支持 alias 字段，解析为 triton_model[/version]（显式值优先）。
+## 测试建议
+1) 进度显示：上传 .onnx（平台 TensorRT），观察进度 5%→平滑至 ~85%→上传≥90%→100%。
+2) SSE 稀疏：仅 start/done 事件情况下，确认前端柔性推进不中断。
+3) progress 小数：后端上报 0–1 小数时换算为百分比正确。
+4) 删除（FS 仓库）：删除存在模型后，确认列表消失且仓库目录被移除。
+5) 删除（S3 仓库）：应提示删除未实现/失败（符合预期限制）。
 
-4) 可观测与指标
-- /api/_metrics/summary 中新增 repo 操作计数（ok/fail for load/unload/poll/list）。
-- 统一请求计数/直方图/下游 gRPC 错误统计。
+## 后续工作（建议）
+- 细化 running 子阶段（解析 trtexec 输出），提供更稳定的中间进度。
+- S3/MinIO 删除实现（ListObjectsV2 + BatchDelete）。
+- 弹窗统一使用 Element Plus MessageBox 与更明确的二次确认文案。
+- 观测性：记录审计日志与指标（删除、转换、失败率、SSE 连接）。
 
-## 三、VA Host 与会话
-
-- TritonInprocServerHost（video-analyzer/src/analyzer/triton_inproc_server_host.*）
-  - 新增 repository_poll_secs 选项；当 model_control=poll 且 >0 时，后台线程周期性 PollModelRepository。
-  - load/unload/poll 加锁串行化；currentLoadedModels() 提供 ready 标记依据。
-- TritonInprocModelSession/Factory 支持 triton_repository_poll_secs 选项透传。
-
-## 四、前端改造（web-front）
-
-- 模型页（src/views/Models.vue）
-  - 数据源：优先 /api/repo/list（仓库），回退 /api/models（检测模型）。
-  - 列展示：仓库模式显示 ready/versions/active_version，隐藏任务/系列/变体/输入尺寸/参数量；检测模型模式反之。
-  - 操作：Load/Unload/Poll；“查看配置”按钮打开 Drawer。
-  - 配置 Drawer：
-    - 宽度 30%；浅色容器；换行/字号控制；复制/下载；
-    - 语法高亮（关键词/常量/数字/字符串/注释），200KB/2000 行上限，避免卡顿；
-    - 编辑模式（textarea）+ 保存/重载 → /api/repo/config（POST/GET）。
-- API 封装（src/api/cp.ts）
-  - repoList()/repoLoad()/repoUnload()/repoPoll()
-  - repoConfig(model)/repoSaveConfig(model, content)
-
-## 五、使用示例（HTTP）
-
-- 列表：GET /api/repo/list
-- 载入：POST /api/repo/load {"model":"yolov12x"}
-- 订阅：POST /api/subscriptions {"stream_id":"cam01","profile":"default","source_uri":"rtsp://…","model_id":"yolov12x"}
-- 配置：GET /api/repo/config?model=yolov12x；POST /api/repo/config {"model":"yolov12x","content":"…"}
-- 别名：POST /api/models/aliases {"alias":"prod","model_id":"yolov12x","version":"1"}
-- 发布：POST /api/control/release {"pipeline_name":"p","node":"det","alias":"prod"}
-
-## 六、分支与提交（IOBinding）
-
-- 关键提交：
-  - RepoList 细节返回：8b01da4
-  - CORS 修复：3767499
-  - 别名治理最小实现：c405173；Release 联动别名：7021d48
-  - VA Host 自动轮询与并发保护：62b5b7c；<thread> 构建修复：68965d8
-  - 前端模型页增强与 Drawer：eebf191/82f5e31/1fcc231/3b5930f/686f8ef
-  - 配置读写链路（VA/CP/前端）：6e65bcc/4354c8f/101d987
-
-## 七、注意事项
-
-- 订阅的 model_id 若为仓库模型名，将全局更新 triton_model；若需每订阅独立模型，需后续改 Pipeline 粒度注入。
-- S3 写入/读取依赖环境变量：AWS_ENDPOINT_URL_S3/AWS_ENDPOINT_URL、AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY、AWS_REGION（或 S3_* 同义）。
-- 大文件渲染采用行分割与长度上限，避免浏览器卡顿；必要时可进一步分页或虚拟化。
