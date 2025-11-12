@@ -135,6 +135,8 @@
               <el-tag :type="convertPhase==='done' ? 'success' : (convertPhase==='failed' ? 'danger' : 'info')" size="small" effect="plain">
                 {{ convertPhase === 'running' ? '转换中…' : (convertPhase==='uploading' ? '上传中…' : convertPhase || '就绪') }}
               </el-tag>
+              <el-progress :percentage="progressPercent" :indeterminate="progressIndeterminate" :status="progressStatus"
+                           :stroke-width="8" style="max-width:420px; margin-top:6px;" />
               <pre class="cfg-text" style="max-height:32vh; overflow:auto; white-space:pre-wrap; background:#0b1020; color:#c7d3ff; padding:8px; border-radius:6px; margin-top:6px;" v-text="convertLogs"></pre>
             </div>
             <div v-else-if="addFileName">
@@ -192,6 +194,10 @@ const addFileName = ref('')
 // convert progress (inline under upload widget)
 const convertLogs = ref('')
 const convertPhase = ref<'created'|'running'|'uploading'|'done'|'failed'|''>('')
+const convertLogCount = ref(0)
+const progressPercent = ref(0)
+const progressIndeterminate = ref(true)
+const progressStatus = ref<'success'|'exception'|''>('')
 const convertInProgress = ref(false)
 // direct upload state (non-conversion)
 const uploadInProgress = ref(false)
@@ -393,6 +399,10 @@ async function startConvertUpload(){
     convertUploaded = false
     convertLogs.value = '已发起转换请求，等待事件流...\n'
     convertPhase.value = 'running'
+    convertLogCount.value = 0
+    progressIndeterminate.value = true
+    progressStatus.value = ''
+    progressPercent.value = 3
     const r:any = await cp.repoConvertUpload({ model: addForm.model || '<model>', version: addForm.version || '1', file: addFile.value })
     const events = (r?.data?.events || '') as string
     if (!events) { convertPhase.value = 'failed'; ElMessage.error('转换任务创建失败'); convertInProgress.value = false; return }
@@ -401,12 +411,27 @@ async function startConvertUpload(){
     const base = ((import.meta as any).env?.DEV ? '' : ((((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || '')) as string)).toString().replace(/\/+$/, '')
     const url = evAbs || `${base}${events}`
     convertEs && convertEs.close(); convertEs = new EventSource(url)
-    convertEs.addEventListener('log', (ev:any) => { try { const d = JSON.parse(ev.data); convertLogs.value += (d.line || '') + '\n' } catch { convertLogs.value += String(ev.data||'')+'\n' } })
-    convertEs.addEventListener('state', (ev:any) => { try { const d = JSON.parse(ev.data); convertPhase.value = (d.phase || convertPhase.value) as any } catch {} })
+    convertEs.addEventListener('log', (ev:any) => {
+      try { const d = JSON.parse(ev.data); convertLogs.value += (d.line || '') + '\n' } catch { convertLogs.value += String(ev.data||'')+'\n' }
+      convertLogCount.value += 1
+      if (progressIndeterminate.value) {
+        // 简单估算：日志数量推进到 80% 上限
+        const est = Math.min(80, 5 + convertLogCount.value)
+        if (est > progressPercent.value) progressPercent.value = est
+      }
+    })
+    convertEs.addEventListener('state', (ev:any) => {
+      try { const d = JSON.parse(ev.data); convertPhase.value = (d.phase || convertPhase.value) as any } catch {}
+      if (convertPhase.value === 'uploading') { progressIndeterminate.value = false; progressPercent.value = Math.max(progressPercent.value, 90) }
+      if (convertPhase.value === 'failed') { progressIndeterminate.value = false; progressStatus.value = 'exception' }
+    })
     convertEs.addEventListener('done', async (ev:any) => {
       try { const d = JSON.parse(ev.data); convertPhase.value = (d.phase || 'done') as any } catch { convertPhase.value = 'done' as any }
       convertEs && convertEs.close(); convertEs = null
       convertInProgress.value = false; convertUploaded = (convertPhase.value==='done')
+      progressIndeterminate.value = false
+      progressPercent.value = (convertPhase.value==='done') ? 100 : progressPercent.value
+      if (convertPhase.value==='done') progressStatus.value = 'success'
       await load()
     })
     convertEs.onerror = () => {
