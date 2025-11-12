@@ -1596,16 +1596,17 @@ int main(int argc, char** argv) {
         va::v1::RepoConvertEvent ev; long long last_keep = 0; auto nowms=[](){ using namespace std::chrono; return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(); };
         while (reader->Read(&ev)) {
           std::string kind = ev.kind();
-          if (kind == "log") {
-            std::string s = ev.line(); std::string esc; esc.reserve(s.size()+16);
-            for (char c : s) { if (c=='\\' || c=='\"') { esc.push_back('\\'); esc.push_back(c); } else if (c=='\r') {} else if (c=='\n') {} else { esc.push_back(c); } }
-            controlplane::sse::write_event(writer, "log", std::string("{\"line\":\"")+esc+"\"}");
-            last_keep = nowms();
-          } else if (kind == "state") {
-            controlplane::sse::write_event(writer, "state", std::string("{\"phase\":\"")+ev.phase()+"\"}");
+          if (kind == "state") {
+            std::string json = std::string("{\"phase\":\"") + ev.phase() + "\"";
+            if (ev.progress() > 0.0f) { json += std::string(",\"progress\":") + std::to_string(ev.progress()); }
+            json += "}";
+            controlplane::sse::write_event(writer, "state", json);
             last_keep = nowms();
           } else if (kind == "done") {
-            controlplane::sse::write_event(writer, "done", std::string("{\"phase\":\"")+ev.phase()+"\"}");
+            std::string json = std::string("{\"phase\":\"") + ev.phase() + "\"";
+            if (ev.progress() > 0.0f) { json += std::string(",\"progress\":") + std::to_string(ev.progress()); }
+            json += "}";
+            controlplane::sse::write_event(writer, "done", json);
             break;
           }
           if (nowms() - last_keep > 8000) controlplane::sse::write_comment(writer, "keepalive");

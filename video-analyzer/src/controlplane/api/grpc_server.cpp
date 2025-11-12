@@ -34,7 +34,7 @@ namespace va { namespace control {
 
 #if defined(USE_TRITON_INPROCESS)
 namespace {
-struct VaConvJob { std::mutex mu; std::vector<std::string> logs; std::string phase; std::string model; std::string version; };
+struct VaConvJob { std::mutex mu; std::vector<std::string> logs; std::string phase; std::string model; std::string version; float progress{0.f}; };
 static std::mutex g_va_conv_mu;
 static std::unordered_map<std::string, std::shared_ptr<VaConvJob>> g_va_conv_jobs;
 }
@@ -758,32 +758,19 @@ public:
             std::ostringstream cmd; cmd << trtexec << " --onnx='" << onnx_tmp << "' --saveEngine='" << plan_tmp << "' --fp16";
             // Conversion thread
             std::thread([job, job_id, onnx_path=std::string(onnx_tmp), plan_tmp, cmd_str=cmd.str(), hopt, model, version]() {
-                auto append_log = [&](const std::string& s){ std::lock_guard<std::mutex> lk(job->mu); job->logs.push_back(s); };
-                {
-                    std::lock_guard<std::mutex> lk(job->mu); job->phase = "running";
-                }
-                append_log(std::string("trtexec: ")+cmd_str);
-                FILE* fp = popen((cmd_str + " 2>&1").c_str(), "r");
+                auto set_phase = [&](const char* ph, float prog){ std::lock_guard<std::mutex> lk(job->mu); job->phase = ph; if (prog >= 0.f) job->progress = prog; };
+                set_phase("running", 5.f);
+                // run trtexec silently (no logs collected nor streamed)
+                FILE* fp = popen((cmd_str + " >/dev/null 2>&1").c_str(), "r");
                 int rc = -1;
-                if (fp) {
-                    char buf[1024];
-                    while (true) {
-                        size_t n = fread(buf, 1, sizeof(buf)-1, fp);
-                        if (n == 0) break; buf[n] = 0; std::string chunk(buf);
-                        size_t b = 0, p; while ((p = chunk.find('\n', b)) != std::string::npos) { append_log(chunk.substr(b, p-b)); b = p+1; }
-                        if (b < chunk.size()) append_log(chunk.substr(b));
-                    }
-                    rc = pclose(fp);
-                } else { append_log("failed to start trtexec"); }
+                if (fp) { rc = pclose(fp); } else { rc = -1; }
                 if (rc != 0) {
-                    std::lock_guard<std::mutex> lk(job->mu); job->phase = "failed";
+                    set_phase("failed", -1.f);
                     try { std::filesystem::remove(onnx_path); } catch (...) {}
                     try { std::filesystem::remove(plan_tmp); } catch (...) {}
                     return;
                 }
-                {
-                    std::lock_guard<std::mutex> lk(job->mu); job->phase = "uploading";
-                }
+                set_phase("uploading", 90.f);
                 // Read plan and write into repo path (FS or S3) as model.plan
                 std::string plan_bytes;
                 try { std::ifstream ifs(plan_tmp, std::ios::binary); plan_bytes.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>()); } catch (...) {}
@@ -833,10 +820,7 @@ public:
                         }
                     }
                 }
-                {
-                    std::lock_guard<std::mutex> lk(job->mu);
-                    job->phase = ok? "done" : "failed";
-                }
+                set_phase(ok? "done" : "failed", ok? 100.f : -1.f);
                 try { std::filesystem::remove(onnx_path); } catch (...) {}
                 try { std::filesystem::remove(plan_tmp); } catch (...) {}
             }).detach();
@@ -863,19 +847,18 @@ public:
             }
             // If not found, just close stream
             va::v1::RepoConvertEvent ev;
-            ev.set_kind("state"); ev.set_phase(job? job->phase : std::string("failed")); writer->Write(ev);
+            ev.set_kind("state"); ev.set_phase(job? job->phase : std::string("failed")); if (job) ev.set_progress(job->progress()); writer->Write(ev);
             if (!job) return ::grpc::Status::OK;
-            size_t idx = 0; std::string last_phase;
+            std::string last_phase; float last_prog = -1.f;
             for (;;) {
                 if (ctx->IsCancelled()) break;
-                bool finished = false; std::string phase;
+                bool finished = false; std::string phase; float prog = -1.f;
                 {
                     std::lock_guard<std::mutex> lk(job->mu);
-                    while (idx < job->logs.size()) { va::v1::RepoConvertEvent e; e.set_kind("log"); e.set_line(job->logs[idx++]); writer->Write(e); }
-                    phase = job->phase;
+                    phase = job->phase; prog = job->progress;
                 }
-                if (phase != last_phase) { va::v1::RepoConvertEvent e; e.set_kind("state"); e.set_phase(phase); writer->Write(e); last_phase = phase; }
-                if (phase == "done" || phase == "failed") { va::v1::RepoConvertEvent e; e.set_kind("done"); e.set_phase(phase); writer->Write(e); break; }
+                if (phase != last_phase || (prog >= 0.f && prog != last_prog)) { va::v1::RepoConvertEvent e; e.set_kind("state"); e.set_phase(phase); if (prog>=0.f) e.set_progress(prog); writer->Write(e); last_phase = phase; last_prog = prog; }
+                if (phase == "done" || phase == "failed") { va::v1::RepoConvertEvent e; e.set_kind("done"); e.set_phase(phase); if (prog>=0.f) e.set_progress(prog); writer->Write(e); break; }
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
             }
             return ::grpc::Status::OK;

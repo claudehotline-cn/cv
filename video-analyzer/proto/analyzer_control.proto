@@ -205,4 +205,4 @@ message RepoPutFileReply   { bool ok = 1; string msg = 2; }
 message RepoConvertUploadRequest { string model = 1; string version = 2; bytes onnx = 3; string trtexec = 4; }
 message RepoConvertUploadReply   { bool ok = 1; string msg = 2; string job_id = 3; }
 message RepoConvertStreamRequest { string job_id = 1; }
-message RepoConvertEvent { string kind = 1; string line = 2; string phase = 3; }
+message RepoConvertEvent { string kind = 1; string line = 2; string phase = 3; float progress = 4; }

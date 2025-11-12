@@ -193,9 +193,8 @@ const addFile = ref<File | null>(null)
 const addIsOnnx = computed(() => !!(addFile.value && isOnnxFile(addFile.value.name)))
 const addFileName = ref('')
 // convert progress (inline under upload widget)
-const convertLogs = ref('')
+// 不展示日志，仅显示阶段和进度
 const convertPhase = ref<'created'|'running'|'uploading'|'done'|'failed'|''>('')
-const convertLogCount = ref(0)
 const progressPercent = ref(0)
 const progressIndeterminate = ref(true)
 const progressStatus = ref<'success'|'exception'|''>('')
@@ -398,9 +397,8 @@ async function startConvertUpload(){
   try {
     convertInProgress.value = true
     convertUploaded = false
-    convertLogs.value = '已发起转换请求，等待事件流...\n'
+    // 初始提示由进度条体现，无需日志
     convertPhase.value = 'running'
-    convertLogCount.value = 0
     progressIndeterminate.value = true
     progressStatus.value = ''
     progressPercent.value = 3
@@ -412,17 +410,12 @@ async function startConvertUpload(){
     const base = ((import.meta as any).env?.DEV ? '' : ((((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || '')) as string)).toString().replace(/\/+$/, '')
     const url = evAbs || `${base}${events}`
     convertEs && convertEs.close(); convertEs = new EventSource(url)
-    convertEs.addEventListener('log', (ev:any) => {
-      try { const d = JSON.parse(ev.data); convertLogs.value += (d.line || '') + '\n' } catch { convertLogs.value += String(ev.data||'')+'\n' }
-      convertLogCount.value += 1
-      if (progressIndeterminate.value) {
-        // 简单估算：日志数量推进到 80% 上限
-        const est = Math.min(80, 5 + convertLogCount.value)
-        if (est > progressPercent.value) progressPercent.value = est
-      }
-    })
     convertEs.addEventListener('state', (ev:any) => {
-      try { const d = JSON.parse(ev.data); convertPhase.value = (d.phase || convertPhase.value) as any } catch {}
+      try {
+        const d = JSON.parse(ev.data)
+        if (d.phase) convertPhase.value = d.phase as any
+        if (typeof d.progress === 'number') { progressIndeterminate.value = false; progressPercent.value = Math.max(progressPercent.value, Math.min(100, Math.max(0, Math.round(d.progress)))) }
+      } catch {}
       if (convertPhase.value === 'uploading') { progressIndeterminate.value = false; progressPercent.value = Math.max(progressPercent.value, 90) }
       if (convertPhase.value === 'failed') { progressIndeterminate.value = false; progressStatus.value = 'exception' }
     })
@@ -438,7 +431,8 @@ async function startConvertUpload(){
     convertEs.onerror = () => {
       // 提示用户事件流连不上，但不终止转换（后台仍可能进行）
       if (convertPhase.value === 'running') {
-        convertLogs.value += '[warn] 事件流连接异常，可能被代理阻断或跨域。转换将后台继续进行...\n'
+        // 无日志模式，静默退让：仅以进度条不确定状态显示
+        progressIndeterminate.value = true
       }
     }
   } catch (err:any) {
