@@ -171,7 +171,7 @@ export const cp = {
     return http.post('/api/repo/config', { model, content })
   },
   async repoUpload(params: { model: string; version?: string; file: File }) {
-    const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+    const base = CP_BASE.toString().replace(/\/+$/, '')
     const q = new URLSearchParams({ model: params.model, filename: params.file.name, version: params.version || '1' })
     const url = `${base}/api/repo/upload?${q.toString()}`
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: params.file })
@@ -179,12 +179,18 @@ export const cp = {
     return r.json()
   },
   async repoConvertUpload(params: { model: string; version?: string; file: File }) {
-    const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+    const base = CP_BASE.toString().replace(/\/+$/, '')
     const q = new URLSearchParams({ model: params.model, filename: params.file.name, version: params.version || '1' })
     const url = `${base}/api/repo/convert_upload?${q.toString()}`
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: params.file })
     if (!r.ok) { const t = await r.text().catch(()=> ''); throw new Error(t || 'repoConvertUpload failed') }
-    return r.json()
+    const j = await r.json()
+    // 补充绝对事件 URL，便于前端直接使用
+    try {
+      const ev = (j?.data?.events || '') as string
+      if (ev && ev.startsWith('/')) (j.data as any).events_abs = `${base}${ev}`
+    } catch { /* ignore */ }
+    return j
   },
   // Repo add model (create config.pbtxt; optional autoload)
   async repoAddModel(payload: { model: string; config?: string; load?: boolean }) {

@@ -507,6 +507,14 @@ int main(int argc, char** argv) {
       } catch (...) { out["data"]["cache"] = { {"error","cache_stats_failed"} }; }
       r.status = 200; r.body = out.dump(); emit("/api/_metrics/summary", r.status); return r;
     }
+    // Minimal events recent endpoint for front-end compatibility
+    if (path.rfind("/api/events/recent", 0) == 0 && method == "GET") {
+      nlohmann::json out; out["code"] = "OK";
+      // return empty list with paging fields for compatibility
+      nlohmann::json data; data["items"] = nlohmann::json::array(); data["next"] = 0;
+      out["data"] = data;
+      r.status = 200; r.body = out.dump(); emit("/api/events/recent", r.status); return r;
+    }
     if (path == "/api/va/runtime" && method == "GET") {
       nlohmann::json out; out["code"] = "OK";
       try {
@@ -1557,6 +1565,21 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Simple generic events stream for front-end compatibility: /api/events/stream
+    if (path.rfind("/api/events/stream", 0) == 0) {
+      controlplane::sse::write_headers(writer);
+      controlplane::metrics::sse_on_open();
+      // emit an initial event then periodic keepalive for a short period
+      controlplane::sse::write_event(writer, "init", "{}");
+      for (int i=0;i<30;i++) { // ~30*1s
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        controlplane::sse::write_comment(writer, "keepalive");
+      }
+      controlplane::sse::close(writer);
+      controlplane::metrics::sse_on_close();
+      controlplane::metrics::inc_request("/api/events/stream", method, 200);
+      return true;
+    }
     // Handle conversion progress SSE: /api/repo/convert/events?job=... -> proxy VA RepoConvertStream
     if (path.rfind("/api/repo/convert/events", 0) == 0) {
       auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);

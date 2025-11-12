@@ -396,8 +396,10 @@ async function startConvertUpload(){
     const r:any = await cp.repoConvertUpload({ model: addForm.model || '<model>', version: addForm.version || '1', file: addFile.value })
     const events = (r?.data?.events || '') as string
     if (!events) { convertPhase.value = 'failed'; ElMessage.error('转换任务创建失败'); convertInProgress.value = false; return }
-    const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
-    const url = `${base}${events}`
+    // 优先使用绝对事件 URL；否则拼接 CP 基础地址
+    const evAbs = (r?.data?.events_abs || '') as string
+    const base = ((import.meta as any).env?.DEV ? '' : ((((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || '')) as string)).toString().replace(/\/+$/, '')
+    const url = evAbs || `${base}${events}`
     convertEs && convertEs.close(); convertEs = new EventSource(url)
     convertEs.addEventListener('log', (ev:any) => { try { const d = JSON.parse(ev.data); convertLogs.value += (d.line || '') + '\n' } catch { convertLogs.value += String(ev.data||'')+'\n' } })
     convertEs.addEventListener('state', (ev:any) => { try { const d = JSON.parse(ev.data); convertPhase.value = (d.phase || convertPhase.value) as any } catch {} })
