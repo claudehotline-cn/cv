@@ -391,7 +391,7 @@ async function startConvertUpload(){
   try {
     convertInProgress.value = true
     convertUploaded = false
-    convertLogs.value = ''
+    convertLogs.value = '已发起转换请求，等待事件流...\n'
     convertPhase.value = 'running'
     const r:any = await cp.repoConvertUpload({ model: addForm.model || '<model>', version: addForm.version || '1', file: addFile.value })
     const events = (r?.data?.events || '') as string
@@ -409,7 +409,12 @@ async function startConvertUpload(){
       convertInProgress.value = false; convertUploaded = (convertPhase.value==='done')
       await load()
     })
-    convertEs.onerror = () => { /* ignore */ }
+    convertEs.onerror = () => {
+      // 提示用户事件流连不上，但不终止转换（后台仍可能进行）
+      if (convertPhase.value === 'running') {
+        convertLogs.value += '[warn] 事件流连接异常，可能被代理阻断或跨域。转换将后台继续进行...\n'
+      }
+    }
   } catch (err:any) {
     convertPhase.value = 'failed'
     convertInProgress.value = false

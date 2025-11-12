@@ -85,7 +85,8 @@ export function setPipelineMode(stream_id: string, profile: string, analysis_ena
 }
 
 // 设计文档中的 CP 封装（基于 VITE_CP_BASE_URL）
-const CP_BASE = ((import.meta as any).env?.DEV ? '' : ((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || ''))
+// 统一取 CP 基础地址：优先 VITE_CP_BASE_URL（开发/生产均可设置），其次 VITE_API_BASE，最后空串表示相对路径（由前端代理）。
+const CP_BASE = (((import.meta as any).env?.VITE_CP_BASE_URL || (import.meta as any).env?.VITE_API_BASE || '') as string)
 export const cp = {
   // New: Engine schema for dynamic form
   async getEngineSchema() {
