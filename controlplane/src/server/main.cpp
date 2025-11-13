@@ -578,6 +578,33 @@ int main(int argc, char** argv) {
       }
       r.status=501; r.body = "{\"code\":\"TRAINER_UNAVAILABLE\"}"; emit("/api/train/status", r.status); return r;
     }
+    if (path.rfind("/api/train/artifacts", 0) == 0 && method == "GET") {
+      auto tb = parse_trainer_base();
+      if (tb.ok) {
+        controlplane::HttpResponse proxyResp;
+        auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos);
+        std::string target = tb.prefix + "/api/train/artifacts" + qs;
+        bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, "", &proxyResp, nullptr);
+        if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/artifacts", r.status); return r; }
+        r = proxyResp; emit("/api/train/artifacts", r.status); return r;
+      }
+      r.status=501; r.body = "{\"code\":\"TRAINER_UNAVAILABLE\"}"; emit("/api/train/artifacts", r.status); return r;
+    }
+    if (path.rfind("/api/train/artifacts/download", 0) == 0 && method == "GET") {
+      auto tb = parse_trainer_base();
+      if (!tb.ok) { r.status=501; r.body = "{\"code\":\"TRAINER_UNAVAILABLE\"}"; emit("/api/train/artifacts/download", r.status); return r; }
+      // We perform a simple fetch and relay body; content-type based on file name
+      auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos);
+      std::string target = tb.prefix + "/api/train/artifacts/download" + qs;
+      controlplane::HttpResponse proxyResp;
+      bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, "", &proxyResp, nullptr);
+      if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/artifacts/download", r.status); return r; }
+      // rudimentary content-type selection
+      std::string ctype = "application/octet-stream";
+      if (qs.find("name=model.yaml") != std::string::npos) ctype = "text/yaml";
+      r.status = proxyResp.status; r.contentType = ctype; r.body = proxyResp.body; r.extraHeaders = proxyResp.extraHeaders;
+      emit("/api/train/artifacts/download", r.status); return r;
+    }
     // Training: list (summary)
     if (path == "/api/train/list" && method == "GET") {
       auto tb = parse_trainer_base();

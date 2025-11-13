@@ -19,6 +19,8 @@ const events: any[] = []
 let es: EventSource | null = null
 const progress = ref<number>(0)
 const phase = ref<string>('')
+const artifacts = ref<{ name:string; url:string }[]>([])
+const modelId = ref<string>('')
 
 async function fetchList() {
   try { const r = await trainList(); jobs.value = (r?.data||[]) as any[] } catch { /* ignore */ }
@@ -46,11 +48,44 @@ function watchJob(id: string) {
     try { const d = JSON.parse(ev.data); if (typeof d.progress === 'number') progress.value = Math.max(progress.value, d.progress*100); if (d.phase) phase.value = d.phase } catch {}
   })
   es.addEventListener('metrics', (ev: MessageEvent) => { /* 可扩展显示 */ })
-  es.addEventListener('done', () => { ElMessage.success('训练完成'); if (es) { es.close(); es=null } fetchList() })
+  es.addEventListener('done', () => { ElMessage.success('训练完成'); if (es) { es.close(); es=null } fetchList(); refreshArtifacts(id) })
   es.onerror = () => { /* 网络抖动可忽略 */ }
 }
 
 onMounted(() => { fetchList(); const t = setInterval(fetchList, 4000); (window as any).__trainTimer = t })
+
+async function refreshArtifacts(id: string) {
+  try {
+    const r = await fetch(`/api/train/artifacts?id=${encodeURIComponent(id)}`)
+    const j = await r.json()
+    artifacts.value = (j?.data||[]) as any[]
+  } catch { artifacts.value = [] }
+}
+
+async function importToRepo() {
+  if (!watchingId.value) { ElMessage.warning('请选择一个训练任务'); return }
+  if (!modelId.value) { ElMessage.warning('请输入模型 ID'); return }
+  try {
+    const item = artifacts.value.find(a => a.name === 'model.onnx')
+    if (!item) { ElMessage.error('未找到 ONNX 工件'); return }
+    const resp = await fetch(`/api/train/artifacts/download?id=${encodeURIComponent(watchingId.value)}&name=model.onnx`)
+    if (!resp.ok) throw new Error('下载工件失败')
+    const blob = await resp.blob()
+    const file = new File([blob], 'model.onnx', { type: 'application/octet-stream' })
+    const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+    const q = new URLSearchParams({ model: modelId.value, filename: file.name, version: '1' })
+    const url = `${base}/api/repo/convert_upload?${q.toString()}`
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })
+    if (!r.ok) { const t = await r.text().catch(()=> ''); throw new Error(t || 'convert_upload 失败') }
+    const j = await r.json()
+    const evUrl = (j?.data?.events || '') as string
+    if (evUrl) {
+      ElMessage.success('已发起导入与转换。可在 Models 页面查看。')
+    }
+  } catch (e:any) {
+    ElMessage.error(e?.message || '导入失败')
+  }
+}
 </script>
 
 <template>
@@ -59,6 +94,9 @@ onMounted(() => { fetchList(); const t = setInterval(fetchList, 4000); (window a
       <template #header>
         <div class="card-hd">启动训练</div>
       </template>
+      <div style="margin-bottom:8px">
+        <el-input v-model="modelId" placeholder="导入到仓库时的模型 ID（如：cv/resnet18）" />
+      </div>
       <el-input v-model="cfgText" type="textarea" :rows="10" />
       <div style="margin-top:10px; text-align:right">
         <el-button type="primary" @click="startJob">开始训练</el-button>
@@ -87,6 +125,15 @@ onMounted(() => { fetchList(); const t = setInterval(fetchList, 4000); (window a
       <div v-if="watchingId" class="watch">
         <div class="watch-hd">监控：{{watchingId}} <span class="phase">{{phase}}</span></div>
         <el-progress :percentage="Math.round(progress)" :stroke-width="12" status="success" />
+        <div v-if="artifacts.length" style="margin-top:10px">
+          <div>工件：</div>
+          <ul>
+            <li v-for="a in artifacts" :key="a.name">
+              <a :href="`/api/train/artifacts/download?id=${encodeURIComponent(watchingId)}&name=${encodeURIComponent(a.name)}`" target="_blank">下载 {{a.name}}</a>
+            </li>
+          </ul>
+          <el-button type="success" size="small" @click="importToRepo">导入到仓库并转换</el-button>
+        </div>
       </div>
     </el-card>
   </div>
@@ -100,4 +147,3 @@ onMounted(() => { fetchList(); const t = setInterval(fetchList, 4000); (window a
 .watch{ margin-top: 12px; }
 .phase{ margin-left: 8px; color: var(--va-text-2); }
 </style>
-

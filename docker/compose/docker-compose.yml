@@ -189,35 +189,13 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      mysql-init-mlflow:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL","wget -qO- http://localhost:5500/ || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 10
 
-  mysql-init-mlflow:
-    image: mysql:8.4
-    container_name: mysql-init-mlflow
-    environment:
-      MYSQL_ROOT_PASSWORD: "123456"
-    depends_on:
-      mysql:
-        condition: service_healthy
-    entrypoint: ["/bin/sh","-lc"]
-    command: >
-      sh -lc '
-      set -e; 
-      for i in 1 2 3 4 5 6 7 8 9 10; do 
-        mysql -hmysql -P3306 -uroot -p"$MYSQL_ROOT_PASSWORD" -e \
-        "CREATE DATABASE IF NOT EXISTS mlflow DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_0900_ai_ci;" && exit 0; 
-        echo "[mysql-init-mlflow] retry $i..."; 
-        sleep 2; 
-      done; 
-      echo "[mysql-init-mlflow] failed to create database"; 
-      exit 1'
-    restart: "no"
+  # mysql-init-mlflow one-shot initializer removed; use manual init when needed
 
   trainer-svc:
     build:

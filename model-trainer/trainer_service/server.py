@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from model_trainer.data.datamodule import build_dataloaders
 from model_trainer.tasks.classification import build_model, train_one_experiment, evaluate
@@ -59,6 +60,13 @@ class JobManager:
 
 jobs = JobManager()
 app = FastAPI(title="cv-trainer-service")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 
 def ensure_tracking_uri():
@@ -80,6 +88,10 @@ def run_training(job: Job):
         job.emit("state", {"phase": job.phase, "progress": job.progress})
 
         with mlflow.start_run(run_name=cfg.get('run', {}).get('run_name', 'run')) as run:
+            # Prepare per-job artifact dir
+            job_dir = os.path.join('artifacts', job.id)
+            exp_dir = os.path.join(job_dir, 'exports')
+            os.makedirs(exp_dir, exist_ok=True)
             train_loader, val_loader, num_classes = build_dataloaders(cfg)
             model = build_model(cfg, num_classes).to(device)
             job.phase = "running"; job.progress = 0.05
@@ -92,16 +104,22 @@ def run_training(job: Job):
 
             onnx_path = export_onnx(model, cfg.get('export', {}))
             if onnx_path:
+                # move to per-job dir
+                try:
+                    dst = os.path.join(exp_dir, 'model.onnx')
+                    os.replace(onnx_path, dst)
+                    onnx_path = dst
+                except Exception:
+                    pass
                 mlflow.log_artifact(onnx_path, artifact_path="exports")
                 job.phase = "exporting"; job.progress = 0.9
                 job.emit("artifact", {"path": "exports/model.onnx"})
                 job.emit("state", {"phase": job.phase, "progress": job.progress})
 
             manifest_text = build_manifest(cfg, metrics)
-            os.makedirs('artifacts', exist_ok=True)
-            with open('artifacts/model.yaml', 'w', encoding='utf-8') as f:
+            with open(os.path.join(job_dir, 'model.yaml'), 'w', encoding='utf-8') as f:
                 f.write(manifest_text)
-            mlflow.log_artifact('artifacts/model.yaml')
+            mlflow.log_artifact(os.path.join(job_dir, 'model.yaml'))
 
             job.status = "done"; job.phase = "done"; job.progress = 1.0; job.done = True
             job.emit("done", {"run_id": run.info.run_id})
@@ -142,6 +160,46 @@ async def api_list():
                 "progress": j.progress
             })
     return {"code": "OK", "data": out}
+
+@app.get("/api/train/artifacts")
+async def api_artifacts(id: str, request: Request):
+    j = jobs.get(id)
+    if not j:
+        return JSONResponse({"code":"NOT_FOUND"}, status_code=404)
+    job_dir = os.path.join('artifacts', j.id)
+    items = []
+    onnx_p = os.path.join(job_dir, 'exports', 'model.onnx')
+    man_p  = os.path.join(job_dir, 'model.yaml')
+    def url_for(name: str):
+        return str(request.url_for('download_artifact')) + f"?id={j.id}&name={name}"
+    if os.path.exists(onnx_p): items.append({"name":"model.onnx", "url": url_for('model.onnx')})
+    if os.path.exists(man_p):  items.append({"name":"model.yaml", "url": url_for('model.yaml')})
+    return {"code":"OK","data":items}
+
+@app.get("/api/train/artifacts/download", name="download_artifact")
+async def api_artifact_download(id: str, name: str):
+    j = jobs.get(id)
+    if not j:
+        return Response(content="", status_code=404)
+    job_dir = os.path.join('artifacts', j.id)
+    if name == 'model.onnx':
+        path = os.path.join(job_dir, 'exports', 'model.onnx')
+        ctype = 'application/octet-stream'
+    elif name == 'model.yaml':
+        path = os.path.join(job_dir, 'model.yaml')
+        ctype = 'text/yaml'
+    else:
+        return Response(content="", status_code=404)
+    if not os.path.exists(path):
+        return Response(content="", status_code=404)
+    def genf():
+        with open(path, 'rb') as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk: break
+                yield chunk
+    headers = { 'Content-Disposition': f'attachment; filename="{name}"' }
+    return StreamingResponse(genf(), media_type=ctype, headers=headers)
 
 @app.get("/api/train/events")
 async def api_events(id: str):
