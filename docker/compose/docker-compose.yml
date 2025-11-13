@@ -199,6 +199,22 @@ services:
       timeout: 3s
       retries: 10
 
+  trainer-svc:
+    build:
+      context: ../..
+      dockerfile: docker/trainer-service/Dockerfile
+    image: cv/trainer-service:latest
+    container_name: trainer-svc
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5500
+    ports:
+      - "8088:8088"
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
   trainer:
     build:
       context: ../..

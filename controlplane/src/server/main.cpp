@@ -329,6 +329,24 @@ finish_err:
   }
 }
 
+// -------------------- Trainer service proxy helpers --------------------
+struct TrainerBase { std::string host; int port{8088}; std::string prefix; bool ok{false}; };
+static TrainerBase parse_trainer_base() {
+  TrainerBase tb; const char* base = std::getenv("CP_TRAINER_BASE_URL"); if (!base || !*base) return tb;
+  std::string s = base; tb.ok = true;
+  // strip scheme
+  if (s.rfind("http://", 0) == 0) s = s.substr(7);
+  else if (s.rfind("https://", 0) == 0) s = s.substr(8); // no TLS support in proxy
+  // split host[:port][/prefix]
+  auto slash = s.find('/'); std::string hp = (slash==std::string::npos) ? s : s.substr(0, slash);
+  tb.prefix = (slash==std::string::npos) ? std::string("") : s.substr(slash);
+  auto colon = hp.rfind(':');
+  if (colon != std::string::npos) { tb.host = hp.substr(0, colon); try { tb.port = std::stoi(hp.substr(colon+1)); } catch(...) { tb.port=8088; } }
+  else { tb.host = hp; tb.port = 8088; }
+  if (tb.prefix.empty()) tb.prefix = std::string("");
+  return tb;
+}
+
 int main(int argc, char** argv) {
   using namespace controlplane;
   using nlohmann::json;
@@ -702,6 +720,24 @@ int main(int argc, char** argv) {
     }
     // Training: start
     if (path == "/api/train/start" && method == "POST") {
+      // If external trainer service is configured, proxy
+      auto tb = parse_trainer_base();
+      if (tb.ok) {
+        controlplane::http::HttpResponse proxyResp;
+        std::string target = tb.prefix + "/api/train/start";
+        bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, body, &proxyResp, nullptr);
+        if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/start", r.status); return r; }
+        // rewrite events URL to CP endpoint if present
+        try {
+          auto j = nlohmann::json::parse(proxyResp.body);
+          if (j.contains("data") && j["data"].contains("job")) {
+            auto id = j["data"]["job"].get<std::string>();
+            j["data"]["events"] = std::string("/api/train/events?id=") + id;
+            proxyResp.body = j.dump();
+          }
+        } catch (...) {}
+        r = proxyResp; emit("/api/train/start", r.status); return r;
+      }
       try {
         nlohmann::json cfgj = body.empty()? nlohmann::json::object() : nlohmann::json::parse(body);
         std::string job = gen_train_job_id();
@@ -721,6 +757,15 @@ int main(int argc, char** argv) {
     }
     // Training: status
     if (path.rfind("/api/train/status", 0) == 0 && method == "GET") {
+      auto tb = parse_trainer_base();
+      if (tb.ok) {
+        controlplane::http::HttpResponse proxyResp;
+        auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos);
+        std::string target = tb.prefix + "/api/train/status" + qs;
+        bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, "", &proxyResp, nullptr);
+        if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/status", r.status); return r; }
+        r = proxyResp; emit("/api/train/status", r.status); return r;
+      }
       auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
       auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return qs.substr(p, e==std::string::npos? std::string::npos : e-p); };
       std::string id = getq("id");
@@ -733,6 +778,14 @@ int main(int argc, char** argv) {
     }
     // Training: list (summary)
     if (path == "/api/train/list" && method == "GET") {
+      auto tb = parse_trainer_base();
+      if (tb.ok) {
+        controlplane::http::HttpResponse proxyResp;
+        std::string target = tb.prefix + "/api/train/list";
+        bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, "", &proxyResp, nullptr);
+        if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/list", r.status); return r; }
+        r = proxyResp; emit("/api/train/list", r.status); return r;
+      }
       std::string sjson; controlplane::db::list_train_jobs_json(cfg, &sjson);
       nlohmann::json out; out["code"]="OK"; try { out["data"]=nlohmann::json::parse(sjson); } catch (...) { out["data"]=nlohmann::json::array(); }
       r.status=200; r.body=out.dump(); emit("/api/train/list", r.status); return r;
@@ -1850,8 +1903,40 @@ int main(int argc, char** argv) {
       controlplane::metrics::inc_request("/api/events/stream", method, 200);
       return true;
     }
-    // Training progress/events SSE: /api/train/events?id=... (skeleton, in-process)
+    // Training progress/events SSE: /api/train/events?id=...
     if (path.rfind("/api/train/events", 0) == 0) {
+      auto tb = parse_trainer_base();
+      if (tb.ok) {
+#ifndef _WIN32
+        // Proxy SSE stream from trainer service via POSIX sockets
+        std::string qs = ""; auto qpos = path.find('?'); if (qpos!=std::string::npos) qs = path.substr(qpos);
+        std::string target = tb.prefix + "/api/train/events" + qs;
+        int sock = -1; struct addrinfo hints{}; hints.ai_socktype = SOCK_STREAM; hints.ai_family = AF_UNSPEC; hints.ai_protocol = IPPROTO_TCP; struct addrinfo* res=nullptr;
+        if (getaddrinfo(tb.host.c_str(), std::to_string(tb.port).c_str(), &hints, &res) != 0 || !res) return false;
+        bool ok=false; for (auto p=res; p; p=p->ai_next) { int s=::socket(p->ai_family,p->ai_socktype,p->ai_protocol); if (s<0) continue; int yes=1; setsockopt(s,IPPROTO_TCP,TCP_NODELAY,&yes,sizeof(yes)); if (::connect(s,p->ai_addr,p->ai_addrlen)==0){ sock=s; ok=true; break;} ::close(s);} freeaddrinfo(res); if(!ok) return false;
+        std::ostringstream hs; hs << "GET " << target << " HTTP/1.1\r\nHost: " << tb.host << ":" << tb.port << "\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n";
+        auto reqs = hs.str(); ::send(sock, reqs.c_str(), (int)reqs.size(), 0);
+        // Read headers and forward body as-is
+        controlplane::sse::write_headers(writer);
+        controlplane::metrics::sse_on_open();
+        char buf[4096]; std::string hdr; bool head=false; ssize_t n;
+        std::string payload;
+        while ((n = ::recv(sock, buf, sizeof(buf), 0)) > 0) {
+          payload.append(buf, buf+n);
+          auto pos = payload.find("\r\n\r\n");
+          if (pos != std::string::npos) { hdr = payload.substr(0,pos+4); payload.erase(0,pos+4); head=true; break; }
+          if (payload.size() > 65536) break;
+        }
+        if (!head) { ::close(sock); controlplane::sse::close(writer); controlplane::metrics::sse_on_close(); return true; }
+        if (!payload.empty()) writer.send(writer.opaque, payload.data(), payload.size());
+        while ((n = ::recv(sock, buf, sizeof(buf), 0)) > 0) { writer.send(writer.opaque, buf, n); }
+        ::close(sock);
+        controlplane::sse::close(writer); controlplane::metrics::sse_on_close();
+        return true;
+#else
+        return false;
+#endif
+      }
       auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
       auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return qs.substr(p, e==std::string::npos? std::string::npos : e-p); };
       std::string job = getq("id");
