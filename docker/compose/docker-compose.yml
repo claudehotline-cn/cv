@@ -133,7 +133,7 @@ services:
         condition: service_healthy
       vsm:
         condition: service_healthy
-      trainer-svc:
+      trainer:
         condition: service_healthy
     ports:
       - "18080:18080"
@@ -197,12 +197,12 @@ services:
 
   # mysql-init-mlflow one-shot initializer removed; use manual init when needed
 
-  trainer-svc:
+  trainer:
     build:
       context: ../..
       dockerfile: docker/trainer-service/Dockerfile
     image: cv/trainer-service:latest
-    container_name: trainer-svc
+    container_name: trainer
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5500
     ports:

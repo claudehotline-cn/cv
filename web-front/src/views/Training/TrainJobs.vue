@@ -21,6 +21,14 @@ const progress = ref<number>(0)
 const phase = ref<string>('')
 const artifacts = ref<{ name:string; url:string }[]>([])
 const modelId = ref<string>('')
+const metrics = ref<{ time:number; key:string; value:number }[]>([])
+const sseLines = ref<string[]>([])
+
+// 转换进度对话框（导入仓库后跟踪）
+const convertDlg = ref(false)
+const convertProgress = ref(0)
+const convertPhase = ref('')
+let convES: EventSource | null = null
 
 async function fetchList() {
   try { const r = await trainList(); jobs.value = (r?.data||[]) as any[] } catch { /* ignore */ }
@@ -46,8 +54,18 @@ function watchJob(id: string) {
   es = new EventSource(url)
   es.addEventListener('state', (ev: MessageEvent) => {
     try { const d = JSON.parse(ev.data); if (typeof d.progress === 'number') progress.value = Math.max(progress.value, d.progress*100); if (d.phase) phase.value = d.phase } catch {}
+    sseLines.value.push(`[state] ${ev.data}`)
   })
-  es.addEventListener('metrics', (ev: MessageEvent) => { /* 可扩展显示 */ })
+  es.addEventListener('metrics', (ev: MessageEvent) => {
+    try {
+      const d = JSON.parse(ev.data)
+      const now = Date.now()
+      Object.entries(d || {}).forEach(([k,v]) => {
+        if (typeof v === 'number') metrics.value.push({ time: now, key: k, value: v as number })
+      })
+    } catch {}
+    sseLines.value.push(`[metrics] ${ev.data}`)
+  })
   es.addEventListener('done', () => { ElMessage.success('训练完成'); if (es) { es.close(); es=null } fetchList(); refreshArtifacts(id) })
   es.onerror = () => { /* 网络抖动可忽略 */ }
 }
@@ -80,11 +98,39 @@ async function importToRepo() {
     const j = await r.json()
     const evUrl = (j?.data?.events || '') as string
     if (evUrl) {
-      ElMessage.success('已发起导入与转换。可在 Models 页面查看。')
+      // 订阅转换进度
+      openConvertDialog(evUrl)
+    } else {
+      ElMessage.success('已发起导入与转换。')
     }
   } catch (e:any) {
     ElMessage.error(e?.message || '导入失败')
   }
+}
+
+function openConvertDialog(eventsUrl: string) {
+  // 计算绝对 URL
+  const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+  const abs = eventsUrl.startsWith('/') ? (base + eventsUrl) : eventsUrl
+  convertDlg.value = true
+  convertProgress.value = 0
+  convertPhase.value = 'running'
+  if (convES) { try { convES.close() } catch {} convES = null }
+  convES = new EventSource(abs)
+  convES.addEventListener('state', (ev: MessageEvent) => {
+    try { const d = JSON.parse(ev.data); if (typeof d.progress === 'number') convertProgress.value = Math.max(convertProgress.value, d.progress*100); if (d.phase) convertPhase.value = d.phase } catch {}
+  })
+  convES.addEventListener('done', async () => {
+    convertProgress.value = 100; convertPhase.value = 'done'
+    if (convES) { try { convES.close() } catch {} convES = null }
+    // 自动加载 VA
+    try {
+      const resp = await fetch('/api/repo/load', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ model: modelId.value }) })
+      if (resp.ok) ElMessage.success('已转换并加载到 VA')
+      else ElMessage.warning('已转换，但加载 VA 失败')
+    } catch { /* ignore */ }
+  })
+  convES.onerror = () => { /* 网络抖动可忽略 */ }
 }
 </script>
 
@@ -137,6 +183,16 @@ async function importToRepo() {
       </div>
     </el-card>
   </div>
+
+  <el-dialog v-model="convertDlg" title="转换进度" width="520px">
+    <div style="padding:8px 4px">
+      <div style="margin-bottom:6px">阶段：{{convertPhase}}</div>
+      <el-progress :percentage="Math.round(convertProgress)" :stroke-width="12" />
+    </div>
+    <template #footer>
+      <el-button @click="convertDlg=false">关闭</el-button>
+    </template>
+  </el-dialog>
   
 </template>
 
