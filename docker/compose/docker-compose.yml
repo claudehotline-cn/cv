@@ -133,7 +133,7 @@ services:
       vsm:
         condition: service_healthy
       trainer-svc:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "18080:18080"
     volumes:
@@ -223,6 +223,11 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:8088/api/train/list >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
 networks:
   default:
