@@ -38,6 +38,12 @@ struct DbConfig {
   int timeout_ms{1000};
 };
 
+struct DeployGates {
+  double accuracy_min{0.0};
+  int latency_p95_ms_max{0};
+  double size_mb_max{0.0};
+};
+
 struct AppConfig {
   std::string http_listen{"0.0.0.0:8080"};
   std::string va_addr{"127.0.0.1:50051"};
@@ -62,6 +68,8 @@ struct AppConfig {
   // Optional trainer service base URL (e.g., http://trainer-svc:8088). When set,
   // CP will proxy /api/train/* to the external trainer service instead of spawning subprocesses.
   std::string trainer_base_url; 
+  // Optional deploy gates (defaults to disabled if zeros)
+  DeployGates deploy_gates{};
 };
 
 bool load_config(const std::string& dir, AppConfig* out, std::string* err);

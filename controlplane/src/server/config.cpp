@@ -57,6 +57,15 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
       if (!out->trainer_base_url.empty()) { setenv("CP_TRAINER_BASE_URL", out->trainer_base_url.c_str(), 1); }
 #endif
     }
+    if (root["deploy"]) {
+      auto d = root["deploy"];
+      if (d["gates"]) {
+        auto g = d["gates"];
+        if (g["accuracy_min"]) out->deploy_gates.accuracy_min = g["accuracy_min"].as<double>(out->deploy_gates.accuracy_min);
+        if (g["latency_p95_ms_max"]) out->deploy_gates.latency_p95_ms_max = g["latency_p95_ms_max"].as<int>(out->deploy_gates.latency_p95_ms_max);
+        if (g["size_mb_max"]) out->deploy_gates.size_mb_max = g["size_mb_max"].as<double>(out->deploy_gates.size_mb_max);
+      }
+    }
     if (root["sse"]) {
       auto s = root["sse"];
       if (s["keepalive_ms"]) out->sse.keepalive_ms = s["keepalive_ms"].as<int>(out->sse.keepalive_ms);

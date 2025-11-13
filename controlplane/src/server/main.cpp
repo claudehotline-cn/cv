@@ -154,6 +154,24 @@ static int run_trtexec_and_upload(const std::string& trtexec_cmd,
 
 // (child-process runner removed; trainer 服务代理模式生效)
 
+// -------------------- Gray rollout shared state ---------------------------
+struct GrayTarget { std::string pipeline; std::string node; };
+struct GrayPlan {
+  std::mutex mu;
+  std::string id;
+  std::string alias{"canary"};
+  int batch_size{1};
+  int interval_ms{30000};
+  std::vector<GrayTarget> targets;
+  int applied{0};
+  bool running{false};
+  bool done{false};
+  std::vector<std::string> events; // JSON lines: {kind, data}
+  std::string error;
+};
+static std::mutex g_gray_mu;
+static std::unordered_map<std::string, std::shared_ptr<GrayPlan>> g_gray_plans;
+
 // -------------------- Trainer service proxy helpers --------------------
 struct TrainerBase { std::string host; int port{8088}; std::string prefix; bool ok{false}; };
 static TrainerBase parse_trainer_base() {
@@ -442,6 +460,122 @@ int main(int argc, char** argv) {
       if (it != g_aliases.end()) { g_aliases.erase(it); save_aliases(); }
       r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/models/aliases/{alias}", r.status); return r;
     }
+    // --- Aliases history + promote/rollback (M1) ---
+    static bool g_alias_hist_loaded = false;
+    static std::vector<nlohmann::json> g_alias_hist; // [{ts, alias, model_id, version, action}]
+    auto alias_hist_file = [](){ return std::string("logs/model_aliases_history.json"); };
+    auto load_alias_hist = [&](){
+      if (g_alias_hist_loaded) return; g_alias_hist_loaded = true;
+      try { std::ifstream ifs(alias_hist_file()); if (!ifs.good()) return; nlohmann::json j; ifs >> j; if (j.is_array()) g_alias_hist = j.get<std::vector<nlohmann::json>>(); } catch (...) {}
+    };
+    auto save_alias_hist = [&](){
+      try { std::filesystem::create_directories("logs"); std::ofstream ofs(alias_hist_file()); if (!ofs.good()) return; nlohmann::json arr = nlohmann::json::array(); for (auto& e: g_alias_hist) arr.push_back(e); ofs << arr.dump(); } catch (...) {}
+    };
+    auto now_ts_ms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(); };
+    if (path == "/api/models/aliases/promote" && method == "POST") {
+      load_aliases(); load_alias_hist();
+      try {
+        auto j = nlohmann::json::parse(body);
+        std::string alias = j.value("alias","prod"); std::string model_id = j.value("model_id",""); std::string version = j.value("version","");
+        if (alias.empty() || model_id.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/models/aliases/promote", r.status); return r; }
+        g_aliases[alias] = {model_id, version}; save_aliases();
+        nlohmann::json ev; ev["ts"] = now_ts_ms(); ev["action"] = "promote"; ev["alias"] = alias; ev["model_id"] = model_id; if(!version.empty()) ev["version"]=version; g_alias_hist.push_back(ev); save_alias_hist();
+        r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/models/aliases/promote", r.status); return r;
+      } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/models/aliases/promote", r.status); return r; }
+    }
+    if (path == "/api/models/aliases/rollback" && method == "POST") {
+      load_aliases(); load_alias_hist();
+      try {
+        auto j = nlohmann::json::parse(body); std::string alias = j.value("alias","prod");
+        if (alias.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/models/aliases/rollback", r.status); return r; }
+        // 找到上一次该 alias 的映射（倒序遍历 history）
+        std::string prev_model, prev_ver; int found = 0;
+        for (int i = (int)g_alias_hist.size()-1; i >= 0; --i) {
+          auto& e = g_alias_hist[i]; if (!e.is_object()) continue; if (e.value("alias","") != alias) continue; ++found; if (found == 2) { prev_model = e.value("model_id",""); prev_ver = e.value("version",""); break; }
+        }
+        if (prev_model.empty()) { r.status=404; r.body="{\"code\":\"NOT_FOUND\",\"msg\":\"no previous mapping\"}"; emit("/api/models/aliases/rollback", r.status); return r; }
+        g_aliases[alias] = {prev_model, prev_ver}; save_aliases();
+        nlohmann::json ev; ev["ts"]=now_ts_ms(); ev["action"]="rollback"; ev["alias"]=alias; ev["model_id"]=prev_model; if(!prev_ver.empty()) ev["version"]=prev_ver; g_alias_hist.push_back(ev); save_alias_hist();
+        r.status=200; r.body="{\"code\":\"OK\"}"; emit("/api/models/aliases/rollback", r.status); return r;
+      } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/models/aliases/rollback", r.status); return r; }
+    }
+    if (path.rfind("/api/models/aliases/history", 0) == 0 && method == "GET") {
+      load_alias_hist();
+      // 可选过滤 ?alias=xxx
+      std::string qs; auto qpos = path.find('?'); if (qpos != std::string::npos) qs = path.substr(qpos+1);
+      auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return qs.substr(p, e==std::string::npos? std::string::npos : e-p); };
+      std::string alias = getq("alias");
+      nlohmann::json arr = nlohmann::json::array();
+      for (auto& e : g_alias_hist) { if (!alias.empty() && e.value("alias","") != alias) continue; arr.push_back(e); }
+      nlohmann::json out; out["code"]="OK"; out["data"]=arr; r.status=200; r.body=out.dump(); emit("/api/models/aliases/history", r.status); return r;
+    }
+
+    // --- Gray release (M1) --------------------------------------------------
+    // GrayPlan state is defined at file scope (see top of file)
+    auto emit_gray = [&](std::shared_ptr<GrayPlan> p, const std::string& kind, const nlohmann::json& d){
+      nlohmann::json ev; ev["kind"]=kind; ev["data"]=d; std::string line = ev.dump(); std::lock_guard<std::mutex> lk(p->mu); p->events.push_back(line);
+    };
+    auto resolve_alias_model = [&](const std::string& alias, std::string* model, std::string* version){
+      load_aliases(); auto it = g_aliases.find(alias); if (it == g_aliases.end()) return false; if (model) *model = it->second.first; if (version) *version = it->second.second; return true; };
+    auto gray_worker = [&](std::shared_ptr<GrayPlan> p){
+      p->running = true; emit_gray(p, "state", { {"phase","started"} });
+      std::string triton_model, triton_ver;
+      if (!resolve_alias_model(p->alias, &triton_model, &triton_ver) || triton_model.empty()) {
+        p->error = std::string("alias not found: ") + p->alias; emit_gray(p, "error", {{"msg", p->error}}); p->running=false; p->done=true; return; }
+      try {
+        auto stub = controlplane::make_va_stub(cfg.va_addr);
+        for (int i = 0; i < (int)p->targets.size(); ) {
+          int end = std::min((int)p->targets.size(), i + p->batch_size);
+          for (int j = i; j < end; ++j) {
+            const auto& t = p->targets[j];
+            // 1) SetEngine to point to triton model (alias resolved)
+            va::v1::SetEngineRequest sreq; va::v1::SetEngineReply srep; grpc::ClientContext sctx;
+            (*sreq.mutable_options())["triton_model"] = triton_model; if (!triton_ver.empty()) (*sreq.mutable_options())["triton_model_version"] = triton_ver;
+            auto st = stub->SetEngine(&sctx, sreq, &srep);
+            if (!st.ok() || !srep.ok()) { p->error = std::string("SetEngine failed: ") + (st.ok()? srep.msg(): st.error_message()); emit_gray(p,"error",{{"msg",p->error}}); p->running=false; p->done=true; return; }
+            // 2) Hotswap model on VA pipeline/node
+            std::string errh; if (!va_hotswap_model(cfg.va_addr, t.pipeline, t.node, "__triton__", &errh)) { p->error = std::string("hotswap failed: ")+errh; emit_gray(p,"error",{{"msg",p->error},{"pipeline",t.pipeline},{"node",t.node}}); p->running=false; p->done=true; return; }
+            p->applied++; emit_gray(p, "applied", {{"pipeline",t.pipeline},{"node",t.node},{"applied",p->applied}});
+          }
+          i = end;
+          if (i < (int)p->targets.size()) { emit_gray(p, "state", {{"phase","waiting"},{"remaining", (int)p->targets.size() - i}}); std::this_thread::sleep_for(std::chrono::milliseconds(p->interval_ms)); }
+        }
+        p->running=false; p->done=true; emit_gray(p, "done", {{"applied", p->applied}});
+      } catch (const std::exception& ex) {
+        p->error = ex.what(); emit_gray(p, "error", {{"msg",p->error}}); p->running=false; p->done=true; return;
+      } catch (...) { p->error = "unknown"; emit_gray(p, "error", {{"msg",p->error}}); p->running=false; p->done=true; return; }
+    };
+
+    if (path == "/api/deploy/gray/start" && method == "POST") {
+      // body: { alias?:string, batch_size?:int, interval_ms?:int, targets:[{pipeline,node}] }
+      try {
+        auto j = nlohmann::json::parse(body);
+        std::string alias = j.value("alias", std::string("canary"));
+        int batch = j.value("batch_size", 1); int interval = j.value("interval_ms", 30000);
+        std::vector<GrayTarget> ts;
+        if (j.contains("targets") && j["targets"].is_array()) {
+          for (auto& it : j["targets"]) {
+            GrayTarget t; t.pipeline = it.value("pipeline", std::string("")); t.node = it.value("node", std::string("")); if (!t.pipeline.empty() && !t.node.empty()) ts.push_back(t);
+          }
+        }
+        if (ts.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"targets required\"}"; emit("/api/deploy/gray/start", r.status); return r; }
+        auto p = std::make_shared<GrayPlan>(); p->alias = alias; p->batch_size = std::max(1,batch); p->interval_ms = std::max(0,interval); p->targets = std::move(ts); p->id = gen_job_id();
+        {
+          std::lock_guard<std::mutex> lk(g_gray_mu); g_gray_plans[p->id] = p;
+        }
+        std::thread th(gray_worker, p); th.detach();
+        nlohmann::json out; out["code"]="ACCEPTED"; nlohmann::json d; d["id"]=p->id; d["events"]=std::string("/api/deploy/gray/events?id=")+p->id; out["data"]=d; r.status=202; r.body=out.dump(); emit("/api/deploy/gray/start", r.status); return r;
+      } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/deploy/gray/start", r.status); return r; }
+    }
+    if (path.rfind("/api/deploy/gray/status", 0) == 0 && method == "GET") {
+      auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
+      auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return qs.substr(p, e==std::string::npos? std::string::npos : e-p); };
+      std::string id = getq("id"); if (id.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/deploy/gray/status", r.status); return r; }
+      std::shared_ptr<GrayPlan> p; { std::lock_guard<std::mutex> lk(g_gray_mu); auto it = g_gray_plans.find(id); if (it != g_gray_plans.end()) p = it->second; }
+      if (!p) { r.status=404; r.body="{\"code\":\"NOT_FOUND\"}"; emit("/api/deploy/gray/status", r.status); return r; }
+      nlohmann::json d; { std::lock_guard<std::mutex> lk(p->mu); d["id"]=p->id; d["alias"]=p->alias; d["applied"]=p->applied; d["total"]= (int)p->targets.size(); d["running"]=p->running; d["done"]=p->done; if(!p->error.empty()) d["error"]=p->error; }
+      nlohmann::json out; out["code"]="OK"; out["data"]=d; r.status=200; r.body=out.dump(); emit("/api/deploy/gray/status", r.status); return r;
+    }
     if (path == "/api/pipelines" && method == "GET") {
       std::string arr;
       if (controlplane::db::list_pipelines_json(cfg, &arr)) {
@@ -616,6 +750,93 @@ int main(int argc, char** argv) {
         r = proxyResp; emit("/api/train/list", r.status); return r;
       }
       r.status=501; r.body = "{\"code\":\"TRAINER_UNAVAILABLE\"}"; emit("/api/train/list", r.status); return r;
+    }
+    // Training: deploy with gates
+    if (path == "/api/train/deploy" && method == "POST") {
+      auto tb = parse_trainer_base();
+      if (!tb.ok) { r.status=501; r.body = "{\"code\":\"TRAINER_UNAVAILABLE\"}"; emit("/api/train/deploy", r.status); return r; }
+      std::string job, model, version="1";
+      double acc_min = cfg.deploy_gates.accuracy_min;
+      try {
+        auto j = nlohmann::json::parse(body);
+        if (j.contains("job")) job = j["job"].get<std::string>();
+        if (j.contains("model")) model = j["model"].get<std::string>();
+        if (j.contains("version")) version = j["version"].get<std::string>();
+        if (j.contains("gates") && j["gates"].is_object()) {
+          auto g = j["gates"]; if (g.contains("accuracy_min")) acc_min = g["accuracy_min"].get<double>();
+        }
+      } catch (...) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/train/deploy", r.status); return r; }
+      if (job.empty() || model.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"job/model required\"}"; emit("/api/train/deploy", r.status); return r; }
+      // 1) 查询训练状态并判定 gates
+      controlplane::HttpResponse sresp;
+      {
+        std::string target = tb.prefix + "/api/train/status?id=" + job;
+        if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &sresp, nullptr)) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/deploy", r.status); return r; }
+      }
+      try {
+        auto js = nlohmann::json::parse(sresp.body);
+        double acc = -1.0;
+        if (js.contains("data") && js["data"].contains("metrics_summary")) {
+          auto ms = js["data"]["metrics_summary"];
+          if (ms.contains("accuracy")) { acc = ms["accuracy"].get<double>(); }
+          else if (ms.contains("val/accuracy")) { acc = ms["val/accuracy"].get<double>(); }
+        }
+        if (acc_min > 0.0 && acc >= 0.0 && acc < acc_min) {
+          nlohmann::json out; out["code"]="PRECONDITION_FAILED"; out["detail"]={{"code","GATE_REJECTED"},{"metric","accuracy"},{"got",acc},{"need",acc_min}};
+          r.status=412; r.body=out.dump(); emit("/api/train/deploy", r.status); return r;
+        }
+      } catch (...) { /* ignore gates if parse failed */ }
+      // 2) 拉取 artifacts: model.yaml 与 model.onnx
+      std::string manifest, onnx_bytes;
+      {
+        controlplane::HttpResponse aresp;
+        std::string target = tb.prefix + "/api/train/artifacts?id=" + job;
+        if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &aresp, nullptr)) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/deploy", r.status); return r; }
+        try {
+          auto ja = nlohmann::json::parse(aresp.body);
+          bool has_on=false, has_man=false;
+          if (ja.contains("data")) {
+            for (auto& it : ja["data"]) {
+              if (!it.contains("name")) continue; auto nm = it["name"].get<std::string>();
+              if (nm == "model.yaml") has_man = true;
+              if (nm == "model.onnx") has_on = true;
+            }
+          }
+          if (!has_on || !has_man) { r.status=422; r.body="{\"code\":\"UNPROCESSABLE_ENTITY\",\"msg\":\"artifacts missing (model.yaml/model.onnx)\"}"; emit("/api/train/deploy", r.status); return r; }
+        } catch (...) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/deploy", r.status); return r; }
+      }
+      // 下载 manifest
+      {
+        controlplane::HttpResponse d;
+        std::string target = tb.prefix + "/api/train/artifacts/download?id=" + job + "&name=model.yaml";
+        if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &d, nullptr) || d.status/100!=2) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\"download manifest failed\"}"; emit("/api/train/deploy", r.status); return r; }
+        manifest = d.body;
+        // 校验 manifest
+        auto chk = controlplane::manifest::validate_yaml(manifest);
+        if (!chk.ok) { nlohmann::json out; out["code"]="UNPROCESSABLE_ENTITY"; out["detail"]={{"code",chk.code},{"msg",chk.msg}}; if(!chk.diag.is_null()) out["detail"]["diag"]=chk.diag; r.status=422; r.body = out.dump(); emit("/api/train/deploy", r.status); return r; }
+        std::string err;
+        if (!controlplane::va_repo_save_config(cfg.va_addr, model, manifest, &err)) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/train/deploy", r.status); return r; }
+      }
+      // 下载 onnx 并触发 convert_upload
+      {
+        controlplane::HttpResponse d;
+        std::string target = tb.prefix + "/api/train/artifacts/download?id=" + job + "&name=model.onnx";
+        if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &d, nullptr) || d.status/100!=2) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\"download onnx failed\"}"; emit("/api/train/deploy", r.status); return r; }
+        onnx_bytes = std::move(d.body);
+      }
+      // Size gate (post-download) using actual bytes
+      if (cfg.deploy_gates.size_mb_max > 0) {
+        double mb = static_cast<double>(onnx_bytes.size()) / (1024.0*1024.0);
+        if (mb > cfg.deploy_gates.size_mb_max) {
+          nlohmann::json out; out["code"]="PRECONDITION_FAILED"; out["detail"]={{"code","GATE_REJECTED"},{"metric","size_mb"},{"got",mb},{"need","<="+std::to_string(cfg.deploy_gates.size_mb_max)}};
+          r.status=412; r.body=out.dump(); emit("/api/train/deploy", r.status); return r;
+        }
+      }
+      std::string conv_job, err;
+      if (!controlplane::va_repo_convert_upload(cfg.va_addr, model, version, onnx_bytes, &conv_job, &err)) {
+        auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()? std::string("convert_upload failed"): err)+"\"}"; emit("/api/train/deploy", r.status); return r; }
+      nlohmann::json out; out["code"]="ACCEPTED"; out["data"]={{"job",conv_job},{"events","/api/repo/convert/events?job="+conv_job},{"model",model},{"version",version}};
+      r.status=202; r.body=out.dump(); emit("/api/train/deploy", r.status); return r;
     }
     if (path == "/api/va/runtime" && method == "GET") {
       nlohmann::json out; out["code"] = "OK";
@@ -1808,6 +2029,56 @@ int main(int argc, char** argv) {
         controlplane::sse::close(writer); controlplane::metrics::sse_on_close();
       }
       return true;
+    }
+
+    // Handle gray rollout SSE: /api/deploy/gray/events?id=...
+    if (path.rfind("/api/deploy/gray/events", 0) == 0) {
+      auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos+1);
+      auto getq = [&](const char* key){ auto k=std::string(key)+"="; auto p=qs.find(k); if(p==std::string::npos) return std::string(""); p+=k.size(); auto e=qs.find('&',p); return qs.substr(p, e==std::string::npos? std::string::npos : e-p); };
+      std::string id = getq("id");
+      controlplane::sse::write_headers(writer);
+      controlplane::metrics::sse_on_open();
+      // Re-lookup plan and stream events progressively
+      int idx = 0; long long last_keep = 0;
+      try {
+        // Use file-scope GrayPlan state
+        std::shared_ptr<GrayPlan> p;
+        {
+          std::lock_guard<std::mutex> lk(g_gray_mu);
+          auto it = g_gray_plans.find(id);
+          if (it != g_gray_plans.end()) p = it->second;
+        }
+        if (!p) { controlplane::sse::write_event(writer, "error", "{\\\"code\\\":\\\"NOT_FOUND\\\"}"); controlplane::sse::close(writer); controlplane::metrics::sse_on_close(); return true; }
+        long long last_keep = 0; auto nowms=[](){ using namespace std::chrono; return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(); };
+        while (true) {
+          std::vector<std::string> copy;
+          bool p_done = false;
+          {
+            std::lock_guard<std::mutex> lk(p->mu);
+            if (idx < (int)p->events.size()) {
+              copy.assign(p->events.begin()+idx, p->events.end());
+              idx = (int)p->events.size();
+            }
+            p_done = p->done;
+          }
+          for (auto& line : copy) {
+            try {
+              auto j = nlohmann::json::parse(line);
+              std::string kind = j.value("kind", std::string("message"));
+              auto& data = j["data"]; std::string payload = data.dump();
+              controlplane::sse::write_event(writer, kind.c_str(), payload.c_str());
+              last_keep = nowms();
+            } catch (...) { /* ignore */ }
+          }
+          if (p_done) { break; }
+          if (nowms() - last_keep > 8000) controlplane::sse::write_comment(writer, "keepalive");
+          std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        controlplane::sse::close(writer); controlplane::metrics::sse_on_close(); return true;
+      } catch (...) {
+        controlplane::sse::write_event(writer, "error", "{\\\"code\\\":\\\"INTERNAL\\\"}");
+        controlplane::sse::close(writer); controlplane::metrics::sse_on_close(); return true;
+      }
     }
 
     // Handle subscription events: /api/subscriptions/{id}/events

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { trainStart, trainStatus, trainList, trainEventsUrl } from '@/api/cp'
+import { trainStart, trainStatus, trainList, trainEventsUrl, trainDeploy } from '@/api/cp'
 
 const cfgText = ref<string>(`{
   "run": { "experiment": "cv-classification", "run_name": "resnet18-baseline", "seed": 42, "device": "cpu" },
@@ -19,10 +19,11 @@ const events: any[] = []
 let es: EventSource | null = null
 const progress = ref<number>(0)
 const phase = ref<string>('')
-const artifacts = ref<{ name:string; url:string }[]>([])
+const artifacts = ref<{ name:string; url:string; size_mb?: number; s3_uri?: string }[]>([])
 const modelId = ref<string>('')
 const metrics = ref<{ time:number; key:string; value:number }[]>([])
 const sseLines = ref<string[]>([])
+const accMin = ref<number>(0.7)
 
 // 转换进度对话框（导入仓库后跟踪）
 const convertDlg = ref(false)
@@ -108,6 +109,24 @@ async function importToRepo() {
   }
 }
 
+async function deployWithGates() {
+  if (!watchingId.value) { ElMessage.warning('请选择一个训练任务'); return }
+  if (!modelId.value) { ElMessage.warning('请输入模型 ID'); return }
+  try {
+    const payload: any = { job: watchingId.value, model: modelId.value, version: '1', gates: { accuracy_min: accMin.value } }
+    const r: any = await trainDeploy(payload)
+    const evUrl = (r?.data?.events || '') as string
+    if (evUrl) {
+      openConvertDialog(evUrl)
+      ElMessage.success('已触发部署与转换（带门槛）')
+    } else {
+      ElMessage.success('已触发部署与转换')
+    }
+  } catch (e:any) {
+    ElMessage.error(e?.message || '部署失败')
+  }
+}
+
 function openConvertDialog(eventsUrl: string) {
   // 计算绝对 URL
   const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
@@ -140,8 +159,9 @@ function openConvertDialog(eventsUrl: string) {
       <template #header>
         <div class="card-hd">启动训练</div>
       </template>
-      <div style="margin-bottom:8px">
-        <el-input v-model="modelId" placeholder="导入到仓库时的模型 ID（如：cv/resnet18）" />
+      <div style="display:flex; gap:8px; margin-bottom:8px">
+        <el-input v-model="modelId" placeholder="模型 ID（如：cv/resnet18）" />
+        <el-input v-model.number="accMin" style="width:180px" placeholder="accuracy_min (0~1)" />
       </div>
       <el-input v-model="cfgText" type="textarea" :rows="10" />
       <div style="margin-top:10px; text-align:right">
@@ -173,12 +193,22 @@ function openConvertDialog(eventsUrl: string) {
         <el-progress :percentage="Math.round(progress)" :stroke-width="12" status="success" />
         <div v-if="artifacts.length" style="margin-top:10px">
           <div>工件：</div>
-          <ul>
-            <li v-for="a in artifacts" :key="a.name">
-              <a :href="`/api/train/artifacts/download?id=${encodeURIComponent(watchingId)}&name=${encodeURIComponent(a.name)}`" target="_blank">下载 {{a.name}}</a>
-            </li>
-          </ul>
-          <el-button type="success" size="small" @click="importToRepo">导入到仓库并转换</el-button>
+          <el-table :data="artifacts" size="small" style="width:100%">
+            <el-table-column prop="name" label="文件" width="160" />
+            <el-table-column prop="size_mb" label="大小(MB)" width="120">
+              <template #default="{ row }">{{ row.size_mb ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="下载">
+              <template #default="{ row }">
+                <a :href="`/api/train/artifacts/download?id=${encodeURIComponent(watchingId)}&name=${encodeURIComponent(row.name)}`" target="_blank">下载</a>
+              </template>
+            </el-table-column>
+            <el-table-column prop="s3_uri" label="对象存储 URI">
+              <template #default="{ row }"><span style="font-family:monospace">{{ row.s3_uri || '-' }}</span></template>
+            </el-table-column>
+          </el-table>
+          <el-button type="success" size="small" @click="importToRepo">仅导入并转换</el-button>
+          <el-button type="primary" size="small" @click="deployWithGates">部署（带门槛）</el-button>
         </div>
       </div>
     </el-card>

@@ -223,3 +223,7 @@ export function trainEventsUrl(id: string) {
   const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
   return `${base}${path}`
 }
+
+export async function trainDeploy(payload: { job: string; model: string; version?: string; gates?: { accuracy_min?: number } }) {
+  return http.post('/api/train/deploy', payload)
+}

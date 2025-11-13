@@ -24,7 +24,13 @@ sfu:
   default_variant: overlay
   pause_policy: stop
 trainer:
-  base_url: http://trainer-svc:8088
+  base_url: http://trainer:8088
+deploy:
+  gates:
+    # 精准门槛（可被 /api/train/deploy 请求体覆盖）
+    accuracy_min: 0.70      # 0 表示禁用该门槛
+    latency_p95_ms_max: 0   # 0 表示禁用该门槛（当前未在 CP 判定）
+    size_mb_max: 0          # 0 表示禁用该门槛（trainer 未上报大小，暂不判定）
 security:
   cors:
     allowed_origins: ["*"]

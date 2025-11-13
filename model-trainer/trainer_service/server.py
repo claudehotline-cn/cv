@@ -1,7 +1,7 @@
 import os
 import time
 import threading
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -16,6 +16,14 @@ import mlflow
 import torch
 import numpy as np
 import json
+import os
+import math
+
+try:
+    import boto3
+    from botocore.config import Config as BotoConfig
+except Exception:
+    boto3 = None
 
 
 class Event:
@@ -35,6 +43,7 @@ class Job:
         self.done = False
         self.err: str = ""
         self.lock = threading.Lock()
+        self.last_metrics: Dict[str, float] = {}
 
     def emit(self, kind: str, data: Dict[str, Any]):
         with self.lock:
@@ -76,6 +85,27 @@ def ensure_tracking_uri():
         os.environ['MLFLOW_TRACKING_URI'] = f'file:{base}'
 
 
+def maybe_s3_client():
+    # Guard: require boto3 and TRAINER_S3_BUCKET and AWS_ENDPOINT_URL
+    bucket = os.environ.get('TRAINER_S3_BUCKET')
+    endpoint = os.environ.get('AWS_ENDPOINT_URL') or os.environ.get('AWS_S3_ENDPOINT')
+    if not (boto3 and bucket and endpoint):
+        return None
+    session = boto3.session.Session(
+        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+        region_name=os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1',
+    )
+    cfg = BotoConfig(signature_version='s3v4', s3={'addressing_style': os.environ.get('S3_ADDRESSING_STYLE', 'path')})
+    s3 = session.client('s3', endpoint_url=endpoint, use_ssl=endpoint.startswith('https'), verify=False, config=cfg)
+    return { 'client': s3, 'bucket': bucket, 'prefix': os.environ.get('TRAINER_S3_PREFIX','trainer') }
+
+def s3_put(cli, bucket: str, key: str, local_path: str) -> str:
+    assert os.path.exists(local_path), f'file not found: {local_path}'
+    cli.upload_file(local_path, bucket, key)
+    return f's3://{bucket}/{key}'
+
+
 def run_training(job: Job):
     try:
         ensure_tracking_uri()
@@ -99,8 +129,9 @@ def run_training(job: Job):
 
             train_one_experiment(model, train_loader, val_loader, cfg, device)
             metrics = evaluate(model, val_loader, device)
-            mlflow.log_metrics(metrics)
-            job.emit("metrics", metrics)
+            job.last_metrics = { k: float(v) for k,v in (metrics or {}).items() }
+            mlflow.log_metrics(job.last_metrics)
+            job.emit("metrics", job.last_metrics)
 
             onnx_path = export_onnx(model, cfg.get('export', {}))
             if onnx_path:
@@ -120,6 +151,22 @@ def run_training(job: Job):
             with open(os.path.join(job_dir, 'model.yaml'), 'w', encoding='utf-8') as f:
                 f.write(manifest_text)
             mlflow.log_artifact(os.path.join(job_dir, 'model.yaml'))
+
+            # Optional: upload to S3/MinIO if configured
+            try:
+                s3c = maybe_s3_client()
+                if s3c:
+                    cli = s3c['client']; bucket = s3c['bucket']; prefix = s3c['prefix']
+                    base_key = f"{prefix}/{job.id}/"
+                    if os.path.exists(onnx_path):
+                        uri = s3_put(cli, bucket, base_key + 'exports/model.onnx', onnx_path)
+                        job.emit('artifact', { 's3_uri': uri })
+                    man_local = os.path.join(job_dir, 'model.yaml')
+                    if os.path.exists(man_local):
+                        uri = s3_put(cli, bucket, base_key + 'model.yaml', man_local)
+                        job.emit('artifact', { 's3_uri': uri })
+            except Exception as ex:
+                job.emit('error', { 'msg': f's3_upload_failed: {ex!s}' })
 
             job.status = "done"; job.phase = "done"; job.progress = 1.0; job.done = True
             job.emit("done", {"run_id": run.info.run_id})
@@ -143,6 +190,8 @@ async def api_status(id: str):
     if not j:
         return JSONResponse({"code": "NOT_FOUND"}, status_code=404)
     d = {"id": j.id, "status": j.status, "phase": j.phase, "progress": j.progress}
+    if j.last_metrics:
+        d["metrics_summary"] = j.last_metrics
     if j.err:
         d["error"] = j.err
     return {"code": "OK", "data": d}
@@ -172,8 +221,33 @@ async def api_artifacts(id: str, request: Request):
     man_p  = os.path.join(job_dir, 'model.yaml')
     def url_for(name: str):
         return str(request.url_for('download_artifact')) + f"?id={j.id}&name={name}"
-    if os.path.exists(onnx_p): items.append({"name":"model.onnx", "url": url_for('model.onnx')})
-    if os.path.exists(man_p):  items.append({"name":"model.yaml", "url": url_for('model.yaml')})
+    # Try to list S3 URIs from emitted events
+    s3_uris = []
+    with j.lock:
+        for ev in j.events:
+            if ev.kind == 'artifact' and isinstance(ev.data, dict) and 's3_uri' in ev.data:
+                s3_uris.append(ev.data['s3_uri'])
+    def size_mb(p: str) -> Optional[float]:
+        try:
+            b = os.path.getsize(p); return round(b / (1024.0*1024.0), 3)
+        except Exception:
+            return None
+    if os.path.exists(onnx_p):
+        item = {"name":"model.onnx", "url": url_for('model.onnx')}
+        sm = size_mb(onnx_p)
+        if sm is not None: item["size_mb"] = sm
+        for u in s3_uris:
+            if u.endswith('/exports/model.onnx') or u.endswith('model.onnx'):
+                item["s3_uri"] = u
+        items.append(item)
+    if os.path.exists(man_p):
+        item = {"name":"model.yaml", "url": url_for('model.yaml')}
+        sm = size_mb(man_p)
+        if sm is not None: item["size_mb"] = sm
+        for u in s3_uris:
+            if u.endswith('/model.yaml') or u.endswith('model.yaml'):
+                item["s3_uri"] = u
+        items.append(item)
     return {"code":"OK","data":items}
 
 @app.get("/api/train/artifacts/download", name="download_artifact")

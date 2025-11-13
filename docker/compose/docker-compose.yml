@@ -176,12 +176,15 @@ services:
       retries: 5
 
   mlflow:
-    image: python:3.10-slim
+    build:
+      context: ../..
+      dockerfile: docker/mlflow/Dockerfile
+    image: cv/mlflow:latest
     container_name: mlflow
     environment:
       - MLFLOW_BACKEND_STORE_URI=mysql+pymysql://root:123456@mysql:3306/mlflow
       - MLFLOW_ARTIFACT_ROOT=file:/mlruns
-    command: /bin/sh -c "pip install --no-cache-dir mlflow pymysql && mlflow server --backend-store-uri $$MLFLOW_BACKEND_STORE_URI --default-artifact-root $$MLFLOW_ARTIFACT_ROOT --host 0.0.0.0 --port 5500"
+    command: /bin/sh -c "mlflow server --backend-store-uri $$MLFLOW_BACKEND_STORE_URI --default-artifact-root $$MLFLOW_ARTIFACT_ROOT --host 0.0.0.0 --port 5500"
     ports:
       - "5500:5500"
     volumes:
@@ -205,12 +208,24 @@ services:
     container_name: trainer
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5500
+      # S3 (MinIO) for optional artifact upload
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin123
+      - AWS_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - AWS_EC2_METADATA_DISABLED=true
+      - S3_ADDRESSING_STYLE=path
+      - TRAINER_S3_BUCKET=cv-models
+      - TRAINER_S3_PREFIX=trainer
     ports:
       - "8088:8088"
     depends_on:
       mlflow:
         condition: service_healthy
       mysql:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL","wget -qO- http://localhost:8088/api/train/list >/dev/null || exit 1"]
