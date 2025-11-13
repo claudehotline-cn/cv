@@ -213,6 +213,107 @@ static void launch_train_simulator(const controlplane::AppConfig& cfg,
   try { controlplane::db::train_job_update(cfg, job_id, { {"status","done"}, {"phase","done"} }); } catch (...) {}
 }
 
+static std::string write_yaml_cfg_to_tmp(const nlohmann::json& j, const std::string& job_id) {
+  std::ostringstream p; p << "/tmp/train_" << job_id << ".yaml";
+  std::string path = p.str();
+  try { std::ofstream ofs(path, std::ios::binary); ofs << j.dump(2); ofs.close(); } catch (...) {}
+  return path;
+}
+
+// Launch external trainer subprocess (if CP_TRAINER_CMD provided), else caller should fall back to simulator
+static void launch_trainer_subprocess(const controlplane::AppConfig& cfg,
+                                      const std::string& job_id,
+                                      const nlohmann::json& cfg_json) {
+  std::shared_ptr<TrainJobRec> tj;
+  {
+    std::lock_guard<std::mutex> lk(g_train_mu);
+    auto it = g_train_jobs.find(job_id);
+    if (it == g_train_jobs.end()) return; tj = it->second;
+  }
+  // persist created
+  try { controlplane::db::train_job_create(cfg, job_id, "created", "preparing", cfg_json); } catch (...) {}
+  {
+    std::lock_guard<std::mutex> lk(tj->mu); tj->status = "running"; tj->phase = "preparing"; tj->progress = 0.0;
+  }
+  train_emit(tj, "state", "{\"phase\":\"preparing\",\"progress\":0}");
+
+  std::string cfg_path = write_yaml_cfg_to_tmp(cfg_json, job_id);
+  std::string cmd;
+  const char* env_cmd = std::getenv("CP_TRAINER_CMD");
+  if (env_cmd && *env_cmd) {
+    cmd = env_cmd;
+    auto pos = cmd.find("{config}");
+    if (pos != std::string::npos) cmd.replace(pos, 8, cfg_path);
+    else { cmd += " -c "; cmd += cfg_path; }
+  } else {
+    cmd = std::string("python3 -m model_trainer.entry -c ") + cfg_path;
+  }
+  {
+    std::lock_guard<std::mutex> lk(tj->mu); tj->phase = "running"; tj->progress = 0.05;
+  }
+  train_emit(tj, "state", "{\"phase\":\"running\",\"progress\":0.05}");
+
+  FILE* fp = popen((cmd + " 2>&1").c_str(), "r");
+  if (!fp) { train_emit(tj, "error", "{\"msg\":\"failed to start trainer\"}"); goto finish_err; }
+  {
+    char buf[2048];
+    while (true) {
+      size_t n = fread(buf, 1, sizeof(buf)-1, fp);
+      if (n == 0) break; buf[n] = 0; std::string chunk(buf);
+      size_t start = 0, pos;
+      while ((pos = chunk.find('\n', start)) != std::string::npos) {
+        std::string line = chunk.substr(start, pos-start); start = pos+1;
+        try {
+          if (line.empty()) continue;
+          auto j = nlohmann::json::parse(line);
+          std::string tp = j.contains("type") && j["type"].is_string()? j["type"].get<std::string>() : std::string("");
+          if (tp.empty()) continue;
+          if (tp == "metrics") {
+            nlohmann::json d = j["data"];
+            train_emit(tj, "metrics", d.dump());
+            try { controlplane::db::train_job_update(cfg, job_id, { {"metrics", d} }); } catch (...) {}
+          } else if (tp == "artifact") {
+            nlohmann::json d; d["path"] = j.value("path", "");
+            train_emit(tj, "artifact", d.dump());
+            {
+              std::lock_guard<std::mutex> lk(tj->mu); tj->phase = "exporting"; tj->progress = 0.9;
+            }
+            train_emit(tj, "state", "{\"phase\":\"exporting\",\"progress\":0.9}");
+          } else if (tp == "done") {
+            std::string runid = j.value("run_id", std::string(""));
+            try { controlplane::db::train_job_update(cfg, job_id, { {"status","done"}, {"phase","done"}, {"mlflow_run_id", runid} }); } catch (...) {}
+            {
+              std::lock_guard<std::mutex> lk(tj->mu); tj->status = "done"; tj->phase = "done"; tj->progress = 1.0; tj->done = true;
+            }
+            train_emit(tj, "done", std::string("{\"run_id\":\"") + runid + "\"}");
+          } else if (tp == "error") {
+            std::string msg = j.value("msg", std::string("trainer error"));
+            try { controlplane::db::train_job_update(cfg, job_id, { {"status","failed"}, {"error", msg} }); } catch (...) {}
+            train_emit(tj, "error", std::string("{\"msg\":\"") + msg + "\"}");
+          }
+        } catch (...) {
+          // ignore
+        }
+      }
+    }
+    int rc = pclose(fp); (void)rc;
+  }
+  {
+    std::lock_guard<std::mutex> lk(tj->mu);
+    if (!tj->done) {
+      tj->status = "done"; tj->phase = "done"; tj->progress = 1.0; tj->done = true;
+      train_emit(tj, "done", "{\"phase\":\"done\"}");
+      try { controlplane::db::train_job_update(cfg, job_id, { {"status","done"}, {"phase","done"} }); } catch (...) {}
+    }
+  }
+  return;
+finish_err:
+  try { controlplane::db::train_job_update(cfg, job_id, { {"status","failed"}, {"error", "spawn_failed"} }); } catch (...) {}
+  {
+    std::lock_guard<std::mutex> lk(tj->mu); tj->status = "failed"; tj->phase = "failed"; tj->done = true;
+  }
+}
+
 int main(int argc, char** argv) {
   using namespace controlplane;
   using nlohmann::json;
@@ -593,7 +694,12 @@ int main(int argc, char** argv) {
         {
           std::lock_guard<std::mutex> lk(g_train_mu); g_train_jobs[job] = rec;
         }
-        std::thread([cfg, job, cfgj]{ launch_train_simulator(cfg, job, cfgj); }).detach();
+        const char* tcmd = std::getenv("CP_TRAINER_CMD");
+        if (tcmd && *tcmd) {
+          std::thread([cfg, job, cfgj]{ launch_trainer_subprocess(cfg, job, cfgj); }).detach();
+        } else {
+          std::thread([cfg, job, cfgj]{ launch_train_simulator(cfg, job, cfgj); }).detach();
+        }
         nlohmann::json out; out["code"]="ACCEPTED"; out["data"]={{"job",job},{"events","/api/train/events?id="+job}};
         r.status=202; r.body=out.dump(); emit("/api/train/start", r.status); return r;
       } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/train/start", r.status); return r; }
