@@ -132,6 +132,8 @@ services:
         condition: service_healthy
       vsm:
         condition: service_healthy
+      trainer-svc:
+        condition: service_started
     ports:
       - "18080:18080"
     volumes:
@@ -221,12 +223,6 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
-
-  trainer:
-    build:
-      context: ../..
-      dockerfile: docker/trainer/Dockerfile
-    image: cv/trainer:latest
 
 networks:
   default:

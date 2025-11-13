@@ -13,3 +13,4 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
 ENV PYTHONPATH=/app/model-trainer:$PYTHONPATH
 EXPOSE 8088
 ENTRYPOINT ["python","-m","model_trainer.trainer_service"]
+
