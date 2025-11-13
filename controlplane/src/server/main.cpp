@@ -548,7 +548,7 @@ int main(int argc, char** argv) {
       // If external trainer service is configured, proxy
       auto tb = parse_trainer_base();
       if (tb.ok) {
-        controlplane::http::HttpResponse proxyResp;
+        controlplane::HttpResponse proxyResp;
         std::string target = tb.prefix + "/api/train/start";
         bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, body, &proxyResp, nullptr);
         if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/start", r.status); return r; }
@@ -569,7 +569,7 @@ int main(int argc, char** argv) {
     if (path.rfind("/api/train/status", 0) == 0 && method == "GET") {
       auto tb = parse_trainer_base();
       if (tb.ok) {
-        controlplane::http::HttpResponse proxyResp;
+        controlplane::HttpResponse proxyResp;
         auto qpos = path.find('?'); std::string qs = (qpos==std::string::npos)? std::string("") : path.substr(qpos);
         std::string target = tb.prefix + "/api/train/status" + qs;
         bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, "", &proxyResp, nullptr);
@@ -582,7 +582,7 @@ int main(int argc, char** argv) {
     if (path == "/api/train/list" && method == "GET") {
       auto tb = parse_trainer_base();
       if (tb.ok) {
-        controlplane::http::HttpResponse proxyResp;
+        controlplane::HttpResponse proxyResp;
         std::string target = tb.prefix + "/api/train/list";
         bool ok = controlplane::proxy_http_simple(tb.host, tb.port, method, target, headers, "", &proxyResp, nullptr);
         if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/list", r.status); return r; }
