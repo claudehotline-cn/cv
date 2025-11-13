@@ -59,6 +59,9 @@ struct AppConfig {
   TlsOptions vsm_tls{};
   SseOptions sse{};
   DbConfig db{};
+  // Optional trainer service base URL (e.g., http://trainer-svc:8088). When set,
+  // CP will proxy /api/train/* to the external trainer service instead of spawning subprocesses.
+  std::string trainer_base_url; 
 };
 
 bool load_config(const std::string& dir, AppConfig* out, std::string* err);

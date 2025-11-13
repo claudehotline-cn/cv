@@ -1,5 +1,6 @@
 #include "controlplane/config.hpp"
 #include <yaml-cpp/yaml.h>
+#include <cstdlib>
 
 namespace controlplane {
 
@@ -46,6 +47,15 @@ bool load_config(const std::string& dir, AppConfig* out, std::string* err) {
       if (sfu["whep_base"]) out->sfu_whep_base = sfu["whep_base"].as<std::string>(out->sfu_whep_base);
       if (sfu["default_variant"]) out->sfu_whep_default_variant = sfu["default_variant"].as<std::string>(out->sfu_whep_default_variant);
       if (sfu["pause_policy"]) out->sfu_pause_policy = sfu["pause_policy"].as<std::string>(out->sfu_pause_policy);
+    }
+    if (root["trainer"]) {
+      auto t = root["trainer"];
+      if (t["base_url"]) out->trainer_base_url = t["base_url"].as<std::string>(out->trainer_base_url);
+#ifdef _WIN32
+      if (!out->trainer_base_url.empty()) { _putenv_s("CP_TRAINER_BASE_URL", out->trainer_base_url.c_str()); }
+#else
+      if (!out->trainer_base_url.empty()) { setenv("CP_TRAINER_BASE_URL", out->trainer_base_url.c_str(), 1); }
+#endif
     }
     if (root["sse"]) {
       auto s = root["sse"];

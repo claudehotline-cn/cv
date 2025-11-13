@@ -23,6 +23,8 @@ sfu:
   whep_base: http://localhost:18080
   default_variant: overlay
   pause_policy: stop
+trainer:
+  base_url: http://trainer-svc:8088
 security:
   cors:
     allowed_origins: ["*"]
