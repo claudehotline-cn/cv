@@ -192,6 +192,20 @@ services:
       timeout: 3s
       retries: 10
 
+  mysql-init-mlflow:
+    image: mysql:8.4
+    container_name: mysql-init-mlflow
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    entrypoint: ["/bin/sh","-lc"]
+    command: >
+      mysql -hmysql -P3306 -uroot -p"$MYSQL_ROOT_PASSWORD" -e \
+      "CREATE DATABASE IF NOT EXISTS mlflow DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_0900_ai_ci;"
+    restart: "no"
+
   trainer-svc:
     build:
       context: ../..
