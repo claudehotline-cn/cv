@@ -207,3 +207,19 @@ export const cp = {
     catch (e:any) { throw e }
   }
 }
+
+// ---- Training APIs ----
+export async function trainStart(cfg: any) {
+  return http.post('/api/train/start', cfg)
+}
+export async function trainStatus(id: string) {
+  return http.get<{ code: string, data: any }>(`/api/train/status?id=${encodeURIComponent(id)}`)
+}
+export async function trainList() {
+  return http.get<{ code: string, data: any[] }>(`/api/train/list`)
+}
+export function trainEventsUrl(id: string) {
+  const path = `/api/train/events?id=${encodeURIComponent(id)}`
+  const base = ((import.meta as any).env?.DEV ? '' : (((import.meta as any).env?.VITE_API_BASE || '') as string)).toString().replace(/\/+$/, '')
+  return `${base}${path}`
+}

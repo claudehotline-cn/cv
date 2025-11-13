@@ -130,6 +130,19 @@ async def api_status(id: str):
     return {"code": "OK", "data": d}
 
 
+@app.get("/api/train/list")
+async def api_list():
+    out = []
+    with jobs.mu:
+        for j in jobs.jobs.values():
+            out.append({
+                "id": j.id,
+                "status": j.status,
+                "phase": j.phase,
+                "progress": j.progress
+            })
+    return {"code": "OK", "data": out}
+
 @app.get("/api/train/events")
 async def api_events(id: str):
     j = jobs.get(id)
@@ -154,4 +167,3 @@ async def api_events(id: str):
             time.sleep(0.2)
 
     return StreamingResponse(gen(), media_type='text/event-stream')
-
