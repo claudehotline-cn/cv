@@ -200,6 +200,7 @@ add_executable(controlplane
   src/server/http_server.cpp
   src/server/http_proxy.cpp
   src/server/db.cpp
+  src/server/manifest.cpp
   src/server/watch_adapter.cpp
   src/server/circuit_breaker.cpp
   src/server/metrics.cpp

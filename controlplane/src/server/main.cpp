@@ -1,5 +1,6 @@
 #include <iostream>
 #include "controlplane/db.hpp"
+#include "controlplane/manifest.hpp"
 #include <string>
 #include <thread>
 #include <chrono>
@@ -699,6 +700,14 @@ int main(int argc, char** argv) {
     if (path == "/api/repo/load" && method == "POST") {
       std::string model; if (!body.empty()) { try { auto j=nlohmann::json::parse(body); if (j.contains("model")&&j["model"].is_string()) model=j["model"].get<std::string>(); } catch (...) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"INVALID_JSON\"}"; emit("/api/repo/load", r.status); return r; } }
       if (model.empty()) { r.status=400; r.body="{\"code\":\"INVALID_ARGUMENT\"}"; emit("/api/repo/load", r.status); return r; }
+      // manifest pre-check: fetch model.yaml and validate before loading
+      {
+        std::string mcontent; std::string merr;
+        if (!controlplane::va_repo_get_config(cfg.va_addr, model, &mcontent, &merr) || mcontent.empty()) {
+          r.status=422; r.body = std::string("{\"code\":\"UNPROCESSABLE_ENTITY\",\"detail\":{\"code\":\"MANIFEST_REQUIRED\",\"msg\":\"model.yaml missing or fetch failed: ") + (merr.empty()? std::string("not found"): merr) + "\"}}"; emit("/api/repo/load", r.status); return r; }
+        auto chk = controlplane::manifest::validate_yaml(mcontent);
+        if (!chk.ok) { nlohmann::json out; out["code"]="UNPROCESSABLE_ENTITY"; out["detail"]={{"code",chk.code},{"msg",chk.msg}}; if(!chk.diag.is_null()) out["detail"]["diag"]=chk.diag; r.status=422; r.body = out.dump(); emit("/api/repo/load", r.status); return r; }
+      }
       std::string err; bool ok = va_repo_load(cfg.va_addr, model, &err);
       if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+err+"\"}"; emit("/api/repo/load", r.status); try{ controlplane::metrics::inc_repo_op("load", false);}catch(...){} return r; }
       try{ controlplane::metrics::inc_repo_op("load", true);}catch(...){}
@@ -764,6 +773,14 @@ int main(int argc, char** argv) {
         } catch (...) { /* ignore */ }
       }
       if (model.empty() || filename.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model/filename required\"}"; emit("/api/repo/upload", r.status); return r; }
+      // If uploading manifest (model.yaml), validate before forwarding to VA
+      {
+        std::string fn = filename; for (auto& c : fn) c = (char)tolower((unsigned char)c);
+        if (fn == "model.yaml" || fn == "/model.yaml" || fn.rfind("/model.yaml") != std::string::npos) {
+          auto chk = controlplane::manifest::validate_yaml(content);
+          if (!chk.ok) { nlohmann::json out; out["code"]="UNPROCESSABLE_ENTITY"; out["detail"]={{"code",chk.code},{"msg",chk.msg}}; if(!chk.diag.is_null()) out["detail"]["diag"]=chk.diag; r.status=422; r.body = out.dump(); emit("/api/repo/upload", r.status); return r; }
+        }
+      }
       std::string err; bool ok = controlplane::va_repo_put_file(cfg.va_addr, model, version, filename, content, &err);
       if (!ok) { auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()? std::string("upload failed"): err)+"\"}"; emit("/api/repo/upload", r.status); return r; }
       nlohmann::json out; out["code"]="CREATED"; out["data"]={{"model",model},{"version",version},{"filename",filename}};
@@ -778,6 +795,14 @@ int main(int argc, char** argv) {
       std::string model = getq("model"); std::string version = getq("version"); if (version.empty()) version = "1";
       if (model.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"model required\"}"; emit("/api/repo/convert_upload", r.status); return r; }
       if (body.empty()) { r.status=400; r.body = "{\"code\":\"INVALID_ARGUMENT\",\"msg\":\"ONNX bytes required in request body (Content-Type: application/octet-stream)\"}"; emit("/api/repo/convert_upload", r.status); return r; }
+      // manifest pre-check
+      {
+        std::string mcontent; std::string merr;
+        if (!controlplane::va_repo_get_config(cfg.va_addr, model, &mcontent, &merr) || mcontent.empty()) {
+          r.status=422; r.body = std::string("{\"code\":\"UNPROCESSABLE_ENTITY\",\"detail\":{\"code\":\"MANIFEST_REQUIRED\",\"msg\":\"model.yaml missing or fetch failed: ") + (merr.empty()? std::string("not found"): merr) + "\"}}"; emit("/api/repo/convert_upload", r.status); return r; }
+        auto chk = controlplane::manifest::validate_yaml(mcontent);
+        if (!chk.ok) { nlohmann::json out; out["code"]="UNPROCESSABLE_ENTITY"; out["detail"]={{"code",chk.code},{"msg",chk.msg}}; if(!chk.diag.is_null()) out["detail"]["diag"]=chk.diag; r.status=422; r.body = out.dump(); emit("/api/repo/convert_upload", r.status); return r; }
+      }
       std::string job; std::string err;
       if (!controlplane::va_repo_convert_upload(cfg.va_addr, model, version, body, &job, &err)) {
         auto mm=cp_map_err(err); r.status=mm.code; r.body=std::string("{\"code\":\"")+mm.text+"\",\"msg\":\""+(err.empty()? std::string("convert_upload failed"): err)+"\"}"; emit("/api/repo/convert_upload", r.status); return r; }
