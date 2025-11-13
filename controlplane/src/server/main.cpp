@@ -240,6 +240,11 @@ static void launch_trainer_subprocess(const controlplane::AppConfig& cfg,
   std::string cfg_path = write_yaml_cfg_to_tmp(cfg_json, job_id);
   std::string cmd;
   const char* env_cmd = std::getenv("CP_TRAINER_CMD");
+  const char* mlflow_uri = std::getenv("CP_MLFLOW_TRACKING_URI");
+  std::string env_prefix;
+  if (mlflow_uri && *mlflow_uri) {
+    env_prefix = std::string("MLFLOW_TRACKING_URI=") + mlflow_uri + " ";
+  }
   if (env_cmd && *env_cmd) {
     cmd = env_cmd;
     auto pos = cmd.find("{config}");
@@ -253,7 +258,7 @@ static void launch_trainer_subprocess(const controlplane::AppConfig& cfg,
   }
   train_emit(tj, "state", "{\"phase\":\"running\",\"progress\":0.05}");
 
-  FILE* fp = popen((cmd + " 2>&1").c_str(), "r");
+  FILE* fp = popen((env_prefix + cmd + " 2>&1").c_str(), "r");
   if (!fp) { train_emit(tj, "error", "{\"msg\":\"failed to start trainer\"}"); goto finish_err; }
   {
     char buf[2048];

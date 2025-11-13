@@ -11,6 +11,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ../../db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../../db/mlflow_init.sql:/docker-entrypoint-initdb.d/02-mlflow.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
       interval: 5s
@@ -124,6 +125,9 @@ services:
     container_name: cp
     environment:
       - VA_REST_BASE=va:8082
+      - CP_TRAINER_CMD=python3 -m model_trainer.entry -c {config}
+      - CP_MLFLOW_TRACKING_URI=http://mlflow:5500
+      - PYTHONPATH=/app/model-trainer
     depends_on:
       mysql:
         condition: service_healthy
@@ -178,3 +182,23 @@ networks:
 volumes:
   minio-data:
   mysql-data:
+  mlflow-artifacts:
+  mlflow:
+    image: python:3.10-slim
+    container_name: mlflow
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=mysql+pymysql://root:123456@mysql:3306/mlflow
+      - MLFLOW_ARTIFACT_ROOT=file:/mlruns
+    command: /bin/sh -c "pip install --no-cache-dir mlflow pymysql && mlflow server --backend-store-uri $$MLFLOW_BACKEND_STORE_URI --default-artifact-root $$MLFLOW_ARTIFACT_ROOT --host 0.0.0.0 --port 5500"
+    ports:
+      - "5500:5500"
+    volumes:
+      - mlflow-artifacts:/mlruns
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:5500/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
