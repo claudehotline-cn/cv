@@ -20,7 +20,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     libssl3 ca-certificates libyaml-cpp0.7 libjsoncpp25 \
-    libgrpc++1 curl libmysqlcppconn-dev \
+    libgrpc++1 curl libmysqlcppconn-dev docker.io \
     python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 

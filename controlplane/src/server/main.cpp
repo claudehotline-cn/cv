@@ -214,8 +214,18 @@ static void launch_train_simulator(const controlplane::AppConfig& cfg,
 }
 
 static std::string write_yaml_cfg_to_tmp(const nlohmann::json& j, const std::string& job_id) {
-  std::ostringstream p; p << "/tmp/train_" << job_id << ".yaml";
-  std::string path = p.str();
+  const char* shared = std::getenv("CP_TRAINER_SHARED_DIR");
+  std::string path;
+  if (shared && *shared) {
+    std::filesystem::create_directories(shared);
+    std::ostringstream p; p << shared;
+    std::string dir = p.str();
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
+    path = dir + job_id + ".yaml";
+  } else {
+    std::ostringstream p; p << "/tmp/train_" << job_id << ".yaml";
+    path = p.str();
+  }
   try { std::ofstream ofs(path, std::ios::binary); ofs << j.dump(2); ofs.close(); } catch (...) {}
   return path;
 }

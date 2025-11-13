@@ -125,9 +125,11 @@ services:
     container_name: cp
     environment:
       - VA_REST_BASE=va:8082
-      - CP_TRAINER_CMD=python3 -m model_trainer.entry -c {config}
+      # 切换为容器运行：使用 docker 运行 trainer 镜像；{config} 将被替换为 CP 写入的共享卷路径
+      - CP_TRAINER_CMD=docker run --rm --network=cv-net -e MLFLOW_TRACKING_URI=http://mlflow:5500 -v trainer-share:/trainer-share cv/trainer:latest -c {config}
       - CP_MLFLOW_TRACKING_URI=http://mlflow:5500
       - PYTHONPATH=/app/model-trainer
+      - CP_TRAINER_SHARED_DIR=/trainer-share/jobs
     depends_on:
       mysql:
         condition: service_healthy
@@ -140,6 +142,8 @@ services:
     volumes:
       - ../config/cp:/app/config:ro
       - ../../controlplane/config/certs:/app/config/certs:ro
+      - trainer-share:/trainer-share
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:18080/api/system/info >/dev/null || exit 1"]
       interval: 10s
@@ -195,6 +199,12 @@ services:
       timeout: 3s
       retries: 10
 
+  trainer:
+    build:
+      context: ../..
+      dockerfile: docker/trainer/Dockerfile
+    image: cv/trainer:latest
+
 networks:
   default:
     name: cv-net
@@ -203,3 +213,6 @@ volumes:
   minio-data:
   mysql-data:
   mlflow-artifacts:
+  trainer-share:
+    name: trainer-share
+    external: false
