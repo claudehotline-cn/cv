@@ -50,7 +50,7 @@ services:
       # wait for minio readiness (extra guard)
       for i in $(seq 1 60); do
         if wget -qO- http://minio:9000/minio/health/ready >/dev/null 2>&1; then break; fi; sleep 1; done;
-      mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD";
+      mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
       mc mb -p local/cv-models || true;
       echo "[mc] bucket cv-models ready";
 
@@ -175,14 +175,6 @@ services:
       timeout: 3s
       retries: 5
 
-networks:
-  default:
-    name: cv-net
-
-volumes:
-  minio-data:
-  mysql-data:
-  mlflow-artifacts:
   mlflow:
     image: python:3.10-slim
     container_name: mlflow
@@ -202,3 +194,12 @@ volumes:
       interval: 10s
       timeout: 3s
       retries: 10
+
+networks:
+  default:
+    name: cv-net
+
+volumes:
+  minio-data:
+  mysql-data:
+  mlflow-artifacts:
