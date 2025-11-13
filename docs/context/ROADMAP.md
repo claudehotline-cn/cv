@@ -1,44 +1,36 @@
 # 路线图总览
 
-- M0「可用性修复」：平滑转换进度 + 本地仓库删除
-  - 目标：消除 5%→100% 跳变；提供“删除模型（FS 仓库）”。
-  - 验收：
-    - 进度在 running 阶段平滑至≈85%，uploading 阶段≥90%，完成 100%；SSE 稀疏时仍连续推进。
-    - 本地仓库模型删除成功（含最佳努力卸载），列表刷新；S3 删除返回明确错误。
-- M1「能力扩展」：运行阶段细粒度 + S3 删除
-  - 目标：解析 trtexec 输出细化进度（parse/build/tactics/serialize）；支持 S3/MinIO 批量删除。
-  - 验收：
-    - 子阶段可见且进度稳定；S3 删除可在 5s 内完成并返回成功。
-- M2「稳健与观测」：审计与指标 + 交互完善
-  - 目标：操作审计、指标（转换/删除成功率、SSE 质量）、统一确认弹窗、回滚策略完善。
-  - 验收：
-    - 指标可在 Grafana 可视化；E2E 用例通过；回滚可在 1 分钟内执行。
+- M0「训练与导入打通」
+  - 目标：Trainer 服务化（FastAPI+MLflow）、CP 代理 `/api/train/*`、完成“训练→工件→导入并转换→加载”。
+  - 验收：前端 `/training` 可启动训练并看到 SSE；产出 `model.onnx/model.yaml`；“导入并转换”成功并能通过 `/api/repo/convert/events` 追踪；VA `repo/load` 成功。
+- M1「一键部署与灰度」
+  - 目标：`/api/train/deploy`（门槛：`accuracy_min/size_mb_max`）、别名历史/推广/回滚、灰度发布（批次/间隔/事件）。
+  - 验收：指标达标即放行；灰度计划能对指定 pipeline/node 分批生效并可订阅事件；推广/回滚在 1 分钟内完成。
+- M2「稳健与可观测」
+  - 目标：完善门槛（延迟/体积/准确率可配置）、对象存储治理（版本化/保留）、UI/体验完善、指标与审计、自动回滚预案。
+  - 验收：Grafana 展示关键指标；回滚演练通过；对象存储清理上线；前端提供灰度计划配置面板。
 
 # 分阶段计划（表格）
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 | ---- | ---------- | -------- | --------- | -------- |
-| M0 | 柔性进度、FS 删除 | 前端软推进、SSE 解析、VA/CP/前端全链路 | Proto 变更导致重建 → 预先全量构建脚本 | 进度≥90%覆盖中间时段；删除成功率≥99% |
-| M1 | 子阶段进度、S3 删除 | trtexec 日志解析；ListObjectsV2+BatchDelete | S3 权限/带宽波动 → 超时与重试 | S3 删除P95≤5s；子阶段误报率≤1% |
-| M1.5 | 前端交互完善 | ElementPlus 弹窗、错误提示与重试 | 用户误删 → 二次确认/撤销窗口 | 误删率→0；可用性满意度≥90% |
-| M2 | 审计与指标 | 操作日志、Prom 指标、Grafana 面板 | 指标采集开销 → 采样/聚合 | 指标采集开销<3% CPU |
-| M2.5 | 回滚与兼容 | Proto 版本标识、双写/灰度 | 兼容破坏 → 明确版本门槛与开关 | 回滚时间≤1min，失败≤1次/季度 |
+| M0 | Trainer 服务 + CP 代理 + 导入转换 | FastAPI/MLflow；CP HTTP 代理；manifest 校验；convert_upload SSE | 组件耦合 → 严格接口、配置旗标 | 训练与导入成功率≥95% |
+| M1 | 部署门槛 + 别名 + 灰度 | `/api/train/deploy` gates；aliases promote/rollback；gray start/status/events | VA 不在线 → 探针与失败回退 | 部署达标放行率≥90%；灰度失败可回收 |
+| M1.5 | 前端部署/灰度面板 | 训练页操作面板、事件可视化 | 误触操作 → 二次确认/干跑模式 | N/A |
+| M2 | 可观测与治理 | 指标/审计；对象存储版本化/保留；回滚剧本 | 采样开销 → 轻量指标与聚合 | 指标采集开销<3% CPU |
 
 # 依赖矩阵
 
 - 内部依赖：
-  - CP HTTP 服务与 gRPC 客户端（`/api/repo/remove`、SSE 转发）。
-  - VA gRPC 服务与 Proto（`RepoRemoveModel`、convert stream）。
-  - Web 前端（Models 页面、SSE 与软推进逻辑）。
+  - CP（HTTP 代理、gRPC 客户端、灰度线程）、VA（convert、hotswap、SetEngine）、Trainer（SSE/工件/MLflow）、Web 前端（训练页、部署按钮、SSE 展示）。
 - 外部依赖（库/服务/硬件）：
-  - TensorRT `trtexec`；Triton in-process 仓库；Element Plus；gRPC/Protobuf；S3/MinIO（后续）。
-  - 运行环境：GPU（可选）、本地/对象存储、浏览器 SSE 支持。
+  - MySQL（CP）、MLflow Tracking、MinIO（可选工件归档）、gRPC/Protobuf、PyTorch、TensorRT/trtexec、GPU（可选）。
 
 # 风险清单（Top-5）
 
-- Proto 变更导致构建失败 → 子模块未重建 → CI 报错/二进制不匹配 → 全量重建脚本与版本钩子
-- SSE 稀疏或断连 → 进度停滞 → 进度长时间不变 → 前端软推进与超时提示
-- S3 删除权限不足 → 删除失败 → 403/签名错误 → 预检权限与重试/回退到人工介入
-- trtexec 行为差异 → 子阶段识别误差 → 进度抖动/误导 → 多特征匹配与阈值、回退到粗粒度
-- 误删模型 → 用户误操作 → 高危操作频发 → 二次确认/延迟删除与可撤销窗口
+- 训练/部署门槛误判 → 指标口径不一致 → MLflow 字段缺失或命名变更 → 统一指标键（accuracy/val/accuracy），缺省时跳过判定。
+- VA 未运行导致灰度失败 → 探针失败/超时 → `/api/deploy/gray/*` 报错 → 启动前检查 VA 健康，失败即终止计划并记录可回收点。
+- 对象存储权限或网络异常 → 403/超时 → S3 上传失败事件 → 上传非强制，提供重试/后台补传脚本。
+- SSE 稀疏导致体验差 → 训练事件间隔大 → 进度停滞感 → 前端柔性推进与超时提示，落地 metrics 图表。
+- 配置漂移/环境差异 → Compose 与运行时不一致 → 启动失败 → 统一 `.env`/模板与健康检查、`depends_on` 顺序。
 

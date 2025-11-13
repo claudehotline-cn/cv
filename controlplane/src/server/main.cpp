@@ -6,6 +6,7 @@
 #include <chrono>
 #include <sstream>
 #include <cstring>
+#include <cstdio>
 #include <cctype>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
@@ -787,7 +788,7 @@ int main(int argc, char** argv) {
         }
       } catch (...) { /* ignore gates if parse failed */ }
       // 2) 拉取 artifacts: model.yaml 与 model.onnx
-      std::string manifest, onnx_bytes;
+      std::string manifest, onnx_bytes; std::string s3_yaml_uri, s3_onnx_uri;
       {
         controlplane::HttpResponse aresp;
         std::string target = tb.prefix + "/api/train/artifacts?id=" + job;
@@ -798,19 +799,51 @@ int main(int argc, char** argv) {
           if (ja.contains("data")) {
             for (auto& it : ja["data"]) {
               if (!it.contains("name")) continue; auto nm = it["name"].get<std::string>();
-              if (nm == "model.yaml") has_man = true;
-              if (nm == "model.onnx") has_on = true;
+              if (nm == "model.yaml") { has_man = true; if (it.contains("s3_uri") && it["s3_uri"].is_string()) s3_yaml_uri = it["s3_uri"].get<std::string>(); }
+              if (nm == "model.onnx") { has_on = true; if (it.contains("s3_uri") && it["s3_uri"].is_string()) s3_onnx_uri = it["s3_uri"].get<std::string>(); }
             }
           }
           if (!has_on || !has_man) { r.status=422; r.body="{\"code\":\"UNPROCESSABLE_ENTITY\",\"msg\":\"artifacts missing (model.yaml/model.onnx)\"}"; emit("/api/train/deploy", r.status); return r; }
         } catch (...) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\"}"; emit("/api/train/deploy", r.status); return r; }
       }
+      // helper: download from S3 (MinIO) using curl aws-sigv4 when possible
+      auto s3_get = [&](const std::string& s3uri, std::string* out) -> bool {
+        if (s3uri.rfind("s3://", 0) != 0) return false;
+        std::string repo = s3uri.substr(5);
+        std::string endpoint, bucket, key;
+        if (repo.rfind("http://", 0) == 0 || repo.rfind("https://", 0) == 0) {
+          auto pos = repo.find('/', repo.find("://") + 3);
+          if (pos != std::string::npos) {
+            endpoint = repo.substr(0, pos);
+            key = repo.substr(pos + 1);
+            auto p2 = key.find('/');
+            if (p2 != std::string::npos) { bucket = key.substr(0, p2); key = key.substr(p2 + 1); }
+          }
+        } else {
+          auto p = repo.find('/'); if (p != std::string::npos) { bucket = repo.substr(0, p); key = repo.substr(p + 1); } else { bucket = repo; key.clear(); }
+          const char* ep = std::getenv("AWS_ENDPOINT_URL_S3"); if (!ep) ep = std::getenv("AWS_S3_ENDPOINT"); if (!ep) ep = std::getenv("AWS_ENDPOINT_URL");
+          if (ep) endpoint = ep;
+        }
+        if (endpoint.empty() || bucket.empty() || key.empty()) return false;
+        std::string region = std::getenv("AWS_REGION")? std::getenv("AWS_REGION"): (std::getenv("S3_REGION")? std::getenv("S3_REGION"): "us-east-1");
+        const char* ak = std::getenv("AWS_ACCESS_KEY_ID"); if (!ak) ak = std::getenv("S3_ACCESS_KEY_ID");
+        const char* sk = std::getenv("AWS_SECRET_ACCESS_KEY"); if (!sk) sk = std::getenv("S3_SECRET_ACCESS_KEY");
+        std::ostringstream cmd; cmd << "curl -s --fail --connect-timeout 3 --max-time 30 ";
+        cmd << "--aws-sigv4 \"aws:amz:" << region << ":s3\" ";
+        if (ak && sk) { cmd << "-u '" << ak << ":" << sk << "' "; }
+        cmd << "'" << endpoint << "/" << bucket << "/" << key << "'";
+        std::string buf; FILE* fp = popen(cmd.str().c_str(), "r"); if (!fp) return false; char b[4096]; size_t n; while ((n=fread(b,1,sizeof(b),fp))>0) buf.append(b,n); int rc = pclose(fp); if (rc!=0) return false; if (out) *out = std::move(buf); return true;
+      };
       // 下载 manifest
       {
         controlplane::HttpResponse d;
-        std::string target = tb.prefix + "/api/train/artifacts/download?id=" + job + "&name=model.yaml";
-        if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &d, nullptr) || d.status/100!=2) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\"download manifest failed\"}"; emit("/api/train/deploy", r.status); return r; }
-        manifest = d.body;
+        bool got = false;
+        if (!s3_yaml_uri.empty()) { try { got = s3_get(s3_yaml_uri, &manifest); } catch (...) { got = false; } }
+        if (!got) {
+          std::string target = tb.prefix + "/api/train/artifacts/download?id=" + job + "&name=model.yaml";
+          if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &d, nullptr) || d.status/100!=2) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\"download manifest failed\"}"; emit("/api/train/deploy", r.status); return r; }
+          manifest = d.body;
+        }
         // 校验 manifest
         auto chk = controlplane::manifest::validate_yaml(manifest);
         if (!chk.ok) { nlohmann::json out; out["code"]="UNPROCESSABLE_ENTITY"; out["detail"]={{"code",chk.code},{"msg",chk.msg}}; if(!chk.diag.is_null()) out["detail"]["diag"]=chk.diag; r.status=422; r.body = out.dump(); emit("/api/train/deploy", r.status); return r; }
@@ -820,9 +853,13 @@ int main(int argc, char** argv) {
       // 下载 onnx 并触发 convert_upload
       {
         controlplane::HttpResponse d;
-        std::string target = tb.prefix + "/api/train/artifacts/download?id=" + job + "&name=model.onnx";
-        if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &d, nullptr) || d.status/100!=2) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\"download onnx failed\"}"; emit("/api/train/deploy", r.status); return r; }
-        onnx_bytes = std::move(d.body);
+        bool got = false;
+        if (!s3_onnx_uri.empty()) { try { got = s3_get(s3_onnx_uri, &onnx_bytes); } catch (...) { got = false; } }
+        if (!got) {
+          std::string target = tb.prefix + "/api/train/artifacts/download?id=" + job + "&name=model.onnx";
+          if (!controlplane::proxy_http_simple(tb.host, tb.port, "GET", target, headers, "", &d, nullptr) || d.status/100!=2) { r.status=502; r.body="{\"code\":\"BACKEND_ERROR\",\"msg\":\"download onnx failed\"}"; emit("/api/train/deploy", r.status); return r; }
+          onnx_bytes = std::move(d.body);
+        }
       }
       // Size gate (post-download) using actual bytes
       if (cfg.deploy_gates.size_mb_max > 0) {

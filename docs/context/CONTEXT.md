@@ -1,68 +1,56 @@
-# CONTEXT（2025-11-12）
+# CONTEXT（2025-11-13）
 
-## 背景
-- 前端页面“模型仓库/添加模型”在进行 ONNX→TensorRT 转换时，进度长期停留 5%，完成瞬间跳到 100%，缺少中间进度反馈，影响可用性与感知。
-- 新需求：在“模型仓库”中支持“删除模型”（仓库移除模型目录）。
+本文件汇总当前对话期间对“训练流水线（training pipeline）”与相关基础设施的架构决策、实现现状与接口清单，作为 M0–M2 里程碑的上下文基线。
 
-## 变更总览
-- 前端（web-front）
-  - 改进转换进度显示（“柔性推进”）：在后端事件稀疏时由前端小步推进，运行阶段上限 85%，上传阶段上限 99%；完成至 100%。兼容 progress 为 0–1 或 0–100 两种上报。
-  - 事件处理：SSE state/done 事件更新 phase 与 progress；uploading 阶段进度基线≥90%。
-  - 修正模板变量：补充 `convertLogs` 占位，避免引用未定义。
-  - 新增“删除模型”按钮（列表行与按 ID 操作栏），调用 CP `POST /api/repo/remove`。
-- 控制平面（controlplane）
-  - 新增路由：`POST /api/repo/remove { model }`，先尝试卸载（best-effort），再通过 gRPC 调用 VA 删除仓库目录。
-  - 新增 gRPC 客户端封装：`va_repo_remove_model`。
-- Video Analyzer（video-analyzer）
-  - Proto 扩展：新增 `RepoRemoveModel` RPC 及消息定义。
-  - gRPC 服务实现：`RepoRemoveModel` 在本地 FS 仓库删除 `<repo>/<model>` 目录（S3 删除暂未实现）。
+## 一、总体架构与目标
+- 组件分层：
+  - `video-analyzer`（VA，C++/gRPC）：推理、仓库、转换（ONNX→TensorRT plan）与运行时管理。
+  - `controlplane`（CP，C++/HTTP）：统一 API 网关与编排层；对外暴露 `/api/*`；通过 gRPC 调 VA，HTTP 反向代理 Trainer。
+  - `model-trainer`（Trainer Service，Python/FastAPI）：模型训练/评估与工件产出（ONNX、model.yaml），集成 MLflow 记录指标与工件；支持可选 S3/MinIO 上传。
+  - `web-front`：前端 UI，含训练页 `/training`（启动、监控、导入/部署）。
+  - 基础设施：MySQL（CP 数据）、MLflow Tracking、MinIO（对象存储，可选）、Redis（后续）。
+- 核心目标：将训练职责下沉至独立 Trainer 服务，CP 仅做代理/编排；以 MLflow 记录过程；产出符合仓库规范的 `model.yaml` 与 `model.onnx` 并一键导入部署。
 
-## 关键细节
-- 转换阶段（convert_upload）
-  - phase：created → running → uploading → done/failed。
-  - 控制面 SSE 转发：`/api/repo/convert/events?job=...`，事件 kind=state/done，字段：phase、progress（float）。
-- 运行阶段细化（建议，未落地）
-  - 可通过解析 trtexec 日志（当前被重定向到 /dev/null）细分 parse/build/tactics/serialize 等子阶段；保持 `phase=running`，仅细化 progress 与可选 detail 字段。
-- 删除模型的限制
-  - 仅支持本地文件系统仓库路径；S3/MinIO 删除未实现，返回错误提示。
-  - 删除前会尝试 `Unload`，避免 in-use 文件，失败不阻塞删除流程（best-effort）。
+## 二、关键改动（按 PR 结构化）
+- PR-1 数据层：新增 `train_jobs` 表与基础 CRUD（CP 内部）。
+- PR-2 编排：CP 移除子进程/docker 触发，改为代理外部 Trainer（`trainer.base_url`）。
+- PR-3 Manifest 预检：上传/加载前校验 `model.yaml`，422 时返回诊断。
+- PR-4 Trainer 骨架：分类训练（ResNet18），MLflow 记录，ONNX 导出与 manifest 生成，SSE 事件（state/metrics/done）。
+- PR-5 Infra：Compose 编排 `mysql/mlflow/minio/trainer/cp`；新增 mlflow 预装镜像（避免启动时在线安装）；CP 依赖 `trainer` 就绪；避免 “Unknown database 'mlflow'”。
+- PR-6 UI：新增 `/training` 页面（启动、列表、SSE、工件下载、导入并转换→自动加载）。
+- PR-7 部署与推广：
+  - CP 新增 `POST /api/train/deploy`（门槛 gates：`accuracy_min`、`size_mb_max`），流程：查询状态→拉取 `model.yaml` 校验并保存→下载 ONNX→调用 VA `convert_upload`（返回转换 SSE）。
+  - CP 新增别名历史/推广/回滚：`/api/models/aliases (GET/POST)`、`/api/models/aliases/history`、`/api/models/aliases/promote`、`/rollback`。
+  - CP 灰度发布最小实现：`/api/deploy/gray/start|status|events`，按 `alias` 解析到 triton 模型，分批对 pipeline/node 调用 `SetEngine + hotswap`。
+  - Trainer 工件元数据增强：`/api/train/artifacts` 返回 `size_mb` 与可选 `s3_uri`；支持将工件上传至 MinIO（可选）。
 
-## API 与路由
-- 新增
-  - CP HTTP：`POST /api/repo/remove { model }`
-  - VA gRPC：`RepoRemoveModel(RepoRemoveModelRequest) returns (RepoRemoveModelReply)`
-- 既有
-  - `POST /api/repo/convert_upload`
-  - `GET  /api/repo/convert/events?job=...`（SSE）
-  - `POST /api/repo/(load|unload|poll)`
+## 三、接口（摘要）
+- Trainer Service（FastAPI）
+  - `POST /api/train/start`、`GET /api/train/status|list`、`GET /api/train/events?id=...`（SSE）
+  - `GET /api/train/artifacts?id=...` → `[ { name, url, size_mb?, s3_uri? } ]`
+  - `GET /api/train/artifacts/download?id=...&name=model.onnx|model.yaml`
+- Control Plane（HTTP）
+  - 训练代理：`/api/train/start|status|list|artifacts|artifacts/download`（代理至 Trainer）
+  - 一键部署：`POST /api/train/deploy { job, model, version?, gates? }` → `events`（转换 SSE）
+  - 仓库：`/api/repo/upload|convert_upload|convert/events|load|unload|remove|config(GET/POST)`（含 manifest 预检）
+  - 别名：`/api/models/aliases(GET/POST)`、`/api/models/aliases/history`、`/promote`、`/rollback`
+  - 灰度：`/api/deploy/gray/start|status|events`
 
-## 受影响文件（摘录）
-- 前端
-  - `web-front/src/views/Models.vue`：进度柔性推进、UI 删除按钮与确认、事件处理优化。
-  - `web-front/src/api/cp.ts`：新增 `cp.repoRemove(model)`。
-- 控制平面
-  - `controlplane/src/server/main.cpp`：新增 `/api/repo/remove` 路由。
-  - `controlplane/include/controlplane/grpc_clients.hpp`、`controlplane/src/server/grpc_clients.cpp`：`va_repo_remove_model`。
-- VA 与 Proto
-  - `video-analyzer/proto/analyzer_control.proto`：`RepoRemoveModel` 定义。
-  - `video-analyzer/src/controlplane/api/grpc_server.cpp`：`RepoRemoveModel` 实现。
-- 备忘
-  - `docs/memo/2025-11-12.md`：记录进度优化与删除能力改动与测试建议。
+## 四、运行与配置
+- Compose 关键服务：`mysql`（挂载 `db/schema.sql` 与 `db/mlflow_init.sql`）、`mlflow`（预装镜像）、`minio` + `minio-mc`、`trainer`、`cp`、`va`、`web`。
+- 约束与依赖：
+  - CP 通过配置 `docker/config/cp/app.yaml` 中 `trainer.base_url: http://trainer:8088` 代理 Trainer。
+  - 部署门槛：`deploy.gates.accuracy_min/size_mb_max`（可被请求体覆盖）。
+  - Trainer 可选对象存储：通过环境变量 `AWS_*`、`TRAINER_S3_BUCKET/PREFIX` 连接 MinIO。
 
-## 构建与运行
-- 需全量重建 VA/CP（Proto 变更）。
-- 前端在 `web-front` 下 `npm run dev` 运行即可。
+## 五、验证流程（建议）
+1) 训练：前端 `/training` 填写配置 → Start → 观察 SSE 与 metrics → 生成工件。
+2) 导入与转换：下载 `model.yaml` 与 `model.onnx`；或在前端“一键导入并转换”，关注 `/api/repo/convert/events`。
+3) 一键部署（带门槛）：调用 `POST /api/train/deploy`，返回转换 SSE，完成后自动 `repo/load`。
+4) 灰度发布：配置 `canary` 别名 → `POST /api/deploy/gray/start`（指定 pipeline/node 列表、batch、间隔）→ 通过 `/events` 订阅进展 → 成功后 `aliases/promote` 切换 `prod`。
 
-## 测试建议
-1) 进度显示：上传 .onnx（平台 TensorRT），观察进度 5%→平滑至 ~85%→上传≥90%→100%。
-2) SSE 稀疏：仅 start/done 事件情况下，确认前端柔性推进不中断。
-3) progress 小数：后端上报 0–1 小数时换算为百分比正确。
-4) 删除（FS 仓库）：删除存在模型后，确认列表消失且仓库目录被移除。
-5) 删除（S3 仓库）：应提示删除未实现/失败（符合预期限制）。
-
-## 后续工作（建议）
-- 细化 running 子阶段（解析 trtexec 输出），提供更稳定的中间进度。
-- S3/MinIO 删除实现（ListObjectsV2 + BatchDelete）。
-- 弹窗统一使用 Element Plus MessageBox 与更明确的二次确认文案。
-- 观测性：记录审计日志与指标（删除、转换、失败率、SSE 连接）。
-
+## 六、已知风险与后续
+- VA 未运行时灰度计划会在 hotswap 报错（预期）；端到端灰度需 VA 在线。
+- `latency_p95_ms_max` 等门槛尚未落地；建议引入评估报告与指标聚合。
+- 前端灰度面板与计划管理 UI 待补充（目标：快速选择 pipeline/node 与回滚）。
+- 更严格的对象存储路径与鉴权策略待固化（版本化、保留策略）。
