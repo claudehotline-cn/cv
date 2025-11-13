@@ -36,3 +36,23 @@ pip install -r model-trainer/requirements.txt
 ### 配置模板
 参考 `model-trainer/configs/example-cls.yaml`，可通过 CLI 形如 `key=value` 的覆盖修改任何字段。
 
+### Docker 镜像（同仓库独立项目）
+
+- 构建镜像：
+```
+docker build -f docker/trainer/Dockerfile -t cv/trainer:latest .
+```
+
+- 运行（读取挂载的配置）：
+```
+docker run --rm \
+  -e MLFLOW_TRACKING_URI=http://localhost:5500 \
+  -v "$PWD/model-trainer/configs":/config:ro \
+  cv/trainer:latest -c /config/example-cls.yaml
+```
+
+- 与 CP 对接（可选）：将 CP_TRAINER_CMD 指向该镜像（需要按环境准备共享卷/路径）：
+```
+CP_TRAINER_CMD="docker run --rm -e MLFLOW_TRACKING_URI=http://mlflow:5500 cv/trainer:latest -c {config}"
+```
+说明：若以 docker 方式运行，需确保 `{config}` 文件对 docker 宿主可见（建议放置在共享卷目录）。
