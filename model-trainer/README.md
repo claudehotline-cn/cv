@@ -56,3 +56,18 @@ docker run --rm \
 CP_TRAINER_CMD="docker run --rm -e MLFLOW_TRACKING_URI=http://mlflow:5500 cv/trainer:latest -c {config}"
 ```
 说明：若以 docker 方式运行，需确保 `{config}` 文件对 docker 宿主可见（建议放置在共享卷目录）。
+
+### 通过 MLflow Projects 启动（不新建容器）
+
+- 在已安装依赖的环境中（或 cp 容器中）：
+```
+mlflow run model-trainer -P config=model-trainer/configs/example-cls.yaml --env-manager local
+```
+
+- 配合 CP（替换 CP_TRAINER_CMD）：
+```
+CP_TRAINER_CMD="mlflow run /app/model-trainer -P config={config} --env-manager local"
+```
+说明：
+- MLflow Tracking Server 不负责拉起训练作业；`mlflow run` 是本地/后端执行入口，需要在可执行环境内运行。
+- `--env-manager local` 表示复用当前环境（需预先安装依赖）。
