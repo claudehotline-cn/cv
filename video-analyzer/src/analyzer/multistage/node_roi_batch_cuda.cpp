@@ -87,7 +87,7 @@ bool NodeRoiBatchCuda::process(Packet& p, NodeContext& ctx) {
             auto err = va::analyzer::cudaops::letterbox_nv12_to_nchw_fp32(
                 roi_y, pitch_y, roi_uv, pitch_uv,
                 rw, rh, out_w_, out_h_, d_out,
-                scale, pad_x, pad_y, true,
+                scale, pad_x, pad_y, /*nearest=*/false,
                 reinterpret_cast<cudaStream_t>(ctx.stream));
             if (err != cudaSuccess) {
                 VA_LOG_C(::va::core::LogLevel::Warn, "ms.roi_batch.cuda") << "letterbox_nv12_to_nchw_fp32 error: " << (int)err;

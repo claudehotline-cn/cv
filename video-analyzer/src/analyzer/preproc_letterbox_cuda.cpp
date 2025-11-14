@@ -161,7 +161,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
                 out_w, out_h,
                 static_cast<float*>(device_ptr_),
                 scale, pad_x, pad_y,
-                true,
+                /*nearest=*/false,
                 stream);
             if (err == cudaSuccess) {
                 out.data = device_ptr_;
@@ -317,7 +317,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
         return true;
     }
 
-    // 启动 CUDA kernel（使用最近邻采样，后续可升级为双线性）
+    // 启动 CUDA kernel（默认使用双线性采样，使之与 CPU 路径更接近）
     #if defined(VA_HAS_CUDA_KERNELS)
     auto stream2 = (stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls());
     err = va::analyzer::cudaops::letterbox_bgr_to_nchw_fp32(
@@ -326,7 +326,7 @@ bool LetterboxPreprocessorCUDA::run(const core::Frame& in, core::TensorView& out
         out_w, out_h,
         static_cast<float*>(device_ptr_),
         scale, pad_x, pad_y,
-        true,
+        /*nearest=*/false,
         stream2);
     if (err != cudaSuccess)
     #endif
