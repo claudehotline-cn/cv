@@ -4,7 +4,6 @@
 
 - 控制平面与 VSM 协作
   - [Controlplane 设计（无桥接 + Restream 订阅）](../architecture/controlplane_design.md)
-  - [控制平面与 VSM 集成说明](./控制平面与VSM集成说明.md)
   - [Video Source Manager REST/SSE 与指标配置](./VSM_REST_SSE与指标配置.md)
   - [控制面错误码与语义](./控制面错误码与语义.md)
 - 协议与 API

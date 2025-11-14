@@ -197,3 +197,60 @@ service SourceControl {
   - `docs/design/subscription_lro/lro_subscription_design.md`
   - `docs/design/training/cv_训练流水线（training_pipeline）详细设计_v_1.md`
 
+## 附录 A：早期嵌入式控制平面与 VSM 集成雏形（历史）
+
+> 本附录基于历史文档《控制平面与 VSM 集成说明（阶段A雏形）》提炼要点，用于保留 VA 内嵌控制面阶段的背景信息。当前推荐架构为独立 `controlplane/` 进程，本附录仅做对照参考。
+
+### A.1 架构背景
+
+- 早期版本中，控制平面能力内嵌在 VA 进程中：
+  - 控制面目录：`video-analyzer/src/control_plane_embedded/`
+  - 提供最小 gRPC/REST 能力：Apply/Remove/Drain/HotSwap/GetStatus 等。
+  - 暴露 Prometheus `/metrics` 与部分调试 HTTP 接口。
+- VSM 作为独立进程，负责：
+  - RTSP 源管理与健康检查；
+  - 通过 gRPC `SourceControl` 与 VA 通信（Attach/Detach/WatchState/Update）。
+
+### A.2 关键目录与组件
+
+- VA 侧嵌入式控制面（已由独立 Controlplane 替代）：
+  - `interfaces.hpp`：Status/OpaquePtr/PlainPipelineSpec/IGraphAdapter/IExecutor 接口。
+  - `adapters/graph_adapter_yaml.*`：从 `config/graphs/*.yaml` 构建多阶段 Graph。
+  - `controllers/pipeline_controller.*`：封装 Apply/Remove/Drain/HotSwap/GetStatus 操作。
+  - `api/grpc_server.*`：`AnalyzerControl` gRPC 服务实现雏形。
+  - `exporters/prometheus_exporter.*`：导出 VA 控制面相关指标到 `/metrics`。
+  - `io/from_vsm_link.hpp`：与 VSM 的数据输入链路占位（可演进为共享内存/IPC/gRPC）。
+- VSM 侧：
+  - `proto/source_control.proto`：`SourceControl` gRPC 接口（Attach/Detach/GetHealth/WatchState/Update）。
+  - `src/app/*`：VSM 主程序与适配器实现。
+
+### A.3 配置与演进计划（摘要）
+
+- VA 配置示例（历史）：
+
+```yaml
+control_plane:
+  enabled: true
+  grpc_addr: "0.0.0.0:50051"
+  metrics_enabled: true
+```
+
+- 演进方向（当时的 B/C 阶段规划）：
+  - 统一管理 gRPC 与 proto：
+    - 在 `video-analyzer/proto/` 中维护 `analyzer_control.proto`、`pipeline.proto`。
+    - CMake 强制 `find_package(Protobuf)`、`find_package(gRPC)`，并通过 vcpkg 管理依赖。
+  - 执行器演进：
+    - 用可扩展 Runner 替换简单执行器，支持热切换与 drain。
+  - VSM 互通：
+    - 利用 `SourceControl` gRPC 提供源健康检查与启停能力；
+    - 向 VA 暴露的 `ToAnalyzerLink` 可按需要选择共享内存/IPC/gRPC。
+
+### A.4 与当前架构的关系
+
+- 当前独立 Controlplane 已接管大部分 HTTP 与协调能力：
+  - 前端只与 CP 通信，VA/VSM 通过 gRPC 接入 CP。
+  - 嵌入式控制面中的大部分职责已迁移到 `controlplane/src/server/*` 模块。
+- 保留本附录的目的：
+  - 追踪控制面能力从 VA 内嵌形态演进到独立 CP 的历史；
+  - 便于理解 `AnalyzerControl` 与 `SourceControl` 在 VA/VSM 中的起源及代码布局。
+
