@@ -1,12 +1,21 @@
 # 异步订阅补强设计（Async Subscription Hardening）
 
+> 状态说明（2025-11-14）：本设计以 VA 内部 `SubscriptionManager` + `/api/subscriptions` REST/SSE 为前提。
+> 当前代码已演进为“VA LRO Runner + 独立 Controlplane 的 `/api/subscriptions`”架构：
+>
+> - VA 侧订阅执行与指标由 LRO Runner 管理（`docs/design/subscription_lro/lro_subscription_design.md`）；
+> - Controlplane 负责对外 HTTP/SSE API 与 `cp_id` 状态维护（`docs/design/architecture/controlplane_design.md`）；
+> - SSE 事件通道在 Controlplane 中已预留路由，等待 VA gRPC `Watch` 接入后按本文件思路继续硬化。
+>
+> 下文关于排队/限流/取消/指标/告警的设计仍可作为后续增强的参考，但具体实现需结合上述最新架构。
+
 ## 背景与目标
 
 异步订阅（POST/GET/DELETE /api/subscriptions + SSE 事件流）已上线，可稳定创建/查询/取消，并输出基础指标。随着并发提升与长稳运行，需要在排队/限流、可取消性、缓存/预热、可观测、安全与 API 细节方面做“硬化”。目标：在高并发、抖动与重启等场景下，订阅链路保持可预期、可控与可观测。
 
 ## 范围
 
-- 服务端：SubscriptionManager、REST/SSE（/api/subscriptions*/events）、System Info、/metrics。 
+- 服务端：SubscriptionManager/LRO Runner、REST/SSE（/api/subscriptions*/events）、System Info、/metrics。 
 - 前端：AnalysisPanel 进度与时间线展示、SSE 断线重连/回退、取消按钮行为。 
 - 运维：配置（YAML+env）、指标/告警、必要的持久化（轻 WAL/Redis 可选）。
 

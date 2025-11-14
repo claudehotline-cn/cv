@@ -49,6 +49,35 @@ graph TD
   CP -- Metrics/Logs --> Grafana[Grafana/Prometheus]
 ```
 
+### 3.1 时序视图（概要）
+
+```mermaid
+sequenceDiagram
+  participant FE as Front-End
+  participant CP as ControlPlane
+  participant RUN as TrainRunner
+  participant TR as Trainer (Python)
+  participant ML as MLflow/MinIO
+  participant DB as MySQL(train_jobs)
+  participant VA as Video Analyzer
+
+  FE->>CP: POST /api/train/start (cfg)
+  CP->>RUN: create job + enqueue
+  RUN->>TR: 启动训练进程/容器
+  TR->>ML: 记录 runs/metrics/artifacts
+  TR-->>RUN: stdout JSON lines (metrics/artifact/gate/done)
+  RUN->>DB: 更新 train_jobs 状态/指标/工件摘要
+  RUN-->>CP: 推送事件 (SSE/LRO)
+  CP-->>FE: SSE: phase/metrics/artifact/gate
+  alt 满足门槛 & 需要上线
+    CP->>ML: 拉取工件 + manifest
+    CP->>VA: gRPC 导入/热更模型
+    CP->>DB: 更新 train_jobs (stage=staging/prod)
+  else 失败/未满足门槛
+    CP->>DB: 记录失败状态与错误
+  end
+```
+
 **形态**：
 - Phase-1：Trainer 由 CP 以**子进程**启动（最小闭环）。
 - Phase-2：Trainer 封装为 **Docker/K8s Job**（接口保持不变）。
@@ -481,4 +510,3 @@ deploy:
 ---
 
 > 本方案已对齐你现有仓库的组织与风格，保证**最小侵入**与**连续可演进**。若需要，我可以按此文档直接生成 **PR-1 ~ PR-4 的首版代码** 作为起步。
-

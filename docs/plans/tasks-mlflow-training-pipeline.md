@@ -77,6 +77,5 @@ PR-8 稳健化（M2）
 PR-1 → PR-2 → PR-4/PR-5（并行） → PR-3 → PR-6 → PR-7 → PR-8。
 
 ## 参考
-- 设计：`docs/design/cv_训练流水线（training_pipeline）详细设计_v_1.md`
+- 设计：`docs/design/training/cv_训练流水线（training_pipeline）详细设计_v_1.md`
 - 背景与路线图：`docs/context/CONTEXT.md`、`docs/context/ROADMAP.md`
-

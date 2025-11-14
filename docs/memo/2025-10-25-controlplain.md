@@ -3,7 +3,7 @@
 任务：根据 controlplain 设计与计划，梳理后续工作、未实现项，以及 VA 中嵌入式控制面/REST 的迁移边界。
 
 - 输入文档：
-  - docs/design/controlplain_design.md
+  - docs/design/architecture/controlplane_design.md
   - docs/plans/controlplain_plan.md
 
 - 现状结论：

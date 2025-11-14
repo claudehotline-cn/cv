@@ -1,6 +1,6 @@
 # WBS — 基于 MLflow 的模型训练流水线
 
-本文依据《docs/design/cv_训练流水线（training_pipeline）详细设计_v_1.md》分解实施工作，按里程碑（M0/M1/M2）与组件（CP/Trainer/前端/MLflow/基础设施）组织。
+本文依据《docs/design/training/cv_训练流水线（training_pipeline）详细设计_v_1.md》分解实施工作，按里程碑（M0/M1/M2）与组件（CP/Trainer/前端/MLflow/基础设施）组织。
 
 ## 1. 里程碑与范围
 - M0 最小闭环：训练→记录→导出→注册→导入仓库→VA 加载（staging）。
@@ -84,4 +84,3 @@ M2 稳健化
 - 资源争用 → 夜间优先队列、GPU 配额与隔离。
 - 凭据与安全 → 最小权限账号、Secret 注入、TLS。
 - SSE 稀疏 → 复用“柔性推进”提升可用感。
-

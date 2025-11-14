@@ -26,6 +26,65 @@
 - 回退链（建议）：
   - `tensorrt-native → triton → tensorrt(ORT-TRT) → cuda(ORT)`；Triton 不可用时自动降级本地会话，保障可用性。
 
+### 2.1 类图与时序图
+
+```mermaid
+classDiagram
+  class IModelSession {
+    <<interface>>
+    +loadModel(pathOrSpec)
+    +run(inputs: TensorView[]) ModelOutput[]
+    +getRuntimeInfo() EngineRuntimeInfo
+    +outputNames() string[]
+  }
+  class TritonGrpcModelSession {
+    -endpoint: string
+    -modelName: string
+    -modelVersion: string
+    -inputName: string
+    -outputNames: string[]
+    +loadModel(...)
+    +run(...)
+    +getRuntimeInfo()
+  }
+  class ModelSessionFactory {
+    +create(engine: EngineDescriptor) IModelSession*
+  }
+  class NodeModel {
+    -session: IModelSession*
+    +init(engine: EngineDescriptor)
+    +execute(inputs) outputs
+  }
+
+  IModelSession <|.. TritonGrpcModelSession
+  ModelSessionFactory --> IModelSession : create()
+  NodeModel --> IModelSession : uses
+```
+
+```mermaid
+sequenceDiagram
+  participant Node as NodeModel
+  participant Fac as ModelSessionFactory
+  participant Sess as TritonGrpcModelSession
+  participant TRT as Triton gRPC Server
+
+  Node->>Fac: create(engine{provider=triton,...})
+  Fac->>Sess: new TritonGrpcModelSession(engine)
+  Fac-->>Node: IModelSession*
+
+  Node->>Sess: loadModel(...)
+  Sess->>TRT: GetModelMetadata/GetModelConfig
+  TRT-->>Sess: metadata/config
+  Sess-->>Node: ok
+
+  loop each inference
+    Node->>Sess: run(inputs)
+    Sess->>TRT: Infer(request)
+    TRT-->>Sess: outputs
+    Sess-->>Node: ModelOutput[]
+  end
+```
+
 ## 3. API 与配置
 
 - provider 选择：

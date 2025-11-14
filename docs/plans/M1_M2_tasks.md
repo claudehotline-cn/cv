@@ -1,5 +1,5 @@
 ## Triton 集成（M0–M2）
-- [ ] 设计评审与范围确认（docs/design/triton_integration_design.md）
+- [ ] 设计评审与范围确认（docs/design/engine_multistage/triton_integration_design.md）
 - [ ] WBS 对齐（docs/plans/triton_wbs.md）
 - [ ] T0 功能（gRPC + Host 内存）
   - [ ] 新增 `TritonGrpcModelSession`（IModelSession 实现）

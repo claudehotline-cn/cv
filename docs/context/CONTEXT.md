@@ -1,119 +1,132 @@
-# CONTEXT（2025-11-14）
+# CONTEXT（2025-11-14，IOBinding & GPU 零拷贝）
 
-本文件梳理当前对话中围绕“训练流水线 + 模型仓库 + VA 视频输出画质调优”的关键结论，作为 M0–M2 规划与日后调试的基线上下文。
+本文件汇总当前对话中围绕“VA GPU 零拷贝推理 + Triton 引擎 + YOLO 检测框一致性 + 前端分析面板”的关键结论，作为训练/部署/调参与 M0–M2 路线图的基线上下文。
 
 ---
 
-## 一、系统角色与职责边界（回顾）
+## 一、系统角色与边界（更新版）
 
 - **video-analyzer（VA）**
-  - 负责推理运行时与多阶段分析：RTSP 解码（FFmpeg / NVDEC）、预处理、Triton In-Process 推理、后处理（NMS）、CUDA/CPU overlay。
-  - 输出路径：
-    - WebRTC DataChannel（兼容旧 Web 端）。
-    - WHEP（WebRTC-HTTP Egress）下行 H.264 轨，供 Web 前端 `WhepPlayer` 播放。
-  - 模型仓库：通过 Triton In-Process + S3/本地文件系统管理 TensorRT plan。
+  - 只对外暴露 gRPC；HTTP（/whep、/api/engine/set 等）在生产构建中可以禁用，由 CP 统一对外。
+  - 职责：RTSP 解码（NVDEC）、多阶段图执行（`analyzer_multistage_example`）、Triton In-Process 推理、后处理（YOLO decode + NMS）、CUDA/CPU overlay、WebRTC/WHEP 输出。
+  - 模型：通过 Triton + TensorRT plan（FP32/FP16）加载 YOLOv12x 等模型。
 
 - **controlplane（CP）**
-  - REST API 网关 + 编排层：负责训练代理、模型一键部署、灰度/别名管理、VA 控制。
-  - 提供：
-    - `/api/train/*`：训练作业启动、状态、工件查询。
-    - `/api/train/deploy`：一键部署（accuracy / size_mb 门槛，S3 优先拉取）。
-    - `/api/control/pipeline_mode`：切换 per-stream 分析模式（分析 / 原始）。
-    - `/whep`：反向代理 VA 的 WHEP 端点，处理 CORS 与 Location 重写。
-
-- **model-trainer（Trainer）**
-  - FastAPI 服务，负责分类任务训练、MLflow 集成与工件产出。
-  - 产出标准工件：`model.onnx` + `model.yaml`，可上传至 MinIO。
+  - 唯一 HTTP 入口：`/api/*`、`/whep`。
+  - 负责：
+    - 训练编排与模型一键部署（Trainer + MLflow + MinIO）。
+    - 通过 gRPC 调 VA：SetEngine、SubscribePipeline、ListPipelines 等。
+    - 通过 LRO `/api/subscriptions` 暴露订阅生命周期与 phase/timeline。
+    - `/whep` 反向代理 VA WHEP 接口，附加 CORS 与 Location 重写。
 
 - **web-front**
-  - Vue + Element Plus SPA。
-  - 训练页 `/training`：表单化配置 + SSE 监控。
-  - 分析面板：通过 `WhepPlayer` 播放分析后视频流，`useAnalysisStore` 统一管理 source/pipeline/graph/model 状态，并通过 CP 控制分析开关。
+  - Vue + Element Plus 单页应用。
+  - `Sources` / `Pipelines` 列表：通过 CP 的 `/api/sources`、`/api/pipelines` 探测可用源与 pipeline。
+  - `AnalysisPanel` 页面：
+    - 通过 CP `/api/subscriptions` 新建订阅，监控 SSE phase/timeline。
+    - 通过 `WhepPlayer` 播放 `whep_url` 对应的 H.264 轨。
+    - 通过 `/api/control/pipeline_mode` 控制“分析+overlay / raw 直通”。
 
-- **基础设施**
-  - MySQL：`cv_cp` 库，CP 训练作业与配置存储。
-  - MLflow + MinIO：训练 Run 及工件的追踪与存储（S3 Artifact Store）。
-  - Docker Compose：统一拉起 mysql/minio/mlflow/trainer/va/cp/web/vsm。
-
----
-
-## 二、视频分析与 WHEP 播放链路
-
-1. **订阅与 Pipeline 构建**
-   - 前端在 Pipelines 分析面板通过 `createSubscription` 创建订阅：
-     - `stream_id`：如 `camera_01`。
-     - `profile`：如 `det_720p`。
-     - CP 使用 restream 基址为 VA 拼接 RTSP 源 URI。
-   - VA 内部 `TrackManager` + `PipelineBuilder` 创建 pipeline：
-     - 解码源（NVDEC/FFmpeg）。
-     - 多阶段 graph（`analyzer_multistage_example`）：`pre → det → nms → ovl`。
-     - 编码器（FFmpeg H.264 / NVENC）。
-     - WebRTCDataChannel + WhepSessionManager 推流。
-
-2. **WHEP 交互**
-   - 前端 `WhepPlayer`：
-     - 构造 `RTCPeerConnection` + recvonly video transceiver，偏好 H.264 `packetization-mode=1`。
-     - 调用 CP `/whep`：
-       - `POST /whep?stream=<stream_id:profile>&variant=overlay` 发送 Offer SDP，获取 Answer SDP 与会话 Location。
-       - `PATCH` 发送 ICE 候选与结束标记。
-   - CP 将 `/whep` 请求转发到 VA REST，VA 内部 `WhepSessionManager` 基于 libdatachannel 建立 H.264 sendonly 轨，并通过 `feedFrame` 接受编码后 Annex-B H.264。
-
-3. **分析模式切换**
-   - 前端在分析面板通过 `setPipelineMode(stream_id, profile, analysis_enabled)` 控制：
-     - `true`：pipeline 进入“分析 + overlay”模式；
-     - `false`：同一 key 下仅编码原始帧（raw passthrough），供对比与暂停。
-   - VA `Pipeline::setAnalysisEnabled` 内部切换分支，并请求下一帧 IDR 以避免切换瞬间伪影。
+- **model-trainer 与基础设施**
+  - Trainer：FastAPI + PyTorch + MLflow，产出 `model.onnx` + `model.yaml`，上传 MinIO。
+  - MySQL：`cv_cp` 库存储源、pipeline、graph、训练/部署记录。
+  - MinIO + MLflow：统一存放模型及训练工件。
+  - Docker Compose：拉起 mysql/minio/mlflow/trainer/va/cp/web/vsm。
 
 ---
 
-## 三、编码链路与画质问题定位
+## 二、VA 推理与 GPU 零拷贝路径
 
-本次对话的核心是“有检测框，但前端播放画面发糊、有噪点”，看起来像编码或解码不佳。
+1. **零拷贝主链路**
+   - `source_nvdec_cuda`：使用 NVDEC 解码 RTSP，填充 `core::Frame.device`（NV12，on_gpu=true），不再强制生成 CPU BGR。
+   - `LetterboxPreprocessorCUDA`/`NodeRoiBatchCuda`：
+     - 对 NV12/BGR 使用双线性插值 + 114 填充 + letterbox，生成 NCHW FP32 tensor。
+     - 通过 `ctx.stream` 与 ORT/Triton 的 user_compute_stream 对齐，实现预处理与推理在同一 CUDA stream。
+   - `OrtModelSession / TensorRTModelSession`：
+     - 通过 engine.options 控制 provider（cuda/tensorrt/triton）、设备号、IoBinding 缓冲大小等。
+     - FP16/INT8 由 `trt_fp16`、`trt_int8` 控制；默认 FP32 校准一致性。
 
-1. **初始问题与根因**
-   - 早期逻辑中，当 profile 未显式设置 `encoder.codec` 时，`Application::buildEncoderConfig` 默认回退为 `jpeg`，与 WHEP/H.264 路径不匹配，存在潜在比特流错配风险。
-   - Docker 部署中 profile 的编码码率仅为 3500kbps（1280×720@30），对复杂监控场景而言主观画质偏糙、噪点明显。
-   - NVENC 默认 `rc=cbr` 且关闭空间/时间 AQ，进一步放大颗粒感。
-   - H.264 SPS/PPS 注入逻辑存在顺序 bug：先判断 `out_packet.keyframe` 再赋值，导致关键帧前不会重复注入参数集，重连/切流时解码更敏感。
+2. **IOBinding 与 decode/NMS**
+   - IOBinding 输入：统一视为 NCHW FP32 连续内存，避免 stride/pitch 带来的空洞。
+   - YOLO GPU decode：
+     - `yolo_decode_to_yxyx` / `_fp16` 在 GPU 上完成 `(cx,cy,w,h,score,cls)`→`yxyx` 的转换。
+     - 新增配置：
+       - `engine.options.yolo_decode_fp16=false`：无论模型输出为 F16/F32，一律在 GPU 上 half→float 后用 FP32 decode。
+       - `true`：若输出为 F16 则直接走 FP16 decode。
+   - GPU NMS：
+     - `nms_yxyx_per_class` 重写为“稳定排序（score/class/坐标/index） + bitmask + 顺序扫描”的确定性实现。
+     - IoU 定义、阈值比较（`> iou_thr`）与 CPU `nonMaxSuppression` 对齐，按类别做 NMS。
 
-2. **代码层修复**
-   - `video-analyzer/src/app/application.cpp`
-     - 默认 codec 改为 `h264`，仅在配置显式声明时启用 `jpeg`，确保 WHEP/H.264 路径统一。
-   - `video-analyzer/src/media/encoder_h264_ffmpeg.cpp`
-     - SPS/PPS 注入修复：先依据 `AV_PKT_FLAG_KEY` 设置 `out_packet.keyframe`，再判断是否拼接 `spspps_annexb_`，确保每个 IDR 都携带完整参数集。
-     - NVENC 码控调整：
-       - 默认 `rc=cbr_hq`，开启 `spatial_aq=1`、`temporal_aq=1`，默认 `aq-strength=8`。
-       - 通过环境变量 `VA_NVENC_RC/VA_NVENC_SPAQ/VA_NVENC_TAQ/VA_NVENC_AQ_STRENGTH` 允许覆盖。
-
-3. **部署配置与调优（docker）**
-   - `docker/config/va/profiles.yaml`
-     - `det_720p` / `seg_720p`：
-       - 分辨率：1280×720@30。
-       - 码率：从 3500 → 8000 → 10000 kbps 逐步拉升，主观画质明显改善。
-   - `docker/config/va/app.yaml`
-     - `overlay_alpha` 从 0.25 调低到 0.15，减少大面积填充带来的“脏感”，保留清晰边框。
-   - `docker/compose/docker-compose.yml`
-     - `va` 服务挂载 `docker/config/va`，通过 `docker compose restart va` 应用新配置。
-   - 运行日志确认：
-     - `[Encoder][nvenc] mapped preset=p3 rc=cbr_hq sp_aq=1 tm_aq=1 ...`
-     - `[Encoder] open OK codec='h264_nvenc' 1280x720@30 pix_fmt=NV12 bitrate_kbps=8000/10000`
-
-4. **效果与结论**
-   - 用户在分析面板确认：在 8Mbps 起画面已经“明显好很多”，10Mbps + 降低 overlay 透明度后进一步接近“源级流”主观清晰度。
-   - 画质问题主要归因于重编码配置（码率/AQ/overlay），而非解码错误或轨道错配；当前编码链路可作为后续调优基线。
+3. **CPU 路径（基线参考）**
+   - CPU 预处理：OpenCV 双线性 letterbox + NCHW FP32。
+   - CPU decode + NMS：`YoloDetectionPostprocessor` 在 host 上解码、按类贪心 NMS。
+   - CPU 路径被视为“参考真值”，用于对齐 GPU 零拷贝路径的行为。
 
 ---
 
-## 四、后续演进与约束
+## 三、CPU/GPU 检测框差异与校准
 
-- 画质与性能权衡：
-  - 720p 建议码率区间：8–10Mbps；如需 1080p 可按比例提升。
-  - 可按 profile 维度分别调节码率与分辨率，结合 GPU/带宽做分级策略。
+1. **现象**
+   - 在相同源、相同 graph（`analyzer_multistage_example`）、相同 NMS `conf/iou` 下：
+     - 某些帧 GPU 比 CPU 少 4–6 个框（典型是远处的小人/边缘目标）。
+     - 也有帧 GPU 比 CPU 多很多框（例如 `cpu=2,gpu=18`），说明 decode+NMS 行为既可能更“谨慎”也可能更“乐观”。
+   - 单纯统一 FP32 精度并不能消除差异，原因在于：
+     - Triton/TensorRT 前向本身使用不同算子和 tactic，logits 分布略有差异。
+     - NMS 是非线性的，边界上的 tiny 差异会放大成“有/无框”。
 
-- WHEP 与前端协同：
-  - 保持 `variant=overlay` 路径稳定，对 raw 需求采用 `pipeline_mode=false` + 同 key 推流策略。
-  - 前端 `WhepPlayer` 继续收集 WebRTC stats（fps/framesDecoded/framesDropped）作为画质与抖动的观测信号。
+2. **诊断脚本**
+   - `compare_cpu_gpu_boxes_detail.py`：
+     - 通过 CP `/api/control/set_engine` 切换 CPU-like（CPU NMS）和 GPU NMS 两种模式。
+     - 通过 CP `/api/subscriptions` 建立订阅，仅依赖 CP HTTP，不需要 VA REST。
+     - tail `logs/video-analyzer-release.log` 中 `ms.nms boxes=…`，构造 CPU/GPU boxes 时间序列，并打印 top diff 帧的 CPU/GPU 日志行。
+   - `suggest_gpu_nms_thresholds.py`：
+     - 从 graph YAML 中解析当前 NMS `conf/iou`。
+     - 在固定一段视频（如 120s）上统计：
+       - CPU/GPU 总 boxes；
+       - 每帧差异（mean_abs_diff）、CPU>0/GPU=0 的比例（miss_ratio）。
+     - 基于这些统计，对 GPU NMS 给出启发式建议：
+       - GPU 明显少框：conf 降一点、iou 升一点；
+       - GPU 明显多框：conf 升一点、iou 降一点；
+       - 输出一行可直接写回 `analyzer_multistage_example.yaml` 的 `params`。
 
-- 兼容性与可观测：
-  - 保持 `encoder.ffmpeg` 与 `transport.webrtc` 日志为 debug 级，便于线上快速定位编码/传输问题。
-  - Grafana 面板中建议新增编码器相关指标：实际输出码率、NVENC RC/AQ 配置命中率、帧丢弃率等。***
+3. **当前结论**
+   - 在当前 `det_720p` + `analyzer_multistage_example` + `conf=0.50,iou=0.55` 的组合下：
+     - GPU 总体 boxes 数略多于 CPU，部分帧存在少数漏检。
+     - 启发式脚本在 120s 样本上给出的建议仍是保持 `0.50/0.55`，说明当前阈值已较平衡。
+   - 对特定场景（小目标极多、误检成本可接受）仍可通过脚本进一步调低 conf、调高 iou，为 GPU 路径定制一套专用 `conf/iou`。
+
+---
+
+## 四、前端分析面板与 CPU/GPU 切换构想
+
+- 现状：
+  - `AnalysisPanel` 通过 `useAnalysisStore` 驱动：
+    - 创建订阅（CP `/api/subscriptions`）并等待 phase=ready。
+    - 自动将 pipeline 置于 raw 模式，然后通过 `setPipelineMode(..., analysis_enabled=true/false)` 控制 overlay。
+  - 当前前端尚未暴露“CPU NMS / GPU 零拷贝 NMS”开关。
+
+- 设计思路（后续工作）：
+  - 在 `AnalysisPanel` 工具栏新增一个 Switch，例如：
+    - `GPU 零拷贝` on/off，内部映射到 CP `/api/control/set_engine`：
+      - off：`use_cuda_preproc=false,use_cuda_nms=false`（CPU 预处理+NMS，推理仍在 GPU/Triton）。
+      - on：`use_cuda_preproc=true,use_cuda_nms=true` + engine.options 中的 `yolo_decode_fp16`/`trt_fp16`。
+  - 前端在切换时：
+    - 先停止当前订阅（cancelSubscription），更新 Engine 配置，再重新启动订阅与分析。
+    - 在 UI 上给出明确的“精度优先 / 性能优先”提示。
+
+---
+
+## 五、实践建议与约束
+
+- 对关键 profile（如看小人、看车牌）：
+  - 优先在 FP32 + CPU NMS 下校准出“基准行为”，再开启 Triton FP16 和 GPU NMS。
+  - 使用 `compare_cpu_gpu_boxes_detail.py` 和 `suggest_gpu_nms_thresholds.py` 对 GPU 路径做一次阈值重标定。
+
+- 精度与性能：
+  - 若 GPU 路径在关键场景仍明显弱于 CPU，可考虑：
+    - 保留 GPU 预处理 + 推理，但 NMS 统一回到 CPU `nonMaxSuppression`（只 D2H 少量候选框）。
+    - 或为该 profile 单独配置更宽松的 `conf/iou`。
+
+- 可观测与调试：
+  - 保持 `ms.node_model`、`ms.nms`、`preproc` 相关日志为 debug 级，以便快速定位 decode/NMS 行为。
+  - 在 Grafana 中增加：CPU/GPU boxes 数量、GPU decode candidates、miss_ratio 等指标，监控“降准”风险。***

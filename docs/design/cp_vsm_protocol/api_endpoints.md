@@ -1,6 +1,11 @@
-# REST API 指南
+# REST API 指南（VA 内嵌 HTTP）
 
-本文档列出了当前 `video-analyzer` 暴露的 HTTP 接口。旧版 `HTTPServer` 相关的 `/api/analysis/*`、`/api/sources*` 等端点已经废弃，请以此文档为准。
+> 说明：当前系统推荐通过独立控制平面（`controlplane/`）作为唯一对外 HTTP 入口  
+> （参见 `docs/design/architecture/controlplane_design.md`）。本文档仅列出 **Video Analyzer 进程自身** 暴露的 HTTP
+> 接口，主要用于本地调试、工具脚本以及由 Controlplane 代理访问。  
+> 控制平面提供的 `/api/subscriptions`、`/whep` 等端点不在此列。
+
+旧版 `HTTPServer` 相关的 `/api/analysis/*`、`/api/sources*` 等端点已经废弃，请以此文档为准。
 
 ## 模型管理
 

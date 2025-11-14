@@ -1,6 +1,11 @@
 # Video Analyzer WebRTC 通信协议
 
-本文档描述当前 `video-analyzer` 后端内置的 WebRTC 信令及数据通道约定。服务端使用 libdatachannel 建立点对点连接，通过 DataChannel 发送经 JPEG 编码的分析帧。所有信令消息均通过 WebSocket（默认 `ws://<host>:8083`）交换，格式为 JSON。
+> 状态说明（2025-11-14）：在引入 WHEP 媒体输出后，系统推荐默认通过 **WHEP（H.264 RTP）** 路径向前端推送画面，
+> DataChannel 仅作为兼容/调试手段。当前代码中，`VA_DISABLE_DATACHANNEL` 默认为启用（值为空时视为禁用 DataChannel），
+> 因此除非显式设置为 `0/false`，VA 仅会推送 WHEP 媒体轨。本文件仍主要描述内置 WebRTC DataChannel 方案，具体取舍请结合
+> Controlplane 的 `/whep` 代理与前端实际接入方式。
+
+本文档描述 `video-analyzer` 后端内置的 WebRTC 信令及数据通道约定。服务端使用 libdatachannel 建立点对点连接，通过 DataChannel 发送经 JPEG 编码的分析帧。所有信令消息均通过 WebSocket（默认 `ws://<host>:8083`）交换，格式为 JSON。
 
 ## 总体流程
 
@@ -11,7 +16,9 @@
 5. **Answer & ICE**：客户端发送 SDP `answer`，双方互换 `ice_candidate`。
 6. **DataChannel 建立**：命名为 `video` 的数据通道打开后，服务端按帧推送 JPEG 数据。
 
-REST 控制面（例如 `/api/subscribe`）负责创建/销毁管线；WebRTC 信令只负责媒体传输协商。
+REST/控制面（VA 的 `/api/subscribe` 或经 Controlplane 封装的 `/api/subscriptions`）负责创建/销毁管线；
+WebRTC 信令只负责媒体传输协商。对于推荐的 WHEP 路径，媒体协商与传输通过 HTTP + RTP 完成，前端通常不再直接消费
+DataChannel 上的 JPEG 帧。
 
 ## 信令报文示例
 

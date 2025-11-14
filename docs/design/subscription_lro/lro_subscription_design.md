@@ -34,6 +34,98 @@
   - `cancel(id)->bool` / `watch(id, on_event(Operation))`
   - `metricsSnapshot()->LroMetrics`
 
+## 类图与时序图
+
+```mermaid
+classDiagram
+  class Runner {
+    +addStep(step: Step)
+    +bindBucket(key: string, sem: CountingSemaphore*)
+    +create(spec_json: string, base_key: string, reuse: bool) string
+    +get(id: string) Operation
+    +cancel(id: string) bool
+    +watch(id: string, on_event(Operation))
+    +metricsSnapshot() LroMetrics
+  }
+  class Operation {
+    +id: string
+    +spec_json: string
+    +status.phase: string
+    +status.progress: int
+    +status.reason: string
+    +timeline: Timeline
+    +result_json: string
+  }
+  class Step {
+    +name: string
+    +cls: StepClass
+    +bucket_key: string
+    +timeout_ms: int
+    +cancelable: bool
+    +fn(Operation&, Context&)
+  }
+  class IStateStore {
+    <<interface>>
+    +put(op: Operation)
+    +get(id: string) Operation
+    +update(op: Operation)
+    +cas(op: Operation) bool
+  }
+  class AdmissionPolicy {
+    +acquire(bucket: string) bool
+    +release(bucket: string)
+  }
+  class IWalAdapter {
+    <<interface>>
+    +enqueue(op: Operation)
+    +complete(op: Operation)
+  }
+  class INotifier {
+    <<interface>>
+    +onEvent(op: Operation)
+  }
+
+  Runner --> Operation
+  Runner --> Step
+  Runner --> IStateStore : uses
+  Runner --> AdmissionPolicy : uses
+  Runner --> IWalAdapter : optional
+  Runner --> INotifier : optional
+```
+
+```mermaid
+sequenceDiagram
+  participant REST as VA REST(/api/subscriptions)
+  participant LRO as Runner
+  participant ADM as AdmissionPolicy
+  participant ST as IStateStore
+  participant STEPS as Steps
+
+  REST->>LRO: create(spec_json, base_key, use_existing)
+  LRO->>ST: put(Operation{phase=pending})
+  LRO-->>REST: id (subscription_id)
+
+  loop worker
+    LRO->>ADM: acquire(open_rtsp)
+    LRO->>STEPS: opening_rtsp(op)
+    STEPS-->>LRO: ok / error(reason)
+    LRO->>ADM: release(open_rtsp)
+
+    LRO->>ADM: acquire(load_model)
+    LRO->>STEPS: loading_model(op)
+    STEPS-->>LRO: ok / error(reason)
+    LRO->>ADM: release(load_model)
+
+    LRO->>ADM: acquire(start_pipeline)
+    LRO->>STEPS: starting_pipeline(op)
+    STEPS-->>LRO: ok(pipeline_key) / error(reason)
+    LRO->>ADM: release(start_pipeline)
+
+    LRO->>ST: update(op{phase=ready|failed,cancelled})
+    LRO-->>REST: watch/GET 返回最新 phase/timeline
+  end
+```
+
 ## Admission / 背压 / 公平 / 合并
 - AdmissionPolicy：多桶信号量（open_rtsp/load_model/start_pipeline）。
 - 公平出队：pending 为 deque，取窗口内（默认 8）首个 baseKey≠last_served 的任务；命中计 `rr_rotations_total`。

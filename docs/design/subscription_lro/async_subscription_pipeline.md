@@ -1,5 +1,14 @@
 # 异步订阅管线设计方案
 
+> 状态说明（2025-11-14）：本方案是早期围绕 VA 内部 `SubscriptionManager` 与 `/api/subscriptions` HTTP
+> 端点的设计草案。当前实现已经演进为：
+>
+> - VA 内部使用通用 LRO Runner 替代 `SubscriptionManager`（详见 `lro_subscription_design.md`）；
+> - 对外异步订阅入口统一由 Controlplane 提供：`POST/GET/DELETE /api/subscriptions`（参见 `controlplane_design.md`）；
+> - 旧的 VA 直接暴露 `/api/subscriptions` 的规划不再推进，现有 `/api/subscribe` 仅作为兼容/调试入口存在。
+>
+> 因此，本文件中的阶段拆分与限流思路仍具参考价值，但具体接口与组件名称以上述两份设计文档及实现代码为准。
+
 ## 背景与动机
 
 当前 `/api/subscribe` 同步执行完整的管线构建流程（RTSP 打开、模型加载、Pipeline 启动等），耗时 3–10 秒不等。由于所有逻辑都在处理请求的线程内完成，导致：
