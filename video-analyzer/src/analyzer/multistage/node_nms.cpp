@@ -32,6 +32,7 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     // Bridge graph-level thresholds到后处理（通过环境变量，避免大范围改动接口）
 // thresholds injected via setThresholds(conf_, iou_)
     bool use_cuda_nms = prefer_cuda_;
+    bool prefer_fp16  = false;
     if (ctx.engine_registry) {
         try {
             auto* em = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry);
@@ -41,12 +42,21 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
                 std::string v = itopt->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
                 use_cuda_nms = use_cuda_nms || (v=="1"||v=="true"||v=="yes"||v=="on");
             }
+            // GPU 精度配置：通过 engine.options 中的 yolo_decode_fp16 控制是否优先使用 FP16 decode
+            auto itprec = desc.options.find("yolo_decode_fp16");
+            if (itprec != desc.options.end()) {
+                std::string v = itprec->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
+                prefer_fp16 = (v=="1"||v=="true"||v=="yes"||v=="on");
+            }
         } catch (...) {}
     }
     // Decide code path. Prefer CUDA when requested; fallback to CPU on failure
     if (use_cuda_nms) {
 #ifdef USE_CUDA
-        va::analyzer::YoloDetectionPostprocessorCUDA gpu_pp; gpu_pp.setStream(ctx.stream); gpu_pp.setThresholds(conf_, iou_);
+        va::analyzer::YoloDetectionPostprocessorCUDA gpu_pp;
+        gpu_pp.setStream(ctx.stream);
+        gpu_pp.setPreferFp16(prefer_fp16);
+        gpu_pp.setThresholds(conf_, iou_);
         if (!gpu_pp.run(raw, p.letterbox, mo)) {
             auto lvl = va::analyzer::logutil::log_level_for_tag("ms.nms"); auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms");
             VA_LOG_THROTTLED(lvl, "ms.nms", thr) << "gpu_nms_run=false -> fallback cpu";

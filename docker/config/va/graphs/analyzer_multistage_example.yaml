@@ -17,7 +17,7 @@ analyzer:
       - name: nms
         type: post.yolo.nms
         # GPU NMS；按需求保持 0.65 置信度
-        params: { conf: "0.65", iou: "0.45", use_cuda: "1" }
+        params: { conf: "0.45", iou: "0.55", use_cuda: "1" }
       - name: ovl
         type: overlay.cuda
         params: { alpha: "0.2", thickness: "3" }

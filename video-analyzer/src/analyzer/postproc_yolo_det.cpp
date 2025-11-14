@@ -366,6 +366,32 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
 
                 float *d_boxes=nullptr, *d_scores=nullptr; int32_t* d_classes=nullptr; int *d_count=nullptr;
                 cudaStream_t st = reinterpret_cast<cudaStream_t>(stream_);
+                // 精度策略：若 prefer_fp16_ 且张量为 F16，则直接在 F16 上 decode；
+                // 否则统一在 GPU 上转换为 float32 再 decode。
+                float* d_logits_f32 = nullptr;
+                const float* decode_src = nullptr;
+                const bool use_fp16_path = prefer_fp16_ && (t.dtype == core::DType::F16);
+                size_t elem_count = static_cast<size_t>(num_det) * static_cast<size_t>(num_attrs);
+                if (!use_fp16_path) {
+                    if (t.dtype == core::DType::F16) {
+                        if (cudaMalloc(&d_logits_f32, elem_count * sizeof(float)) != cudaSuccess) {
+                            goto DECODE_CLEANUP_EARLY;
+                        }
+#if VA_HAS_CUDA_RUNTIME
+                        if (va::analyzer::cudaops::half_to_float(
+                                reinterpret_cast<const __half*>(t.data),
+                                d_logits_f32,
+                                static_cast<int>(elem_count),
+                                st) != cudaSuccess) {
+                            goto DECODE_CLEANUP_EARLY;
+                        }
+#endif
+                        decode_src = d_logits_f32;
+                    } else {
+                        decode_src = static_cast<const float*>(t.data);
+                    }
+                }
+
                 if (cudaMalloc(&d_boxes,  num_det * 4 * sizeof(float))==cudaSuccess &&
                     cudaMalloc(&d_scores, num_det * sizeof(float))==cudaSuccess &&
                     cudaMalloc(&d_classes,num_det * sizeof(int32_t))==cudaSuccess &&
@@ -390,7 +416,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                             << " thr=" << conf_thr
                             << " need_sigmoid=" << need_sigmoid;
                     }
-                    if (t.dtype == core::DType::F16) {
+                    if (use_fp16_path) {
                         kerr = va::analyzer::cudaops::yolo_decode_to_yxyx_fp16(
                             reinterpret_cast<const __half*>(t.data), num_det, num_attrs, num_attrs-4,
                             channels_first?1:0, conf_thr, need_sigmoid?1:0,
@@ -398,7 +424,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                             d_boxes, d_scores, d_classes, d_count, st);
                     } else {
                         kerr = va::analyzer::cudaops::yolo_decode_to_yxyx(
-                            static_cast<const float*>(t.data), num_det, num_attrs, num_attrs-4,
+                            decode_src, num_det, num_attrs, num_attrs-4,
                             channels_first?1:0, conf_thr, need_sigmoid?1:0,
                             pre_sx, pre_sy, scale, pad_x, pad_y, ow, oh,
                             d_boxes, d_scores, d_classes, d_count, st);
@@ -414,7 +440,7 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                                 << " normalized=" << std::boolalpha << normalized
                                 << " pre_sx=" << pre_sx << " pre_sy=" << pre_sy
                                 << " thr=" << conf_thr
-                                << " dtype=" << (t.dtype==core::DType::F16?"F16":"F32")
+                                << " dtype=" << (t.dtype==core::DType::F16?(use_fp16_path?"F16":"F16->F32"):"F32")
                                 << " ch_first=" << (channels_first?1:0)
                                 << " num_det=" << num_det << " num_attrs=" << num_attrs;
                         }
@@ -460,13 +486,16 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                         // 释放并返回
                         if (d_boxes) cudaFree(d_boxes); if (d_scores) cudaFree(d_scores);
                         if (d_classes) cudaFree(d_classes); if (d_count) cudaFree(d_count);
+                        if (d_logits_f32) cudaFree(d_logits_f32);
                         return true;
                     } else {
                         VA_LOG_C(::va::core::LogLevel::Warn, "ms.nms") << "gpu_decode kernel error code=" << int(kerr);
                     }
                 }
+DECODE_CLEANUP_EARLY:
                 if (d_boxes) cudaFree(d_boxes); if (d_scores) cudaFree(d_scores);
                 if (d_classes) cudaFree(d_classes); if (d_count) cudaFree(d_count);
+                if (d_logits_f32) cudaFree(d_logits_f32);
             }
         }
     }
