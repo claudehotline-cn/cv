@@ -5,6 +5,8 @@
 #include <functional>
 #include <numeric>
 #include <vector>
+#include <cstdint>
+#include <cstring>
 
 namespace {
 
