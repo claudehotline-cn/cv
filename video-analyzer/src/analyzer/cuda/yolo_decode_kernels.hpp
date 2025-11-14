@@ -28,6 +28,7 @@ namespace va::analyzer::cudaops {
 //   d_classes: device int32 array [M]
 //   d_count: device int, number of written detections (<= num_det)
 // Returns cudaError_t
+// 参数 use_sigmoid：1 表示对类别分数应用 sigmoid（logit→prob），0 表示假定已为概率直接使用。
 cudaError_t yolo_decode_to_yxyx(
     const float* d_out,
     int num_det,
@@ -35,6 +36,7 @@ cudaError_t yolo_decode_to_yxyx(
     int num_classes,
     int channels_first,
     float conf_thr,
+    int use_sigmoid,
     float pre_sx,
     float pre_sy,
     float scale,
@@ -56,6 +58,7 @@ cudaError_t yolo_decode_to_yxyx_fp16(
     int num_classes,
     int channels_first,
     float conf_thr,
+    int use_sigmoid,
     float pre_sx,
     float pre_sy,
     float scale,

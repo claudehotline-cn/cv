@@ -8,6 +8,7 @@ namespace va::analyzer::cudaops {
 
 __global__ void k_yolo_decode(
     const float* out, int N, int A, int K, int ch_first, float conf_thr,
+    int use_sigmoid,
     float pre_sx, float pre_sy,
     float scale, int pad_x, int pad_y, int ow, int oh,
     float* boxes, float* scores, int32_t* classes, int* count)
@@ -19,9 +20,10 @@ __global__ void k_yolo_decode(
     float best=0.0f; int bc=-1;
     for (int c=0;c<K;++c){
         float s = at(4+c);
-        // 自适应：对类别分数应用 sigmoid（logit -> prob），
-        // 若本身已是概率，二次压缩仍在 (0,1)，阈值 0.25 兼容。
-        s = 1.f / (1.f + expf(-s));
+        // 若配置为 logit→prob，则应用 sigmoid；否则假定已为概率直接使用。
+        if (use_sigmoid) {
+            s = 1.f / (1.f + expf(-s));
+        }
         if (s > best){ best=s; bc=c; }
     }
     if (bc<0 || best<conf_thr) return;
@@ -48,6 +50,7 @@ cudaError_t yolo_decode_to_yxyx(
     int num_classes,
     int channels_first,
     float conf_thr,
+    int use_sigmoid,
     float pre_sx,
     float pre_sy,
     float scale,
@@ -64,7 +67,7 @@ cudaError_t yolo_decode_to_yxyx(
     int threads = 256;
     int blocks = (num_det + threads - 1) / threads;
     k_yolo_decode<<<blocks, threads, 0, stream>>>(d_out, num_det, num_attrs, num_classes, channels_first, conf_thr,
-        pre_sx, pre_sy, scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
+        use_sigmoid, pre_sx, pre_sy, scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
     return cudaGetLastError();
 }
 
@@ -72,6 +75,7 @@ cudaError_t yolo_decode_to_yxyx(
 // FP16 杈撳叆锛坃_half锛夌増鏈細閫昏緫涓?float 鐗堟湰涓€鑷达紝浠呭皢璇诲彇杞负 __half2float
 __global__ void k_yolo_decode_fp16(
     const __half* out, int N, int A, int K, int ch_first, float conf_thr,
+    int use_sigmoid,
     float pre_sx, float pre_sy,
     float scale, int pad_x, int pad_y, int ow, int oh,
     float* boxes, float* scores, int32_t* classes, int* count)
@@ -83,7 +87,9 @@ __global__ void k_yolo_decode_fp16(
     float best=0.0f; int bc=-1;
     for (int c=0;c<K;++c){
         float s = at(4+c);
-        s = 1.f / (1.f + expf(-s));
+        if (use_sigmoid) {
+            s = 1.f / (1.f + expf(-s));
+        }
         if (s > best){ best=s; bc=c; }
     }
     if (bc<0 || best<conf_thr) return;
@@ -110,6 +116,7 @@ cudaError_t yolo_decode_to_yxyx_fp16(
     int num_classes,
     int channels_first,
     float conf_thr,
+    int use_sigmoid,
     float pre_sx,
     float pre_sy,
     float scale,
@@ -126,7 +133,7 @@ cudaError_t yolo_decode_to_yxyx_fp16(
     int threads = 256;
     int blocks = (num_det + threads - 1) / threads;
     k_yolo_decode_fp16<<<blocks, threads, 0, stream>>>(d_out, num_det, num_attrs, num_classes, channels_first, conf_thr,
-        pre_sx, pre_sy, scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
+        use_sigmoid, pre_sx, pre_sy, scale, pad_x, pad_y, orig_w, orig_h, d_boxes, d_scores, d_classes, d_count);
     return cudaGetLastError();
 }
 

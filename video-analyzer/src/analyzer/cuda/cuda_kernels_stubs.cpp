@@ -19,6 +19,7 @@ cudaError_t yolo_decode_to_yxyx(
     int /*num_classes*/,
     int /*channels_first*/,
     float /*conf_thr*/,
+    int /*use_sigmoid*/,
     float /*pre_sx*/,
     float /*pre_sy*/,
     float /*scale*/,
@@ -47,6 +48,7 @@ cudaError_t yolo_decode_to_yxyx_fp16(
     int /*num_classes*/,
     int /*channels_first*/,
     float /*conf_thr*/,
+    int /*use_sigmoid*/,
     float /*pre_sx*/,
     float /*pre_sy*/,
     float /*scale*/,
@@ -89,4 +91,3 @@ cudaError_t nms_yxyx_per_class(
 #endif // !VA_HAS_CUDA_KERNELS
 
 } // namespace va::analyzer::cudaops
-

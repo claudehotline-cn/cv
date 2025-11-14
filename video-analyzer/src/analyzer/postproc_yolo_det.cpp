@@ -289,15 +289,73 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
             if (dim1 < dim2) { channels_first = true; num_det = static_cast<int>(dim2); num_attrs = static_cast<int>(dim1); }
             else { channels_first = false; num_det = static_cast<int>(dim1); num_attrs = static_cast<int>(dim2); }
             if (num_attrs >= 5) {
-                // 规范化预缩放
+                const int num_classes = static_cast<int>(num_attrs - 4);
+                // 规范化预缩放（与 CPU 路径保持一致）
                 bool normalized = true;
                 if (t.dtype == core::DType::F32) {
-                    int sample = std::min(num_attrs, 8);
-                    std::vector<float> h(sample, 0.0f);
-                    const float* dptr = static_cast<const float*>(t.data);
-                    cudaMemcpy(h.data(), dptr, sample*sizeof(float), cudaMemcpyDeviceToHost);
-                    float mx = 0.0f; for (int i=0;i<sample;++i) mx = std::max(mx, std::abs(h[i]));
+                    int sample = std::min(num_attrs, 6);
+                    float mx = 0.0f;
+                    for (int a = 0; a < sample; ++a) {
+                        size_t idx = channels_first ? (size_t)a * (size_t)num_det : (size_t)a;
+                        float v = 0.0f;
+                        cudaMemcpy(&v, static_cast<const float*>(t.data) + idx, sizeof(float), cudaMemcpyDeviceToHost);
+                        mx = std::max(mx, std::abs(v));
+                    }
                     normalized = (mx <= 1.2f);
+                }
+                // 判定是否需要对类别分数做 sigmoid（与 CPU 路径保持一致）
+                bool need_sigmoid = true;
+                if (num_classes > 0) {
+                    float minv = 1e9f, maxv = -1e9f;
+                    int probe = std::min(num_classes, 6);
+                    if (t.dtype == core::DType::F32) {
+                        for (int c = 0; c < probe; ++c) {
+                            int attr = 4 + c;
+                            size_t idx = channels_first ? (size_t)attr * (size_t)num_det : (size_t)attr;
+                            float v = 0.0f;
+                            cudaMemcpy(&v, static_cast<const float*>(t.data) + idx, sizeof(float), cudaMemcpyDeviceToHost);
+                            minv = std::min(minv, v);
+                            maxv = std::max(maxv, v);
+                        }
+                    } else if (t.dtype == core::DType::F16) {
+                        auto h2f = [](uint16_t h)->float {
+                            uint32_t s = (h & 0x8000u) << 16;
+                            uint32_t e = (h & 0x7C00u) >> 10;
+                            uint32_t f = (h & 0x03FFu);
+                            uint32_t out_e, out_f;
+                            if (e == 0) {
+                                if (f == 0) { out_e = 0; out_f = 0; }
+                                else {
+                                    e = 1; while ((f & 0x0400u) == 0) { f <<= 1; e--; }
+                                    f &= 0x03FFu;
+                                    out_e = e + (127 - 15);
+                                    out_f = f << 13;
+                                }
+                            } else if (e == 31) { // Inf/NaN
+                                out_e = 255; out_f = f ? (f << 13) : 0;
+                            } else {
+                                out_e = e + (127 - 15);
+                                out_f = f << 13;
+                            }
+                            uint32_t out = s | (out_e << 23) | out_f;
+                            float r;
+                            std::memcpy(&r, &out, sizeof(float));
+                            return r;
+                        };
+                        const uint16_t* dhalf = reinterpret_cast<const uint16_t*>(t.data);
+                        for (int c = 0; c < probe; ++c) {
+                            int attr = 4 + c;
+                            size_t idx = channels_first ? (size_t)attr * (size_t)num_det : (size_t)attr;
+                            uint16_t hv = 0;
+                            cudaMemcpy(&hv, dhalf + idx, sizeof(uint16_t), cudaMemcpyDeviceToHost);
+                            float v = h2f(hv);
+                            minv = std::min(minv, v);
+                            maxv = std::max(maxv, v);
+                        }
+                    }
+                    if (minv >= -0.2f && maxv <= 1.2f) {
+                        need_sigmoid = false;
+                    }
                 }
                 const float pre_sx = normalized ? static_cast<float>(meta.input_width)  : 1.0f;
                 const float pre_sy = normalized ? static_cast<float>(meta.input_height) : 1.0f;
@@ -327,17 +385,20 @@ bool YoloDetectionPostprocessorCUDA::run(const std::vector<core::TensorView>& ra
                             << " dtype=" << (t.dtype==core::DType::F16?"F16":"F32")
                             << " normalized=" << std::boolalpha << normalized
                             << " pre_sx=" << pre_sx << " pre_sy=" << pre_sy
-                            << " thr=" << conf_thr;
+                            << " thr=" << conf_thr
+                            << " need_sigmoid=" << need_sigmoid;
                     }
                     if (t.dtype == core::DType::F16) {
                         kerr = va::analyzer::cudaops::yolo_decode_to_yxyx_fp16(
                             reinterpret_cast<const __half*>(t.data), num_det, num_attrs, num_attrs-4,
-                            channels_first?1:0, conf_thr, pre_sx, pre_sy, scale, pad_x, pad_y, ow, oh,
+                            channels_first?1:0, conf_thr, need_sigmoid?1:0,
+                            pre_sx, pre_sy, scale, pad_x, pad_y, ow, oh,
                             d_boxes, d_scores, d_classes, d_count, st);
                     } else {
                         kerr = va::analyzer::cudaops::yolo_decode_to_yxyx(
                             static_cast<const float*>(t.data), num_det, num_attrs, num_attrs-4,
-                            channels_first?1:0, conf_thr, pre_sx, pre_sy, scale, pad_x, pad_y, ow, oh,
+                            channels_first?1:0, conf_thr, need_sigmoid?1:0,
+                            pre_sx, pre_sy, scale, pad_x, pad_y, ow, oh,
                             d_boxes, d_scores, d_classes, d_count, st);
                     }
                     if (kerr == cudaSuccess) {
