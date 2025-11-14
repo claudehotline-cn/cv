@@ -4,8 +4,7 @@
 
 - 引擎与推理会话
   - [TensorRT 引擎设计](./tensorrt_engine.md)
-  - [Triton gRPC 集成设计](./triton_integration_design.md)
-  - [Triton In-Process 集成设计](./triton_inprocess_integration.md)
+  - [Triton In-Process 集成与 gRPC 回退设计](./triton_inprocess_integration.md)
 - 多阶段 Graph 框架与节点
   - [多阶段 Graph 详细设计](./multistage_graph_详细设计.md)
 - 执行路径与性能

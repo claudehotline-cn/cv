@@ -209,3 +209,146 @@ sequenceDiagram
 - 工厂仅新增分支，不破坏既有 provider 选择链；
 - 单测覆盖至少：请求构建、错误映射、Host/GPU 输出切换、回退链路。
 
+## 附录 A：Triton gRPC 集成设计概要（回退与对照）
+
+> 本附录基于历史文档 `triton_integration_design.md`，总结 `provider: triton`（外部 Triton gRPC 模式）的设计要点。当前 In‑Process 模式是推荐路径，gRPC 模式主要作为回退与对照方案存在。
+
+### A.1 整体目标与范围
+
+- 目标：
+  - 以最小侵入方式在 VA 内接入 Triton Inference Server（gRPC 客户端），对接现有 `IModelSession/ModelSessionFactory/NodeModel` 抽象。
+  - 保持多阶段 Graph 与上下游节点不变，仅新增 `IModelSession` 实现与工厂映射。
+  - M0 优先保证功能正确与可观测；M1 引入 CUDA Shared Memory 降低拷贝；M2 视需要演进到 Triton Ensemble。
+- 范围：
+  - `provider: triton`（或 `triton-grpc`）对应的 `TritonGrpcModelSession`。
+  - 外部 `tritonserver` 服务的部署、配置与回退链路。
+
+### A.2 抽象对齐与类图
+
+- 核心抽象：
+  - `IModelSession`：统一 `loadModel/run/getRuntimeInfo/outputNames`；
+  - `ModelSessionFactory`：根据 `EngineDescriptor` 决定具体 provider；
+  - `NodeModel`：多阶段 Graph 中的模型节点，只依赖 `IModelSession`；
+  - `TensorView/ModelOutput`： VA 内部张量抽象与结果类型。
+- gRPC 实现：
+  - `TritonGrpcModelSession`：`IModelSession` 的一类实现，封装 Triton C++ gRPC Client（`grpc_client.h`）。
+  - 通过 `ModelSessionFactory` 的 provider 字段（`triton`/`triton-grpc`）创建。
+
+```mermaid
+classDiagram
+  class IModelSession {
+    <<interface>>
+    +loadModel(pathOrSpec)
+    +run(inputs: TensorView[]) ModelOutput[]
+    +getRuntimeInfo() EngineRuntimeInfo
+    +outputNames() string[]
+  }
+  class TritonGrpcModelSession {
+    -endpoint: string
+    -modelName: string
+    -modelVersion: string
+    -inputName: string
+    -outputNames: string[]
+    +loadModel(...)
+    +run(...)
+    +getRuntimeInfo()
+  }
+  class ModelSessionFactory {
+    +create(engine: EngineDescriptor) IModelSession*
+  }
+  class NodeModel {
+    -session: IModelSession*
+    +init(engine: EngineDescriptor)
+    +execute(inputs) outputs
+  }
+
+  IModelSession <|.. TritonGrpcModelSession
+  ModelSessionFactory --> IModelSession : create()
+  NodeModel --> IModelSession : uses
+```
+
+### A.3 调用时序与数据流（gRPC）
+
+- 加载阶段：
+  - `NodeModel` 通过 `ModelSessionFactory` 创建 `TritonGrpcModelSession`，调用 `loadModel()`。
+  - 会话连接外部 Triton Server，调用 `GetModelMetadata/GetModelConfig` 并缓存输入/输出名与 dtype/shape。
+- 推理阶段：
+  - 每次推理 `NodeModel.run()` 调用会话 `run(inputs)`；
+  - 会话构造 `InferInput/InferRequestedOutput`，使用 Host 内存或 CUDA SHM 作为载体；
+  - 通过 gRPC `Infer` 发起请求，得到 `InferResult`，再映射为 `ModelOutput[]`/`TensorView`。
+
+```mermaid
+sequenceDiagram
+  participant Node as NodeModel
+  participant Fac as ModelSessionFactory
+  participant Sess as TritonGrpcModelSession
+  participant TRT as Triton gRPC Server
+
+  Node->>Fac: create(engine{provider=triton,...})
+  Fac->>Sess: new TritonGrpcModelSession(engine)
+  Fac-->>Node: IModelSession*
+
+  Node->>Sess: loadModel(...)
+  Sess->>TRT: GetModelMetadata/GetModelConfig
+  TRT-->>Sess: metadata/config
+  Sess-->>Node: ok
+
+  loop each inference
+    Node->>Sess: run(inputs)
+    Sess->>TRT: Infer(request)
+    TRT-->>Sess: outputs
+    Sess-->>Node: ModelOutput[]
+  end
+```
+
+### A.4 配置与运行选项
+
+- provider 选择：
+  - `engine.provider: triton`（或 `triton-grpc`）。
+- 关键选项（`engine.options`）：
+  - `triton_url: triton:8001`               # gRPC 端点
+  - `triton_model: yolov12x`                # 模型名
+  - `triton_model_version: ""`              # 空=latest
+  - `triton_input: images`                  # 输入名称
+  - `triton_outputs: dets,proto`            # 输出名称（逗号分隔）
+  - `triton_timeout_ms: 2000`               # RPC 超时
+  - `triton_no_batch: false`                # 是否保留 batch 维
+  - `triton_shm_cuda: false`                # 是否启用 CUDA Shared Memory
+  - `triton_cuda_shm_bytes: 0`              # 预留容量（0=按首次输入推断）
+  - `triton_shm_server_device_id`           # 服务器侧设备 ID 覆盖（解决 GPU 映射不一致）
+  - `triton_shm_fail_threshold`             # 连续失败阈值，超过后自动禁用 SHM
+- NodeModel YAML：仍使用 `model` 节点；在 Triton 模式下路径字段可忽略，由 Engine.options 描述模型信息。
+
+### A.5 指标、日志与部署
+
+- 指标（Prometheus）：
+  - `va_triton_rpc_seconds`：推理请求耗时直方图（可按 model/op 分桶）；
+  - `va_triton_rpc_failed_total{reason=...}`：失败计数（create/invalid_input/mk_input/mk_output/infer/no_output/timeout/unavailable/other）。
+- 日志：
+  - `[triton] call model=<name> bytes_in=<n> bytes_out=<m> ms=<x>`，失败时输出指纹与建议（例如检查 CUDA_VISIBLE_DEVICES 或 SHM 配置）。
+- Compose 与部署（示意）：
+  - 在 docker-compose 中增加 `triton` 服务，挂载模型仓库 `/models`，暴露 8001（gRPC）与 8000（HTTP，可选）。
+  - VA 容器通过同一网络访问 `triton:8001`，并在 `engine.options` 中设置 `triton_url`。
+  - GPU 资源通过 `gpus: all` 或设备映射注入；必要时设置 `ipc: host` 以启用 CUDA IPC。
+
+### A.6 分阶段推进与风险
+
+- 推进阶段（示意）：
+  - M0：gRPC + Host 内存路径，先保证功能与回退链；确保 `FPS`、`va_frame_latency_ms` 与 CPU/原生 TRT 路径基础对齐；
+  - M1：启用 CUDA SHM 输入/输出，在固定输入尺寸下验证时延与吞吐收益，并处理 SHM 生命周期与重注册问题；
+  - M2：支持动态形状/批量、可选 Ensemble、熔断与健康探测，并形成基准报告。
+- 典型风险与缓解：
+  - Triton Client 依赖与打包复杂 → 使用统一基镜像或 third_party 子模块管理；
+  - CUDA SHM 生命周期与资源泄漏 → 通过容量复用与严格的注册/注销流程管理，在异常时回退到 Host 路径；
+  - dtype/布局错误 → 依赖 ModelMetadata/Config，统一 FP16/FP32 映射与输出顺序校验。
+
+### A.7 基准与验收参考
+
+- 指标：
+  - `FPS`、`va_frame_latency_ms` P50/P95；
+  - `va_triton_rpc_seconds`、`va_triton_rpc_failed_total`；
+  - 冷启加载时长纳入 `va_model_session_load_seconds`。
+- 验收：
+  - 推理链路稳定（boxes>0，无 NVENC/NVDEC 相关异常）；
+  - Triton 不可用时回退链生效（自动切换到本地 TensorRT/ORT provider）；
+  - 在目标场景下，相对纯 ORT/本地 TRT 路径有明确的资源/可运维收益评估。

@@ -16,7 +16,7 @@
 
 - 概要设计：`docs/design/architecture/整体架构设计.md`
 - VA 详细设计：`docs/design/architecture/video_analyzer_详细设计.md`
-- 推理与引擎：`docs/design/engine_multistage/tensorrt_engine.md`、`docs/design/engine_multistage/triton_integration_design.md`、`docs/design/engine_multistage/triton_inprocess_integration.md`
+- 推理与引擎：`docs/design/engine_multistage/tensorrt_engine.md`、`docs/design/engine_multistage/triton_inprocess_integration.md`
 - 性能与保护：见本说明书第 6 章“非功能性与调试建议”
 - YOLO/NMS 与多阶段图：`docs/design/engine_multistage/multistage_graph_详细设计.md`
 
