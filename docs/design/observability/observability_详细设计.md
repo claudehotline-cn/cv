@@ -178,3 +178,50 @@ sequenceDiagram
 - 所有新增指标在设计前应评估基数与写入频率。
 
 本说明书与 `LOGGING.md`、`METRICS.md` 一起构成观测层的详细设计基线；任何涉及新增日志模块、指标或调整标签/TTL 策略的改动，应同步更新相应文档。 
+
+## 7 Grafana / Prometheus 集成（前端视角概览）
+
+### 7.1 目标与流向
+
+- 在不改动现有后端数据路径的前提下，为前端 Observability 页面接入 Grafana/Prometheus：
+  - 统一通过 Controlplane 反向代理访问 Grafana 与 Prometheus，避免跨域与直连；
+  - 支持 iframe 嵌入面板、PromQL 驱动图表以及 PNG 渲染兜底。
+
+整体流向：
+
+- 前端 → CP：
+  - `/grafana/**` → CP 反代到 Grafana（子路径 `/grafana`）；
+  - `/prom/**` → CP 反代到 Prometheus。
+- CP → Grafana/Prometheus：
+  - 在 `app.yaml` 中配置 `grafana.base` 与 `prom.base`，利用已有 HTTP 代理模块转发请求。
+
+### 7.2 CP 与前端配置要点
+
+- Grafana 容器（示例环境变量）：
+  - `GF_SECURITY_ALLOW_EMBEDDING=true`
+  - `GF_AUTH_ANONYMOUS_ENABLED=true`
+  - `GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer`
+  - `GF_SERVER_SERVE_FROM_SUB_PATH=true`
+  - `GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana`
+- Controlplane `app.yaml` 中新增：
+  - `grafana.base: http://127.0.0.1:3000/grafana`
+  - `prom.base: http://127.0.0.1:9090`
+- 前端 Vite 代理：
+  - `'/grafana' -> http://127.0.0.1:18080`
+  - `'/prom' -> http://127.0.0.1:18080`
+
+### 7.3 前端页面对接模式
+
+- Overview 页面（推荐 iframe 嵌入）：
+  - 为每个核心面板配置 `uid/panelId/range/refresh` 等参数；
+  - iframe URL 示例：`/grafana/d-solo/${uid}?orgId=1&panelId=${id}&from=${from}&to=${to}&theme=light&refresh=${refresh}`。
+- Metrics 页面（PromQL 驱动）：
+  - 通过 CP 代理调用 `/prom/api/v1/query(_range)` 获取即时值与时序；
+  - 使用 ECharts/AntV 等在前端绘制图表。
+- PNG 渲染兜底：
+  - 可选安装 `grafana-image-renderer` 插件，通过 `/grafana/render/d-solo/...` 获取 PNG，在卡片中 `<img>` 展示。
+
+### 7.4 权限与安全
+
+- 内网环境可使用匿名只读（Viewer），对外环境建议使用 API Key 或公开 Dashboard 链接；
+- 通过 CP 统一出口增加 Referer/Origin 白名单与 Header 过滤，控制访问来源。

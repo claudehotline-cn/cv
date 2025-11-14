@@ -17,8 +17,8 @@
 - 概要设计：`docs/design/architecture/整体架构设计.md`
 - VA 详细设计：`docs/design/architecture/video_analyzer_详细设计.md`
 - 推理与引擎：`docs/design/engine_multistage/tensorrt_engine.md`、`docs/design/engine_multistage/triton_integration_design.md`、`docs/design/engine_multistage/triton_inprocess_integration.md`
-- 性能与保护：`docs/design/engine_multistage/perf_guards.md`
-- YOLO/NMS 与多阶段图：`docs/design/engine_multistage/多阶段Graph条件边与join使用指南.md`、`docs/design/engine_multistage/多阶段ReID平滑节点.md`
+- 性能与保护：见本说明书第 6 章“非功能性与调试建议”
+- YOLO/NMS 与多阶段图：`docs/design/engine_multistage/multistage_graph_详细设计.md`
 
 ## 2 总体数据流
 
@@ -158,7 +158,18 @@ sequenceDiagram
 
 ## 6 非功能性与调试建议
 
-### 6.1 性能与资源
+### 6.1 性能与资源防护
+
+- 订阅路径资源防护：
+  - 使用 `open_rtsp/load_model/start_pipeline` 等 bucket 控制重资源阶段并发度，避免 GPU/解码拥塞；
+  - 为队列设置上限（默认 1024，后续可通过配置或环境变量调整），超限直接返回 429（queue_full），防止无限堆积；
+  - 通过幂等 key 重用 in-flight 或 ready 的订阅任务（`use_existing`），减少重复构建。
+- Backpressure 与 Retry-After：
+  - 根据队列长度与各阶段槽位估算推荐重试时间（1–60s），映射为 HTTP `Retry-After` 头；
+  - 结合 `va_backpressure_retry_after_seconds` 等指标监控队列健康度。
+- TTL 与清理：
+  - 为终态订阅保留一定 TTL（默认 900s），后台清理线程周期性回收过期记录；
+  - 失败原因归一化为有限集合（如 open_rtsp_/load_model_/subscribe_failed/cancelled/unknown），便于指标聚合。
 
 - 利用 CUDA stream 与异步 kernel 调用，提高 pipeline 并行度；
 - 合理设置 batch 大小与模型输入尺寸，在精度与吞吐之间平衡；

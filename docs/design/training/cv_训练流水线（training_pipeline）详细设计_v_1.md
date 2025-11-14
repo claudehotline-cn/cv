@@ -509,4 +509,110 @@ deploy:
 
 ---
 
-> 本方案已对齐你现有仓库的组织与风格，保证**最小侵入**与**连续可演进**。若需要，我可以按此文档直接生成 **PR-1 ~ PR-4 的首版代码** 作为起步。
+> 本方案已对齐你现有仓库的组织与风格，保证**最小侵入**与**连续可演进**。
+
+---
+
+## 附录 A：MLflow 训练流水线设计概览
+
+本附录整合原 `mlflow-training-pipeline.md` 的主要内容，对 MLflow 训练流水线的角色、部署与配置做补充说明。
+
+### A.1 角色与架构
+
+- MLflow Tracking Server：记录训练 run 的参数、指标与工件，并可选使用 Model Registry 管理模型版本。
+- Controlplane（CP）：通过 `/api/train/*` 编排训练任务，并根据训练结果触发导出、注册与上线流程（详见正文 §3–§7）。
+- Model Trainer（Python 服务/进程）：执行具体训练脚本，并用 MLflow Python 客户端上报 metrics/artifacts。
+- Video Analyzer（VA）：作为在线推理引擎，由 CP 负责从 MLflow/MinIO 拉取模型并加载。
+
+### A.2 MLflow 部署与存储
+
+- Backend Store：
+  - 推荐 MySQL，示例：`mysql+pymysql://root:123456@192.168.50.78:13306/mlflow`；
+  - 开发阶段可使用 SQLite 本地文件（如 `mlruns.db`）。
+- Artifact Store：
+  - 起步可用本地目录（如 `logs/mlruns`），后续建议迁移到 S3/MinIO，与本设计中对象存储方案保持一致。
+- Tracking Server 示例启动命令（Linux）：
+
+```bash
+mlflow server \
+  --backend-store-uri mysql+pymysql://root:123456@192.168.50.78:13306/mlflow \
+  --default-artifact-root file:/home/chaisen/projects/cv/logs/mlruns \
+  --host 0.0.0.0 --port 5500
+```
+
+### A.3 训练配置与日志
+
+- 训练配置示例参见正文 §6 与 §10 的请求体；推荐通过 YAML/Hydra 配置管理数据、模型、训练、导出与注册参数；
+- 使用 `mlflow.start_run()` + `mlflow.log_params/metrics/artifacts` 记录训练过程：
+  - 关键指标包括 `val/accuracy`、`val/mAP`（检测）、`train/loss`、学习率等；
+  - 保存最佳权重、导出 ONNX/TensorRT plan 等工件；
+  - 日志粒度应控制在“每若干 step 或每个 epoch”，避免大量碎片化日志。
+
+### A.4 CP 与 Trainer 协作
+
+- CP 通过 LRO Runner 管理训练任务：
+  - `POST /api/train/start` 创建 job 并启动 Trainer 子进程或容器；
+  - Trainer 将 JSON 行写入 stdout（metrics/artifact/gate/log），CP 解析后更新 `train_jobs` 表，并通过 SSE 推送事件；
+  - 训练结束后，CP 根据 manifest 与 gates 决定是否触发导出/注册/上线。
+
+更多细节可结合正文 §3–§8 与本附录一起阅读。
+
+---
+
+## 附录 B：MinIO S3 模型仓库设计概览
+
+本附录整合原 `minio_s3_model_repository.md` 的要点，聚焦 VA/Triton 使用 MinIO/S3 作为模型仓库的配置要点与拓扑。
+
+### B.1 架构与集成方式
+
+- 模型仓库：
+  - 使用 MinIO 提供 S3 兼容对象存储，作为 Triton/VA 的模型源；
+  - 仓库路径建议为 `s3://cv-models/models`，内部结构遵循 Triton 模型仓库规范。
+- VA 与 Triton：
+  - 在 In-Process 或外部 Triton 部署中，将 `repo_path` 指向 S3（MinIO），通过环境变量提供 S3 凭据与端点；
+  - 控制平面负责设置引擎选项 `triton_repo/triton_model/triton_model_version` 并驱动模型加载/切换。
+
+### B.2 环境变量与配置
+
+在 VA/Triton 容器中，为 S3/MinIO 接入注入环境变量（开发环境样例）：
+
+- 凭据与区域：
+  - `AWS_ACCESS_KEY_ID` / `S3_ACCESS_KEY_ID`
+  - `AWS_SECRET_ACCESS_KEY` / `S3_SECRET_ACCESS_KEY`
+  - `AWS_REGION` 或 `S3_REGION`（任意非空值）
+  - `AWS_EC2_METADATA_DISABLED=true`（避免从 EC2 metadata 拉凭据）
+- 端点与 TLS：
+  - `S3_ENDPOINT=http://minio:9000`
+  - `S3_USE_HTTPS=0`、`S3_VERIFY_SSL=0`（开发环境禁用 TLS 与证书校验）
+  - `S3_ADDRESSING_STYLE=path`
+  - 可选 `AWS_ENDPOINT_URL`/`AWS_ENDPOINT_URL_S3` 指向 MinIO。
+
+生产环境中应开启 TLS（`S3_USE_HTTPS=1`、`S3_VERIFY_SSL=1`）并配置可信 CA。
+
+### B.3 Docker Compose 示例（概念性）
+
+- MinIO 服务：
+  - 使用官方 `minio/minio` 镜像，暴露 9000（API）/9001（控制台），并初始化 bucket（如 `cv-models`）；
+- Video Analyzer 服务：
+  - 在 Compose 中通过 `environment` 注入上述 S3 相关变量；
+  - 使用配置或控制平面传入 `VA_TRITON_REPO/VA_TRITON_MODEL/VA_TRITON_MODEL_VERSION` 等参数。
+
+Triton 模型目录结构推荐：
+
+```
+cv-models/
+  models/
+    <model_name>/
+      <version>/
+        model.onnx | model.plan | model.pt
+        config.pbtxt
+```
+
+### B.4 故障排查要点
+
+- 权限错误（403）：检查 MinIO 用户/策略以及 AK/SK 是否正确；
+- 地址样式问题（301/404）：确保 `S3_ADDRESSING_STYLE=path`；
+- TLS 相关错误：在启用 HTTPS 时提供正确的 CA 证书，并检查端口与协议；
+- 加载慢或超时：首次从 S3 拉取大模型耗时较长，可配合本地缓存（例如 TensorRT engine 缓存）与合理的 repository poll 配置。
+
+模型仓库的更细节配置可结合 Triton 官方文档与实际部署需要进行扩展，本附录仅给出与本仓库集成相关的关键要点。 
