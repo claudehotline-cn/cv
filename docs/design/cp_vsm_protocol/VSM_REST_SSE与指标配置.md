@@ -80,6 +80,7 @@ Video Source Manager：REST/SSE 与指标配置
   - vsm_sse_max_connections（gauge）配置的上限连接数
 
 常用 PromQL：
+
 - 当前连接数：vsm_sse_connections
 - 拒绝速率（近 5 分钟）：rate(vsm_sse_rejects_total[5m])
 - 在线会话数：sum(vsm_stream_up)
@@ -95,24 +96,23 @@ Video Source Manager：REST/SSE 与指标配置
 五、curl 示例
 
 添加会话：
-curl -X POST -H "Content-Type: application/json" "http://127.0.0.1:7071/api/source/add" -d '{"id":"camera_01","uri":"rtsp://127.0.0.1:8554/camera_01","profile":"det_720p","model_id":"det:yolo:v12l"}'
+curl -X POST -H "Content-Type: application/json" "<http://127.0.0.1:7071/api/source/add>" -d '{"id":"camera_01","uri":"rtsp://127.0.0.1:8554/camera_01","profile":"det_720p","model_id":"det:yolo:v12l"}'
 
 更新模型：
-curl -X POST -H "Content-Type: application/json" "http://127.0.0.1:7071/api/source/update" -d '{"id":"camera_01","model_id":"det:yolo:v12x"}'
+curl -X POST -H "Content-Type: application/json" "<http://127.0.0.1:7071/api/source/update>" -d '{"id":"camera_01","model_id":"det:yolo:v12x"}'
 
 删除会话：
-curl -X POST -H "Content-Type: application/json" "http://127.0.0.1:7071/api/source/delete" -d '{"id":"camera_01"}'
+curl -X POST -H "Content-Type: application/json" "<http://127.0.0.1:7071/api/source/delete>" -d '{"id":"camera_01"}'
 
 REST 长轮询：
-curl "http://127.0.0.1:7071/api/source/watch?since=0&timeout_ms=25000"
+curl "<http://127.0.0.1:7071/api/source/watch?since=0&timeout_ms=25000>"
 
 SSE 订阅：
-curl -N "http://127.0.0.1:7071/api/source/watch_sse?since=0&keepalive_ms=10000&max_sec=300"
+curl -N "<http://127.0.0.1:7071/api/source/watch_sse?since=0&keepalive_ms=10000&max_sec=300>"
 
 指标查看：
-curl "http://127.0.0.1:9101/metrics"
+curl "<http://127.0.0.1:9101/metrics>"
 
 六、与 VA 的协同（提示）
 
 VA 端可通过 VA_VSM_ADDR 指定 gRPC 地址，并在 app.yaml/环境变量配置 keepalive/backoff/debounce。VSM 的 WatchState（gRPC）或 REST/SSE 事件将触发 VA 侧的自动订阅、切流、切模动作，详见 VA 日志 [ControlPlane] 前缀输出与 /metrics 的 va_cp_auto_* 计数器。
-
