@@ -169,18 +169,17 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
             nv_preset = settings.preset.c_str();
         }
         av_opt_set(codec_ctx_->priv_data, "preset", nv_preset, 0);
-        // Prefer higher quality rate control at same bitrate
-        // Rate control and AQ. Default to conservative settings to avoid颗粒/抖动。
-        // Allow runtime override via environment variables.
+        // Prefer更高质量的码控与 AQ 以减少噪点/颗粒；允许环境变量覆盖。
         const char* env_rc = std::getenv("VA_NVENC_RC");
         const char* env_spaq = std::getenv("VA_NVENC_SPAQ");
         const char* env_taq = std::getenv("VA_NVENC_TAQ");
         const char* env_aqs = std::getenv("VA_NVENC_AQ_STRENGTH");
-        std::string rc = env_rc ? std::string(env_rc) : std::string("cbr");
+        // 默认使用 cbr_hq + 空间/时间 AQ；外部如需极限低延迟/低算力可通过环境变量降级。
+        std::string rc = env_rc ? std::string(env_rc) : std::string("cbr_hq");
         av_opt_set(codec_ctx_->priv_data, "rc", rc.c_str(), 0);
-        const char* spaq = env_spaq ? env_spaq : "0";
-        const char* taq  = env_taq  ? env_taq  : "0";
-        const char* aqs  = env_aqs  ? env_aqs  : "0";
+        const char* spaq = env_spaq ? env_spaq : "1";
+        const char* taq  = env_taq  ? env_taq  : "1";
+        const char* aqs  = env_aqs  ? env_aqs  : "8";
         av_opt_set(codec_ctx_->priv_data, "spatial_aq", spaq, 0);
         av_opt_set(codec_ctx_->priv_data, "temporal_aq", taq, 0);
         // 仅在有效范围 [1,15] 时设置 aq-strength；默认(0)不设置，避免 FFmpeg 报错
@@ -628,7 +627,9 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
     }
 
     out_packet.data.assign(packet_->data, packet_->data + packet_->size);
-    // If keyframe and SPS/PPS available, prepend them to ensure decoders can start
+    out_packet.keyframe = (packet_->flags & AV_PKT_FLAG_KEY) != 0;
+    // If keyframe and SPS/PPS available, prepend them to ensure decoders can reliably启动
+    // （原实现先判断 out_packet.keyframe 再赋值，导致永远不生效）
     if (out_packet.keyframe && spspps_ready_ && !spspps_annexb_.empty()) {
         std::vector<uint8_t> joined;
         joined.reserve(spspps_annexb_.size() + out_packet.data.size());
@@ -636,7 +637,6 @@ bool FfmpegH264Encoder::encode(const va::core::Frame& frame, Packet& out_packet)
         joined.insert(joined.end(), out_packet.data.begin(), out_packet.data.end());
         out_packet.data.swap(joined);
     }
-    out_packet.keyframe = (packet_->flags & AV_PKT_FLAG_KEY) != 0;
     out_packet.pts_ms = frame.pts_ms;
     av_packet_unref(packet_);
     return true;

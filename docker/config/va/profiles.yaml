@@ -12,7 +12,7 @@ profiles:
       width: 1280
       height: 720
       fps: 30
-      bitrate_kbps: 3500
+      bitrate_kbps: 10000
       bframes: 0
       zero_latency: true
       preset: veryfast
@@ -34,7 +34,7 @@ profiles:
       width: 1280
       height: 720
       fps: 30
-      bitrate_kbps: 3500
+      bitrate_kbps: 10000
       bframes: 0
       zero_latency: true
       preset: veryfast

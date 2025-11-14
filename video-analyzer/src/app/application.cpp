@@ -1163,7 +1163,8 @@ va::core::EncoderConfig Application::buildEncoderConfig(const ProfileEntry& prof
     cfg.profile = profile.enc_profile;
     std::string codec = profile.enc_codec;
     if (codec.empty()) {
-        codec = "jpeg";
+        // 默认回退到 H.264：JPEG 仅在配置显式声明时启用，避免对 WebRTC/WHEP 传输路径误用 JPEG 导致解码异常或画质严重劣化。
+        codec = "h264";
     }
     cfg.codec = codec;
     cfg.zero_latency = profile.enc_zero_latency;

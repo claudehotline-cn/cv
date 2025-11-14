@@ -19,7 +19,7 @@ engine:
     graph_id: analyzer_multistage_example
     warmup_runs: auto
     overlay_thickness: 3
-    overlay_alpha: 0.25
+    overlay_alpha: 0.15
     trt_fp16: true
     trt_int8: false
     trt_workspace_mb: 1024
