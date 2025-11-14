@@ -202,8 +202,14 @@ __global__ void k_letterbox_nv12_to_nchw_fp32(
                 sampleUV(cx0, cy1, U01, V01);
                 sampleUV(cx1, cy1, U11, V11);
 
-                float Uv = w00*U00 + w10*U10 + w01*U01 + w11*U11;
-                float Vv = w00*V00 + w10*V10 + w01*V01 + w11*V11;
+                // 使用基于 chroma 坐标的小数部分重新计算 UV 权重，避免复用 Y 的 w00..w11 造成色度偏差
+                float cw00 = (1.0f - fx_c) * (1.0f - fy_c);
+                float cw10 = fx_c * (1.0f - fy_c);
+                float cw01 = (1.0f - fx_c) * fy_c;
+                float cw11 = fx_c * fy_c;
+
+                float Uv = cw00*U00 + cw10*U10 + cw01*U01 + cw11*U11;
+                float Vv = cw00*V00 + cw10*V10 + cw01*V01 + cw11*V11;
 
                 nv12_to_bgr(Yv, Uv, Vv, B, G, R);
             }
