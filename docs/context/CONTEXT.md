@@ -1,132 +1,135 @@
-# CONTEXT（2025-11-14，IOBinding & GPU 零拷贝）
+# CONTEXT（2025-11-15，全局架构与文档重构）
 
-本文件汇总当前对话中围绕“VA GPU 零拷贝推理 + Triton 引擎 + YOLO 检测框一致性 + 前端分析面板”的关键结论，作为训练/部署/调参与 M0–M2 路线图的基线上下文。
-
----
-
-## 一、系统角色与边界（更新版）
-
-- **video-analyzer（VA）**
-  - 只对外暴露 gRPC；HTTP（/whep、/api/engine/set 等）在生产构建中可以禁用，由 CP 统一对外。
-  - 职责：RTSP 解码（NVDEC）、多阶段图执行（`analyzer_multistage_example`）、Triton In-Process 推理、后处理（YOLO decode + NMS）、CUDA/CPU overlay、WebRTC/WHEP 输出。
-  - 模型：通过 Triton + TensorRT plan（FP32/FP16）加载 YOLOv12x 等模型。
-
-- **controlplane（CP）**
-  - 唯一 HTTP 入口：`/api/*`、`/whep`。
-  - 负责：
-    - 训练编排与模型一键部署（Trainer + MLflow + MinIO）。
-    - 通过 gRPC 调 VA：SetEngine、SubscribePipeline、ListPipelines 等。
-    - 通过 LRO `/api/subscriptions` 暴露订阅生命周期与 phase/timeline。
-    - `/whep` 反向代理 VA WHEP 接口，附加 CORS 与 Location 重写。
-
-- **web-front**
-  - Vue + Element Plus 单页应用。
-  - `Sources` / `Pipelines` 列表：通过 CP 的 `/api/sources`、`/api/pipelines` 探测可用源与 pipeline。
-  - `AnalysisPanel` 页面：
-    - 通过 CP `/api/subscriptions` 新建订阅，监控 SSE phase/timeline。
-    - 通过 `WhepPlayer` 播放 `whep_url` 对应的 H.264 轨。
-    - 通过 `/api/control/pipeline_mode` 控制“分析+overlay / raw 直通”。
-
-- **model-trainer 与基础设施**
-  - Trainer：FastAPI + PyTorch + MLflow，产出 `model.onnx` + `model.yaml`，上传 MinIO。
-  - MySQL：`cv_cp` 库存储源、pipeline、graph、训练/部署记录。
-  - MinIO + MLflow：统一存放模型及训练工件。
-  - Docker Compose：拉起 mysql/minio/mlflow/trainer/va/cp/web/vsm。
+本文件汇总当前对话中围绕“整体架构设计、订阅/LRO 管线、推理与多阶段 Graph、协议与存储设计、设计文档重构”的关键结论，作为理解本仓库及后续路线图的统一上下文。
 
 ---
 
-## 二、VA 推理与 GPU 零拷贝路径
+## 一、系统与仓库概览
 
-1. **零拷贝主链路**
-   - `source_nvdec_cuda`：使用 NVDEC 解码 RTSP，填充 `core::Frame.device`（NV12，on_gpu=true），不再强制生成 CPU BGR。
-   - `LetterboxPreprocessorCUDA`/`NodeRoiBatchCuda`：
-     - 对 NV12/BGR 使用双线性插值 + 114 填充 + letterbox，生成 NCHW FP32 tensor。
-     - 通过 `ctx.stream` 与 ORT/Triton 的 user_compute_stream 对齐，实现预处理与推理在同一 CUDA stream。
-   - `OrtModelSession / TensorRTModelSession`：
-     - 通过 engine.options 控制 provider（cuda/tensorrt/triton）、设备号、IoBinding 缓冲大小等。
-     - FP16/INT8 由 `trt_fp16`、`trt_int8` 控制；默认 FP32 校准一致性。
-
-2. **IOBinding 与 decode/NMS**
-   - IOBinding 输入：统一视为 NCHW FP32 连续内存，避免 stride/pitch 带来的空洞。
-   - YOLO GPU decode：
-     - `yolo_decode_to_yxyx` / `_fp16` 在 GPU 上完成 `(cx,cy,w,h,score,cls)`→`yxyx` 的转换。
-     - 新增配置：
-       - `engine.options.yolo_decode_fp16=false`：无论模型输出为 F16/F32，一律在 GPU 上 half→float 后用 FP32 decode。
-       - `true`：若输出为 F16 则直接走 FP16 decode。
-   - GPU NMS：
-     - `nms_yxyx_per_class` 重写为“稳定排序（score/class/坐标/index） + bitmask + 顺序扫描”的确定性实现。
-     - IoU 定义、阈值比较（`> iou_thr`）与 CPU `nonMaxSuppression` 对齐，按类别做 NMS。
-
-3. **CPU 路径（基线参考）**
-   - CPU 预处理：OpenCV 双线性 letterbox + NCHW FP32。
-   - CPU decode + NMS：`YoloDetectionPostprocessor` 在 host 上解码、按类贪心 NMS。
-   - CPU 路径被视为“参考真值”，用于对齐 GPU 零拷贝路径的行为。
+- **业务目标**：接入多路 RTSP 视频源，执行可配置的多阶段视觉分析（检测/跟踪/ReID 等），以 WebRTC/WHEP 向浏览器实时回传叠加画面，并提供训练与模型上线能力。
+- **主要子项目与职责**：
+  - `video-analyzer`（VA）：RTSP 解码（NVDEC/FFmpeg）、多阶段 Graph 执行、GPU 零拷贝推理（TensorRT/Triton In-Process）、后处理与叠加、H.264/NVENC 编码、WHEP 输出，对内暴露 `AnalyzerControl` gRPC 与少量调试 HTTP。
+  - `controlplane`（CP）：唯一对外 HTTP 入口，负责 `/api/*` 与 `/whep`，对接 VA/VSM/Trainer，管理订阅 LRO、训练与模型仓库、控制与观测接口。
+  - `video-source-manager`（VSM）：管理 RTSP 源配置，通过 gRPC `SourceControl` 与 CP 协作，并以 Restream 方式发布稳定 RTSP 端点，暴露 REST/SSE 供观测。
+  - `web-front`：Vue+TS 前端，提供 Sources/Pipelines/AnalysisPanel/Training 等页面，仅访问 CP HTTP 与 `/whep`。
+  - `model-trainer`：训练服务（FastAPI+PyTorch+MLflow），产出 ONNX/TensorRT plan 与 manifest，结合 MinIO/MySQL/MLflow 构成训练与部署闭环。
+- **基础设施**：MySQL（`cv_cp`）、Redis（可选）、MinIO、MLflow、Prometheus/Grafana、GPU（推理+NVENC/NVDEC）。
 
 ---
 
-## 三、CPU/GPU 检测框差异与校准
+## 二、控制平面与订阅/LRO 总体设计
 
-1. **现象**
-   - 在相同源、相同 graph（`analyzer_multistage_example`）、相同 NMS `conf/iou` 下：
-     - 某些帧 GPU 比 CPU 少 4–6 个框（典型是远处的小人/边缘目标）。
-     - 也有帧 GPU 比 CPU 多很多框（例如 `cpu=2,gpu=18`），说明 decode+NMS 行为既可能更“谨慎”也可能更“乐观”。
-   - 单纯统一 FP32 精度并不能消除差异，原因在于：
-     - Triton/TensorRT 前向本身使用不同算子和 tactic，logits 分布略有差异。
-     - NMS 是非线性的，边界上的 tiny 差异会放大成“有/无框”。
+订阅与播放从“控制平面与订阅”视角的整体结构如下：
 
-2. **诊断脚本**
-   - `compare_cpu_gpu_boxes_detail.py`：
-     - 通过 CP `/api/control/set_engine` 切换 CPU-like（CPU NMS）和 GPU NMS 两种模式。
-     - 通过 CP `/api/subscriptions` 建立订阅，仅依赖 CP HTTP，不需要 VA REST。
-     - tail `logs/video-analyzer-release.log` 中 `ms.nms boxes=…`，构造 CPU/GPU boxes 时间序列，并打印 top diff 帧的 CPU/GPU 日志行。
-   - `suggest_gpu_nms_thresholds.py`：
-     - 从 graph YAML 中解析当前 NMS `conf/iou`。
-     - 在固定一段视频（如 120s）上统计：
-       - CPU/GPU 总 boxes；
-       - 每帧差异（mean_abs_diff）、CPU>0/GPU=0 的比例（miss_ratio）。
-     - 基于这些统计，对 GPU NMS 给出启发式建议：
-       - GPU 明显少框：conf 降一点、iou 升一点；
-       - GPU 明显多框：conf 升一点、iou 降一点；
-       - 输出一行可直接写回 `analyzer_multistage_example.yaml` 的 `params`。
+```mermaid
+flowchart LR
+  WEB[Web-Front SPA] -->|"POST/GET/DELETE /api/subscriptions"| CP[Controlplane HTTP API]
+  WEB -->|"SSE /api/subscriptions/:id/events"| CP
+  WEB -->|"WHEP /whep"| CP
 
-3. **当前结论**
-   - 在当前 `det_720p` + `analyzer_multistage_example` + `conf=0.50,iou=0.55` 的组合下：
-     - GPU 总体 boxes 数略多于 CPU，部分帧存在少数漏检。
-     - 启发式脚本在 120s 样本上给出的建议仍是保持 `0.50/0.55`，说明当前阈值已较平衡。
-   - 对特定场景（小目标极多、误检成本可接受）仍可通过脚本进一步调低 conf、调高 iou，为 GPU 路径定制一套专用 `conf/iou`。
+  subgraph CP_ZONE["Controlplane（控制平面）"]
+    CP
+    STORE[(订阅 Store / DB 映射)]
+  end
+
+  subgraph VA_ZONE["Video Analyzer（订阅执行与媒体）"]
+    VAAPI[AnalyzerControl gRPC]
+    LRO[LRO Runner / Operation / Step]
+    PIPE[多阶段 Graph / 媒体管线]
+  end
+
+  subgraph VSM_ZONE["Video Source Manager"]
+    VSM[SourceControl gRPC]
+  end
+
+  subgraph DATA["持久化与缓存"]
+    DB[(MySQL cv_cp)]
+    REDIS[(Redis)]
+  end
+
+  CP -->|gRPC Subscribe/Get/Cancel/Watch| VAAPI
+  VAAPI --> LRO
+  LRO --> PIPE
+
+  CP -->|gRPC 源状态/配置| VSM
+  VSM -->|Restream RTSP 源| PIPE
+
+  CP -->|订阅/源/训练元数据| DB
+  CP -->|可选配额/速率缓存| REDIS
+
+  CP -->|WHEP 反向代理| PIPE
+```
+
+- **CP HTTP API**：
+  - 订阅：`POST/GET/DELETE /api/subscriptions`，`GET /api/subscriptions/{id}/events`（SSE）。
+  - 控制：`/api/control/apply_pipeline`、`/api/control/hotswap`、`/api/control/pipeline_mode` 等，经 CP 转发至 VA gRPC。
+  - 训练与模型：`/api/train/*`、`/api/repo/*`。
+  - 媒体：`POST/PATCH/DELETE /whep`，作为 VA WHEP 的反向代理与编排入口。
+- **LRO 订阅执行（VA 内部）**：
+  - `Runner/Operation/Step/IStateStore/AdmissionPolicy` 组成通用 LRO 框架；
+  - 订阅由一系列步骤构成（打开 RTSP → 加载模型 → 构建/启动 pipeline → 准备 WHEP 输出），每个步骤有明确的 phase 与错误原因；
+  - CP 通过 `AnalyzerControl` gRPC 触发订阅、查询 phase 与 timeline，并在 MySQL 中维护映射。
+- **VSM 与源管理**：
+  - VSM 通过 gRPC `SourceControl` 接收 CP 的源启停与配置变更；
+  - 向 VA 提供 Restream RTSP 端点，避免 VA 直接依赖上游摄像头稳定性；
+  - 详细协议见 `docs/design/protocol/VSM_REST_SSE与指标配置.md` 与 `控制平面HTTP与gRPC接口说明.md`。
 
 ---
 
-## 四、前端分析面板与 CPU/GPU 切换构想
+## 三、推理、多阶段 Graph 与 GPU 零拷贝
 
-- 现状：
-  - `AnalysisPanel` 通过 `useAnalysisStore` 驱动：
-    - 创建订阅（CP `/api/subscriptions`）并等待 phase=ready。
-    - 自动将 pipeline 置于 raw 模式，然后通过 `setPipelineMode(..., analysis_enabled=true/false)` 控制 overlay。
-  - 当前前端尚未暴露“CPU NMS / GPU 零拷贝 NMS”开关。
-
-- 设计思路（后续工作）：
-  - 在 `AnalysisPanel` 工具栏新增一个 Switch，例如：
-    - `GPU 零拷贝` on/off，内部映射到 CP `/api/control/set_engine`：
-      - off：`use_cuda_preproc=false,use_cuda_nms=false`（CPU 预处理+NMS，推理仍在 GPU/Triton）。
-      - on：`use_cuda_preproc=true,use_cuda_nms=true` + engine.options 中的 `yolo_decode_fp16`/`trt_fp16`。
-  - 前端在切换时：
-    - 先停止当前订阅（cancelSubscription），更新 Engine 配置，再重新启动订阅与分析。
-    - 在 UI 上给出明确的“精度优先 / 性能优先”提示。
+- **多阶段 Graph 框架**（`multistage_graph_详细设计.md`）：
+  - 核心抽象：`Packet/NodeContext/INode/Graph/NodeRegistry/AnalyzerMultistageAdapter`；
+  - 支持条件边、join、ReID 平滑等高级节点，通过 YAML 描述 pipeline；
+  - 新节点扩展需实现 `INode` 接口，并在 `NodeRegistry` 中注册。
+- **推理引擎与集成**：
+  - `tensorrt_engine.md`：介绍 VA 内部 TensorRT/ONNX Runtime session 管理与引擎抽象；
+  - `triton_inprocess_integration.md`：以 In-Process 作为主路径，附录涵盖 gRPC 集成方案；
+  - 配合 LRO 与 Graph，实现从 decode→预处理→推理→后处理→叠加的可配置管线。
+- **GPU 零拷贝路径**（`zero_copy_execution_详细设计.md`）：
+  - 解码：NVDEC 将帧解码到 GPU；
+  - 预处理：CUDA kernel 完成 letterbox/resize，生成 NCHW FP32/FP16 tensor；
+  - 推理：通过 IOBinding 将显存 buffer 直接绑定到 TensorRT/Triton；
+  - 后处理：GPU decode + NMS，行为与 CPU 基线对齐，必要时可回退到 CPU NMS；
+  - 提供 compare/suggest 脚本，用于校准 CPU/GPU 检测框差异与 conf/iou。
 
 ---
 
-## 五、实践建议与约束
+## 四、存储、协议与可观测性
 
-- 对关键 profile（如看小人、看车牌）：
-  - 优先在 FP32 + CPU NMS 下校准出“基准行为”，再开启 Triton FP16 和 GPU NMS。
-  - 使用 `compare_cpu_gpu_boxes_detail.py` 和 `suggest_gpu_nms_thresholds.py` 对 GPU 路径做一次阈值重标定。
+- **存储设计**（`storage_详细设计.md`）：
+  - 聚合原 `数据库设计.md` 内容，统一描述 MySQL `cv_cp` 的实体（sources/pipelines/graphs/models/sessions/events/logs/training_records 等）和 ER 图；
+  - 说明 VA/CP 访问数据库的 `DbPool` 与各 `Repo` 模块职责，以及迁移策略与索引约定。
+- **协议与错误码**（`protocol` 目录）：
+  - `控制平面HTTP与gRPC接口说明.md`：系统性描述 CP HTTP API、CP↔VA `AnalyzerControl` gRPC、CP↔VSM `SourceControl` gRPC；
+  - `webrtc-protocol.md`：描述 WHEP/WHEP 相关交互与实现注意事项；
+  - `控制面错误码与语义.md`：统一 HTTP/gRPC/LRO 的错误码与 reason 语义。
+- **可观测性**（`observability` 目录）：
+  - `LOGGING.md`、`METRICS.md`、`observability_详细设计.md` 形成日志/指标的集中设计入口；
+  - Prometheus + Grafana 用于监控订阅链路、推理性能、训练与 DB 相关指标。
 
-- 精度与性能：
-  - 若 GPU 路径在关键场景仍明显弱于 CPU，可考虑：
-    - 保留 GPU 预处理 + 推理，但 NMS 统一回到 CPU `nonMaxSuppression`（只 D2H 少量候选框）。
-    - 或为该 profile 单独配置更宽松的 `conf/iou`。
+---
 
-- 可观测与调试：
-  - 保持 `ms.node_model`、`ms.nms`、`preproc` 相关日志为 debug 级，以便快速定位 decode/NMS 行为。
-  - 在 Grafana 中增加：CPU/GPU boxes 数量、GPU decode candidates、miss_ratio 等指标，监控“降准”风险。***
+## 五、设计文档重构与约定
+
+围绕 `docs/design` 目录，本次对话完成了系统性重构与整合：
+
+- **子目录结构**：
+  - `architecture/`：系统概要设计与各子系统详细设计（VA、CP、VSM、Web-Front）；
+  - `subscription_pipeline/`：LRO 订阅设计、多阶段 Graph、推理引擎与 GPU 零拷贝；
+  - `protocol/`：CP HTTP/gRPC、VSM REST/SSE、WebRTC/WHEP 等协议与错误码；
+  - `storage/`：数据库与存储详细设计；
+  - `observability/`：日志与指标设计；
+  - `training/`：训练流水线与模型仓库设计。
+- **文档整合与删除**：
+  - 将 `subscription_lro` 目录下的历史文档整合为 `subscription_pipeline/lro_subscription_design.md`，附录中保留早期异步订阅方案；
+  - 将 `engine_multistage` 重命名并归档为 `subscription_pipeline`，统一承载多阶段 Graph 与引擎设计；
+  - 将 `cp_vsm_protocol` 重命名并归档为 `protocol`，统一管理协议相关文档；
+  - 删除多份已过时或被合并的文档（如 `perf_guards.md`、早期前端设计稿等）；
+  - 删除废弃的 `web-frontend-old/` 工程，只保留 `web-front/` 作为唯一前端实现。
+- **工作流与约束（摘录）**：
+  - 修改代码与文档需使用 `apply_patch`；完成后在 `docs/memo` 追加当日记录；
+  - 构建成功后必须进行测试；新增设计图统一使用 Mermaid；
+  - 提交信息使用中文祈使句，保持变更聚焦与与 Issue 关联；沟通与文档语言统一为中文。
+
+本 CONTEXT.md 与 `docs/design/architecture/整体架构设计.md`、`docs/context/ROADMAP.md` 共同构成后续演进与决策的全局参照。***
