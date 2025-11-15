@@ -190,9 +190,9 @@ service SourceControl {
   - `docs/design/architecture/整体架构设计.md`
   - `docs/design/architecture/controlplane_design.md`
 - 协议与接口：
-  - `docs/design/cp_vsm_protocol/VSM_REST_SSE与指标配置.md`
-  - `docs/design/cp_vsm_protocol/webrtc-protocol.md`
-  - `docs/design/cp_vsm_protocol/控制面错误码与语义.md`
+  - `docs/design/protocol/VSM_REST_SSE与指标配置.md`
+  - `docs/design/protocol/webrtc-protocol.md`
+  - `docs/design/protocol/控制面错误码与语义.md`
 - 订阅与训练：
   - `docs/design/subscription_lro/lro_subscription_design.md`
   - `docs/design/training/cv_训练流水线（training_pipeline）详细设计_v_1.md`
