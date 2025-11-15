@@ -9,7 +9,7 @@
 - 确认接入点：新增 `TritonGrpcModelSession`（实现 `IModelSession`）。
 - 工厂映射：`engine.provider=triton|triton-grpc` → Triton 会话。
 - 配置键：`triton_url/model/model_version/input/outputs/timeout_ms/shm_cuda/cuda_shm_bytes`。
-- 验收：评审 `docs/design/engine_multistage/triton_inprocess_integration.md`（含附录 A：gRPC 集成概要）与 WBS 一致。
+- 验收：评审 `docs/design/subscription_pipeline/triton_inprocess_integration.md`（含附录 A：gRPC 集成概要）与 WBS 一致。
 
 ## 2. T0 功能实现：gRPC + Host 内存（1.5d）
 - 新增文件：`src/analyzer/triton_session.hpp/.cpp`（Host 内存路径）。
