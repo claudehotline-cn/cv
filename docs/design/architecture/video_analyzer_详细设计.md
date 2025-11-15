@@ -166,23 +166,7 @@ VA 源码主要分布在 `video-analyzer/src/` 目录，按职责划分为以下
 
 ## 5 接口与交互
 
-### 5.1 REST 接口（VA 内嵌）
-
-VA 内嵌 REST 接口的详细列表见 `docs/design/cp_vsm_protocol/api_endpoints.md`，本小节仅描述与内部模块的关系：
-
-- `/api/subscribe`、`/api/unsubscribe`：
-  - 调用 `Application::subscribeStream/unsubscribeStream`；
-  - 在新架构中主要用于调试与自动化测试，正式环境订阅建议通过 Controlplane 的 `/api/subscriptions` 间接驱动 VA。
-- `/api/pipelines`：
-  - 通过 `TrackManager` 返回当前 Pipeline 运转状态（running、fps 等）。
-- `/api/models`、`/api/profiles`：
-  - 读取配置加载结果与模型状态，辅助前端/脚本选择合适配置。
-- `/api/system/info`、`/api/system/stats`：
-  - 通过 `Application::systemStats` 与 Engine runtime 获取整体运行态。
-- `/api/engine/set`、`/api/logging*`：
-  - 对接 EngineManager 和日志子系统，实现运行时引擎/日志动态调整。
-
-### 5.2 gRPC 接口（控制平面）
+### 5.1 gRPC 接口（控制平面）
 
 当启用 gRPC 控制平面时，VA 暴露 `AnalyzerControl` 服务，主要方法包括：
 
