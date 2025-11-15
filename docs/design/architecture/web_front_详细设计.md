@@ -1,6 +1,6 @@
 # Web-Front 前端项目详细设计说明书
 
-> 本文面向 `web-front/` 前端项目，补充整体架构、模块划分、关键数据流与与 Controlplane 的交互细节。视觉与交互规范参见《前端设计.md》，订阅与播放链路参见《web_front_analysis_panel_详细设计.md》与《controlplane_design.md》。本说明不覆盖已废弃的 `web-frontend-old/` 目录。
+> 本文面向 `web-front/` 前端项目，补充整体架构、模块划分、关键数据流与与 Controlplane 的交互细节。视觉与交互规范参见《前端设计.md》，订阅与播放链路详见本说明书第 3.2 节与《controlplane_design.md》。本说明不覆盖已废弃的 `web-frontend-old/` 目录。
 
 ## 1 概述
 
@@ -159,12 +159,103 @@ API 层负责：统一错误处理（HTTP 状态 → 业务错误码）、附加
 - Pipelines 列表：
   - 数据来源：`listPipelines()`（CP `GET /api/control/pipelines`）。
   - UI：表格展示 Pipeline 名称、状态、FPS、告警数等，支持按状态过滤。
-- AnalysisPanel：
-  - 页面结构与交互详见《web_front_analysis_panel_详细设计.md》；
-  - 这里重点强调与 `analysis` Store 的连接：
-    - 使用 computed 绑定 currentSource/currentModel/analyzing 等字段；
-    - 用户点击“开始分析” → 调用 `analysis.startAnalysis()`；
-    - 在 `whepUrl` 更新时，将新 URL 传给 `WhepPlayer` 播放。
+- 分析面板（AnalysisPanel）：
+  - 负责单源分析播放与订阅生命周期的可视化，依赖 `useAnalysisStore` 管理状态。
+  - 使用 computed 绑定 `currentSource/currentModel/analyzing` 等字段，按钮事件委托给 store 的 `startAnalysis/stopAnalysis`。
+  - 在 `whepUrl` 更新时，将新 URL 传给 `WhepPlayer` 播放。
+
+#### 3.2.1 组件关系
+
+```mermaid
+flowchart LR
+  subgraph Frontend
+    AP[AnalysisPanel.vue]
+    SRCV[Sources.vue]
+    PIPV[Pipelines.vue]
+    STORE[useAnalysisStore]
+    API[cp.ts + dataProvider]
+    PLAYER[WhepPlayer.vue]
+  end
+
+  AP --> STORE
+  SRCV --> STORE
+  PIPV --> STORE
+  STORE --> API
+  AP --> PLAYER
+  STORE --> PLAYER
+
+  subgraph Backend
+    CP[Controlplane /api/* + /whep]
+    VA[Video Analyzer]
+    VSM[Video Source Manager]
+  end
+
+  API --> CP
+  CP --> VA
+  CP --> VSM
+  PLAYER --> CP
+```
+
+- `useAnalysisStore`：持有源/模型/graph/pipeline 选择状态与订阅 LRO 状态（id/phase/progress/timeline），负责与 CP API 交互并驱动播放。
+- `AnalysisPanel.vue`：主界面，展示选择器、订阅进度、timeline、播放器与统计信息。
+- `cp.ts`：封装 `createSubscription/getSubscription/deleteSubscription/subscriptionEventsUrl/setPipelineMode` 等 CP HTTP 调用。
+- `WhepPlayer.vue`：仅负责根据 `whep-url/autoplay` 建立 WHEP 会话并驱动 `<video>` 播放。
+
+#### 3.2.2 订阅与进度流程
+
+`startAnalysis` 是订阅创建的核心入口（定义于 `analysis.ts`）：
+
+```mermaid
+sequenceDiagram
+  participant UI as AnalysisPanel.vue
+  participant ST as useAnalysisStore
+  participant API as cp.ts
+  participant CP as Controlplane
+  participant VA as Video Analyzer
+
+  UI->>ST: startAnalysis()
+  ST->>ST: 补全 currentPipeline/currentGraphId/currentSourceId
+  ST->>API: createSubscription(currentSourceId, profile, '', model, {useExisting: true, source_id: currentSourceId})
+  API->>CP: POST /api/subscriptions?use_existing=1&source_id=...
+  CP->>VA: gRPC Subscribe(stream_id, profile, source_uri, model_id?)
+  VA-->>CP: pipeline_key / internal id
+  CP-->>API: { id: cp_id, ... }
+  API-->>ST: cp_id
+  ST->>ST: currentSubId = cp_id
+  ST->>API: subscriptionEventsUrl(cp_id)
+  ST->>ST: 建立 EventSource(SSE)
+```
+
+SSE 事件处理逻辑（`analysis.ts`）：
+
+- 监听 `phase` 事件：
+  - 更新 `subPhase` 与 `subProgress`（通过 phase→进度映射）。
+  - 调用 `getSubscriptionWithTimeline(cp_id)` 拉取 timeline，并写入 `timeline`。
+  - 当 phase 为 `ready` 时：
+    - 优先使用事件 payload 中的 `whep_url` 更新 `whepUrl`，否则调用 `updateWhepUrl()` 推导；
+    - 调用 `setPipelineMode(stream_id, profile, false)` 将 pipeline 置为 raw 模式（仅输出画面），作为“默认暂停”策略；
+    - 关闭 SSE 连接（当前订阅完成构建）。
+- 若 SSE 建立失败或中断，store 通过 `_subRetries` 记录重试次数，可按需实现退避与回退到轮询。
+
+取消流程（`stopAnalysis`）：
+
+- 若存在 `currentSubId`，调用 `cancelSubscription(id)`（`DELETE /api/subscriptions/{id}`）取消订阅；
+- 重置 `currentSubId/subPhase/subProgress/timeline` 等字段；
+- 将 `analyzing` 标志置为 `false`，按策略处理 `whepUrl`（保留或清空）。
+
+#### 3.2.3 界面布局与交互
+
+- 顶部工具栏：
+  - 源/graph/pipeline/模型选择（`el-select`），双向绑定 store 对应字段；
+  - 自动播放开关（autoPlay）、实时分析开关（analyzing）、“开始/取消”按钮与刷新按钮。
+- 播放区域：
+  - 中央为 `WhepPlayer` 播放区；
+  - 右上角 overlay 显示 FPS/P95 延迟/告警数（取自 `store.stats`）；
+  - 可在 `!analyzing && subProgress > 0` 时展示构建进度条与阶段标签。
+- 下方信息区：
+  - 展示当前 pipeline 配置、源能力（caps）、graph 元数据等。
+
+Sources/Pipelines 页面中如需触发分析，只通过 `useAnalysisStore` 的 `startAnalysis/stopAnalysis` 接口调用，避免在多个页面复制订阅逻辑。
 
 ### 3.3 Observability 页面
 
@@ -227,6 +318,4 @@ API 层负责：统一错误处理（HTTP 状态 → 业务错误码）、附加
 - 《整体架构设计.md》：系统整体视图与 Web-Front 职责定位。
 - 《controlplane_design.md》：控制平面内部设计与 API 说明。
 - 《web_front_integration_design.md》：前端与 CP/VA/VSM 的集成视图与时序图。
-- 《web_front_analysis_panel_详细设计.md》：分析面板专题详细设计。
 - 《前端设计.md》：主题与交互风格指南。
-
