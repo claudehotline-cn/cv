@@ -13,13 +13,13 @@
   - 控制层：`src/app/controller/source_controller.*`
   - 输入适配器：`adapters/inputs/*`（例如 `ffmpeg_rtsp_reader`）
   - 输出适配器：`adapters/outputs/to_analyzer_link.*`
-- REST/SSE 与 metrics：参考 `docs/design/protocol/VSM_REST_SSE与指标配置.md`
+- REST/SSE 与 metrics：参考 `docs/design/subscription_pipeline/VSM_REST_SSE与指标配置.md`
 - 不涉及 Controlplane 和 VA 的内部实现，仅在需要时说明接口契约。
 
 ### 1.3 相关文档
 
 - 概要设计：`docs/design/architecture/整体架构设计.md`
-- VSM REST/SSE 与指标：`docs/design/protocol/VSM_REST_SSE与指标配置.md`
+- VSM REST/SSE 与指标：`docs/design/subscription_pipeline/VSM_REST_SSE与指标配置.md`
 - 参考设计：`docs/references/video-source-manager设计文档.md`
 - Controlplane 设计：`docs/design/architecture/controlplane_design.md`
 
@@ -123,7 +123,7 @@ classDiagram
 
 ## 4 REST/SSE 与指标设计（与 VSM_REST_SSE 文档对齐）
 
-REST/SSE 设计在 `docs/design/protocol/VSM_REST_SSE与指标配置.md` 中已有完整说明，本节仅从详细设计视角补充结构与时序。
+REST/SSE 设计在 `docs/design/subscription_pipeline/VSM_REST_SSE与指标配置.md` 中已有完整说明，本节仅从详细设计视角补充结构与时序。
 
 ### 4.1 REST API 结构
 
