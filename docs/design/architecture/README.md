@@ -9,6 +9,4 @@
   - [Controlplane 设计（详细）](./controlplane_design.md)
   - [Video Source Manager 详细设计](./video_source_manager_详细设计.md)
 - 前端子系统
-  - [Web-Front 对接设计（总体）](./web_front_integration_design.md)
   - [Web-Front 前端项目详细设计](./web_front_详细设计.md)
-  - [前端设计（UI/主题等）](./前端设计.md)

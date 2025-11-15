@@ -317,5 +317,4 @@ Sources/Pipelines 页面中如需触发分析，只通过 `useAnalysisStore` 的
 
 - 《整体架构设计.md》：系统整体视图与 Web-Front 职责定位。
 - 《controlplane_design.md》：控制平面内部设计与 API 说明。
-- 《web_front_integration_design.md》：前端与 CP/VA/VSM 的集成视图与时序图。
-- 《前端设计.md》：主题与交互风格指南。
+- 《控制平面HTTP与gRPC接口说明.md》：CP HTTP 与 gRPC 契约说明。
