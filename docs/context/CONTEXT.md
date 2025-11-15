@@ -105,7 +105,7 @@ flowchart LR
   - `webrtc-protocol.md`：描述 WHEP/WHEP 相关交互与实现注意事项；
   - `控制面错误码与语义.md`：统一 HTTP/gRPC/LRO 的错误码与 reason 语义。
 - **可观测性**（`observability` 目录）：
-  - `LOGGING.md`、`METRICS.md`、`observability_详细设计.md` 形成日志/指标的集中设计入口；
+  - `observability_详细设计.md` 作为日志与指标设计的单一权威文档，已整合原 LOGGING/METRICS/path 标签/PromQL/节流配置等内容；
   - Prometheus + Grafana 用于监控订阅链路、推理性能、训练与 DB 相关指标。
 
 ---
@@ -116,16 +116,17 @@ flowchart LR
 
 - **子目录结构**：
   - `architecture/`：系统概要设计与各子系统详细设计（VA、CP、VSM、Web-Front）；
-  - `subscription_pipeline/`：LRO 订阅设计、多阶段 Graph、推理引擎与 GPU 零拷贝；
+  - `subscription_pipeline/`：订阅流水线与 LRO 专题设计（`subscription_pipeline_详细设计.md`、`lro_subscription_design.md`）以及多阶段 Graph、推理引擎与 GPU 零拷贝；
   - `protocol/`：CP HTTP/gRPC、VSM REST/SSE、WebRTC/WHEP 等协议与错误码；
   - `storage/`：数据库与存储详细设计；
-  - `observability/`：日志与指标设计；
+  - `observability/`：日志与指标设计（集中在 `observability_详细设计.md`）；
   - `training/`：训练流水线与模型仓库设计。
 - **文档整合与删除**：
   - 将 `subscription_lro` 目录下的历史文档整合为 `subscription_pipeline/lro_subscription_design.md`，附录中保留早期异步订阅方案；
   - 将 `engine_multistage` 重命名并归档为 `subscription_pipeline`，统一承载多阶段 Graph 与引擎设计；
   - 将 `cp_vsm_protocol` 重命名并归档为 `protocol`，统一管理协议相关文档；
-  - 删除多份已过时或被合并的文档（如 `perf_guards.md`、早期前端设计稿等）；
+  - 将观测层散列文档（LOGGING/METRICS/path 标签/PromQL/节流配置等）整合进 `observability_详细设计.md` 并删除原文件；
+  - 删除多份已过时或被合并的文档（如 `perf_guards.md`、早期前端设计稿等），以及废弃的 `subscription_lro/` 目录；
   - 删除废弃的 `web-frontend-old/` 工程，只保留 `web-front/` 作为唯一前端实现。
 - **工作流与约束（摘录）**：
   - 修改代码与文档需使用 `apply_patch`；完成后在 `docs/memo` 追加当日记录；
