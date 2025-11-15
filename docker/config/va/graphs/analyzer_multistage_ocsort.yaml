@@ -1,0 +1,61 @@
+analyzer:
+  multistage:
+    nodes:
+      - name: pre
+        type: preproc.letterbox
+        params: { out_w: "1440", out_h: "800", use_cuda: "1" }
+      - name: det
+        type: model
+        params:
+          in: "tensor:det_input"
+          outs: "tensor:det_raw"
+          # 仅使用 ORT/ONNX 路径进行检测推理
+          model_path_ort: "models/yolox.onnx"
+          model_path: "models/yolox.onnx"
+      - name: nms
+        type: post.yolo.nms
+        # 目标追踪场景下的检测阈值，可按需要再调参
+        params: { conf: "0.30", iou: "0.70", use_cuda: "1", emit_gpu_rois: "1" }
+      - name: roi
+        type: roi.batch.cuda
+        params:
+          in_rois: "det"
+          out: "tensor:roi_batch"
+          # PASS-ReID 模型配置中 INPUT.SIZE_TEST = [384, 128]
+          out_w: "128"
+          out_h: "384"
+          max_rois: "128"
+      - name: reid
+        type: model
+        params:
+          in: "tensor:roi_batch"
+          outs: "tensor:reid"
+          # 使用 ModelScope PASS-ViT-B 行人 ReID 模型导出的 ONNX
+          model_path_ort: "models/reid_passvitb.onnx"
+          model_path: "models/reid_passvitb.onnx"
+      - name: track
+        type: track.ocsort
+        params:
+          in_rois: "det"
+          out_rois: "track"
+          iou_thresh: "0.30"
+          max_missed: "30"
+          feat_key: "tensor:reid"
+          feat_alpha: "0.90"
+          w_iou: "0.5"
+          w_reid: "0.5"
+      - name: ovl
+        type: overlay.cuda
+        params:
+          alpha: "0.2"
+          thickness: "3"
+          rois: "track"
+          use_gpu_rois: "1"
+    edges:
+      - [pre, det]
+      - [det, nms]
+      - [nms, roi]
+      - [roi, reid]
+      - [nms, track]
+      - [reid, track]
+      - [track, ovl]

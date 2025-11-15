@@ -1,6 +1,10 @@
 #include "analyzer/multistage/node_track_ocsort.hpp"
 #include "analyzer/multistage/nodes_common.hpp"
 #include "core/logger.hpp"
+#include "analyzer/logging_util.hpp"
+#if defined(USE_CUDA)
+#include <cuda_runtime.h>
+#endif
 #include <algorithm>
 #include <cmath>
 
@@ -21,6 +25,38 @@ NodeTrackOcsort::NodeTrackOcsort(const std::unordered_map<std::string,std::strin
     if (feat_alpha_ > 1.0f) feat_alpha_ = 1.0f;
     w_iou_ = get_or_float(cfg, "w_iou", 0.5f);
     w_reid_ = get_or_float(cfg, "w_reid", 0.5f);
+    max_tracks_ = get_or_int(cfg, "max_tracks", 256);
+    if (max_tracks_ < 16) max_tracks_ = 16;
+    if (max_tracks_ > 512) max_tracks_ = 512;
+}
+
+bool NodeTrackOcsort::open(NodeContext& ctx) {
+#if defined(USE_CUDA)
+    // 仅在具备 GPU 上下文时尝试启用 GPU 追踪路径
+    if (ctx.gpu_pool && ctx.stream) {
+        use_gpu_ = true;
+    } else {
+        use_gpu_ = false;
+    }
+    gpu_state_ready_ = false;
+    (void)ctx;
+#else
+    (void)ctx;
+#endif
+    return true;
+}
+
+void NodeTrackOcsort::close(NodeContext& ctx) {
+    (void)ctx;
+#if defined(USE_CUDA)
+    if (gpu_state_ready_) {
+        va::analyzer::cudaops::ocsort_free_state(gpu_state_);
+        gpu_state_ready_ = false;
+    }
+    use_gpu_ = false;
+#endif
+    tracks_.clear();
+    next_id_ = 1;
 }
 
 float NodeTrackOcsort::iou(const Roi& a, const Roi& b) {
@@ -64,7 +100,25 @@ float NodeTrackOcsort::cosine(const std::vector<float>& a, const float* b, int D
     return static_cast<float>(dot / denom);
 }
 
-bool NodeTrackOcsort::process(Packet& p, NodeContext& /*ctx*/) {
+bool NodeTrackOcsort::process(Packet& p, NodeContext& ctx) {
+#if defined(USE_CUDA)
+    if (use_gpu_) {
+        if (process_gpu(p, ctx)) {
+            auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
+            auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
+            VA_LOG_THROTTLED(lvl, "ms.track", thr) << "path=gpu";
+            return true;
+        }
+        // GPU 路径失败时回退到 CPU 实现
+        auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
+        VA_LOG_THROTTLED(lvl, "ms.track", thr) << "gpu_path_failed -> fallback cpu";
+    }
+#endif
+    return process_cpu(p);
+}
+
+bool NodeTrackOcsort::process_cpu(Packet& p) {
     auto it = p.rois.find(in_rois_key_);
     if (it == p.rois.end()) {
         // 没有检测框时清空输出并衰减已有轨迹
@@ -208,5 +262,98 @@ bool NodeTrackOcsort::process(Packet& p, NodeContext& /*ctx*/) {
     p.rois[out_rois_key_] = std::move(out);
     return true;
 }
+
+#if defined(USE_CUDA)
+
+bool NodeTrackOcsort::process_gpu(Packet& p, NodeContext& ctx) {
+    if (!ctx.gpu_pool || !ctx.stream) {
+        return false;
+    }
+    auto itg = p.gpu_rois.find(in_rois_key_);
+    if (itg == p.gpu_rois.end()) {
+        // 没有 GPU ROI 时暂不强行拷贝，交给 CPU 路径处理
+        return false;
+    }
+    const auto& gdet = itg->second;
+    if (!gdet.d_boxes || gdet.count <= 0) {
+        // 只有轨迹衰减，无新的检测框
+        if (!gpu_state_ready_) {
+            return true; // 无状态且无检测时无需任何操作
+        }
+        auto err = va::analyzer::cudaops::ocsort_match_and_update(
+            gdet,
+            nullptr,
+            gpu_state_,
+            iou_thresh_,
+            feat_alpha_,
+            w_iou_,
+            w_reid_,
+            max_missed_,
+            1,
+            static_cast<cudaStream_t>(ctx.stream));
+        if (err != cudaSuccess) return false;
+    } else {
+        const float* d_feats = nullptr;
+        int feat_dim = 0;
+        auto itf = p.tensors.find(feat_key_);
+        if (itf != p.tensors.end()) {
+            const auto& tv = itf->second;
+            if (tv.on_gpu && tv.dtype == va::core::DType::F32 && tv.shape.size() == 2) {
+                const int64_t N = tv.shape[0];
+                const int64_t D = tv.shape[1];
+                if (N == static_cast<int64_t>(gdet.count) && D > 0) {
+                    d_feats = static_cast<const float*>(tv.data);
+                    feat_dim = static_cast<int>(D);
+                }
+            }
+        }
+        if (!gpu_state_ready_) {
+            int use_feat_dim = feat_dim;
+            if (use_feat_dim < 0) use_feat_dim = 0;
+            auto err_alloc = va::analyzer::cudaops::ocsort_alloc_state(
+                gpu_state_, max_tracks_, use_feat_dim);
+            if (err_alloc != cudaSuccess) {
+                return false;
+            }
+            gpu_state_ready_ = true;
+        }
+        auto err = va::analyzer::cudaops::ocsort_match_and_update(
+            gdet,
+            d_feats,
+            gpu_state_,
+            iou_thresh_,
+            feat_alpha_,
+            w_iou_,
+            w_reid_,
+            max_missed_,
+            1,
+            static_cast<cudaStream_t>(ctx.stream));
+        if (err != cudaSuccess) return false;
+    }
+
+    // 构造 GPU 轨迹 ROI 视图：直接引用 GPU 状态中的轨迹 boxes / ids
+    if (!gpu_state_ready_) return false;
+    int h_count = 0;
+    if (gpu_state_.d_track_count) {
+        if (cudaMemcpy(&h_count,
+                       gpu_state_.d_track_count,
+                       sizeof(int32_t),
+                       cudaMemcpyDeviceToHost) != cudaSuccess) {
+            return false;
+        }
+    }
+    if (h_count < 0) h_count = 0;
+    va::analyzer::multistage::GpuRoiBuffer buf;
+    buf.d_boxes  = gpu_state_.d_track_boxes;
+    buf.d_scores = nullptr;
+    buf.d_cls    = gpu_state_.d_track_ids;
+    buf.count    = h_count;
+    p.gpu_rois[out_rois_key_] = buf;
+    // GPU 路径下不再填充 CPU rois[out_rois_key_]，交由 overlay.cuda 直接消费 gpu_rois
+    p.rois.erase(out_rois_key_);
+    return true;
+}
+
+#endif // USE_CUDA
 
 } } } // namespace

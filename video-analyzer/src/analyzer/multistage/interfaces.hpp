@@ -20,12 +20,22 @@ using TensorDict = std::unordered_map<std::string, va::core::TensorView>;
 using AttrDict   = std::unordered_map<std::string, Attr>;
 using RoiDict    = std::unordered_map<std::string, std::vector<Roi>>;
 
+// GPU ROI view: device-side representation of ROIs for zero-copy pipelines.
+struct GpuRoiBuffer {
+    float* d_boxes {nullptr};   // [N,4] (x1,y1,x2,y2)
+    float* d_scores {nullptr};  // [N]   optional
+    int32_t* d_cls {nullptr};   // [N]   optional (class id or track id)
+    int32_t count {0};          // number of ROIs
+};
+using GpuRoiDict = std::unordered_map<std::string, GpuRoiBuffer>;
+
 // A packet flowing through nodes per frame
 struct Packet {
     va::core::Frame frame;                 // Input/output frame
     va::core::LetterboxMeta letterbox;     // Optional letterbox meta
     TensorDict tensors;                    // Named tensor views
-    RoiDict rois;                          // Named ROI lists
+    RoiDict rois;                          // Named ROI lists (CPU)
+    GpuRoiDict gpu_rois;                  // Named ROI buffers (GPU, zero-copy)
     AttrDict attrs;                        // Free-form attributes
 };
 

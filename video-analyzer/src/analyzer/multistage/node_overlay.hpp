@@ -13,6 +13,7 @@ public:
     std::vector<std::string> inputs() const override { return { std::string("rois:") + rois_key_ }; }
 private:
     std::string rois_key_ {"det"};
+    bool use_gpu_rois_ {false};
     // Renderer resolved in open() via context (or created lazily)
     std::shared_ptr<va::analyzer::IRenderer> renderer_;
     bool prefer_cuda_ {true};

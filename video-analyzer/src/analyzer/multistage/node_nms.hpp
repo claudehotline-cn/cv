@@ -15,6 +15,7 @@ private:
     float conf_ {0.25f};
     float iou_ {0.45f};
     bool prefer_cuda_ {false};
+    bool emit_gpu_rois_ {false};
 };
 
 } } } // namespace

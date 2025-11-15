@@ -3,6 +3,7 @@
 #include "core/logger.hpp"
 #include "analyzer/logging_util.hpp"
 #include "core/global_metrics.hpp"
+#include "analyzer/multistage/interfaces.hpp"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/core.hpp>
 #include <vector>
@@ -241,6 +242,101 @@ CLEAN_IMG:
     bool ok = cpu.draw(in, output, out);
     log_once("cpu", output.boxes.size(), false, 2, 0.0f, in);
     return ok;
+}
+
+bool OverlayRendererCUDA::draw_gpu_rois(const core::Frame& in,
+                                        const multistage::GpuRoiBuffer& rois,
+                                        core::Frame& out) {
+#if !defined(VA_HAS_CUDA_KERNELS) || !defined(USE_CUDA)
+    (void)in; (void)rois; (void)out;
+    return false;
+#else
+    auto log_once = [&](const char* path, size_t boxes, const core::Frame& f){
+        if (!debug_printed_) {
+            auto lvl = va::analyzer::logutil::log_level_for_tag("overlay.cuda");
+            auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("overlay.cuda");
+            VA_LOG_THROTTLED(lvl, "overlay.cuda", thr)
+                << "[OverlayCUDA] path=" << path
+                << " boxes=" << boxes
+                << " nv12_pitch0=" << (f.has_device_surface? f.device.pitch0:0)
+                << " nv12_pitch1=" << (f.has_device_surface? f.device.pitch1:0);
+            debug_printed_ = true;
+        }
+    };
+
+    const int N = rois.count;
+    if (N <= 0) {
+        if (in.has_device_surface && in.device.on_gpu && in.device.fmt == core::PixelFormat::NV12) {
+            log_once("gpu-rois-nv12-empty", 0, in);
+            out = in;
+            return true;
+        }
+        return false;
+    }
+
+    // NV12 设备帧：直接在 GPU 上绘制
+    if (in.has_device_surface && in.device.on_gpu && in.device.fmt == core::PixelFormat::NV12) {
+        out = in;
+        const int w = in.device.width;
+        const int h = in.device.height;
+        int thick = 2;
+        float alpha = 0.0f;
+        if (const char* t = std::getenv("VA_OVERLAY_THICKNESS")) { try { thick = std::stoi(t); } catch (...) {} }
+        if (const char* a = std::getenv("VA_OVERLAY_ALPHA")) { try { alpha = std::stof(a); } catch (...) {} }
+        auto st = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
+        if (alpha > 0.0f) {
+            (void)va::analyzer::cudaops_nv12::fill_rects_nv12_inplace(
+                static_cast<uint8_t*>(in.device.data0), in.device.pitch0,
+                static_cast<uint8_t*>(in.device.data1), in.device.pitch1,
+                w, h, rois.d_boxes, rois.d_cls, N, alpha, st);
+        }
+        if (va::analyzer::cudaops_nv12::draw_rects_nv12_inplace(
+                static_cast<uint8_t*>(in.device.data0), in.device.pitch0,
+                static_cast<uint8_t*>(in.device.data1), in.device.pitch1,
+                w, h, rois.d_boxes, rois.d_cls, N, thick, st) == cudaSuccess) {
+            log_once("gpu-rois-nv12", static_cast<size_t>(N), in);
+            return true;
+        }
+        // fall through to BGR path on failure
+    }
+
+    // BGR CPU 帧：复制图像到 GPU，但复用 GPU ROI（避免 ROI H2D）
+    if (in.width > 0 && in.height > 0 && !in.bgr.empty()) {
+        out = in;
+        const int w = in.width, h = in.height;
+        const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 3ull;
+        uint8_t* d_img = nullptr;
+        if (cudaMalloc(&d_img, bytes) != cudaSuccess) {
+            if (d_img) cudaFree(d_img);
+            return false;
+        }
+        if (cudaMemcpy(d_img, in.bgr.data(), bytes, cudaMemcpyHostToDevice) != cudaSuccess) {
+            cudaFree(d_img);
+            return false;
+        }
+
+        float alpha = 0.3f;
+        int thick = 2;
+        if (const char* a = std::getenv("VA_OVERLAY_ALPHA")) { try { alpha = std::stof(a); } catch (...) {} }
+        if (const char* t = std::getenv("VA_OVERLAY_THICKNESS")) { try { thick = std::stoi(t); } catch (...) {} }
+        if (alpha > 0.0f) {
+            auto st = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
+            (void)va::analyzer::cudaops::fill_rects_bgr_inplace(d_img, w, h, rois.d_boxes, rois.d_cls, N, alpha, st);
+        }
+        auto st2 = stream_ ? reinterpret_cast<cudaStream_t>(stream_) : va::exec::StreamPool::instance().tls();
+        if (va::analyzer::cudaops::draw_rects_bgr_inplace(d_img, w, h, rois.d_boxes, rois.d_cls, N, thick, st2) != cudaSuccess) {
+            cudaFree(d_img);
+            return false;
+        }
+        bool ok = (cudaMemcpy(out.bgr.data(), d_img, bytes, cudaMemcpyDeviceToHost) == cudaSuccess);
+        cudaFree(d_img);
+        if (ok) {
+            log_once("gpu-rois-bgr", static_cast<size_t>(N), in);
+            return true;
+        }
+    }
+    return false;
+#endif
 }
 
 } 
