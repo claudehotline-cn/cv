@@ -12,6 +12,7 @@
 #include "analyzer/multistage/node_overlay_kpt.hpp"
 #include "analyzer/multistage/node_join.hpp"
 #include "analyzer/multistage/node_reid_smooth.hpp"
+#include "analyzer/multistage/node_track_ocsort.hpp"
 #include "core/logger.hpp"
 #include "core/engine_manager.hpp"
 #include <filesystem>
@@ -35,6 +36,7 @@ static void ensure_ms_nodes_registered() {
     using va::analyzer::multistage::NodeOverlayKpt;
     using va::analyzer::multistage::NodeJoin;
     using va::analyzer::multistage::NodeReidSmooth;
+    using va::analyzer::multistage::NodeTrackOcsort;
     static std::once_flag once;
     std::call_once(once, []{
         MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
@@ -49,6 +51,7 @@ static void ensure_ms_nodes_registered() {
         MS_REGISTER_NODE("overlay.kpt", NodeOverlayKpt);
         MS_REGISTER_NODE("join", NodeJoin);
         MS_REGISTER_NODE("reid.smooth", NodeReidSmooth);
+        MS_REGISTER_NODE("track.ocsort", NodeTrackOcsort);
     });
 }
 static std::string resolve_yaml(const PlainPipelineSpec& spec) {

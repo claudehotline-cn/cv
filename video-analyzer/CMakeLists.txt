@@ -279,6 +279,7 @@ list(APPEND SOURCES
     src/core/drop_metrics.cpp
     src/analyzer/multistage/node_join.cpp
     src/analyzer/multistage/node_reid_smooth.cpp
+    src/analyzer/multistage/node_track_ocsort.cpp
     src/core/source_reconnects.cpp
     src/core/nvdec_events.cpp
     # Storage: DB repositories

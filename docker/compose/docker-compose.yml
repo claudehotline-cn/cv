@@ -237,6 +237,8 @@ services:
       - S3_ADDRESSING_STYLE=path
       - TRAINER_S3_BUCKET=cv-models
       - TRAINER_S3_PREFIX=trainer
+    volumes:
+      - ../../docker/model:/models:ro
     ports:
       - "8088:8088"
     depends_on:

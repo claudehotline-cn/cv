@@ -66,3 +66,13 @@ services:
       - "8001:8001"   # Triton gRPC
       - "8000:8000"   # Triton HTTP
   # triton 服务已并入 va 容器，由 va 的 entrypoint.sh 启动
+
+  trainer:
+    build:
+      dockerfile: docker/trainer-service/Dockerfile.gpu
+    image: cv/trainer-service:latest-gpu
+    # 使用宿主 GPU
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
