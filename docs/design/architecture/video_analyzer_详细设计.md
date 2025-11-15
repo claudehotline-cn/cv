@@ -18,7 +18,7 @@
 - LRO 订阅设计：`docs/design/subscription_pipeline/lro_subscription_design.md`
 - WebRTC / WHEP 协议：`docs/design/subscription_pipeline/webrtc-protocol.md`
 - 存储访问详细设计：`docs/design/storage/storage_详细设计.md`
-- 日志与指标：`docs/design/observability/LOGGING.md`、`docs/design/observability/METRICS.md`
+- 日志与指标：`docs/design/observability/observability_详细设计.md`
 
 ## 2 模块划分
 

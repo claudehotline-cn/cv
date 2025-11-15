@@ -15,12 +15,7 @@
 ### 1.3 相关文档
 
 - 概要设计：`docs/design/architecture/整体架构设计.md`
-- 本文已深度整合以下文档内容，原文件仅作为历史与快速查阅参考：
-  - VA 日志说明：`docs/design/observability/LOGGING.md`
-  - VA 指标说明：`docs/design/observability/METRICS.md`
-  - Path 标签与 PromQL 示例：`docs/design/observability/metrics_path_labels.md`、`docs/design/observability/promql_examples.md`
-  - 日志节流与级别配置：`docs/design/observability/日志与节流配置.md`
-  - 观测配置示例：`docs/design/observability/app_observability_snippet.yaml`
+- 本文已深度整合原 `LOGGING.md`、`METRICS.md`、`metrics_path_labels.md`、`promql_examples.md`、`日志与节流配置.md` 与 `app_observability_snippet.yaml` 的内容，这些独立文档在当前版本中已删除，仅在历史提交中保留。
 
 ## 2 配置与总体设计
 
