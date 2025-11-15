@@ -33,7 +33,7 @@ flowchart LR
     AP[AnalysisPanel.vue]
     SRCV[Sources.vue]
     PIPV[Pipelines.vue]
-    STORE[useAnalysisStore (analysis.ts)]
+    STORE[useAnalysisStore]
     API[cp.ts + dataProvider]
     PLAYER[WhepPlayer.vue]
   end
