@@ -173,7 +173,7 @@ sequenceDiagram
 
 - 利用 CUDA stream 与异步 kernel 调用，提高 pipeline 并行度；
 - 合理设置 batch 大小与模型输入尺寸，在精度与吞吐之间平衡；
-- 通过 `perf_guards.md` 中建议的 guard 与指标监控，避免单路源或单节点成为瓶颈。
+- 结合本节建议的 guard 与指标监控，避免单路源或单节点成为瓶颈。
 
 ### 6.2 观测与排障
 

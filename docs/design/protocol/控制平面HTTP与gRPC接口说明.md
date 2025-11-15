@@ -33,7 +33,7 @@
 
 请求/响应字段与阶段语义详见：
 
-- 订阅整体设计：`docs/design/subscription_lro/lro_subscription_design.md`
+- 订阅整体设计：`docs/design/subscription_pipeline/lro_subscription_design.md`
 - 前端分析面板时序：`docs/design/architecture/web_front_详细设计.md` 第 3.2 节
 
 ### 2.2 源管理
@@ -194,6 +194,6 @@ service SourceControl {
   - `docs/design/protocol/webrtc-protocol.md`
   - `docs/design/protocol/控制面错误码与语义.md`
 - 订阅与训练：
-  - `docs/design/subscription_lro/lro_subscription_design.md`
+  - `docs/design/subscription_pipeline/lro_subscription_design.md`
   - `docs/design/training/cv_训练流水线（training_pipeline）详细设计_v_1.md`
   - `docs/design/architecture/web_front_详细设计.md`（包含分析面板与订阅/WHEP 前端流程）
