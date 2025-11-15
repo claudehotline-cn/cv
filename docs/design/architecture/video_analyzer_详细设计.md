@@ -17,7 +17,7 @@
 - 控制平面设计：`docs/design/architecture/controlplane_design.md`
 - LRO 订阅设计：`docs/design/subscription_lro/lro_subscription_design.md`
 - WebRTC / WHEP 协议：`docs/design/cp_vsm_protocol/webrtc-protocol.md`
-- 数据库设计：`docs/design/storage/数据库设计.md`
+- 存储访问详细设计：`docs/design/storage/storage_详细设计.md`
 - 日志与指标：`docs/design/observability/LOGGING.md`、`docs/design/observability/METRICS.md`
 
 ## 2 模块划分

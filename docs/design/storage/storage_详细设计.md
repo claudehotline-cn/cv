@@ -18,22 +18,186 @@
 ### 1.3 相关文档
 
 - 概要设计：`docs/design/architecture/整体架构设计.md`
-- 数据库 schema：`docs/design/storage/数据库设计.md`
 - VA 详细设计：`docs/design/architecture/video_analyzer_详细设计.md`
 - Controlplane 设计：`docs/design/architecture/controlplane_design.md`
 
-## 2 数据库设计概览
+## 2 数据库设计（cv_cp，MySQL 8.0）
 
-详细表结构见 `docs/design/storage/数据库设计.md`，本节仅概述关键实体：
+本节整合原《数据库设计（MySQL 8.0）》文档内容，统一说明控制面数据库的目标、实体关系、表结构与迁移策略。
 
-- `sources`：视频源（id/uri/status/caps/fps/...）。
-- `pipelines`：管线定义（name/graph_id/default_model_id/encoder_cfg/...）。
-- `graphs`：graph 元数据与配置文件路径。
-- `models`：模型元数据（id/task/family/variant/path/conf/iou/...）。
-- `sessions`：订阅会话生命周期（id/stream_id/pipeline/model_id/status/error_msg/...）。
-- `events`：业务事件（告警/状态变更等）。
-- `logs`：结构化日志。
-- 训练相关表（训练任务、工件、部署记录等），细节见数据库设计文档。
+### 2.1 背景与目标
+
+- 目标：
+  - 为 CV 系统（VSM/VA/前端）提供可靠的持久化存储，用于保存“源/会话/图/模型/事件/日志”等控制面数据；
+  - 支持重启恢复、分页查询、观测与多端协作。
+- 范围（MVP）：
+  - 源（sources）与会话（sessions）持久化；
+  - 图/模型元数据（graphs/models/pipelines）；
+  - 事件（events）与日志（logs）落库与分页查询；
+  - 保持现有 watch 长轮询实时性，SSE 稳定后可逐步启用。
+- 总体架构：
+  - 存储：MySQL 8.0（InnoDB，utf8mb4），部分字段使用 JSON 存放半结构化数据（caps/requires/extra 等）。
+  - 数据流：
+    - VSM → CP/VA：VSM 状态通过现有 list/describe/watch 采集；
+    - CP/VA → DB：控制面组件将“源快照/会话/事件/日志”等写入 DB（异步或小批）；
+    - 前端 → CP：`/api/*` 从“内存聚合 + DB”返回；watch 仍走内存 rev 指纹，降低 DB 压力。
+  - 配置：数据库连接在 `app.yaml:database` 段配置（host/port/user/password/db/pool/driver）。
+
+### 2.2 实体关系（ER 图）
+
+```mermaid
+erDiagram
+    sources ||--o{ sessions : has
+    pipelines ||--o{ sessions : runs
+    graphs ||--o{ sessions : uses
+    models ||--o{ sessions : uses
+    sessions ||--o{ events : emit
+    sessions ||--o{ logs : write
+
+    sources {
+      varchar(64) id PK
+      varchar(1024) uri
+      varchar(32) status
+      json caps
+      double fps
+      datetime created_at
+      datetime updated_at
+    }
+    pipelines {
+      varchar(64) name PK
+      varchar(64) graph_id
+      varchar(128) default_model_id
+      json encoder_cfg
+      datetime created_at
+      datetime updated_at
+    }
+    graphs {
+      varchar(64) id PK
+      varchar(128) name
+      json requires
+      varchar(512) file_path
+      datetime created_at
+      datetime updated_at
+    }
+    models {
+      varchar(128) id PK
+      varchar(32) task
+      varchar(64) family
+      varchar(64) variant
+      varchar(512) path
+      double conf
+      double iou
+      datetime created_at
+      datetime updated_at
+    }
+    sessions {
+      bigint id PK
+      varchar(64) stream_id  "FK->sources.id"
+      varchar(64) pipeline   "FK->pipelines.name"
+      varchar(128) model_id  "FK->models.id"
+      varchar(32) status
+      varchar(256) error_msg
+      datetime started_at
+      datetime stopped_at
+    }
+    events {
+      bigint id PK
+      datetime ts
+      varchar(16) level
+      varchar(24) type
+      varchar(64) pipeline
+      varchar(64) node
+      varchar(64) stream_id
+      varchar(256) msg
+      json extra
+    }
+    logs {
+      bigint id PK
+      datetime ts
+      varchar(16) level
+      varchar(64) pipeline
+      varchar(64) node
+      varchar(64) stream_id
+      text message
+      json extra
+    }
+```
+
+### 2.3 表结构与索引要点
+
+- `sources`：
+  - 保存源 URI、状态、最新 caps（JSON），常用字段：`id/uri/status/caps/fps/created_at/updated_at`；
+  - 建议索引：`(status, updated_at)`，便于按状态筛选与最近变更排序。
+- `pipelines`：
+  - 管线定义：`name/graph_id/default_model_id/encoder_cfg/...`；
+  - `encoder_cfg` 使用 JSON 存放编码参数（码率/GOP/AQ 等），可按需增加 JSON 校验。
+- `graphs`：
+  - graph 元数据与配置文件路径，字段包括 `id/name/requires/file_path/...`；
+  - `requires` 为 JSON，描述 Graph 对模型/源/配置的依赖。
+- `models`：
+  - 模型元数据（`id/task/family/variant/path/conf/iou/...`），与训练流水线产物对应；
+  - 可根据 `task/family/variant` 建组合索引，方便 CP 查询。
+- `sessions`：
+  - 订阅会话生命周期（`id/stream_id/pipeline/model_id/status/error_msg/started_at/stopped_at`）；
+  - 建议索引：
+    - `(stream_id, started_at)`：按源维度查询历史；
+    - `(pipeline, started_at)`：按管线维度查询历史；
+    - `(status, started_at)`：按状态/时间查询。
+- `events` 与 `logs`：
+  - 观测事件与日志，字段包括 `ts/level/pipeline/node/stream_id/msg/extra` 等；
+  - 索引：
+    - `(ts)`、`(pipeline, ts)` 用于时间线查询；
+    - 视需要增加 `(level, ts)` 或 `(stream_id, ts)`。
+
+### 2.4 访问与索引策略（按接口维度）
+
+- `/api/sources`：
+  - 以内存聚合（VA pipelines）为主，DB 作为非活跃源回放；
+  - 按 `updated_at` 排序分页，避免扫描全表。
+- `/api/sources/watch`：
+  - 保持内存 rev 指纹与长轮询，DB 仅作为补全，不直接参与 watch。
+- `/api/logs` / `/api/events`：
+  - 读：基于日志/事件表的分页查询，按 `ts/pipeline/level` 过滤；
+  - 写：通过 VA/CP 中的后台写线程批量落库，避免请求路径内频繁写入。
+- `sessions`：
+  - 在订阅 LRO 完成（ready/failed/cancelled）或取消时更新记录；
+  - 支持按 stream/pipeline 查询历史订阅行为。
+
+### 2.5 迁移与部署
+
+- 建库与导入：
+  - 建议集中维护 `db/schema.sql`，由运维按环境导入；
+  - Windows 环境可使用 PowerShell 脚本：
+    - `pwsh -File tools/db/import_schema.ps1 -Host 127.0.0.1 -Port 13306 -User root -Password 123456 -Database cv_cp -SchemaPath db/schema.sql`
+- Docker 部署（可选）：
+  - 使用 `mysql:8.0` 与 Adminer/phpMyAdmin 组合；
+  - 或在现有 MySQL 实例上直接导入 schema。
+- 迁移工具（建议）：
+  - 使用 Flyway/Liquibase 管理版本化迁移脚本（如 `V1__init.sql`、`V2__add_sessions_indexes.sql` 等）。
+
+### 2.6 安全与运维
+
+- 最小权限：
+  - 为应用创建专用账号，仅授予 `cv_cp` 上必要的 CRUD 与索引权限；
+  - 避免使用 root 账号直连业务数据库。
+- 密钥管理：
+  - 生产环境中不应在配置文件写死密码，应通过环境变量或安全配置服务（Vault/KMS 等）注入；
+  - 支持在 `app.yaml` 中引用环境变量。
+- 容量与归档：
+  - `events/logs` 建议按时间分区或定期归档（如按月归档到历史表或对象存储）；
+  - 必要时增加应用级审计，记录关键操作。
+
+### 2.7 渐进计划
+
+- M0：
+  - 完成 schema 设计与脚本产出；
+  - 在 `/api/system/info` 中透出 database 概要（driver/host/schema/health）。
+- M1：
+  - 接入 logs/events 的“写入 + 分页查询”，watch 仍走内存；
+  - 验证在典型日志/事件写入压力下的性能。
+- M2：
+  - 接入 sessions 生命周期持久化与查询；
+  - 根据实际需要补充 rollup 指标表或历史归档方案。
 
 ## 3 VA 存储访问设计
 
@@ -173,4 +337,4 @@ Controlplane 的训练相关 API（`/api/train/*`）可以直接访问外部 Tra
 - 生产环境应为应用创建最小权限账号，仅授予 `cv_cp` 数据库所需的 CRUD 与索引权限；
 - 不建议在配置文件中硬编码密码，可通过环境变量或安全配置管理工具注入。
 
-本说明书作为存储访问层的详细设计基线，任何涉及新表、新 Repo 或更改 DB 访问方式的改动，均应同步更新本文件与 `数据库设计.md`，并视情况补充迁移脚本与回滚策略。
+本说明书作为存储访问层的详细设计基线，任何涉及新表、新 Repo 或更改 DB 访问方式的改动，均应同步更新本文件，并视情况补充迁移脚本与回滚策略。
