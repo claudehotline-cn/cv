@@ -17,7 +17,7 @@ class NodeRoiBatchCuda : public INode {
 public:
     explicit NodeRoiBatchCuda(const std::unordered_map<std::string,std::string>& cfg);
     bool process(Packet& p, NodeContext& ctx) override;
-    std::vector<std::string> inputs() const override { return {in_rois_key_}; }
+    std::vector<std::string> inputs() const override { return { std::string("rois:") + in_rois_key_ }; }
     std::vector<std::string> outputs() const override { return {out_key_}; }
     // Introspection (best-effort): last total/used ROIs
     int last_total_rois() const { return last_total_rois_; }

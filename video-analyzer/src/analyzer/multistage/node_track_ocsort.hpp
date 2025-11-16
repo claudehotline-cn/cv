@@ -31,8 +31,9 @@ public:
     bool open(NodeContext& ctx) override;
     void close(NodeContext& ctx) override;
     bool process(Packet& p, NodeContext& ctx) override;
-    std::vector<std::string> inputs() const override { return {in_rois_key_}; }
-    std::vector<std::string> outputs() const override { return {out_rois_key_}; }
+    // Graph 视图中使用 "rois:<key>" 标记 ROI 流，实际数据仍存放在 Packet.rois/gpu_rois 的 <key> 槽位中。
+    std::vector<std::string> inputs() const override { return { std::string("rois:") + in_rois_key_ }; }
+    std::vector<std::string> outputs() const override { return { std::string("rois:") + out_rois_key_ }; }
 
 private:
     struct Track {
