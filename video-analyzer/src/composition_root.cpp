@@ -39,6 +39,7 @@
 #include "analyzer/multistage/node_overlay_kpt.hpp"
 #include "analyzer/multistage/node_join.hpp"
 #include "analyzer/multistage/node_reid_smooth.hpp"
+#include "analyzer/multistage/node_track_ocsort.hpp"
 #include <algorithm>
 #include <cstdlib>
 
@@ -133,6 +134,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             using va::analyzer::multistage::NodeRoiBatchCuda;
             using va::analyzer::multistage::NodeJoin;
             using va::analyzer::multistage::NodeReidSmooth;
+            using va::analyzer::multistage::NodeTrackOcsort;
             MS_REGISTER_NODE("preproc.letterbox", NodePreprocLetterbox);
             MS_REGISTER_NODE("model.ort", NodeModel);
             MS_REGISTER_NODE("model", NodeModel);
@@ -145,6 +147,7 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
             MS_REGISTER_NODE("overlay.kpt", NodeOverlayKpt);
             MS_REGISTER_NODE("join", NodeJoin);
             MS_REGISTER_NODE("reid.smooth", NodeReidSmooth);
+            MS_REGISTER_NODE("track.ocsort", NodeTrackOcsort);
             auto ms = std::make_shared<AnalyzerMultistageAdapter>();
             // Populate NodeContext with available process-wide services
             {

@@ -28,6 +28,8 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
     if (auto itT = cfg.find("model_path_trt"); itT != cfg.end()) model_path_trt_ = itT->second;
     if (auto itO = cfg.find("model_path_ort"); itO != cfg.end()) model_path_ort_ = itO->second;
     if (auto itTi = cfg.find("model_path_triton"); itTi != cfg.end()) model_path_triton_ = itTi->second;
+    // Optional per-node provider override (e.g., reid 使用 cuda，det 使用 triton)
+    if (auto itFp = cfg.find("force_provider"); itFp != cfg.end()) force_provider_override_ = itFp->second;
 }
 
 bool NodeModel::open(NodeContext& ctx) {
@@ -38,6 +40,11 @@ bool NodeModel::open(NodeContext& ctx) {
     if (ctx.engine_registry) {
         try { desc = reinterpret_cast<va::core::EngineManager*>(ctx.engine_registry)->currentEngine(); }
         catch (...) { /* ignore */ }
+    }
+    // Node-level provider override: allow certain nodes (e.g., reid) to use a different provider
+    // while keeping engine-level force_provider=triton for others（如 det）
+    if (!force_provider_override_.empty()) {
+        try { desc.options["force_provider"] = force_provider_override_; } catch (...) { /* ignore */ }
     }
     // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_model（按模型目录名）
     if (!model_path_triton_.empty()) {
@@ -110,10 +117,20 @@ bool NodeModel::open(NodeContext& ctx) {
         // Validate outputs declared
         try {
             auto out_names_probe = cand->outputNames();
-            if (out_names_probe.empty()) {
-                VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
-                    << "model has zero declared outputs (path='" << model_path_ << "'). Check ONNX export.";
-                continue;
+            // 对于 Triton 路径（尤其是 In‑Process），允许在 load 阶段输出名为空，
+            // 由后续推理过程基于响应自动填充真实输出名。
+            std::string prov_lower = prov_resolved;
+            std::transform(prov_lower.begin(), prov_lower.end(), prov_lower.begin(),
+                           [](unsigned char c){ return (char)std::tolower(c); });
+            bool is_triton_like = (prov_lower == "triton" ||
+                                   prov_lower == "triton-inproc" ||
+                                   prov_lower == "triton-grpc");
+            if (!is_triton_like) {
+                if (out_names_probe.empty()) {
+                    VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                        << "model has zero declared outputs (path='" << model_path_ << "'). Check ONNX export.";
+                    continue;
+                }
             }
         } catch (...) {}
         loaded = std::move(cand); used_provider = prov_resolved; break;

@@ -3,13 +3,14 @@ analyzer:
     nodes:
       - name: pre
         type: preproc.letterbox
-        params: { out_w: "1440", out_h: "800", use_cuda: "1" }
+        params: { out_w: "640", out_h: "640", use_cuda: "1" }
       - name: det
         type: model
         params:
           in: "tensor:det_input"
           outs: "tensor:det_raw"
-          # 仅使用 ORT/ONNX 路径进行检测推理
+          # 检测：In-Process Triton 路径使用 yolov12x 仓库模型，ORT 路径用于回退
+          model_path_triton: "yolov12x"
           model_path_ort: "models/yolox.onnx"
           model_path: "models/yolox.onnx"
       - name: nms
@@ -30,7 +31,8 @@ analyzer:
         params:
           in: "tensor:roi_batch"
           outs: "tensor:reid"
-          # 使用 ModelScope PASS-ViT-B 行人 ReID 模型导出的 ONNX
+          # ReID：优先使用 ORT/CUDA 提供特征，避免当前环境下 In-Process Triton 对不同 input 名称的限制
+          force_provider: cuda
           model_path_ort: "models/reid_passvitb.onnx"
           model_path: "models/reid_passvitb.onnx"
       - name: track

@@ -67,6 +67,60 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
     // Phase 1：依赖模型仓库已预加载模型（MODE_NONE/auto）
     loaded_ = true;
     VA_LOG_INFO() << "[inproc.triton] init model='" << opt_.model_name << "'";
+
+    // 当未显式配置 input_name 时，尝试通过 Triton metadata 自动填充第一个输入名，
+    // 以避免对全局 triton_input=images 的硬编码依赖。
+    if (opt_.input_name.empty()) {
+        auto* server = host_->server();
+        if (server) {
+            TRITONSERVER_Message* md = nullptr;
+            TRITONSERVER_Error* e_md = TRITONSERVER_ServerModelMetadata(
+                server,
+                opt_.model_name.c_str(),
+                (opt_.model_version.empty() ? -1 : std::strtoll(opt_.model_version.c_str(), nullptr, 10)),
+                &md);
+            if (e_md != nullptr) {
+                VA_LOG_WARN() << "[inproc.triton] ModelMetadata failed for model '" << opt_.model_name
+                              << "': " << TRITONSERVER_ErrorMessage(e_md);
+                TRITONSERVER_ErrorDelete(e_md);
+            } else if (md) {
+                const char* buf = nullptr;
+                size_t size = 0;
+                TRITONSERVER_Error* e_js = TRITONSERVER_MessageSerializeToJson(md, &buf, &size);
+                if (e_js != nullptr) {
+                    VA_LOG_WARN() << "[inproc.triton] MessageSerializeToJson failed for model '" << opt_.model_name
+                                  << "': " << TRITONSERVER_ErrorMessage(e_js);
+                    TRITONSERVER_ErrorDelete(e_js);
+                } else if (buf && size > 0) {
+                    try {
+                        std::string json(buf, size);
+                        std::string in_name;
+                        auto pos_inputs = json.find("\"inputs\"");
+                        if (pos_inputs != std::string::npos) {
+                            auto pos_name = json.find("\"name\"", pos_inputs);
+                            if (pos_name != std::string::npos) {
+                                auto pos_colon = json.find(':', pos_name);
+                                auto pos_q1 = json.find('"', pos_colon);
+                                auto pos_q2 = (pos_q1 == std::string::npos) ? std::string::npos
+                                                                             : json.find('"', pos_q1 + 1);
+                                if (pos_q1 != std::string::npos && pos_q2 != std::string::npos && pos_q2 > pos_q1 + 1) {
+                                    in_name = json.substr(pos_q1 + 1, pos_q2 - pos_q1 - 1);
+                                }
+                            }
+                        }
+                        if (!in_name.empty()) {
+                            opt_.input_name = in_name;
+                            VA_LOG_INFO() << "[inproc.triton] autofill input_name='" << opt_.input_name
+                                          << "' for model='" << opt_.model_name << "'";
+                        }
+                    } catch (...) {
+                        // best-effort: 若解析失败则保持 input_name 为空，由后续错误日志协助诊断
+                    }
+                }
+                TRITONSERVER_MessageDelete(md);
+            }
+        }
+    }
     return true;
 #else
     (void)opt_;
@@ -192,13 +246,16 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         }
     }
 
-    // Outputs
-    for (const auto& name : opt_.output_names) {
-        if (auto* e = TRITONSERVER_InferenceRequestAddRequestedOutput(req, name.c_str()); e != nullptr) {
-            VA_LOG_WARN() << "[inproc.triton] AddRequestedOutput('" << name << "') failed: " << TRITONSERVER_ErrorMessage(e);
-            TRITONSERVER_ErrorDelete(e);
-            TRITONSERVER_InferenceRequestDelete(req);
-            return false;
+    // Outputs：若 output_names 为空，则不显式指定，让 Triton 返回模型配置中的全部输出，
+    // 随后在首次推理时自动发现真实输出名并写回 opt_.output_names。
+    if (!opt_.output_names.empty()) {
+        for (const auto& name : opt_.output_names) {
+            if (auto* e = TRITONSERVER_InferenceRequestAddRequestedOutput(req, name.c_str()); e != nullptr) {
+                VA_LOG_WARN() << "[inproc.triton] AddRequestedOutput('" << name << "') failed: " << TRITONSERVER_ErrorMessage(e);
+                TRITONSERVER_ErrorDelete(e);
+                TRITONSERVER_InferenceRequestDelete(req);
+                return false;
+            }
         }
     }
 
@@ -307,6 +364,9 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         return false;
     }
     host_out_bufs_.clear(); host_out_shapes_.clear(); outputs.clear();
+    // 当 output_names 为空时，收集响应中的真实输出名，供后续请求与 NodeModel 映射使用。
+    std::vector<std::string> discovered_names;
+    bool need_discover = opt_.output_names.empty();
     for (uint32_t i=0;i<outc;i++) {
         const char* oname = nullptr; TRITONSERVER_DataType odt; const int64_t* odims=nullptr; uint64_t odimc=0;
         const void* base = nullptr; size_t bsize = 0; TRITONSERVER_MemoryType mtype; int64_t mid=0; void* userp=nullptr;
@@ -315,7 +375,14 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
             TRITONSERVER_ErrorDelete(e);
             continue;
         }
-        (void)oname; (void)odt; // 假定为 FP32
+        if (need_discover) {
+            if (oname && *oname) {
+                discovered_names.emplace_back(oname);
+            } else {
+                discovered_names.emplace_back(std::string("output") + std::to_string(i));
+            }
+        }
+        (void)odt; // 假定为 FP32
         if (!base || bsize == 0) continue;
         std::vector<int64_t> shape(odims, odims + odimc);
         // 若下游期望 batch=1，则可在此补前导维（与 gRPC 版对齐）
@@ -349,6 +416,13 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
                 va::core::TensorView tv; tv.on_gpu=false; tv.dtype=va::core::DType::F32; tv.data=host_out_bufs_.back().data(); tv.shape=host_out_shapes_.back(); outputs.push_back(tv);
             }
         }
+    }
+    // 若本会话之前未显式配置输出名且本次推理成功获取到输出，
+    // 则将名称持久化到 opt_ 中，供后续 AddRequestedOutput 以及 NodeModel::process 使用。
+    if (need_discover && !discovered_names.empty()) {
+        opt_.output_names = std::move(discovered_names);
+        VA_LOG_INFO() << "[inproc.triton] autofill output_names (n=" << opt_.output_names.size()
+                      << ") for model='" << opt_.model_name << "'";
     }
     TRITONSERVER_InferenceResponseDelete(resp);
     if (allocator) TRITONSERVER_ResponseAllocatorDelete(allocator);

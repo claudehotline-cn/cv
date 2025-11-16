@@ -91,13 +91,21 @@ create_model_session(const va::core::EngineDescriptor& engine,
 #if defined(USE_TRITON_CLIENT)
         va::analyzer::TritonGrpcModelSession::Options topt;
         const auto& opts = engine.options;
+        bool has_triton_outputs = false;
+        bool has_triton_input = false;
+        // 默认留空，由各实现基于 metadata / config 自动填充；仅当显式配置 triton_input 时才覆盖
+        topt.input_name.clear();
         if (auto it = opts.find("triton_url"); it != opts.end()) topt.url = it->second;
         if (auto it = opts.find("triton_model"); it != opts.end()) topt.model_name = it->second;
         if (auto it = opts.find("triton_model_version"); it != opts.end()) topt.model_version = it->second;
-        if (auto it = opts.find("triton_input"); it != opts.end()) topt.input_name = it->second;
+        if (auto it = opts.find("triton_input"); it != opts.end()) {
+            topt.input_name = it->second;
+            has_triton_input = true;
+        }
         if (auto it = opts.find("triton_outputs"); it != opts.end()) {
             topt.output_names.clear();
             std::string v = it->second; std::string cur; for (char c : v){ if (c==','||c==';'){ if(!cur.empty()){ topt.output_names.push_back(cur); cur.clear(); } } else cur.push_back(c);} if(!cur.empty()) topt.output_names.push_back(cur);
+            has_triton_outputs = true;
         }
         if (auto it = opts.find("triton_no_batch"); it != opts.end()) {
             std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
@@ -119,8 +127,20 @@ create_model_session(const va::core::EngineDescriptor& engine,
             va::analyzer::TritonInprocModelSession::Options iopt;
             iopt.model_name = topt.model_name;
             iopt.model_version = topt.model_version;
-            iopt.input_name = topt.input_name;
-            iopt.output_names = topt.output_names;
+            // 若未显式提供 triton_input，则由 In-Process 路径在 loadModel 阶段基于 Triton metadata
+            // 自动填充 input_name（避免硬编码 images）。
+            if (has_triton_input) {
+                iopt.input_name = topt.input_name;
+            } else {
+                iopt.input_name.clear();
+            }
+            // 若未在配置中显式提供 triton_outputs，则让 In‑Process 路径在首次推理后
+            // 基于响应自动填充真实输出名（避免硬编码 dets/output0）。
+            if (has_triton_outputs) {
+                iopt.output_names = topt.output_names;
+            } else {
+                iopt.output_names.clear();
+            }
             iopt.timeout_ms = topt.timeout_ms;
             iopt.device_id = engine.device_index;
             iopt.assume_no_batch = topt.assume_no_batch;
