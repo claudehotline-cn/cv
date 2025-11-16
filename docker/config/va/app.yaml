@@ -16,7 +16,7 @@ engine:
     render_passthrough: false
     render_cuda: true
     use_cuda_preproc: true
-    graph_id: analyzer_multistage_ocsort
+    graph_id: analyzer_multistage_example
     warmup_runs: auto
     overlay_thickness: 3
     overlay_alpha: 0.35
