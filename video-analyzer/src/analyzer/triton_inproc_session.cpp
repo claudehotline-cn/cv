@@ -236,6 +236,13 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
     }
     TRITONSERVER_InferenceRequestSetId(req, "va-inproc");
     TRITONSERVER_InferenceRequestSetTimeoutMicroseconds(req, static_cast<uint64_t>(opt_.timeout_ms) * 1000ull);
+    // In Async 模式下由 Triton 在推理完成后调用 release 回调；在回调中负责删除 request。
+    auto req_release = [](TRITONSERVER_InferenceRequest* request, unsigned int /*release_flags*/, void* /*userp*/) {
+        if (request) {
+            TRITONSERVER_InferenceRequestDelete(request);
+        }
+    };
+    TRITONSERVER_InferenceRequestSetReleaseCallback(req, req_release, nullptr);
 
     // Input
     TRITONSERVER_DataType dtype = TRITONSERVER_TYPE_FP32;
@@ -285,26 +292,42 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         }
     }
 
-    // 使用同步 ServerInfer 接口，避免异步回调/线程交互带来的不确定性。
-    TRITONSERVER_InferenceResponse* resp = nullptr;
-    TRITONSERVER_Error* err_inf = TRITONSERVER_ServerInfer(server, req, &resp);
-    // request 生命周期由调用方管理：无论成功与否都显式删除
-    TRITONSERVER_InferenceRequestDelete(req);
+    // Async 推理：使用默认 ResponseAllocator，通过 InferenceResponseOutput 获取输出 buffer。
+    std::promise<TRITONSERVER_InferenceResponse*> prom;
+    auto fut = prom.get_future();
+    auto resp_cb = [](TRITONSERVER_InferenceResponse* response, const uint32_t flags, void* userp){
+        auto* p = reinterpret_cast<std::promise<TRITONSERVER_InferenceResponse*>*>(userp);
+        (void)flags;
+        if (p) {
+            p->set_value(response);
+        }
+    };
+    if (auto* e = TRITONSERVER_InferenceRequestSetResponseCallback(
+            req,
+            nullptr,
+            nullptr,
+            resp_cb,
+            &prom); e != nullptr) {
+        VA_LOG_WARN() << "[inproc.triton] SetResponseCallback failed: " << TRITONSERVER_ErrorMessage(e);
+        TRITONSERVER_ErrorDelete(e);
+        // req 将在 release 回调中由 Triton 删除
+        return false;
+    }
+
+    TRITONSERVER_Error* err_inf = TRITONSERVER_ServerInferAsync(server, req, nullptr);
     if (err_inf != nullptr) {
         const char* msg = TRITONSERVER_ErrorMessage(err_inf);
-        VA_LOG_WARN() << "[inproc.triton] ServerInfer failed: " << msg;
+        VA_LOG_WARN() << "[inproc.triton] ServerInferAsync failed: " << msg;
         TRITONSERVER_ErrorDelete(err_inf);
-        if (resp) {
-            TRITONSERVER_InferenceResponseDelete(resp);
-        }
         return false;
     }
     try {
         VA_LOG_C(::va::core::LogLevel::Info, "inproc.triton")
-            << "[DebugSeg] ServerInfer done model='" << opt_.model_name
+            << "[DebugSeg] ServerInferAsync dispatched model='" << opt_.model_name
             << "' use_gpu_output=" << std::boolalpha << opt_.use_gpu_output;
     } catch (...) {}
 
+    TRITONSERVER_InferenceResponse* resp = fut.get();
     if (!resp) {
         VA_LOG_WARN() << "[inproc.triton] null response";
         return false;
