@@ -9,6 +9,8 @@ analyzer:
         params:
           in: "tensor:det_input"
           outs: "tensor:det_raw"
+          # YOLOv12x 模型在 Triton config 中输入名为 images
+          triton_input: "images"
           # 固定 Triton 输出名，避免动态输出路径触发 In-Process + TensorRT bug
           triton_outputs: "output0"
           # 检测：In-Process Triton 路径使用 yolov12x 仓库模型，ORT 路径用于回退
@@ -37,6 +39,8 @@ analyzer:
           model_path_triton: "reid_passvitb"
           model_path_ort: "models/reid_passvitb.onnx"
           model_path: "models/reid_passvitb.onnx"
+          # PASS-ReID 模型在 ONNX/Triton config 中输入名为 input
+          triton_input: "input"
           triton_outputs: "feat"
       - name: track
         type: track.ocsort
