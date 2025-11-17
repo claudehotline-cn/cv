@@ -1,265 +1,190 @@
-# CONTEXT（2025-11-15，全局架构与文档重构）
+# CONTEXT（2025-11-17，In-Process Triton + OCSORT 调试）
 
-本文件汇总当前对话中围绕“整体架构设计、订阅/LRO 管线、推理与多阶段 Graph、协议与存储设计、设计文档重构”的关键结论，作为理解本仓库及后续路线图的统一上下文。
-
----
-
-## 一、系统与仓库概览
-
-- **业务目标**：接入多路 RTSP 视频源，执行可配置的多阶段视觉分析（检测/跟踪/ReID 等），以 WebRTC/WHEP 向浏览器实时回传叠加画面，并提供训练与模型上线能力。
-- **主要子项目与职责**：
-  - `video-analyzer`（VA）：RTSP 解码（NVDEC/FFmpeg）、多阶段 Graph 执行、GPU 零拷贝推理（TensorRT/Triton In-Process）、后处理与叠加、H.264/NVENC 编码、WHEP 输出，对内暴露 `AnalyzerControl` gRPC 与少量调试 HTTP。
-  - `controlplane`（CP）：唯一对外 HTTP 入口，负责 `/api/*` 与 `/whep`，对接 VA/VSM/Trainer，管理订阅 LRO、训练与模型仓库、控制与观测接口。
-  - `video-source-manager`（VSM）：管理 RTSP 源配置，通过 gRPC `SourceControl` 与 CP 协作，并以 Restream 方式发布稳定 RTSP 端点，暴露 REST/SSE 供观测。
-  - `web-front`：Vue+TS 前端，提供 Sources/Pipelines/AnalysisPanel/Training 等页面，仅访问 CP HTTP 与 `/whep`。
-  - `model-trainer`：训练服务（FastAPI+PyTorch+MLflow），产出 ONNX/TensorRT plan 与 manifest，结合 MinIO/MySQL/MLflow 构成训练与部署闭环。
-- **基础设施**：MySQL（`cv_cp`）、Redis（可选）、MinIO、MLflow、Prometheus/Grafana、GPU（推理+NVENC/NVDEC）。
+本文件汇总当前对话中围绕 “VideoAnalyzer In-Process Triton 集成、多阶段 OCSORT 图、per-node 推理配置与后续文档/路线规划” 的关键结论，作为后续开发与调试的统一上下文。
 
 ---
 
-## 二、控制平面与订阅/LRO 总体设计
+## 一、当前进度与关键决策
 
-订阅与播放从“控制平面与订阅”视角的整体结构如下：
+### 1. In-Process Triton 集成路径
 
-```mermaid
-flowchart LR
-  WEB[Web-Front SPA] -->|"POST/GET/DELETE /api/subscriptions"| CP[Controlplane HTTP API]
-  WEB -->|"SSE /api/subscriptions/:id/events"| CP
-  WEB -->|"WHEP /whep"| CP
+- 已彻底删除 gRPC Triton client 路径：
+  - 删除 `video-analyzer/src/analyzer/triton_session.{hpp,cpp}` 与所有 `USE_TRITON_CLIENT` 相关 CMake/Docker 逻辑。
+  - VA 现在只通过 `libtritonserver.so` 的 In-Process C API（`TRITONSERVER_ServerNew/ServerLoadModel/ServerInferAsync` 等）调用 Triton。
+- In-Process 会话实现：
+  - 代码位置：`video-analyzer/src/analyzer/triton_inproc_session.cpp/.hpp`。
+  - 主要特性：
+    - 支持 GPU 输入与 GPU 输出，输出通过默认 ResponseAllocator + D2D 拷贝到会话级 GPU 缓冲。
+    - 新增入口/输出调试日志（如 `[DebugSeg]`）方便配合 gdb 分析。
+    - `loadModel()` 中使用 `TRITONSERVER_ServerModelMetadata + MessageSerializeToJson` 自动填充 `opt_.input_name`。
+    - 针对 `input_name` 增加硬校验：若最终 `input_name` 仍为空，则视为 load 失败，记录 ERROR 日志并返回 `false`。
+- gdb 崩溃分析（用户提供的 backtrace）：
+  - 崩溃线程名 `grpcpp_sync_ser`，栈顶为 `triton::core::InferenceResponse::InferenceResponse(...)` → `TRITONBACKEND_ResponseNew` → `tensorrt::ModelInstanceState::Run`。
+  - 说明 SIGSEGV 发生在 Triton/TensorRT backend 构造 `InferenceResponse` 时，我们自己的响应解析代码尚未执行。
+  - 暂时结论：Triton 2.60.0 + TensorRT backend + In-Process + 某些输出配置组合存在内核级 bug，需要通过配置/降级绕开。
 
-  subgraph CP_ZONE["Controlplane（控制平面）"]
-    CP
-    STORE[(订阅 Store / DB 映射)]
-  end
+### 2. ModelSessionFactory 与 NodeModel 调整
 
-  subgraph VA_ZONE["Video Analyzer（订阅执行与媒体）"]
-    VAAPI[AnalyzerControl gRPC]
-    LRO[LRO Runner / Operation / Step]
-    PIPE[多阶段 Graph / 媒体管线]
-  end
+- `video-analyzer/src/analyzer/model_session_factory.cpp`：
+  - `provider='triton'` 分支只构造 `TritonInprocModelSession`，前提是 `engine.options` 中存在非空 `triton_outputs`。
+  - 若未配置 `triton_outputs`，记录告警：
+    - `"provider='triton' requested but no triton_outputs configured; falling back to cuda"`，
+    - 并将 provider 回退为 `cuda`。
+  - 从 `engine.options` 中解析以下字段填充 `TritonInprocModelSession::Options`：
+    - `triton_model` / `triton_model_version`；
+    - `triton_input` → `iopt.input_name`（存在时覆盖 metadata）；
+    - `triton_outputs` → `iopt.output_names`（如 `"output0"` → `["output0"]`）；
+    - `warmup_runs`、`triton_gpu_input/triton_gpu_output`；
+    - `triton_repo`、`triton_backend_dir`；
+    - `triton_pinned_mem_mb`、`triton_cuda_pool_device_id`、`triton_cuda_pool_bytes`；
+    - `triton_backend_configs` 等高级 ServerOptions。
+- `video-analyzer/src/analyzer/multistage/node_model.hpp/.cpp`：
+  - 新增 per-node 字段，用于细粒度控制 Triton：
+    - `model_path_triton_`：Triton 仓库模型名，例如 `"yolov12x"` / `"reid_passvitb"`。
+    - `triton_input_override_`：按节点固定 Triton 输入名，例如 `"images"` 或 `"input"`。
+    - `triton_outputs_override_`：按节点固定 Triton 输出名列表，例如 `"output0"` 或 `"feat"`。
+  - `NodeModel::NodeModel` 从 Graph YAML 解析 `triton_input`/`triton_outputs` 字段。
+  - `NodeModel::open` 中将 per-node 覆盖注入 `EngineDescriptor::options`：
+    - 填充 `triton_model`、`triton_input`、`triton_outputs`，供 `ModelSessionFactory` 使用。
+  - 保留 provider chain fallback（tensorrt-native → triton → tensorrt → cuda）与非 Triton provider 的输出名校验。
 
-  subgraph VSM_ZONE["Video Source Manager"]
-    VSM[SourceControl gRPC]
-  end
+### 3. OCSORT 多阶段图（analyzer_multistage_ocsort）改造
 
-  subgraph DATA["持久化与缓存"]
-    DB[(MySQL cv_cp)]
-    REDIS[(Redis)]
-  end
+- 图文件：`docker/config/va/graphs/analyzer_multistage_ocsort.yaml`。
+- det 节点（YOLOv12x 检测）示例配置：
+  - 目标：显式固定输入名/输出名，与 Triton config 中 `input: images` + `output: output0` 对齐，回到历史上稳定的组合。
+  - 典型片段：
+    ```yaml
+    - name: det
+      type: model
+      params:
+        in: "tensor:det_input"
+        outs: "tensor:det_raw"
+        triton_input: "images"
+        triton_outputs: "output0"
+        model_path_triton: "yolov12x"
+        model_path_ort: "models/yolox.onnx"
+        model_path: "models/yolox.onnx"
+    ```
+- reid 节点（Pass-ReID）示例配置：
+  - 目标：为 ReID 也启用 In-Process Triton，避免出现 `unexpected inference input 'images' for model 'reid_passvitb'`。
+  - 典型片段：
+    ```yaml
+    - name: reid
+      type: model
+      params:
+        in: "tensor:roi_batch"
+        outs: "tensor:reid"
+        model_path_triton: "reid_passvitb"
+        model_path_ort: "models/reid_passvitb.onnx"
+        model_path: "models/reid_passvitb.onnx"
+        triton_input: "input"
+        triton_outputs: "feat"
+    ```
+- 同时对齐 ROI 流节点（如 `roi.batch.cuda`、`track.ocsort`）的 I/O key，修复 Graph finalize 报 `Graph input missing ...` 的问题。
 
-  CP -->|gRPC Subscribe/Get/Cancel/Watch| VAAPI
-  VAAPI --> LRO
-  LRO --> PIPE
+### 4. Docker/CMake 与日志配置
 
-  CP -->|gRPC 源状态/配置| VSM
-  VSM -->|Restream RTSP 源| PIPE
+- `video-analyzer/CMakeLists.txt`：
+  - 移除所有 `USE_TRITON_CLIENT` 选项和相关链接，仅保留 `USE_TRITON_INPROCESS`。
+- `docker/va/Dockerfile.gpu`：
+  - 删除 tritonclient 构建阶段与 `/opt/tritonclient` 拷贝。
+  - 构建时只传 `-DUSE_TRITON_INPROCESS=${VA_USE_TRT_INPROC:-OFF}`。
+- `docker/compose/docker-compose.gpu.override.yml`：
+  - 为 `va` 服务追加：
+    - `TRITONSERVER_LOG_VERBOSE=1`；
+    - `TRITONSERVER_LOG_INFO=1`；
+  - 用于输出 Triton 详细日志辅助定位 In-Process 出错位置。
 
-  CP -->|订阅/源/训练元数据| DB
-  CP -->|可选配额/速率缓存| REDIS
+### 5. 日志与错误观测
 
-  CP -->|WHEP 反向代理| PIPE
-```
-
-- **CP HTTP API**：
-  - 订阅：`POST/GET/DELETE /api/subscriptions`，`GET /api/subscriptions/{id}/events`（SSE）。
-  - 控制：`/api/control/apply_pipeline`、`/api/control/hotswap`、`/api/control/pipeline_mode` 等，经 CP 转发至 VA gRPC。
-  - 训练与模型：`/api/train/*`、`/api/repo/*`。
-  - 媒体：`POST/PATCH/DELETE /whep`，作为 VA WHEP 的反向代理与编排入口。
-- **LRO 订阅执行（VA 内部）**：
-  - `Runner/Operation/Step/IStateStore/AdmissionPolicy` 组成通用 LRO 框架；
-  - 订阅由一系列步骤构成（打开 RTSP → 加载模型 → 构建/启动 pipeline → 准备 WHEP 输出），每个步骤有明确的 phase 与错误原因；
-  - CP 通过 `AnalyzerControl` gRPC 触发订阅、查询 phase 与 timeline，并在 MySQL 中维护映射。
-- **VSM 与源管理**：
-  - VSM 通过 gRPC `SourceControl` 接收 CP 的源启停与配置变更；
-  - 向 VA 提供 Restream RTSP 端点，避免 VA 直接依赖上游摄像头稳定性；
-  - 详细协议见 `docs/design/protocol/VSM_REST_SSE与指标配置.md` 与 `控制平面HTTP与gRPC接口说明.md`。
-
----
-
-## 三、推理、多阶段 Graph 与 GPU 零拷贝
-
-- **多阶段 Graph 框架**（`multistage_graph_详细设计.md`）：
-  - 核心抽象：`Packet/NodeContext/INode/Graph/NodeRegistry/AnalyzerMultistageAdapter`；
-  - 支持条件边、join、ReID 平滑等高级节点，通过 YAML 描述 pipeline；
-  - 新节点扩展需实现 `INode` 接口，并在 `NodeRegistry` 中注册。
-- **推理引擎与集成**：
-  - `tensorrt_engine.md`：介绍 VA 内部 TensorRT/ONNX Runtime session 管理与引擎抽象；
-  - `triton_inprocess_integration.md`：以 In-Process 作为主路径，附录涵盖 gRPC 集成方案；
-  - 配合 LRO 与 Graph，实现从 decode→预处理→推理→后处理→叠加的可配置管线。
-- **GPU 零拷贝路径**（`zero_copy_execution_详细设计.md`）：
-  - 解码：NVDEC 将帧解码到 GPU；
-  - 预处理：CUDA kernel 完成 letterbox/resize，生成 NCHW FP32/FP16 tensor；
-  - 推理：通过 IOBinding 将显存 buffer 直接绑定到 TensorRT/Triton；
-  - 后处理：GPU decode + NMS，行为与 CPU 基线对齐，必要时可回退到 CPU NMS；
-  - 提供 compare/suggest 脚本，用于校准 CPU/GPU 检测框差异与 conf/iou。
-
----
-
-## 四、存储、协议与可观测性
-
-- **存储设计**（`storage_详细设计.md`）：
-  - 聚合原 `数据库设计.md` 内容，统一描述 MySQL `cv_cp` 的实体（sources/pipelines/graphs/models/sessions/events/logs/training_records 等）和 ER 图；
-  - 说明 VA/CP 访问数据库的 `DbPool` 与各 `Repo` 模块职责，以及迁移策略与索引约定。
-- **协议与错误码**（`protocol` 目录）：
-  - `控制平面HTTP与gRPC接口说明.md`：系统性描述 CP HTTP API、CP↔VA `AnalyzerControl` gRPC、CP↔VSM `SourceControl` gRPC；
-  - `webrtc-protocol.md`：描述 WHEP/WHEP 相关交互与实现注意事项；
-  - `控制面错误码与语义.md`：统一 HTTP/gRPC/LRO 的错误码与 reason 语义。
-- **可观测性**（`observability` 目录）：
-  - `observability_详细设计.md` 作为日志与指标设计的单一权威文档，已整合原 LOGGING/METRICS/path 标签/PromQL/节流配置等内容；
-  - Prometheus + Grafana 用于监控订阅链路、推理性能、训练与 DB 相关指标。
-
----
-
-## 五、设计文档重构与约定
-
-围绕 `docs/design` 目录，本次对话完成了系统性重构与整合：
-
-- **子目录结构**：
-  - `architecture/`：系统概要设计与各子系统详细设计（VA、CP、VSM、Web-Front）；
-  - `subscription_pipeline/`：订阅流水线与 LRO 专题设计（`subscription_pipeline_详细设计.md`、`lro_subscription_design.md`）以及多阶段 Graph、推理引擎与 GPU 零拷贝；
-  - `protocol/`：CP HTTP/gRPC、VSM REST/SSE、WebRTC/WHEP 等协议与错误码；
-  - `storage/`：数据库与存储详细设计；
-  - `observability/`：日志与指标设计（集中在 `observability_详细设计.md`）；
-  - `training/`：训练流水线与模型仓库设计。
-- **文档整合与删除**：
-  - 将 `subscription_lro` 目录下的历史文档整合为 `subscription_pipeline/lro_subscription_design.md`，附录中保留早期异步订阅方案；
-  - 将 `engine_multistage` 重命名并归档为 `subscription_pipeline`，统一承载多阶段 Graph 与引擎设计；
-  - 将 `cp_vsm_protocol` 重命名并归档为 `protocol`，统一管理协议相关文档；
-  - 将观测层散列文档（LOGGING/METRICS/path 标签/PromQL/节流配置等）整合进 `observability_详细设计.md` 并删除原文件；
-  - 删除多份已过时或被合并的文档（如 `perf_guards.md`、早期前端设计稿等），以及废弃的 `subscription_lro/` 目录；
-  - 删除废弃的 `web-frontend-old/` 工程，只保留 `web-front/` 作为唯一前端实现。
-- **工作流与约束（摘录）**：
-  - 修改代码与文档需使用 `apply_patch`；完成后在 `docs/memo` 追加当日记录；
-  - 构建成功后必须进行测试；新增设计图统一使用 Mermaid；
-  - 提交信息使用中文祈使句，保持变更聚焦与与 Issue 关联；沟通与文档语言统一为中文。
-
-本 CONTEXT.md 与 `docs/design/architecture/整体架构设计.md`、`docs/context/ROADMAP.md` 共同构成后续演进与决策的全局参照。***
-# CONTEXT（2025-11-15，多阶段 OCSORT 与 GPU 零拷贝追踪）
-
-本文件在原有 CONTEXT 的基础上，聚焦本次对话新增的「OCSORT 目标追踪、多阶段 Graph 表达、GPU 零拷贝实现路径以及 trainer/模型集成」相关决策与现状，用于指导后续实现与代码评审。
+- 用户日志中可见典型错误：
+  - `ONNX Runtime failed to load model: Load model from models/yolov12x.onnx failed: File doesn't exist`
+  - `ms.node_model: load failed provider='triton' path='models/yolov12x.onnx'`
+  - `analyzer: provider='triton' requested but no triton_outputs configured; falling back to cuda`
+- 说明：
+  - 部分路径仍会尝试使用本地 `models/yolov12x.onnx`，而用户实际使用 MinIO S3 模型仓库；
+  - 某些情况下 `provider='triton'` 但 `triton_outputs` 未配置，触发回退。
 
 ---
 
-## 一、系统与仓库概览（简要回顾）
+## 二、重要上下文、约束与用户偏好
 
-- **业务目标**：接入多路 RTSP 视频流，执行可配置的多阶段视觉分析（检测/跟踪/ReID 等），以 WebRTC/WHEP 实时回传叠加画面，并支持训练与模型上线。
-- **主要子项目**：
-  - `video-analyzer`（VA）：GPU 解码/预处理/推理/后处理/叠加，WHEP 输出，多阶段 Graph 执行。
-  - `controlplane`（CP）：唯一 HTTP 入口，负责订阅 LRO、训练与模型管理、WHEP 反向代理等。
-  - `video-source-manager`（VSM）：RTSP 源管理与 Restream。
-  - `web-front`：前端 SPA。
-  - `model-trainer`：训练服务，负责模型训练、导出 ONNX/plan 与 manifest。
-- **基础设施**：MySQL `cv_cp`、Redis（可选）、MinIO、MLflow、Prometheus/Grafana、GPU（NVDEC/NVENC+TensorRT/Triton）。
+### 1. 用户偏好与使用场景
 
-更多架构细节请参考：`docs/design/architecture/整体架构设计.md` 与 `docs/context/ROADMAP.md`。
+- 语言：希望与 Agent 以中文交流。
+- 前端行为：分析页默认只拉流、不启用推理；只有点“实时分析”后才期望后端开始推理。
+  - 当前问题：在未点击实时分析时 VA 也会崩溃，说明某些后台 warmup 或 Graph 初始化路径仍在触发推理或模型加载。
+- 推理路径偏好：
+  - 优先使用 In-Process Triton + GPU I/O（尽量零拷贝），减少 gRPC 开销。
+  - det/reid 模型优先走 In-Process；当 In-Process 不稳定时，可以接受回退到 ORT CUDA，但更希望通过配置稳定 In-Process。
+- 模型仓库：
+  - 优先使用 MinIO S3 模型仓库（例如 `s3://http://minio:9000/cv-models/models`）。
+  - 本地 `models/*.onnx` 路径主要用于兼容/回退，不保证实际存在。
 
----
+### 2. 环境与构建约束
 
-## 二、OCSORT 目标追踪与模型集成
+- 本地 CLI 环境缺少 OpenCVConfig.cmake，直接在宿主上 `cmake -S video-analyzer -B build` 会失败；
+  - 实际构建在 Docker GPU 镜像中完成（`docker/va/Dockerfile.gpu`）。
+- gdb 调试在 `cv/va:latest-gpu` 容器内进行，二进制通常无完整调试符号；
+  - 因此堆栈符号主要来自 `libtritonserver.so`、TensorRT backend 与标准库。
 
-### 2.1 模型来源与格式
+### 3. 关键设计约束与决策
 
-- 本次对话中，我们确定了基于 **ModelScope `limengying/ocsort`** 的检测/追踪方案：
-  - 通过 `modelscope download` 在 `trainer` 容器内下载完整 OCSORT 工程与权重；
-  - 使用官方 `0_oc_track/deploy/scripts/export_onnx.py` + YOLOX 代码，将 `ocsort_x` 检测部分导出为 ONNX；
-  - 生成的 ONNX 模型保存为：`docker/model/ocsort_x.onnx`。
-- 检查 ModelScope 下发的 checkpoint 结构：
-  - `ocsort_x.pth.tar`：`{'meta': {...}, 'state_dict': OrderedDict(...)}`；
-  - `meta.config` 中包含 YOLOX + OCSORT 的完整配置（CSPDarknet backbone、YOLOXPAFPN、num_classes=1 等）。
-
-### 2.2 trainer 容器与 CUDA 依赖
-
-- 新增 `docker/trainer-service/Dockerfile.gpu`：
-  - 基础镜像：`nvcr.io/nvidia/tensorrt:25.08-py3`；
-  - 安装 `build-essential`、`cmake`、`protobuf-compiler` 等构建依赖；
-  - 通过 `https://download.pytorch.org/whl/cu124` 安装 PyTorch GPU 版本；
-  - 保持入口为 `uvicorn trainer_service.server:app`。
-- 在 `docker/compose/docker-compose.gpu.override.yml` 中，为 `trainer` 添加 GPU 覆盖：
-  - 使用 GPU Dockerfile 构建 `cv/trainer-service:latest-gpu`；
-  - 声明 `gpus: all`、`NVIDIA_VISIBLE_DEVICES`/`NVIDIA_DRIVER_CAPABILITIES`。
-
-这一条路径主要用于离线导出 ONNX 与调试 OCSORT 模型，对 VA 在线推理路径只影响模型文件与配置。
+- 不再使用 Triton gRPC client（`libgrpcclient`），所有 Triton 交互均为 In-Process。
+- 对于 provider='triton' 的模型：
+  - 要求必须显式配置 `triton_outputs`（engine 或 node 级），否则不启用 In-Process，回退到 `cuda` 等其他 provider。
+- 对 `input_name` 采用“三层防御”策略：
+  1. 从模型 metadata 自动填充；
+  2. 允许 per-node 配置 `triton_input` 覆盖；
+  3. 若最终仍为空，则视为 model load 失败，避免带空 input 进入推理。
 
 ---
 
-## 三、多阶段 Graph 中的 OCSORT 检测与追踪
+## 三、尚未完成/待办事项
 
-### 3.1 analyzer_multistage_ocsort 图
+1. 处理 ONNX 本地路径缺失与 fallback 行为：
+   - 现象：Triton In-Process 模型加载时仍有日志尝试访问 `models/yolov12x.onnx`，并报 “File doesn't exist”。
+   - 需要检查：
+     - `NodeModel::open` 中 provider chain 与 `dec.resolved`/`prov_resolved` 的组合逻辑；
+     - `pick_path_for(prov_resolved)` 对 `"triton"`/`"triton-inproc"` 是否始终返回 `"__triton__"`；
+     - 确保当最终 provider 是 Triton-InProcess 时，不再去尝试加载本地 ONNX。
+   - 目标：Triton 路径只依赖 S3 仓库，不依赖本地 `models/*.onnx`。
 
-在 `docker/config/va/graphs/` 下新增 `analyzer_multistage_ocsort.yaml`，用于专门承载 OCSORT 场景的多阶段流水线，其结构大致为：
+2. 验证 det/reid In-Process 路径在实际前端使用场景中的稳定性：
+   - 在 Docker GPU 环境中构建最新 VA 镜像后：
+     - 打开分析页但不点实时分析，确认 VA 不再崩溃；
+     - 点“实时分析”后确认：
+       - det/reid 均使用 In-Process Triton（日志 provider=triton-inproc）；
+       - 不再出现 `InferenceResponse` 构造阶段的 SIGSEGV。
+   - 若崩溃消失，再观察性能与延迟是否符合预期。
 
-- 节点：
-  - `pre`（`preproc.letterbox`）：与 OCSORT YOLOX 配置对齐的输入尺寸（如 1440×800，GPU 路径）。
-  - `det`（`model`）：使用 `models/ocsort_x.onnx` 作为检测模型。
-  - `nms`（`post.yolo.nms`）：支持 CUDA NMS，可配置 `emit_gpu_rois`。
-  - `roi`（`roi.batch.cuda`）：基于 `rois:det` 的 ROI 裁剪，输出 `tensor:roi_batch`。
-  - `reid`（`model`）：ReID 特征提取（占位模型 `models/reid_x.onnx`），输出 `tensor:reid`。
-  - `track`（`track.ocsort`）：多目标追踪节点，基于 IoU+ReID 的匹配与轨迹维护。
-  - `ovl`（`overlay.cuda`）：叠加轨迹框，显示 `track_id`。
-- 边：
-  - `pre → det → nms → roi → reid → track → ovl`（ReID 特征流）；
-  - `nms → track`（检测框元数据）；
-  - `track → ovl`（轨迹 ROI）。
+3. 持续整理 `docs/context/CONTEXT.md` 与 `docs/context/ROADMAP.md`：
+   - 本次已基于最新对话重写 CONTEXT，并将 ROADMAP 作为后续任务的一部分生成。
+   - 后续若关键设计或路径发生变化，需要同步更新 CONTEXT 与 ROADMAP，以避免文档与实现偏离。
 
-该 Graph 是后续“全 GPU 零拷贝追踪”方案的载体，当前版本仍允许 CPU 路径存在（特别是 ReID 特征与匹配）。
-
-### 3.2 NodeTrackOcsort 节点
-
-在 `video-analyzer/src/analyzer/multistage/` 下新增：
-
-- `node_track_ocsort.hpp/.cpp`：
-  - 输入：`rois[in_rois]`（默认 `det`）与 `tensor[feat_key]`（默认 `tensor:reid`，CPU F32 `[N,D]`）；
-  - 输出：`rois[out_rois]`（默认 `track`），其中 `Box.cls` 字段被复用为 `track_id`；
-  - 内部维护：
-    - 每条轨迹的 `id/box/missed/feat/has_feat`；
-    - 使用 IoU + ReID 余弦相似度 + EMA 平滑的简化 OCSORT 匹配逻辑。
-
-当前实现仍为 CPU 版本，但接口与配置已经为后续迁移到 GPU 内核预留了 `feat_key/feat_alpha/w_iou/w_reid/max_missed` 等参数。
+4. 梳理 In-Process 日志与防御策略：
+   - 当前为了调试启用了较多 `[DebugSeg]` 日志和高 Verbose 的 Triton 日志。
+   - 在确认稳定后，可以考虑：
+     - 把 DebugSeg 日志纳入某个 log-level 开关；
+     - 回收部分过于频繁的调试输出；
+     - 设计更平滑的 fallback 策略（如 In-Process 失败时自动回退 ORT，并在日志中标明）。
 
 ---
 
-## 四、GPU 零拷贝追踪规划与当前进度
+## 四、关键数据与参考文件
 
-### 4.1 Packet 与 NMS 的 GPU ROI 支持
+- 代码文件：
+  - `video-analyzer/src/analyzer/triton_inproc_session.cpp`：In-Process Triton 会话实现、input_name 校验、输出 D2D 拷贝逻辑。
+  - `video-analyzer/src/analyzer/model_session_factory.cpp`：`provider='triton'` 分支、强制 `triton_outputs` 与 Options 映射。
+  - `video-analyzer/src/analyzer/multistage/node_model.hpp/.cpp`：per-node `force_provider`、`model_path_triton`、`triton_input`/`triton_outputs` 配置与 provider chain。
+  - `docker/config/va/graphs/analyzer_multistage_ocsort.yaml`：OCSORT 图中 det/reid 节点的 per-node Triton 配置（含固定输入/输出名）。
+  - `docker/compose/docker-compose.gpu.override.yml`：VA GPU 环境配置（TRITONSERVER 日志、VA_USE_TRT_INPROC）。
+  - `docker/va/Dockerfile.gpu`：VA GPU 镜像构建（仅 In-Process Triton）。
+- 文档文件：
+  - `docs/memo/2025-11-16.md`、`docs/memo/2025-11-17.md`：记录 gRPC client 删除、In-Process 集成、Graph/配置改动与 gdb 调试过程。
+  - `docs/context/CONTEXT.md`：当前文件，作为后续 ROADMAP 与变更规划的基础。
+  - 历史设计与计划文档（供深入参考）：
+    - `docs/references/GPU_zero_copy_ocsort_multistage_plan.md`
+    - `docs/plans/GPU_zero_copy_ocsort_multistage_tasks.md`
 
-- 在 `Packet` 中新增：
-  - `GpuRoiBuffer` 与 `GpuRoiDict gpu_rois`，用于表示 GPU 上的 ROI 视图。
-- 在 `NodeNmsYolo` 中新增参数：
-  - `emit_gpu_rois`（默认关），仅在 CUDA NMS + 存在 `ctx.gpu_pool` 时生效；
-  - 启用后，NMS 结果除写入 `p.rois["det"]` 外，还会构造 `p.gpu_rois["det"]`（目前先通过一次 H2D 拷贝实现基础版本）。
-
-这一步是为后续完全 GPU OCSORT 提供入口，不改变任何现有检测行为。
-
-### 4.2 GPU OCSORT 内核与 overlay 计划
-
-规划文档已写入：
-
-- `docs/references/GPU_zero_copy_ocsort_multistage_plan.md`
-- `docs/plans/GPU_zero_copy_ocsort_multistage_tasks.md`
-
-核心方向：
-
-- 在 `analyzer/cuda` 下新增 `track_ocsort_kernels`，负责在 GPU 上执行 IoU + ReID 匹配与特征 EMA，并维护 GPU 轨迹状态；
-- 扩展 `NodeTrackOcsort` 在检测与 ReID 都在 GPU 时走纯 GPU 路径，仅在必要时才将少量轨迹元数据暴露给 CPU；
-- 扩展 `OverlayRendererCUDA` 与 `NodeOverlay`，支持以 `gpu_rois["track"]` 为输入渲染轨迹，而非依赖 CPU `ModelOutput::boxes`。
-
-当前进度：
-
-- 文档与任务拆解已完成；
-- Packet 扩展与 NodeNmsYolo 的 GPU ROI 初步支持已合并；
-- GPU OCSORT 内核与 overlay GPU ROI 消费尚未实现，仍处于规划阶段。
-
----
-
-## 五、与 ROADMAP 的关系
-
-- 本 CONTEXT 与 `docs/context/ROADMAP.md` 中的 M0/M1/M2 对应关系：
-  - M0：架构与文档基线 —— 已覆盖多阶段 Graph / 订阅 LRO / 存储 / 协议等；
-  - M1：订阅流水线与协议打通 —— OCSORT Graph 将作为订阅链路中的一种分析配置；
-  - M2：GPU 零拷贝与训练闭环 —— 本次 OCSORT GPU 方案是 M2 阶段中“多阶段 Graph + zero-copy execution”的重要一环。
-
-后续请统一参考：
-
-- 设计方案：`docs/references/GPU_zero_copy_ocsort_multistage_plan.md`
-- 实施任务：`docs/plans/GPU_zero_copy_ocsort_multistage_tasks.md`
-- 全局路线图：`docs/context/ROADMAP.md`

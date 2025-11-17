@@ -42,6 +42,9 @@ analyzer:
           # PASS-ReID 模型在 ONNX/Triton config 中输入名为 input
           triton_input: "input"
           triton_outputs: "feat"
+          # ReID 模型在 Triton 配置中 max_batch_size=1，这里启用 ROI 顺序推理并在 GPU 上聚合特征为 [N,D]
+          roi_seq_batch: "1"
+          triton_gpu_output: "1"
       - name: track
         type: track.ocsort
         params:

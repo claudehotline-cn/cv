@@ -16,7 +16,7 @@ engine:
     render_passthrough: false
     render_cuda: true
     use_cuda_preproc: true
-    graph_id: analyzer_multistage_example
+    graph_id: analyzer_multistage_ocsort
     warmup_runs: auto
     overlay_thickness: 3
     overlay_alpha: 0.35
@@ -51,6 +51,8 @@ engine:
     triton_url: localhost:8001
     triton_model: yolov12x
     triton_model_version: ""
+    # 这里保留空值，依赖 per-node 的 triton_input/triton_outputs 覆盖；
+    # 若需要全局默认输出名，可在风险可控时再启用。
     # triton_input: images
     # triton_outputs: output0
     triton_timeout_ms: 2000

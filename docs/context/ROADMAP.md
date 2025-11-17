@@ -1,16 +1,16 @@
 # 路线图总览
 
-- **M0「架构与文档基线」**  
-  - 目标：固化整体架构视图与子系统/专题设计，完成 CONTEXT/ROADMAP 与设计文档重构，使文档结构与代码实现一一对应。  
-  - 验收：VA/CP/VSM/Web-Front/训练/存储/协议/观测均有完整详细设计；`docs/design` 无死链；Mermaid 图在常见渲染环境下可正常解析。
+- **M0「In-Process Triton 稳定基线」**  
+  - 目标：在不修改前端行为的前提下，让 VA 使用 In-Process Triton 时在「分析页打开但未点实时分析」场景不再崩溃，det/reid 节点通过 per-node 固定输入/输出名稳定运行。  
+  - 验收：打开分析页但不启用实时分析时 VA 无崩溃；仅在前端开启实时分析后才出现推理负载；日志中不再出现 `InferenceResponse` 相关 SIGSEGV 和本地 ONNX `File doesn't exist` 报错。
 
-- **M1「订阅流水线与协议打通」**  
-  - 目标：以 LRO 为核心完成订阅流水线，使 Web-Front→CP HTTP→VA LRO→Graph→推理引擎→WHEP 全链路稳定，错误码与协议语义收敛到统一文档。  
-  - 验收：典型场景下从 `POST /api/subscriptions` 到 `/whep` 播放的端到端成功率达预期；订阅 phase/timeline 在前端可视化；`subscription_pipeline_详细设计.md` 与协议文档及实现保持一致。
+- **M1「OCSORT 多阶段图 + MinIO 仓库打通」**  
+  - 目标：让 `analyzer_multistage_ocsort.yaml` 在 MinIO S3 模型仓库 + Triton In-Process 环境下端到端稳定运行（检测 + ReID + 追踪 + 叠加），并保证 provider/fallback 链路行为可预期。  
+  - 验收：使用 OCSORT 图在代表性 RTSP 测试源上连续运行，帧处理数 > 0 且无 HTTP/RTSP 错误；det/reid 节点实际 provider 为 `triton-inproc`，仅在显式配置时才回退到其他 provider。
 
-- **M2「GPU 零拷贝与 OCSORT 追踪闭环」**  
-  - 目标：在订阅链路稳定的基础上，完成以 OCSORT 为代表的多阶段追踪 Graph，打通「检测 + ReID + 追踪 + 叠加」全 GPU 零拷贝路径，并与 Trainer→MinIO/MLflow→CP→VA 的训练/部署闭环协同。  
-  - 验收：代表性场景下 CPU/GPU 检测/追踪结果差异在可接受范围；OCSORT Graph 在多流场景下稳定运行；前端可选择追踪模式并查看轨迹/指标。
+- **M2「性能与可观测性收敛」**  
+  - 目标：在 M0/M1 稳定基础上，收敛 Triton/VA 日志级别、完善告警与指标，明确 In-Process fallback 策略，并评估 GPU 资源占用与延迟表现。  
+  - 验收：关闭调试开关后日志噪音显著下降；关键指标（端到端延迟、GPU/CPU 利用、显存占用）满足目标阈值；在 In-Process 出现异常时能平滑回退到 ORT/CUDA，且有清晰告警与报错信息。
 
 ---
 
@@ -18,32 +18,32 @@
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| M0 | 更新的整体架构设计 + 子系统/专题详细设计 + 文档目录重构 | 完成 `整体架构设计.md` 与 VA/CP/VSM/Web-Front 详细设计；完善 `subscription_pipeline_详细设计.md`、`storage_详细设计.md`、`observability_详细设计.md` 等专题；收敛 `docs/design` 结构并清理冗余文档 | 文档与代码偏离 → 定期抽样对照实现；在 `docs/memo` 记录每次设计调整；增加死链扫描脚本 | 架构/详细设计覆盖主要模块（≈90%）；文档链接检查无 404；文档结构获得团队认可 |
-| M1 | LRO 订阅流水线 + 协议与错误码收敛 + AnalysisPanel 串联 | 落实 Runner/Step/状态机设计；完善 `控制平面HTTP与gRPC接口说明.md` 与 `控制面错误码与语义.md`；让 AnalysisPanel 通过 `/api/subscriptions` + `/whep` 驱动订阅 | LRO 状态机复杂、协议同步困难 → 优先实现 happy path，在附录保留历史方案；通过 e2e 测试和日志/指标收敛边界条件 | 订阅创建/查询/取消成功率 ≥ 99%；首帧延迟/中断率满足产品目标；关键错误场景均有明确 reason_code |
-| M2 | GPU 零拷贝推理 + OCSORT 多阶段追踪 + 训练/部署闭环 | 依据 `zero_copy_execution_详细设计.md`、`tensorrt_engine.md`、`GPU_zero_copy_ocsort_multistage_plan.md` 收敛 GPU 路径；实现多阶段 Graph（pre→det→nms→roi→reid→track→ovl）在 GPU 上执行；打通 Trainer→MinIO/MLflow→CP→VA 部署链路；在 Grafana 与前端增加追踪相关指标与模式切换 | CUDA/IOBinding 行为差异导致降准；OCSORT GPU 内核复杂度高 → 先保留 CPU fallback，使用对拍脚本验证 CPU/GPU 轨迹一致性；为关键 profile 提供回退开关；训练/部署链路依赖多服务 → 为训练与部署增加重试/熔断与旁路脚本 | CPU/GPU boxes 与轨迹差异满足业务阈值；OCSORT Graph 在目标场景稳定运行；训练任务成功率 ≥ 95%；部署成功率 ≥ 90% |
+| M0 | 稳定的 In-Process Triton 基线（det/reid per-node 输入/输出固定） | 完成 `TritonInprocModelSession` Options 映射；`NodeModel` 支持 `triton_input`/`triton_outputs` per-node 配置；修正 `pick_path_for` 等逻辑，确保 provider='triton' 时只走 In-Process，不再尝试本地 ONNX | Triton 内部 bug 或响应构造异常 → 通过固定输出名、限制输出集合绕开；必要时提供 provider 回退（cuda/ort），并加 gdb/日志锚点 | 打开分析页不点实时分析 VA 不崩溃；det/reid 配置正确时推理成功率 ≈ 100% |
+| M1 | OCSORT 多阶段图在 MinIO + Triton 环境下的稳定运行 | 在 `analyzer_multistage_ocsort.yaml` 中为 det/reid 明确 `model_path_triton` 与 `triton_input`/`triton_outputs`；验证 Graph I/O key 链路（包括 `roi.batch.cuda`、`track.ocsort` 等）；确保模型实际从 MinIO/Triton 加载 | 模型路径与仓库配置不一致 → 在日志中打印实际加载的 model repo/model name；提供脚本快速检查 S3 与 Graph 配置是否匹配 | OCSORT 图在标准测试源上持续运行 30 分钟无崩溃；日志中无本地 ONNX `File doesn't exist` 报错 |
+| M2 | 性能/可观测性与防御策略收敛 | 降低 `[DebugSeg]` 等调试日志级别；在 docker-compose 中为 Triton/VA 配置合理日志等级与环境变量；增加关键指标（推理 QPS/端到端延迟/失败率）；明确 In-Process 异常时的 fallback 策略与开关 | 观测不足或 fallback 行为不可预期 → 在 `docs/context/CONTEXT.md` 与设计文档中记录决策；增加 smoke test 覆盖典型异常分支；为重要开关提供配置项 | 在目标场景下 GPU 利用率与延迟稳定；告警与日志能快速定位 In-Process or provider 问题；fallback 触发率在预期范围内 |
 
 ---
 
 # 依赖矩阵
 
 - **内部依赖：**
-  - `controlplane`：HTTP 网关、订阅 LRO 编排、训练与模型管理、WHEP 反向代理、错误码与协议聚合。
-  - `video-analyzer`：RTSP 解码、多阶段 Graph、推理引擎（TensorRT/Triton In-Process）、GPU 零拷贝路径、OCSORT 多阶段追踪、WHEP 输出。
-  - `video-source-manager`：RTSP 源管理与 Restream，`SourceControl` gRPC 控制。
-  - `model-trainer`：训练循环、评估、MLflow 集成与模型导出（含 ReID/OCSORT 相关模型）。
-  - `web-front`：配置与控制界面、AnalysisPanel、轨迹与订阅状态可视化与模式切换。
+  - `video-analyzer`：`TritonInprocModelSession`、`ModelSessionFactory`、`NodeModel`、`analyzer_multistage_ocsort.yaml`、多阶段 Graph 与 Pipeline 运行时。
+  - `controlplane`：AnalysisPanel 对应的 API（分析页打开/关闭、实时分析开关），确保前端行为与后端推理生命周期一致。
+  - `web-front`：分析页与实时分析 UI 逻辑，避免在未点击实时分析时触发不必要的推理请求。
+  - `docs/memo` 与 `docs/context`：记录每次 Triton/Graph 相关变更和决策，供后续调试与审计。
 
 - **外部依赖（库/服务/硬件）：**
-  - MySQL `cv_cp` 库、Redis 缓存；MinIO 与 MLflow Tracking 服务。
-  - gRPC/Protobuf（CP↔VA、CP↔VSM）、FFmpeg/NVENC/NVDEC、TensorRT/Triton、PyTorch、ModelScope（用于 OCSORT 模型）；
-  - GPU 资源（推理+编解码），以及 Prometheus/Grafana 观测栈。
+  - Triton Server（含 TensorRT backend）、CUDA Runtime 与 GPU 驱动。
+  - MinIO S3 模型仓库与其配置（模型路径、bucket、访问凭据）。
+  - MySQL `cv_cp` 与 Redis（用于订阅/配置状态持久化与缓存）。
+  - 宿主机/容器中的 gdb、日志收集与监控栈（Prometheus/Grafana）。
 
 ---
 
 # 风险清单（Top-5）
 
-- **订阅/LRO 状态机复杂度过高** → 触发条件：频繁新增 phase/原因码或跨文档定义不一致 → 监控信号：订阅失败率上升、日志中 reason_code 分布紊乱 → 预案：在 `lro_subscription_design.md` 与 `控制面错误码与语义.md` 中集中维护枚举；通过 e2e 测试覆盖核心状态流转，并在 CI 中加入契约校验。  
-- **GPU 零拷贝路径精度退化（检测/追踪）** → 触发条件：启用 CUDA 预处理/IOBinding/FP16/TRT/OCSORT GPU 内核后 → 监控信号：CPU/GPU boxes 与轨迹差异、miss_ratio 异常，Grafana 中相关 metrics 激增 → 预案：使用 compare 脚本对关键 profile 做基准校准，必要时回退到 CPU NMS/追踪或关闭零拷贝。  
-- **OCSORT 多阶段 Graph 与 TrackManager 职责边界模糊** → 触发条件：Graph 内追踪逻辑与 TrackManager 行为重叠或不一致 → 监控信号：轨迹 ID 不稳定、重复或泄露；Graph/TrackManager 双处更新同一状态 → 预案：在设计文档中明确边界（Graph 负责单流视觉阶段，TrackManager 负责订阅级 orchestrator），通过接口约束和回归测试保证一致性。  
-- **协议与实现漂移（特别是订阅/追踪相关）** → 触发条件：接口演进未同步更新 `protocol` 文档 → 监控信号：OpenAPI/Proto 与实现不一致、前端 4xx/5xx 比例上升 → 预案：为关键 HTTP/gRPC 接口建立契约测试，在 CI 中对照 `控制平面HTTP与gRPC接口说明.md` 自动校验；对 OCSORT Graph 增加端到端回归。  
-- **基础设施或 GPU 资源瓶颈** → 触发条件：MySQL/MinIO/MLflow/Prometheus/Grafana 或 GPU 资源不足/不稳定 → 监控信号：连接错误率上升、时延抖动、GPU 利用率/显存使用率异常 → 预案：为关键服务配置高可用和告警阈值，提供降级路径（本地磁盘/缓存、CPU 模式 Graph），以及清晰的扩容与回滚方案。  
+- **Triton/TensorRT backend 内部 bug 再次触发** → 触发条件：特定输出配置或 batch 形状下 In-Process 执行 → 监控信号：`InferenceResponse` 相关 SIGSEGV、`TRITONBACKEND_ResponseNew` 栈顶崩溃 → 预案：继续约束输出集合（固定 `output0` 等）、限制动态 shape 组合；在关键 Graph 中提供 provider 回退配置，并保留 ORT/CUDA 路径作为兜底。  
+- **本地 ONNX 路径与 MinIO 仓库配置冲突** → 触发条件：provider 解析错误或 `pick_path_for` 返回本地路径 → 监控信号：`ONNX Runtime failed to load model ... File doesn't exist` 日志出现 → 预案：修正 `NodeModel` 和路径选择逻辑，使 provider='triton' 时只使用 `"__triton__"`；增加启动自检脚本，提前发现缺失的本地模型引用。  
+- **前端行为与后端推理生命周期不一致** → 触发条件：分析页打开时错误地触发推理初始化或 warmup → 监控信号：未点击实时分析时 GPU 使用或 Triton 请求出现；VA 在此阶段崩溃 → 预案：与 Web-Front/CP 对齐接口约定，仅在明确的“开始实时分析”操作后触发推理；在 VA 端对无订阅/无实时分析状态下的推理请求做防御。  
+- **per-node 输入/输出名配置漂移** → 触发条件：模型或 Triton config 更新后未同步修改 Graph 中 `triton_input`/`triton_outputs` → 监控信号：Triton 日志中出现 `unexpected inference input/output` 错误；VA 侧节点 open 失败 → 预案：在 Graph 校验阶段增加对 Triton metadata 的对比检查；为 det/reid 维护集中配置清单，变更时同步更新并写入 `docs/memo`。  
+- **性能或资源回退策略不清晰** → 触发条件：In-Process 或 Triton backend 出现间歇性问题，需要临时关闭或回退 → 监控信号：推理失败率/延迟抖动明显增加；告警频繁 → 预案：为 In-Process/Trt provider 提供显式开关与 runtime fallback；在 `docker-compose` 与配置文件中预置 CPU/ORT 模式；在文档中写清推荐回退步骤和验证流程。  

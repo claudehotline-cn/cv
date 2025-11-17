@@ -67,65 +67,11 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
     // Phase 1：依赖模型仓库已预加载模型（MODE_NONE/auto）
     loaded_ = true;
     VA_LOG_INFO() << "[inproc.triton] init model='" << opt_.model_name << "'";
-
-    // 当未显式配置 input_name 时，尝试通过 Triton metadata 自动填充第一个输入名，
-    // 以避免对全局 triton_input=images 的硬编码依赖。
+    // 不再通过 ModelMetadata 动态发现输入名，要求在配置（engine options 或 per-node triton_input）中显式提供。
     if (opt_.input_name.empty()) {
-        auto* server = host_->server();
-        if (server) {
-            TRITONSERVER_Message* md = nullptr;
-            TRITONSERVER_Error* e_md = TRITONSERVER_ServerModelMetadata(
-                server,
-                opt_.model_name.c_str(),
-                (opt_.model_version.empty() ? -1 : std::strtoll(opt_.model_version.c_str(), nullptr, 10)),
-                &md);
-            if (e_md != nullptr) {
-                VA_LOG_WARN() << "[inproc.triton] ModelMetadata failed for model '" << opt_.model_name
-                              << "': " << TRITONSERVER_ErrorMessage(e_md);
-                TRITONSERVER_ErrorDelete(e_md);
-            } else if (md) {
-                const char* buf = nullptr;
-                size_t size = 0;
-                TRITONSERVER_Error* e_js = TRITONSERVER_MessageSerializeToJson(md, &buf, &size);
-                if (e_js != nullptr) {
-                    VA_LOG_WARN() << "[inproc.triton] MessageSerializeToJson failed for model '" << opt_.model_name
-                                  << "': " << TRITONSERVER_ErrorMessage(e_js);
-                    TRITONSERVER_ErrorDelete(e_js);
-                } else if (buf && size > 0) {
-                    try {
-                        std::string json(buf, size);
-                        std::string in_name;
-                        auto pos_inputs = json.find("\"inputs\"");
-                        if (pos_inputs != std::string::npos) {
-                            auto pos_name = json.find("\"name\"", pos_inputs);
-                            if (pos_name != std::string::npos) {
-                                auto pos_colon = json.find(':', pos_name);
-                                auto pos_q1 = json.find('"', pos_colon);
-                                auto pos_q2 = (pos_q1 == std::string::npos) ? std::string::npos
-                                                                             : json.find('"', pos_q1 + 1);
-                                if (pos_q1 != std::string::npos && pos_q2 != std::string::npos && pos_q2 > pos_q1 + 1) {
-                                    in_name = json.substr(pos_q1 + 1, pos_q2 - pos_q1 - 1);
-                                }
-                            }
-                        }
-                        if (!in_name.empty()) {
-                            opt_.input_name = in_name;
-                            VA_LOG_INFO() << "[inproc.triton] autofill input_name='" << opt_.input_name
-                                          << "' for model='" << opt_.model_name << "'";
-                        }
-                    } catch (...) {
-                        // best-effort: 若解析失败则保持 input_name 为空，由后续错误日志协助诊断
-                    }
-                }
-                TRITONSERVER_MessageDelete(md);
-            }
-        }
-    }
-    // 元数据自动填充结束后，强制校验 input_name，避免后续 AddInput 使用空名称触发未定义行为。
-    if (opt_.input_name.empty()) {
-        VA_LOG_ERROR() << "[inproc.triton] input_name is empty after ModelMetadata for model='"
+        VA_LOG_ERROR() << "[inproc.triton] input_name is empty for model='"
                        << opt_.model_name << "', repo='" << opt_.repo_path
-                       << "'. Treating this as load failure to avoid undefined behaviour.";
+                       << "'. Please configure triton_input explicitly in engine or graph.";
         loaded_ = false;
         host_.reset();
         return false;
@@ -301,7 +247,94 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         }
     }
 
-    // Async 推理：使用默认 ResponseAllocator，通过 InferenceResponseOutput 获取输出 buffer。
+    // 自定义 ResponseAllocator：优先为已知输出名分配会话持久化的 GPU 缓冲，
+    // 未匹配到的输出或禁用 GPU 输出时回退到临时 CPU 缓冲。
+    TRITONSERVER_ResponseAllocator* allocator = nullptr;
+    struct AllocCtx { TritonInprocModelSession* self; } actx{ this };
+    auto alloc_fn = [](TRITONSERVER_ResponseAllocator* /*allocator*/, const char* tensor_name, size_t byte_size,
+                       TRITONSERVER_MemoryType preferred_memory_type, int64_t preferred_memory_type_id,
+                       void* userp, void** buffer, void** buffer_userp,
+                       TRITONSERVER_MemoryType* actual_memory_type, int64_t* actual_memory_type_id) -> TRITONSERVER_Error* {
+        (void)preferred_memory_type;
+        (void)preferred_memory_type_id;
+        auto* ctx = reinterpret_cast<AllocCtx*>(userp);
+        auto* self = ctx ? ctx->self : nullptr;
+        if (!self || byte_size == 0) {
+            *buffer = nullptr;
+            *buffer_userp = nullptr;
+            *actual_memory_type = TRITONSERVER_MEMORY_CPU;
+            *actual_memory_type_id = 0;
+            return nullptr;
+        }
+        // 根据 tensor_name 在配置的输出名列表中查找索引
+        size_t idx = 0;
+        bool found = false;
+        for (size_t i = 0; i < self->opt_.output_names.size(); ++i) {
+            if (self->opt_.output_names[i] == tensor_name) {
+                idx = i;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            *buffer = nullptr;
+            *buffer_userp = nullptr;
+            *actual_memory_type = TRITONSERVER_MEMORY_CPU;
+            *actual_memory_type_id = 0;
+            return nullptr;
+        }
+#if defined(USE_CUDA)
+        if (self->opt_.use_gpu_output) {
+            int cur = -1;
+            (void)cudaGetDevice(&cur);
+            if (cur != self->opt_.device_id) {
+                (void)cudaSetDevice(self->opt_.device_id);
+            }
+            if (self->out_capacity_.size() <= idx) {
+                self->out_capacity_.resize(self->opt_.output_names.size(), 0);
+                self->out_dev_bufs_.resize(self->opt_.output_names.size(), nullptr);
+            }
+            if (self->out_capacity_[idx] < byte_size || self->out_dev_bufs_[idx] == nullptr) {
+                if (self->out_dev_bufs_[idx]) {
+                    cudaFree(self->out_dev_bufs_[idx]);
+                    self->out_dev_bufs_[idx] = nullptr;
+                    self->out_capacity_[idx] = 0;
+                }
+                if (cudaSuccess == cudaMalloc(&self->out_dev_bufs_[idx], byte_size)) {
+                    self->out_capacity_[idx] = byte_size;
+                }
+            }
+            if (self->out_dev_bufs_[idx]) {
+                *buffer = self->out_dev_bufs_[idx];
+                *buffer_userp = nullptr; // GPU 缓冲由会话持久化管理，release 不释放
+                *actual_memory_type = TRITONSERVER_MEMORY_GPU;
+                *actual_memory_type_id = self->opt_.device_id;
+                return nullptr;
+            }
+        }
+#endif
+        // CPU 回退：为该输出分配一次性 host 缓冲，由 release 回调负责释放
+        void* cpu = nullptr;
+        if (byte_size) {
+            cpu = std::malloc(byte_size);
+        }
+        *buffer = cpu;
+        *buffer_userp = cpu;
+        *actual_memory_type = TRITONSERVER_MEMORY_CPU;
+        *actual_memory_type_id = 0;
+        return nullptr;
+    };
+    auto release_fn = [](TRITONSERVER_ResponseAllocator* /*allocator*/, void* buffer, void* buffer_userp,
+                         size_t /*byte_size*/, TRITONSERVER_MemoryType memory_type, int64_t /*memory_type_id*/) -> TRITONSERVER_Error* {
+        // 仅释放我们在 alloc 中通过 malloc 分配的 CPU 缓冲，GPU 缓冲由会话生命周期管理
+        if (memory_type == TRITONSERVER_MEMORY_CPU && buffer && buffer_userp == buffer) {
+            std::free(buffer);
+        }
+        return nullptr;
+    };
+    (void)TRITONSERVER_ResponseAllocatorNew(&allocator, alloc_fn, release_fn, nullptr);
+
+    // Async 推理：使用自定义 ResponseAllocator 获取输出 buffer。
     std::promise<TRITONSERVER_InferenceResponse*> prom;
     auto fut = prom.get_future();
     auto resp_cb = [](TRITONSERVER_InferenceResponse* response, const uint32_t flags, void* userp){
@@ -313,12 +346,15 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
     };
     if (auto* e = TRITONSERVER_InferenceRequestSetResponseCallback(
             req,
-            nullptr,
-            nullptr,
+            allocator,
+            &actx,
             resp_cb,
             &prom); e != nullptr) {
         VA_LOG_WARN() << "[inproc.triton] SetResponseCallback failed: " << TRITONSERVER_ErrorMessage(e);
         TRITONSERVER_ErrorDelete(e);
+        if (allocator) {
+            TRITONSERVER_ResponseAllocatorDelete(allocator);
+        }
         // req 将在 release 回调中由 Triton 删除
         return false;
     }
@@ -339,6 +375,9 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
     TRITONSERVER_InferenceResponse* resp = fut.get();
     if (!resp) {
         VA_LOG_WARN() << "[inproc.triton] null response";
+        if (allocator) {
+            TRITONSERVER_ResponseAllocatorDelete(allocator);
+        }
         return false;
     }
 
@@ -348,6 +387,9 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         VA_LOG_WARN() << "[inproc.triton] response error: " << (emsg ? emsg : "<unknown>");
         TRITONSERVER_ErrorDelete(rerr);
         TRITONSERVER_InferenceResponseDelete(resp);
+        if (allocator) {
+            TRITONSERVER_ResponseAllocatorDelete(allocator);
+        }
         return false;
     }
 
@@ -357,16 +399,27 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         VA_LOG_WARN() << "[inproc.triton] OutputCount failed: " << TRITONSERVER_ErrorMessage(e);
         TRITONSERVER_ErrorDelete(e);
         TRITONSERVER_InferenceResponseDelete(resp);
+        if (allocator) {
+            TRITONSERVER_ResponseAllocatorDelete(allocator);
+        }
         return false;
     }
     try {
         VA_LOG_C(::va::core::LogLevel::Info, "inproc.triton")
             << "[DebugSeg] OutputCount=" << outc << " model='" << opt_.model_name << "'";
     } catch (...) {}
-    host_out_bufs_.clear(); host_out_shapes_.clear(); outputs.clear();
-    // 当 output_names 为空时，收集响应中的真实输出名，供后续请求与 NodeModel 映射使用。
-    std::vector<std::string> discovered_names;
-    bool need_discover = opt_.output_names.empty();
+    if (opt_.output_names.empty()) {
+        VA_LOG_ERROR() << "[inproc.triton] output_names is empty for model='" << opt_.model_name
+                       << "'. Please configure triton_outputs explicitly in engine or graph.";
+        TRITONSERVER_InferenceResponseDelete(resp);
+        if (allocator) {
+            TRITONSERVER_ResponseAllocatorDelete(allocator);
+        }
+        return false;
+    }
+    host_out_bufs_.clear();
+    host_out_shapes_.clear();
+    outputs.clear();
     for (uint32_t i=0;i<outc;i++) {
         const char* oname = nullptr; TRITONSERVER_DataType odt; const int64_t* odims=nullptr; uint64_t odimc=0;
         const void* base = nullptr; size_t bsize = 0; TRITONSERVER_MemoryType mtype; int64_t mid=0; void* userp=nullptr;
@@ -382,13 +435,6 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
                 << " mtype=" << static_cast<int>(mtype)
                 << " mid=" << mid;
         } catch (...) {}
-        if (need_discover) {
-            if (oname && *oname) {
-                discovered_names.emplace_back(oname);
-            } else {
-                discovered_names.emplace_back(std::string("output") + std::to_string(i));
-            }
-        }
         (void)odt; // 假定为 FP32
         if (!base || bsize == 0) continue;
         std::vector<int64_t> shape(odims, odims + odimc);
@@ -398,53 +444,19 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
             with_batch.insert(with_batch.end(), shape.begin(), shape.end()); shape.swap(with_batch);
         }
         if (mtype == TRITONSERVER_MEMORY_GPU && mid == opt_.device_id && opt_.use_gpu_output) {
-            // 设备侧输出：从 Triton 默认分配的 GPU 缓冲 D2D 拷贝到会话持久化的 GPU 缓冲，
-            // 确保 ResponseDelete 后 TensorView 仍然有效。
-#if defined(USE_CUDA)
-            { int cur=-1; (void)cudaGetDevice(&cur); if (cur != opt_.device_id) (void)cudaSetDevice(opt_.device_id); }
-            if (out_capacity_.size() <= i) {
-                out_capacity_.resize(i+1, 0);
-                out_dev_bufs_.resize(i+1, nullptr);
-            }
-            size_t alloc_size = next_pow2(bsize);
-            if (out_capacity_[i] < alloc_size || out_dev_bufs_[i] == nullptr) {
-                if (out_dev_bufs_[i]) cudaFree(out_dev_bufs_[i]);
-                if (cudaSuccess != cudaMalloc(&out_dev_bufs_[i], alloc_size)) {
-                    out_dev_bufs_[i] = nullptr; out_capacity_[i] = 0;
-                } else {
-                    out_capacity_[i] = alloc_size;
-                }
-            }
-            if (!out_dev_bufs_[i]) {
-                VA_LOG_WARN() << "[inproc.triton] cudaMalloc for output D2D buffer failed, falling back to host";
-                // 回退到 CPU 路径
-                goto stage_to_host;
-            }
-            {
-                auto cerr = cudaMemcpy(out_dev_bufs_[i], base, bsize, cudaMemcpyDeviceToDevice);
-                if (cerr != cudaSuccess) {
-                    VA_LOG_WARN() << "[inproc.triton] cudaMemcpy output D2D failed: " << cudaGetErrorString(cerr);
-                    continue;
-                }
-            }
-            {
-                va::core::TensorView tv;
-                tv.on_gpu = true;
-                tv.dtype = va::core::DType::F32;
-                tv.data = out_dev_bufs_[i];
-                tv.shape = shape;
-                outputs.push_back(tv);
-            }
-#else
-            VA_LOG_WARN() << "[inproc.triton] output on GPU but CUDA not enabled; skipping";
-            continue;
-#endif
+            // 设备侧输出（由 ResponseAllocator 提供 GPU 缓冲），直接暴露 device TensorView
+            va::core::TensorView tv;
+            tv.on_gpu = true;
+            tv.dtype = va::core::DType::F32;
+            tv.data = const_cast<void*>(base);
+            tv.shape = shape;
+            outputs.push_back(tv);
         } else {
-stage_to_host:
-            if (mtype == TRITONSERVER_MEMORY_GPU) {
-                // Stage device buffer to host when默认分配器返回 GPU 但我们需要 CPU 视图
 #if defined(USE_CUDA)
-                std::vector<uint8_t> cpu; cpu.resize(bsize);
+            if (mtype == TRITONSERVER_MEMORY_GPU) {
+                // 当 allocator 回退到 GPU 但当前会话希望 CPU 视图时，显式 D2H 搬运
+                std::vector<uint8_t> cpu;
+                cpu.resize(bsize);
                 auto cerr = cudaMemcpy(cpu.data(), base, bsize, cudaMemcpyDeviceToHost);
                 if (cerr != cudaSuccess) {
                     VA_LOG_WARN() << "[inproc.triton] cudaMemcpy output D2H failed: " << cudaGetErrorString(cerr);
@@ -452,27 +464,32 @@ stage_to_host:
                 }
                 host_out_bufs_.emplace_back(std::move(cpu));
                 host_out_shapes_.push_back(shape);
-                va::core::TensorView tv; tv.on_gpu=false; tv.dtype=va::core::DType::F32; tv.data=host_out_bufs_.back().data(); tv.shape=host_out_shapes_.back(); outputs.push_back(tv);
-#else
-                VA_LOG_WARN() << "[inproc.triton] output on GPU but CUDA not enabled; skipping";
-                continue;
+                va::core::TensorView tv;
+                tv.on_gpu = false;
+                tv.dtype = va::core::DType::F32;
+                tv.data = host_out_bufs_.back().data();
+                tv.shape = host_out_shapes_.back();
+                outputs.push_back(tv);
+            } else
 #endif
-            } else {
-                host_out_bufs_.emplace_back(reinterpret_cast<const uint8_t*>(base), reinterpret_cast<const uint8_t*>(base) + bsize);
+            {
+                host_out_bufs_.emplace_back(reinterpret_cast<const uint8_t*>(base),
+                                            reinterpret_cast<const uint8_t*>(base) + bsize);
                 host_out_shapes_.push_back(shape);
-                va::core::TensorView tv; tv.on_gpu=false; tv.dtype=va::core::DType::F32; tv.data=host_out_bufs_.back().data(); tv.shape=host_out_shapes_.back(); outputs.push_back(tv);
+                va::core::TensorView tv;
+                tv.on_gpu = false;
+                tv.dtype = va::core::DType::F32;
+                tv.data = host_out_bufs_.back().data();
+                tv.shape = host_out_shapes_.back();
+                outputs.push_back(tv);
             }
         }
     }
-    // 若本会话之前未显式配置输出名且本次推理成功获取到输出，
-    // 则将名称持久化到 opt_ 中，供后续 AddRequestedOutput 以及 NodeModel::process 使用。
-	    if (need_discover && !discovered_names.empty()) {
-	        opt_.output_names = std::move(discovered_names);
-	        VA_LOG_INFO() << "[inproc.triton] autofill output_names (n=" << opt_.output_names.size()
-	                      << ") for model='" << opt_.model_name << "'";
-	    }
-	    TRITONSERVER_InferenceResponseDelete(resp);
-	    return !outputs.empty();
+    TRITONSERVER_InferenceResponseDelete(resp);
+    if (allocator) {
+        TRITONSERVER_ResponseAllocatorDelete(allocator);
+    }
+    return !outputs.empty();
 #else
     (void)input; (void)outputs; return false;
 #endif

@@ -8,6 +8,22 @@
 #include "analyzer/multistage/nodes_common.hpp"
 #include "core/logger.hpp"
 
+#ifdef USE_CUDA
+#  if defined(__has_include)
+#    if __has_include(<cuda_runtime.h>)
+#      include <cuda_runtime.h>
+#      define VA_MS_NODE_MODEL_HAS_CUDA 1
+#    else
+#      define VA_MS_NODE_MODEL_HAS_CUDA 0
+#    endif
+#  else
+#    include <cuda_runtime.h>
+#    define VA_MS_NODE_MODEL_HAS_CUDA 1
+#  endif
+#else
+#  define VA_MS_NODE_MODEL_HAS_CUDA 0
+#endif
+
 using va::analyzer::multistage::util::get_or;
 
 namespace va { namespace analyzer { namespace multistage {
@@ -30,9 +46,16 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
     if (auto itTi = cfg.find("model_path_triton"); itTi != cfg.end()) model_path_triton_ = itTi->second;
     // Optional per-node provider override (e.g., reid 使用 cuda，det 使用 triton)
     if (auto itFp = cfg.find("force_provider"); itFp != cfg.end()) force_provider_override_ = itFp->second;
-    // Optional per-node Triton 输入名 / 输出名覆盖（例如 det 节点固定 input=images, output0）
+    // Optional per-node Triton 输入名 / 输出名 / GPU 输出覆盖（例如 det 节点固定 input=images, output0）
     if (auto itTi = cfg.find("triton_input"); itTi != cfg.end()) triton_input_override_ = itTi->second;
     if (auto itTo = cfg.find("triton_outputs"); itTo != cfg.end()) triton_outputs_override_ = itTo->second;
+    if (auto itGo = cfg.find("triton_gpu_output"); itGo != cfg.end()) triton_gpu_output_override_ = itGo->second;
+    // 可选：对 ROI batch 输入的模型启用“按 ROI 顺序逐个推理”（用于 max_batch_size=1 的 ReID 模型）
+    if (auto itSeq = cfg.find("roi_seq_batch"); itSeq != cfg.end()) {
+        auto v = itSeq->second;
+        std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+        roi_seq_batch_ = (v=="1" || v=="true" || v=="yes" || v=="on");
+    }
 }
 
 bool NodeModel::open(NodeContext& ctx) {
@@ -53,21 +76,28 @@ bool NodeModel::open(NodeContext& ctx) {
     if (!model_path_triton_.empty()) {
         try { desc.options["triton_model"] = model_path_triton_; } catch (...) { /* ignore */ }
     }
-    // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_input / triton_outputs（按模型 IO 名）
+    // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_input / triton_outputs / triton_gpu_output（按模型 IO 名）
     if (!triton_input_override_.empty()) {
         try { desc.options["triton_input"] = triton_input_override_; } catch (...) { /* ignore */ }
     }
     if (!triton_outputs_override_.empty()) {
         try { desc.options["triton_outputs"] = triton_outputs_override_; } catch (...) { /* ignore */ }
     }
+    if (!triton_gpu_output_override_.empty()) {
+        try { desc.options["triton_gpu_output"] = triton_gpu_output_override_; } catch (...) { /* ignore */ }
+    }
 
     auto now_ms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); };
 
     auto pick_path_for = [&](const std::string& prov)->std::string{
         std::string p = model_path_;
-        std::string v = prov; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
-        if ((v=="tensorrt-native" || v=="tensorrt_native" || v=="trt-native") && !model_path_trt_.empty()) return model_path_trt_;
-        if (v=="triton") return std::string("__triton__"); // 占位，Triton 会话忽略路径
+        std::string v = prov;
+        std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){return (char)std::tolower(c);} );
+        if ((v=="tensorrt-native" || v=="tensorrt_native" || v=="trt-native") && !model_path_trt_.empty())
+            return model_path_trt_;
+        // Triton In-Process / gRPC 均不依赖本地 ONNX 路径，使用占位符避免误用本地模型路径
+        if (v=="triton" || v=="triton-inproc" || v=="triton_grpc" || v=="triton-grpc")
+            return std::string("__triton__");
         if (!model_path_ort_.empty()) return model_path_ort_;
         return p;
     };
@@ -178,15 +208,186 @@ bool NodeModel::open(NodeContext& ctx) {
     return true;
 }
 
-bool NodeModel::process(Packet& p, NodeContext& /*ctx*/) {
+bool NodeModel::process(Packet& p, NodeContext& ctx) {
     auto it = p.tensors.find(in_key_);
-    if (it == p.tensors.end()) return false;
-    // 移除冗余推理输入日志，避免控制台噪声
-    std::vector<va::core::TensorView> outs;
-    if (!session_ || !session_->run(it->second, outs)) {
-        infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+    if (it == p.tensors.end()) {
+        // 对于以 ROI batch 作为输入的模型节点（如 ReID、ROI 分类），
+        // 在本帧没有 ROI（上游未产出 tensor:roi_batch）时视为“空集合”，不将其视为错误，直接跳过该节点。
+        if (roi_seq_batch_ && in_key_ == "tensor:roi_batch") {
+            return true;
+        }
         return false;
     }
+
+    std::vector<va::core::TensorView> outs;
+    // 针对启用了 roi_seq_batch 的节点（例如 max_batch_size=1 的 ReID），
+    // 将 [N,3,H,W] 的 ROI batch 拆成 N 次单独推理，并在 CPU 或 GPU 上聚合为 [N,D] 特征。
+    if (roi_seq_batch_ && in_key_ == "tensor:roi_batch") {
+        const auto& in_tv = it->second;
+        if (in_tv.shape.size() != 4) {
+            infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+            VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                << "roi_seq_batch enabled but input rank != 4 (path='" << model_path_ << "').";
+            return false;
+        }
+        const int64_t N = in_tv.shape[0];
+        const int64_t C = in_tv.shape[1];
+        const int64_t H = in_tv.shape[2];
+        const int64_t W = in_tv.shape[3];
+        if (N <= 0) {
+            // 空 ROI 集合：直接跳过
+            return true;
+        }
+        const size_t plane = static_cast<size_t>(C) * static_cast<size_t>(H) * static_cast<size_t>(W);
+        const size_t elems_per_sample = plane;
+        roi_seq_feat_buf_.clear();
+        int feat_dim = -1;
+        bool agg_on_gpu = false;
+        float* d_feats_base = nullptr;
+        for (int64_t i = 0; i < N; ++i) {
+            va::core::TensorView single = in_tv;
+            single.shape[0] = 1;
+            // 假定为连续的 NCHW/FP32 布局；原始 data 为 void*，此处仅重定位起始地址
+            const float* base = static_cast<const float*>(in_tv.data);
+            float* sample_ptr = const_cast<float*>(base + i * elems_per_sample);
+            single.data = static_cast<void*>(sample_ptr);
+            std::vector<va::core::TensorView> tmp_outs;
+            if (!session_ || !session_->run(single, tmp_outs) || tmp_outs.empty()) {
+                infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                    << "roi_seq_batch: sub-inference failed at index " << i
+                    << " (path='" << model_path_ << "').";
+                return false;
+            }
+            const auto& t = tmp_outs[0];
+            if (t.dtype != va::core::DType::F32) {
+                infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                    << "roi_seq_batch: output dtype is not F32 (path='" << model_path_ << "').";
+                return false;
+            }
+            int cur_feat_dim = 0;
+            const std::size_t rank = t.shape.size();
+            if (rank >= 2) {
+                // 允许 [1,D] 或 [1,C,H,W] 等任意 rank>=2 的形状，统一将除 batch 维之外的维度展平为特征维度
+                if (t.shape[0] != 1) {
+                    infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                    VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                        << "roi_seq_batch: expected first dim==1 but got " << t.shape[0]
+                        << " (path='" << model_path_ << "').";
+                    return false;
+                }
+                int64_t prod = 1;
+                for (std::size_t k = 1; k < rank; ++k) {
+                    prod *= t.shape[k];
+                }
+                cur_feat_dim = static_cast<int>(prod);
+            } else if (rank == 1) {
+                // [D]
+                cur_feat_dim = static_cast<int>(t.shape[0]);
+            } else {
+                infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                    << "roi_seq_batch: unsupported output rank=" << rank
+                    << " (path='" << model_path_ << "').";
+                return false;
+            }
+            if (cur_feat_dim <= 0) {
+                infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                    << "roi_seq_batch: invalid feature dim " << cur_feat_dim
+                    << " (path='" << model_path_ << "').";
+                return false;
+            }
+            if (feat_dim < 0) {
+                feat_dim = cur_feat_dim;
+                // 首次确定特征维度后，决定聚合位置（GPU 或 CPU）
+                if (t.on_gpu && ctx.gpu_pool && VA_MS_NODE_MODEL_HAS_CUDA) {
+#if VA_MS_NODE_MODEL_HAS_CUDA
+                    // 释放上一帧的聚合缓冲（若存在），避免 GPU 内存泄漏
+                    if (roi_seq_gpu_mem_.ptr) {
+                        ctx.gpu_pool->release(std::move(roi_seq_gpu_mem_));
+                    }
+                    roi_seq_gpu_mem_ = ctx.gpu_pool->acquire(static_cast<std::size_t>(N) * static_cast<std::size_t>(feat_dim) * sizeof(float));
+                    if (roi_seq_gpu_mem_.ptr) {
+                        d_feats_base = static_cast<float*>(roi_seq_gpu_mem_.ptr);
+                        agg_on_gpu = true;
+                    } else {
+                        agg_on_gpu = false;
+                    }
+#else
+                    agg_on_gpu = false;
+#endif
+                } else {
+                    agg_on_gpu = false;
+                }
+                if (!agg_on_gpu) {
+                    roi_seq_feat_buf_.reserve(static_cast<size_t>(N) * static_cast<size_t>(feat_dim));
+                }
+            } else if (cur_feat_dim != feat_dim) {
+                infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                    << "roi_seq_batch: inconsistent feature dim " << cur_feat_dim
+                    << " vs " << feat_dim << " (path='" << model_path_ << "').";
+                return false;
+            }
+            if (agg_on_gpu) {
+#if VA_MS_NODE_MODEL_HAS_CUDA
+                if (!d_feats_base) {
+                    infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                    VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                        << "roi_seq_batch: GPU aggregation selected but d_feats_base is null (path='" << model_path_ << "').";
+                    return false;
+                }
+                auto err = cudaMemcpyAsync(
+                    d_feats_base + static_cast<std::size_t>(i) * static_cast<std::size_t>(feat_dim),
+                    t.data,
+                    static_cast<std::size_t>(feat_dim) * sizeof(float),
+                    cudaMemcpyDeviceToDevice,
+                    static_cast<cudaStream_t>(ctx.stream));
+                if (err != cudaSuccess) {
+                    infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                    VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
+                        << "roi_seq_batch: cudaMemcpyAsync D2D failed (" << cudaGetErrorString(err)
+                        << ") path='" << model_path_ << "'.";
+                    return false;
+                }
+#else
+                (void)d_feats_base;
+                infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                return false;
+#endif
+            } else {
+                const float* src = static_cast<const float*>(t.data);
+                roi_seq_feat_buf_.insert(roi_seq_feat_buf_.end(), src, src + feat_dim);
+            }
+        }
+        if (feat_dim <= 0) {
+            infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        va::core::TensorView tv;
+        tv.dtype = va::core::DType::F32;
+        if (agg_on_gpu) {
+            tv.on_gpu = true;
+            tv.data = d_feats_base;
+            tv.shape = { N, static_cast<int64_t>(feat_dim) };
+        } else {
+            tv.on_gpu = false;
+            tv.data = roi_seq_feat_buf_.data();
+            tv.shape = { static_cast<int64_t>(roi_seq_feat_buf_.size() / static_cast<size_t>(feat_dim)),
+                         static_cast<int64_t>(feat_dim) };
+        }
+        outs.clear();
+        outs.push_back(tv);
+    } else {
+        // 普通路径：单次调用 session_->run 处理完整 batch
+        if (!session_ || !session_->run(it->second, outs)) {
+            infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+
     if (outs.empty()) {
         infer_fail_count_.fetch_add(1, std::memory_order_relaxed);
         VA_LOG_C(::va::core::LogLevel::Error, "ms.node_model")
