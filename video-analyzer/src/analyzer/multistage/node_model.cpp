@@ -30,6 +30,8 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
     if (auto itTi = cfg.find("model_path_triton"); itTi != cfg.end()) model_path_triton_ = itTi->second;
     // Optional per-node provider override (e.g., reid 使用 cuda，det 使用 triton)
     if (auto itFp = cfg.find("force_provider"); itFp != cfg.end()) force_provider_override_ = itFp->second;
+    // Optional per-node Triton 输出名覆盖（例如 det 节点固定 output0）
+    if (auto itTo = cfg.find("triton_outputs"); itTo != cfg.end()) triton_outputs_override_ = itTo->second;
 }
 
 bool NodeModel::open(NodeContext& ctx) {
@@ -49,6 +51,10 @@ bool NodeModel::open(NodeContext& ctx) {
     // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_model（按模型目录名）
     if (!model_path_triton_.empty()) {
         try { desc.options["triton_model"] = model_path_triton_; } catch (...) { /* ignore */ }
+    }
+    // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_outputs（按模型输出名列表，如 "output0"）
+    if (!triton_outputs_override_.empty()) {
+        try { desc.options["triton_outputs"] = triton_outputs_override_; } catch (...) { /* ignore */ }
     }
 
     auto now_ms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); };

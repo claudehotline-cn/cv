@@ -88,92 +88,95 @@ create_model_session(const va::core::EngineDescriptor& engine,
 
     // Triton In-Process path（仅保留嵌入式 libtritonserver 路径，gRPC Triton client 已移除）
     if (chosen == "triton") {
-#if defined(USE_TRITON_INPROCESS)
-        va::analyzer::TritonInprocModelSession::Options iopt;
         const auto& opts = engine.options;
-        bool has_triton_outputs = false;
-        bool has_triton_input = false;
-        // 默认留空，由各实现基于 metadata / config 自动填充；仅当显式配置 triton_input 时才覆盖
-        iopt.input_name.clear();
-        if (auto it = opts.find("triton_model"); it != opts.end()) iopt.model_name = it->second;
-        if (auto it = opts.find("triton_model_version"); it != opts.end()) iopt.model_version = it->second;
-        if (auto it = opts.find("triton_input"); it != opts.end()) {
-            iopt.input_name = it->second;
-            has_triton_input = true;
-        }
+        bool has_triton_outputs_cfg = false;
         if (auto it = opts.find("triton_outputs"); it != opts.end()) {
-            iopt.output_names.clear();
-            std::string v = it->second; std::string cur;
-            for (char c : v) {
-                if (c==','||c==';'){
-                    if(!cur.empty()){
-                        iopt.output_names.push_back(cur);
-                        cur.clear();
-                    }
-                } else {
-                    cur.push_back(c);
-                }
-            }
-            if(!cur.empty()) iopt.output_names.push_back(cur);
-            has_triton_outputs = true;
+            if (!it->second.empty()) has_triton_outputs_cfg = true;
         }
-        if (auto it = opts.find("triton_no_batch"); it != opts.end()) {
-            std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-            iopt.assume_no_batch = (v=="1"||v=="true"||v=="yes"||v=="on");
-        }
-        iopt.timeout_ms = parse_int(opts, "triton_timeout_ms", 2000);
-        iopt.device_id = engine.device_index;
-        // 若未显式提供 triton_input，则由 In-Process 路径在 loadModel 阶段基于 Triton metadata
-        // 自动填充 input_name（避免硬编码 images）。
-        if (!has_triton_input) {
+#if defined(USE_TRITON_INPROCESS)
+        if (has_triton_outputs_cfg) {
+            va::analyzer::TritonInprocModelSession::Options iopt;
+            bool has_triton_input = false;
+            // 默认留空，由 In-Process 路径基于 metadata / config 自动填充；仅当显式配置 triton_input 时才覆盖
             iopt.input_name.clear();
-        }
-        // 若未在配置中显式提供 triton_outputs，则让 In‑Process 路径在首次推理后
-        // 基于响应自动填充真实输出名（避免硬编码 dets/output0）。
-        if (!has_triton_outputs) {
-            iopt.output_names.clear();
-        }
-        // warmup_runs: 复用 ORT 分支解析逻辑：auto/-1=自动；off/0=禁用；其他数值
-        {
-            int wu = 0; // 默认不额外预热
-            auto it = opts.find("warmup_runs");
-            if (it != opts.end()) {
-                auto v = to_lower(it->second);
-                if (v == "auto" || v == "-1") { wu = -1; }
-                else if (v == "off" || v == "false" || v == "0" || v == "no") { wu = 0; }
-                else { try { wu = std::stoi(v); } catch (...) { wu = 0; } }
+            if (auto it = opts.find("triton_model"); it != opts.end()) iopt.model_name = it->second;
+            if (auto it = opts.find("triton_model_version"); it != opts.end()) iopt.model_version = it->second;
+            if (auto it = opts.find("triton_input"); it != opts.end()) {
+                iopt.input_name = it->second;
+                has_triton_input = true;
             }
-            iopt.warmup_runs = wu;
+            if (auto it = opts.find("triton_outputs"); it != opts.end()) {
+                iopt.output_names.clear();
+                std::string v = it->second; std::string cur;
+                for (char c : v) {
+                    if (c==','||c==';'){
+                        if(!cur.empty()){
+                            iopt.output_names.push_back(cur);
+                            cur.clear();
+                        }
+                    } else {
+                        cur.push_back(c);
+                    }
+                }
+                if(!cur.empty()) iopt.output_names.push_back(cur);
+            }
+            if (auto it = opts.find("triton_no_batch"); it != opts.end()) {
+                std::string v = it->second; std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+                iopt.assume_no_batch = (v=="1"||v=="true"||v=="yes"||v=="on");
+            }
+            iopt.timeout_ms = parse_int(opts, "triton_timeout_ms", 2000);
+            iopt.device_id = engine.device_index;
+            // 若未显式提供 triton_input，则由 In-Process 路径在 loadModel 阶段基于 Triton metadata 自动填充 input_name。
+            if (!has_triton_input) {
+                iopt.input_name.clear();
+            }
+            // warmup_runs: 复用 ORT 分支解析逻辑：auto/-1=自动；off/0=禁用；其他数值
+            {
+                int wu = 0; // 默认不额外预热
+                auto it = opts.find("warmup_runs");
+                if (it != opts.end()) {
+                    auto v = to_lower(it->second);
+                    if (v == "auto" || v == "-1") { wu = -1; }
+                    else if (v == "off" || v == "false" || v == "0" || v == "no") { wu = 0; }
+                    else { try { wu = std::stoi(v); } catch (...) { wu = 0; } }
+                }
+                iopt.warmup_runs = wu;
+            }
+            // I/O GPU 直通开关（默认开启）
+            iopt.use_gpu_input = parse_bool(opts, "triton_gpu_input", true);
+            iopt.use_gpu_output = parse_bool(opts, "triton_gpu_output", true);
+            // server host extras (optional)
+            if (auto it = opts.find("triton_repo"); it != opts.end()) iopt.repo_path = it->second; else iopt.repo_path = "/models";
+            if (parse_bool(opts, "triton_enable_http", false)) { iopt.enable_http = true; iopt.http_port = parse_int(opts, "triton_http_port", 8000); }
+            if (parse_bool(opts, "triton_enable_grpc", false)) { iopt.enable_grpc = true; iopt.grpc_port = parse_int(opts, "triton_grpc_port", 8001); }
+            if (auto it = opts.find("triton_model_control"); it != opts.end()) iopt.model_control = it->second;
+            iopt.strict_config = parse_bool(opts, "triton_strict_config", false);
+            // repository auto-poll interval (seconds), only effective when model_control=poll
+            iopt.repository_poll_secs = parse_int(opts, "triton_repository_poll_secs", 0);
+            // advanced ServerOptions
+            if (auto it = opts.find("triton_backend_dir"); it != opts.end()) iopt.backend_dir = it->second;
+            {
+                int mb = parse_int(opts, "triton_pinned_mem_mb", 0); if (mb > 0) iopt.pinned_mem_pool_mb = static_cast<size_t>(mb);
+            }
+            iopt.cuda_pool_device_id = parse_int(opts, "triton_cuda_pool_device_id", engine.device_index);
+            if (auto it = opts.find("triton_cuda_pool_bytes"); it != opts.end()) {
+                try { iopt.cuda_pool_bytes = static_cast<size_t>(std::stoull(it->second)); } catch (...) {}
+            }
+            if (auto it = opts.find("triton_backend_configs"); it != opts.end()) {
+                std::string v = it->second; std::string cur;
+                for (char c : v) { if (c==';' || c==',') { if(!cur.empty()){ iopt.backend_configs.push_back(cur); cur.clear(); } }
+                                   else cur.push_back(c); }
+                if (!cur.empty()) iopt.backend_configs.push_back(cur);
+            }
+            auto inps = std::make_shared<va::analyzer::TritonInprocModelSession>(iopt);
+            if (decision) { decision->resolved = "triton-inproc"; }
+            return inps;
+        } else {
+            VA_LOG_C(::va::core::LogLevel::Warn, "analyzer")
+                << "provider='triton' requested but no triton_outputs configured; falling back to cuda";
+            chosen = "cuda";
+            if (decision) { decision->resolved = chosen; }
         }
-        // I/O GPU 直通开关（默认开启）
-        iopt.use_gpu_input = parse_bool(opts, "triton_gpu_input", true);
-        iopt.use_gpu_output = parse_bool(opts, "triton_gpu_output", true);
-        // server host extras (optional)
-        if (auto it = opts.find("triton_repo"); it != opts.end()) iopt.repo_path = it->second; else iopt.repo_path = "/models";
-        if (parse_bool(opts, "triton_enable_http", false)) { iopt.enable_http = true; iopt.http_port = parse_int(opts, "triton_http_port", 8000); }
-        if (parse_bool(opts, "triton_enable_grpc", false)) { iopt.enable_grpc = true; iopt.grpc_port = parse_int(opts, "triton_grpc_port", 8001); }
-        if (auto it = opts.find("triton_model_control"); it != opts.end()) iopt.model_control = it->second;
-        iopt.strict_config = parse_bool(opts, "triton_strict_config", false);
-        // repository auto-poll interval (seconds), only effective when model_control=poll
-        iopt.repository_poll_secs = parse_int(opts, "triton_repository_poll_secs", 0);
-        // advanced ServerOptions
-        if (auto it = opts.find("triton_backend_dir"); it != opts.end()) iopt.backend_dir = it->second;
-        {
-            int mb = parse_int(opts, "triton_pinned_mem_mb", 0); if (mb > 0) iopt.pinned_mem_pool_mb = static_cast<size_t>(mb);
-        }
-        iopt.cuda_pool_device_id = parse_int(opts, "triton_cuda_pool_device_id", engine.device_index);
-        if (auto it = opts.find("triton_cuda_pool_bytes"); it != opts.end()) {
-            try { iopt.cuda_pool_bytes = static_cast<size_t>(std::stoull(it->second)); } catch (...) {}
-        }
-        if (auto it = opts.find("triton_backend_configs"); it != opts.end()) {
-            std::string v = it->second; std::string cur;
-            for (char c : v) { if (c==';' || c==',') { if(!cur.empty()){ iopt.backend_configs.push_back(cur); cur.clear(); } }
-                               else cur.push_back(c); }
-            if (!cur.empty()) iopt.backend_configs.push_back(cur);
-        }
-        auto inps = std::make_shared<va::analyzer::TritonInprocModelSession>(iopt);
-        if (decision) { decision->resolved = "triton-inproc"; }
-        return inps;
 #else
         VA_LOG_C(::va::core::LogLevel::Warn, "analyzer") << "provider='triton' requested but Triton in-process disabled; falling back to cuda";
         chosen = "cuda";
