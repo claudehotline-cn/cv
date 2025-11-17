@@ -121,6 +121,15 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
             }
         }
     }
+    // 元数据自动填充结束后，强制校验 input_name，避免后续 AddInput 使用空名称触发未定义行为。
+    if (opt_.input_name.empty()) {
+        VA_LOG_ERROR() << "[inproc.triton] input_name is empty after ModelMetadata for model='"
+                       << opt_.model_name << "', repo='" << opt_.repo_path
+                       << "'. Treating this as load failure to avoid undefined behaviour.";
+        loaded_ = false;
+        host_.reset();
+        return false;
+    }
     return true;
 #else
     (void)opt_;
