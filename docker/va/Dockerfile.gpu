@@ -3,13 +3,9 @@
 # Parameterize base tags (declare before any FROM for compatibility with older builders)
 ARG UBUNTU_VER=22.04
 ARG NGC_TRT_TAG=25.08-py3
-ARG TRITON_CLIENT_TAG=25.08-py3-sdk
 ARG TRITON_TAG=25.08-py3
 ARG ORT_PREBUILT_IMAGE=cv/va-ort:1.23.2-cuda13
 ARG VA_USE_TRT_INPROC=OFF
-# Provide Triton C++ client headers/libs via the SDK image (contains grpc_client.h & libgrpcclient.so)
-FROM nvcr.io/nvidia/tritonserver:${TRITON_CLIENT_TAG} AS tritonclient
-# Separate runtime stage for server headers/libs used at build time
 FROM nvcr.io/nvidia/tritonserver:${TRITON_TAG} AS tritonrt
 
 # Optional prebuilt ORT provider stage（默认使用本地构建的 cv/va-ort:1.23.2-cuda13；若不存在再回退到 NGC Triton 基础镜像）
@@ -31,12 +27,6 @@ RUN apt-get update && apt-get install -y \
     libgrpc++-dev protobuf-compiler protobuf-compiler-grpc libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 
-## Bring in Triton client headers/libs for optional gRPC client build (robust to SDK layout)
-# 复制 SDK 镜像内的 /opt 目录，后续在 RUN 中自适配不同布局并拷贝到 /opt/tritonclient
-COPY --from=tritonclient /opt /opt/_tc
-# Prefer SDK's installed clients under /workspace/install (if available in SDK)
-COPY --from=tritonclient /workspace/install/include /opt/tritonclient/include
-COPY --from=tritonclient /workspace/install/lib /opt/tritonclient/lib
 # Provide tritonserver headers/libs for in-process build detection/linkage
 COPY --from=tritonrt /opt/tritonserver/include /opt/tritonserver/include
 COPY --from=tritonrt /opt/tritonserver/lib /opt/tritonserver/lib
@@ -46,38 +36,6 @@ RUN set -eux; ls -l /opt/tritonserver/lib || true
 
 # If a prebuilt ORT image was provided, copy its /opt/onnxruntime (else copies empty dirs created above)
 COPY --from=ortprebuilt /opt/onnxruntime /opt/onnxruntime
-RUN set -eux; \
-    # If runtime image didn't contain headers/libs, try to source from SDK layout
-    if [ ! -f /opt/tritonserver/include/triton/core/tritonserver.h ] && [ -f /opt/_tc/tritonserver/include/triton/core/tritonserver.h ]; then \
-      mkdir -p /opt/tritonserver/include && cp -rv /opt/_tc/tritonserver/include/* /opt/tritonserver/include/; \
-    fi; \
-    if [ ! -f /opt/tritonserver/lib/libtritonserver.so ] && [ -d /opt/_tc/tritonserver/lib ]; then \
-      mkdir -p /opt/tritonserver/lib && cp -rv /opt/_tc/tritonserver/lib/* /opt/tritonserver/lib/; \
-    fi
-RUN set -eux; \
-    mkdir -p /opt/tritonclient/include /opt/tritonclient/lib; \
-    if [ ! -f /opt/tritonclient/include/grpc_client.h ]; then \
-       if [ -d /opt/_tc/triton/install/include ]; then \
-          cp -rv /opt/_tc/triton/install/include/* /opt/tritonclient/include/ || true; \
-       fi; \
-       if [ -d /opt/_tc/triton/install/lib ]; then \
-          cp -rv /opt/_tc/triton/install/lib/* /opt/tritonclient/lib/ || true; \
-       fi; \
-       if [ -f /opt/_tc/tritonserver/clients/include/grpc_client.h ]; then \
-          cp -rv /opt/_tc/tritonserver/clients/include/* /opt/tritonclient/include/ || true; \
-          [ -d /opt/_tc/tritonserver/clients/lib ] && cp -rv /opt/_tc/tritonserver/clients/lib/* /opt/tritonclient/lib/ || true; \
-       elif [ -d /opt/_tc/tritonserver/include ]; then \
-          cp -rv /opt/_tc/tritonserver/include/* /opt/tritonclient/include/ || true; \
-          [ -d /opt/_tc/tritonserver/lib ] && cp -rv /opt/_tc/tritonserver/lib/* /opt/tritonclient/lib/ || true; \
-       fi; \
-    fi; \
-    # Final check & log
-    if [ ! -f /opt/tritonclient/include/grpc_client.h ]; then \
-      echo 'WARNING: grpc_client.h not found under /opt/tritonclient/include'; \
-      find /opt/tritonclient -maxdepth 3 -type f -name 'grpc_client.h' -print || true; \
-    fi; \
-    ls -l /opt/tritonclient/include || true; ls -l /opt/tritonclient/lib || true
-
 
 # Upgrade CMake to >=3.28 via Kitware APT (ORT 1.23.2 requires it)
 RUN set -eux; \
@@ -259,17 +217,12 @@ RUN set -eux; \
     cmake -S video-analyzer -B build -G Ninja \
       -DUSE_CUDA=ON -DWITH_CUDA_KERNELS=ON -DWITH_NVDEC=ON -DWITH_NVENC=ON \
       -DUSE_GRPC=ON -DVA_ENABLE_GRPC_SERVER=ON \
-      -DUSE_TRITON_CLIENT=ON -DTRITON_CLIENT_ROOT=/opt/tritonclient \
       -DUSE_TRITON_INPROCESS=${VA_USE_TRT_INPROC:-OFF} \
-      -DTRITON_CLIENT_INCLUDE_DIR=/opt/tritonclient/include \
-      -DTRITON_CLIENT_GRPC_LIB=/opt/tritonclient/lib/libgrpcclient.so \
       -DCMAKE_CUDA_ARCHITECTURES="120" \
       -DONNXRUNTIME_ROOT=/opt/onnxruntime \
       -DONNXRUNTIME_INCLUDE_DIR=/opt/onnxruntime/include/onnxruntime/core/session \
       -DONNXRUNTIME_LIB:FILEPATH=/opt/onnxruntime/lib/libonnxruntime.so \
-    && cmake --build build -j${ORT_JOBS} \
-    && { ldd build/bin/VideoAnalyzer | grep -qi 'grpcclient' \
-         || { echo 'ERROR: libgrpcclient linkage missing. Check Triton client detection.'; ldd build/bin/VideoAnalyzer || true; exit 90; }; }
+    && cmake --build build -j${ORT_JOBS}
 
 ARG UBUNTU_VER=22.04
 # Runtime: 使用 TritonServer 作为基础运行镜像
@@ -285,12 +238,11 @@ RUN set -eux; \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:/opt/tritonserver/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonserver/lib:${LD_LIBRARY_PATH}
 COPY --from=build /app/build/bin/VideoAnalyzer /app/bin/VideoAnalyzer
 COPY --from=build /app/build/bin/trt_cache_builder /app/bin/trt_cache_builder
 COPY --from=build /app/build/bin/trt_engine_exporter /app/bin/trt_engine_exporter
 COPY --from=build /opt/onnxruntime /opt/onnxruntime
-COPY --from=build /opt/tritonclient /opt/tritonclient
 COPY --from=build /usr/local /usr/local
 COPY video-analyzer/config /app/config
 COPY docker/va/entrypoint.sh /app/entrypoint.sh
@@ -300,6 +252,6 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV VA_PROM_ENDPOINT=0.0.0.0:9090
 ENV TRITON_HTTP_PORT=8000 TRITON_GRPC_PORT=8001 TRITON_METRICS_PORT=8002 TRITON_MODEL_REPO=/models
-ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonclient/lib:/opt/tritonserver/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/tritonserver/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH}
 EXPOSE 8082 9090 50051 8000 8001 8002
 ENTRYPOINT ["/app/entrypoint.sh"]

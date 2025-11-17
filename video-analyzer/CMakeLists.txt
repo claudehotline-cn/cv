@@ -135,36 +135,8 @@ endif()
 find_path(JSONCPP_INCLUDE_DIR NAMES json/json.h PATHS /usr/local/include /usr/include PATH_SUFFIXES jsoncpp)
 find_library(JSONCPP_LIBRARY NAMES jsoncpp PATHS /usr/local/lib /usr/lib)
 
-# Optional: Triton C++ gRPC client (disabled by default)
-option(USE_TRITON_CLIENT "Enable Triton gRPC client integration" OFF)
+# In-Process Triton (libtritonserver) —— 唯一保留的 Triton 路径
 option(USE_TRITON_INPROCESS "Enable Triton in-process integration (libtritonserver)" OFF)
-if (USE_TRITON_CLIENT)
-    set(TRITON_CLIENT_ROOT "$ENV{TRITON_CLIENT_ROOT}" CACHE PATH "Root of Triton C++ client install")
-    if (TRITON_CLIENT_ROOT)
-        find_path(TRITON_CLIENT_INCLUDE_DIR NAMES grpc_client.h
-            PATHS ${TRITON_CLIENT_ROOT}/include /usr/include /usr/local/include
-            PATH_SUFFIXES "" triton triton/client clients client)
-        find_library(TRITON_CLIENT_GRPC_LIB
-            NAMES triton-grpc-client grpcclient tritonclient triton_grpc_client
-            PATHS ${TRITON_CLIENT_ROOT}/lib ${TRITON_CLIENT_ROOT}/lib64 /usr/lib /usr/local/lib)
-    else()
-        find_path(TRITON_CLIENT_INCLUDE_DIR NAMES grpc_client.h
-            PATHS /usr/include /usr/local/include
-            PATH_SUFFIXES "" triton triton/client clients client)
-        find_library(TRITON_CLIENT_GRPC_LIB
-            NAMES triton-grpc-client grpcclient tritonclient triton_grpc_client
-            PATHS /usr/lib /usr/local/lib)
-    endif()
-    if (TRITON_CLIENT_INCLUDE_DIR)
-        add_definitions(-DUSE_TRITON_CLIENT)
-        message(STATUS "Triton client headers found: ${TRITON_CLIENT_INCLUDE_DIR}")
-    else()
-        message(WARNING "Triton client headers not found; disabling USE_TRITON_CLIENT")
-        set(USE_TRITON_CLIENT OFF)
-    endif()
-endif()
-
-# In-Process Triton (libtritonserver)
 if (USE_TRITON_INPROCESS)
     # Allow hint via TRITON_SERVER_ROOT (default /opt/tritonserver)
     set(TRITON_SERVER_ROOT $ENV{TRITON_SERVER_ROOT})
@@ -321,17 +293,6 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE ${OpenCV_LIBS}
     PRIVATE Threads::Threads
     PRIVATE ${YAML_CPP_TARGET})
-
-if (USE_TRITON_CLIENT AND TRITON_CLIENT_GRPC_LIB)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${TRITON_CLIENT_GRPC_LIB})
-    # 仅为 Triton 源文件添加头文件搜索路径，避免污染全局包含（尤其是 absl/grpc 版本差异）
-    set_source_files_properties(
-        src/analyzer/triton_session.cpp
-        PROPERTIES
-            COMPILE_OPTIONS "-I${TRITON_CLIENT_INCLUDE_DIR}"
-            COMPILE_DEFINITIONS "TRITON_ENABLE_GPU"
-    )
-endif()
 
 # Link libtritonserver after target is defined (if in-process enabled)
 if (USE_TRITON_INPROCESS AND TRITONSERVER_LIB_RESOLVED)
