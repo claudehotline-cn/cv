@@ -33,10 +33,11 @@ analyzer:
         params:
           in: "tensor:roi_batch"
           outs: "tensor:reid"
-          # ReID：优先使用 ORT/CUDA 提供特征，避免当前环境下 In-Process Triton 对不同 input 名称的限制
-          force_provider: cuda
+          # ReID：使用 In-Process Triton（reid_passvitb 仓库模型），并固定输出名为 feat
+          model_path_triton: "reid_passvitb"
           model_path_ort: "models/reid_passvitb.onnx"
           model_path: "models/reid_passvitb.onnx"
+          triton_outputs: "feat"
       - name: track
         type: track.ocsort
         params:
