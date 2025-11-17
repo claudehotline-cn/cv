@@ -26,6 +26,7 @@ namespace va { namespace analyzer { namespace multistage {
     std::string model_path_ort_;     // ORT/ORT-TRT/CUDA 路径（.onnx）
     std::string model_path_triton_;  // Triton 仓库模型名（目录名），如 "yolov12x"
     std::string force_provider_override_; // 可选：按节点覆盖 provider（如仅 reid 节点用 cuda）
+    std::string triton_input_override_;    // 可选：按节点覆盖 Triton 输入名（如 "images"/"input"）
     std::string triton_outputs_override_;  // 可选：按节点固定 Triton 输出名列表（如 "output0"）
     std::atomic<uint64_t> infer_fail_count_{0};
   };

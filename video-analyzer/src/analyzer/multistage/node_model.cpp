@@ -30,7 +30,8 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
     if (auto itTi = cfg.find("model_path_triton"); itTi != cfg.end()) model_path_triton_ = itTi->second;
     // Optional per-node provider override (e.g., reid 使用 cuda，det 使用 triton)
     if (auto itFp = cfg.find("force_provider"); itFp != cfg.end()) force_provider_override_ = itFp->second;
-    // Optional per-node Triton 输出名覆盖（例如 det 节点固定 output0）
+    // Optional per-node Triton 输入名 / 输出名覆盖（例如 det 节点固定 input=images, output0）
+    if (auto itTi = cfg.find("triton_input"); itTi != cfg.end()) triton_input_override_ = itTi->second;
     if (auto itTo = cfg.find("triton_outputs"); itTo != cfg.end()) triton_outputs_override_ = itTo->second;
 }
 
@@ -52,7 +53,10 @@ bool NodeModel::open(NodeContext& ctx) {
     if (!model_path_triton_.empty()) {
         try { desc.options["triton_model"] = model_path_triton_; } catch (...) { /* ignore */ }
     }
-    // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_outputs（按模型输出名列表，如 "output0"）
+    // 当使用 Triton provider 时，允许通过 graph 参数覆盖 triton_input / triton_outputs（按模型 IO 名）
+    if (!triton_input_override_.empty()) {
+        try { desc.options["triton_input"] = triton_input_override_; } catch (...) { /* ignore */ }
+    }
     if (!triton_outputs_override_.empty()) {
         try { desc.options["triton_outputs"] = triton_outputs_override_; } catch (...) { /* ignore */ }
     }
