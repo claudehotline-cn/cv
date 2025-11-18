@@ -45,12 +45,11 @@ function toggleTheme() {
   const root = document.documentElement
   if (dark.value) root.setAttribute('data-theme','dark')
   else root.setAttribute('data-theme','light')
-  localStorage.setItem('va_theme', dark.value ? 'dark' : 'light')
 }
 onMounted(() => {
-  const t = localStorage.getItem('va_theme') || 'dark'
-  dark.value = (t === 'dark')
-  toggleTheme()
+  // 启动时根据当前 html data-theme 同步开关状态，不主动改主题
+  const t = document.documentElement.getAttribute('data-theme')
+  dark.value = (t !== 'light')
 })
 
 function goSearch(){

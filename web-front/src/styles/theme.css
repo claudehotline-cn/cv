@@ -34,32 +34,28 @@
   --el-fill-color-light:     #1b2233;
 }
 
-/* 亮色主题（可切换） */
+/* 亮色主题（暂时屏蔽，统一使用暗色变量） */
+/*
 :root[data-theme="light"] {
-  /* 品牌与信息色 */
   --va-primary:#1ea7ff;
   --va-accent:#0ea5e9;
   --va-success:#10b981; --va-warning:#f59e0b; --va-danger:#f43f5e; --va-info:#38bdf8;
-
-  /* 表面与文本（亮色） */
   --va-surface-1:#ffffff;
   --va-surface-2:#f8fafc;
   --va-surface-3:#f1f5f9;
   --va-text-1:#0f172a; --va-text-2:#334155; --va-border:#e2e8f0;
-
-  /* 映射到 Element Plus */
   --el-color-primary: var(--va-primary);
   --el-color-success: var(--va-success);
   --el-color-warning: var(--va-warning);
   --el-color-danger:  var(--va-danger);
   --el-color-info:    var(--va-info);
-
   --el-bg-color:             var(--va-surface-1);
   --el-bg-color-overlay:     #fff;
   --el-text-color-primary:   var(--va-text-1);
   --el-text-color-regular:   var(--va-text-2);
   --el-border-color:         var(--va-border);
 }
+*/
 
 /* 让原生组件遵循暗色渲染（默认） */
 :root { color-scheme: dark; }
