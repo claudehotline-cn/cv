@@ -208,6 +208,13 @@ bool NodeModel::open(NodeContext& ctx) {
     return true;
 }
 
+// 释放顺序 ReID 聚合使用的 GPU 特征缓冲
+static void release_roi_seq_gpu_mem(va::core::GpuBufferPool::Memory& mem, NodeContext& ctx) {
+    if (mem.ptr && ctx.gpu_pool) {
+        ctx.gpu_pool->release(std::move(mem));
+    }
+}
+
 bool NodeModel::process(Packet& p, NodeContext& ctx) {
     auto it = p.tensors.find(in_key_);
     if (it == p.tensors.end()) {
@@ -221,7 +228,7 @@ bool NodeModel::process(Packet& p, NodeContext& ctx) {
 
     std::vector<va::core::TensorView> outs;
     // 针对启用了 roi_seq_batch 的节点（例如 max_batch_size=1 的 ReID），
-    // 将 [N,3,H,W] 的 ROI batch 拆成 N 次单独推理，并在 CPU 或 GPU 上聚合为 [N,D] 特征。
+    // 将 [N,3,H,W] 的 ROI batch 拆成 N 次单独推理，并在 CPU 上聚合为 [N,D] 特征。
     if (roi_seq_batch_ && in_key_ == "tensor:roi_batch") {
         const auto& in_tv = it->second;
         if (in_tv.shape.size() != 4) {
@@ -304,11 +311,12 @@ bool NodeModel::process(Packet& p, NodeContext& ctx) {
                 // 首次确定特征维度后，决定聚合位置（GPU 或 CPU）
                 if (t.on_gpu && ctx.gpu_pool && VA_MS_NODE_MODEL_HAS_CUDA) {
 #if VA_MS_NODE_MODEL_HAS_CUDA
-                    // 释放上一帧的聚合缓冲（若存在），避免 GPU 内存泄漏
-                    if (roi_seq_gpu_mem_.ptr) {
-                        ctx.gpu_pool->release(std::move(roi_seq_gpu_mem_));
+                    // 若现有聚合缓冲不足以容纳 [N,D]，则通过池子重新获取更大的缓冲
+                    const std::size_t needed_bytes = static_cast<std::size_t>(N) * static_cast<std::size_t>(feat_dim) * sizeof(float);
+                    if (!roi_seq_gpu_mem_.ptr || roi_seq_gpu_mem_.bytes < needed_bytes) {
+                        release_roi_seq_gpu_mem(roi_seq_gpu_mem_, ctx);
+                        roi_seq_gpu_mem_ = ctx.gpu_pool->acquire(needed_bytes);
                     }
-                    roi_seq_gpu_mem_ = ctx.gpu_pool->acquire(static_cast<std::size_t>(N) * static_cast<std::size_t>(feat_dim) * sizeof(float));
                     if (roi_seq_gpu_mem_.ptr) {
                         d_feats_base = static_cast<float*>(roi_seq_gpu_mem_.ptr);
                         agg_on_gpu = true;

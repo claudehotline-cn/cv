@@ -43,6 +43,8 @@ def export_reid_onnx(
         "feat": {0: "batch"},
     }
 
+    # 对于较大的 ReID 权重，torch 可能会默认使用 external data 格式导出。
+    # 这里先测试直接导出；如若生成 .onnx.data 文件，可在后处理阶段显式合并。
     torch.onnx.export(
         net,
         dummy,
@@ -112,4 +114,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

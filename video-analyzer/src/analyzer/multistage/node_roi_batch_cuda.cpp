@@ -35,10 +35,27 @@ NodeRoiBatchCuda::NodeRoiBatchCuda(const std::unordered_map<std::string,std::str
 
 bool NodeRoiBatchCuda::process(Packet& p, NodeContext& ctx) {
     auto it = p.rois.find(in_rois_key_);
-    if (it == p.rois.end()) { p.tensors.erase(out_key_); return true; }
+    if (it == p.rois.end()) {
+        p.tensors.erase(out_key_);
+        return true;
+    }
     const auto& rois = it->second;
     last_total_rois_ = static_cast<int>(rois.size());
-    staged_.clear();
+    // 释放上一帧占用的 GPU 缓冲，归还到对应的 GpuBufferPool，避免长时间运行时内存不断增长
+    if (!staged_.empty()) {
+        va::core::GpuBufferPool* pool = ctx.gpu_pool;
+        if (!pool && local_pool_) {
+            pool = local_pool_.get();
+        }
+        if (pool) {
+            for (auto& m : staged_) {
+                if (m.ptr) {
+                    pool->release(std::move(m));
+                }
+            }
+        }
+        staged_.clear();
+    }
 
 #if VA_MS_RBC_HAS_CUDA && defined(VA_HAS_CUDA_KERNELS)
     if (p.frame.has_device_surface && p.frame.device.on_gpu && p.frame.device.fmt == va::core::PixelFormat::NV12) {
