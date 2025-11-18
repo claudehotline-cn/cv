@@ -7,6 +7,9 @@
 #endif
 #include <algorithm>
 #include <cmath>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/video/tracking.hpp>
+#include <opencv2/calib3d.hpp>
 
 using va::analyzer::multistage::util::get_or_float;
 using va::analyzer::multistage::util::get_or_int;
@@ -92,6 +95,7 @@ std::vector<std::pair<int,int>> hungarian_minimize(const std::vector<float>& cos
 // --- Kalman filter (CPU) helpers: 7D state, 4D measurement ---
 
 using Roi = va::analyzer::multistage::Roi;
+using CmcState = va::analyzer::multistage::CmcState;
 
 constexpr int KF_DIM_X = 7;
 constexpr int KF_DIM_Z = 4;
@@ -346,6 +350,77 @@ inline void kf_update(float x[7], float P[49], const Roi& b) {
     for (int i = 0; i < KF_DIM_X * KF_DIM_X; ++i) P[i] = P_new[i];
 }
 
+// --- CMC sparse optical flow state ---
+inline cv::Matx23f cmc_identity() {
+    return cv::Matx23f(1.0f, 0.0f, 0.0f,
+                       0.0f, 1.0f, 0.0f);
+}
+
+// 计算稀疏光流 CMC 仿射矩阵：参考 Deep-OC-SORT 的 _affine_sparse_flow
+inline cv::Matx23f cmc_compute_sparse(CmcState& st,
+                                      const cv::Mat& gray,
+                                      const cv::Mat& mask,
+                                      int min_features) {
+    cv::Matx23f A = cmc_identity();
+    std::vector<cv::Point2f> keypoints;
+    const int max_corners = 3000;
+    cv::goodFeaturesToTrack(gray, keypoints, max_corners,
+                            0.01, 1.0, mask, 3, false, 0.04);
+    if (keypoints.empty()) {
+        st.prev_gray = gray.clone();
+        st.prev_pts.clear();
+        return A;
+    }
+
+    if (st.prev_gray.empty() || st.prev_pts.empty()) {
+        st.prev_gray = gray.clone();
+        st.prev_pts = keypoints;
+        return A;
+    }
+
+    std::vector<cv::Point2f> next_pts;
+    std::vector<unsigned char> status;
+    std::vector<float> err;
+    cv::calcOpticalFlowPyrLK(st.prev_gray, gray,
+                             st.prev_pts, next_pts,
+                             status, err);
+
+    std::vector<cv::Point2f> prev_points;
+    std::vector<cv::Point2f> curr_points;
+    prev_points.reserve(status.size());
+    curr_points.reserve(status.size());
+    for (size_t i = 0; i < status.size(); ++i) {
+        if (!status[i]) continue;
+        prev_points.push_back(st.prev_pts[i]);
+        curr_points.push_back(next_pts[i]);
+    }
+
+    if (prev_points.size() > static_cast<size_t>(min_features)) {
+        cv::Mat A_mat;
+        std::vector<unsigned char> inliers;
+        A_mat = cv::estimateAffinePartial2D(prev_points, curr_points,
+                                            inliers, cv::RANSAC);
+        if (!A_mat.empty() && A_mat.rows == 2 && A_mat.cols == 3) {
+            A = A_mat;
+        }
+    }
+
+    st.prev_gray = gray.clone();
+    st.prev_pts = std::move(keypoints);
+    return A;
+}
+
+inline void cmc_apply_affine_to_box(const cv::Matx23f& A, Roi& b, int img_w, int img_h) {
+    cv::Vec3f p1(b.x1, b.y1, 1.0f);
+    cv::Vec3f p2(b.x2, b.y2, 1.0f);
+    cv::Vec2f q1 = A * p1;
+    cv::Vec2f q2 = A * p2;
+    b.x1 = std::min(std::max(q1[0], 0.0f), static_cast<float>(img_w - 1));
+    b.y1 = std::min(std::max(q1[1], 0.0f), static_cast<float>(img_h - 1));
+    b.x2 = std::min(std::max(q2[0], 0.0f), static_cast<float>(img_w - 1));
+    b.y2 = std::min(std::max(q2[1], 0.0f), static_cast<float>(img_h - 1));
+}
+
 } // anonymous namespace
 
 namespace va { namespace analyzer { namespace multistage {
@@ -392,6 +467,12 @@ NodeTrackOcsort::NodeTrackOcsort(const std::unordered_map<std::string,std::strin
                 use_byte_ = false;
             }
         }
+        it = cfg.find("cmc_method");
+        if (it != cfg.end()) {
+            cmc_method_ = it->second;
+        }
+        cmc_min_features_ = get_or_int(cfg, "cmc_min_features", 10);
+        cmc_off_ = (cmc_method_ == "none" || cmc_method_.empty());
     }
     max_tracks_ = get_or_int(cfg, "max_tracks", 256);
     if (max_tracks_ < 16) max_tracks_ = 16;
@@ -408,6 +489,9 @@ bool NodeTrackOcsort::open(NodeContext& ctx) {
 #else
     (void)ctx;
 #endif
+    if (!cmc_off_ && !cmc_state_) {
+        cmc_state_ = std::make_unique<CmcState>();
+    }
     return true;
 }
 
@@ -437,6 +521,7 @@ void NodeTrackOcsort::close(NodeContext& ctx) {
     }
     gpu_pool_ = nullptr;
 #endif
+    cmc_state_.reset();
     tracks_.clear();
     next_id_ = 1;
 }
@@ -564,6 +649,44 @@ bool NodeTrackOcsort::process_cpu(Packet& p) {
         return true;
     }
     const auto& dets = it->second;
+
+    // 可选：在匹配前执行 CMC（sparse optical flow），将已有轨迹的 box / 观测历史对齐到当前帧坐标系
+    if (!cmc_off_ && cmc_state_ && !tracks_.empty()) {
+        const int img_w = p.frame.width;
+        const int img_h = p.frame.height;
+        if (img_w > 0 && img_h > 0 && !p.frame.bgr.empty()) {
+            cv::Mat bgr(img_h, img_w, CV_8UC3,
+                        const_cast<uint8_t*>(p.frame.bgr.data()));
+            cv::Mat gray;
+            cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+            cv::Mat mask(gray.size(), CV_8UC1, cv::Scalar(255));
+            if (!dets.empty()) {
+                for (const auto& bb : dets) {
+                    int x1 = std::max(0, static_cast<int>(std::floor(bb.x1)));
+                    int y1 = std::max(0, static_cast<int>(std::floor(bb.y1)));
+                    int x2 = std::min(img_w - 1, static_cast<int>(std::ceil(bb.x2)));
+                    int y2 = std::min(img_h - 1, static_cast<int>(std::ceil(bb.y2)));
+                    if (x2 > x1 && y2 > y1) {
+                        cv::Rect r(x1, y1, x2 - x1, y2 - y1);
+                        mask(r).setTo(0);
+                    }
+                }
+            }
+            cv::Matx23f A = cmc_identity();
+            // 当前实现：sparse / sift 均走 sparse 分支，避免引入 SIFT 依赖
+            A = cmc_compute_sparse(*cmc_state_, gray, mask, cmc_min_features_);
+            // 将仿射矩阵应用到当前所有轨迹及其观测历史
+            for (auto& tr : tracks_) {
+                cmc_apply_affine_to_box(A, tr.box, img_w, img_h);
+                if (tr.has_last_obs) {
+                    cmc_apply_affine_to_box(A, tr.last_obs, img_w, img_h);
+                }
+                for (auto& kv : tr.observations) {
+                    cmc_apply_affine_to_box(A, kv.second, img_w, img_h);
+                }
+            }
+        }
+    }
 
     // 读取 ReID 特征 [N,D]（可选），优先使用 GPU tensor 并拷贝一份到 CPU
     const float* feat_data = nullptr;

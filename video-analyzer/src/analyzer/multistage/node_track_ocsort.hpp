@@ -4,12 +4,21 @@
 #include "core/gpu_buffer_pool.hpp"
 #include <unordered_map>
 #include <vector>
+#include <memory>
+#include <string>
+#include <opencv2/core.hpp>
 
 #if defined(USE_CUDA)
 #include "analyzer/cuda/track_ocsort_kernels.hpp"
 #endif
 
 namespace va { namespace analyzer { namespace multistage {
+
+// CMC（Camera Motion Compensation）状态（稀疏光流）
+struct CmcState {
+    cv::Mat prev_gray;
+    std::vector<cv::Point2f> prev_pts;
+};
 
 // OCSORT-style multi-object tracker node.
 // - 输入：来自检测阶段的 ROI（默认为 rois["det"] / gpu_rois["det"]）。
@@ -105,6 +114,12 @@ private:
     static float iou(const Roi& a, const Roi& b);
     static float cosine(const std::vector<float>& a, const float* b, int D);
     static void l2_normalize(std::vector<float>& v);
+
+    // CMC（Camera Motion Compensation）相关
+    std::unique_ptr<CmcState> cmc_state_;
+    std::string cmc_method_ {"none"};  // "none" / "sparse" / "sift"（当前 sift 退化为 sparse）
+    int cmc_min_features_ {10};        // sparse optical flow 最低特征点数量
+    bool cmc_off_ {true};
 };
 
 } } } // namespace
