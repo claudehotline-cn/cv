@@ -19,6 +19,10 @@ struct OcsortGpuState {
     int32_t* d_track_ids   {nullptr};    // [T_max]   track id
     int32_t* d_track_missed{nullptr};    // [T_max]   missed frame count
     uint8_t* d_track_has_feat{nullptr};  // [T_max]   0/1 whether feat is valid
+    float*   d_track_vel   {nullptr};    // [T_max,2] simple velocity (vx,vy) per track
+    // Kalman filter state（7 维：x,y,s,r, vx,vy,vs），完全在 GPU 侧维护
+    float*   d_kf_x        {nullptr};    // [T_max,7] 状态向量
+    float*   d_kf_P        {nullptr};    // [T_max,7*7] 协方差矩阵（行主序）
     int32_t* d_track_count {nullptr};    // [1]       current active track count T
     int32_t* d_next_id     {nullptr};    // [1]       next track id to allocate
     int32_t  max_tracks {0};
@@ -50,4 +54,3 @@ cudaError_t ocsort_match_and_update(
     cudaStream_t stream);
 
 } // namespace va::analyzer::cudaops
-

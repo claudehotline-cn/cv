@@ -1,6 +1,7 @@
 #include "analyzer/triton_inproc_session.hpp"
 #include "analyzer/triton_inproc_server_host.hpp"
 #include "core/logger.hpp"
+#include "analyzer/logging_util.hpp"
 
 #include <atomic>
 #include <future>
@@ -87,14 +88,16 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
 bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<core::TensorView>& outputs) {
     outputs.clear();
 #if defined(USE_TRITON_INPROCESS)
-    // DebugSeg：入口打点，记录输入 tensor 形状与 GPU 标志，便于精确定位崩溃前状态
+    // DebugSeg：入口打点，改用节流日志，避免每帧刷 Info。
     try {
         std::string shape_str;
         for (size_t i = 0; i < input.shape.size(); ++i) {
             if (i) shape_str += "x";
             shape_str += std::to_string(input.shape[i]);
         }
-        VA_LOG_C(::va::core::LogLevel::Info, "inproc.triton")
+        auto lvl = va::analyzer::logutil::log_level_for_tag("inproc.triton");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("inproc.triton");
+        VA_LOG_THROTTLED(lvl, "inproc.triton", thr)
             << "[DebugSeg] TritonInproc::run enter model='" << opt_.model_name
             << "' on_gpu=" << std::boolalpha << input.on_gpu
             << " shape=" << shape_str
@@ -226,7 +229,9 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
     }
 
     try {
-        VA_LOG_C(::va::core::LogLevel::Info, "inproc.triton")
+        auto lvl = va::analyzer::logutil::log_level_for_tag("inproc.triton");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("inproc.triton");
+        VA_LOG_THROTTLED(lvl, "inproc.triton", thr)
             << "[DebugSeg] InferenceRequest prepared model='" << opt_.model_name
             << "' input_name='" << opt_.input_name
             << "' use_gpu_input=" << std::boolalpha << use_gpu_input
@@ -367,7 +372,9 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         return false;
     }
     try {
-        VA_LOG_C(::va::core::LogLevel::Info, "inproc.triton")
+        auto lvl = va::analyzer::logutil::log_level_for_tag("inproc.triton");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("inproc.triton");
+        VA_LOG_THROTTLED(lvl, "inproc.triton", thr)
             << "[DebugSeg] ServerInferAsync dispatched model='" << opt_.model_name
             << "' use_gpu_output=" << std::boolalpha << opt_.use_gpu_output;
     } catch (...) {}
@@ -405,7 +412,9 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         return false;
     }
     try {
-        VA_LOG_C(::va::core::LogLevel::Info, "inproc.triton")
+        auto lvl = va::analyzer::logutil::log_level_for_tag("inproc.triton");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("inproc.triton");
+        VA_LOG_THROTTLED(lvl, "inproc.triton", thr)
             << "[DebugSeg] OutputCount=" << outc << " model='" << opt_.model_name << "'";
     } catch (...) {}
     if (opt_.output_names.empty()) {
@@ -429,7 +438,9 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
             continue;
         }
         try {
-            VA_LOG_C(::va::core::LogLevel::Info, "inproc.triton")
+            auto lvl = va::analyzer::logutil::log_level_for_tag("inproc.triton");
+            auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("inproc.triton");
+            VA_LOG_THROTTLED(lvl, "inproc.triton", thr)
                 << "[DebugSeg] ResponseOutput[" << i << "] name='" << (oname ? oname : "<null>")
                 << "' bytes=" << bsize
                 << " mtype=" << static_cast<int>(mtype)

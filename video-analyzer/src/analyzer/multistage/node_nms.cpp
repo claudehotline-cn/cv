@@ -40,6 +40,11 @@ NodeNmsYolo::NodeNmsYolo(const std::unordered_map<std::string,std::string>& cfg)
 bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     auto it = p.tensors.find(in_key_);
     if (it == p.tensors.end()) return false;
+    // 释放上一帧为 GPU ROI 分配的缓冲，避免长时间运行时显存不断增长
+    if (gpu_boxes_mem_.ptr && gpu_pool_) {
+        gpu_pool_->release(std::move(gpu_boxes_mem_));
+        gpu_boxes_mem_ = {};
+    }
     {
         // 输入形状与cuda偏好日志
         std::string shp; for (size_t i=0;i<it->second.shape.size();++i){ shp += (i?"x":""); shp += std::to_string(it->second.shape[i]); }
@@ -99,8 +104,16 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
         if (n > 0) {
             // Allocate a GPU buffer for [N,4] boxes (x1,y1,x2,y2)
             const std::size_t elems = n * 4;
-            auto mem = ctx.gpu_pool->acquire(elems * sizeof(float));
-            if (mem.ptr) {
+            gpu_pool_ = ctx.gpu_pool;
+            if (gpu_boxes_mem_.ptr && gpu_boxes_mem_.bytes < elems * sizeof(float)) {
+                // 当前缓存不足时先归还旧块，再申请更大的块
+                gpu_pool_->release(std::move(gpu_boxes_mem_));
+                gpu_boxes_mem_ = {};
+            }
+            if (!gpu_boxes_mem_.ptr) {
+                gpu_boxes_mem_ = gpu_pool_->acquire(elems * sizeof(float));
+            }
+            if (gpu_boxes_mem_.ptr) {
                 // Prepare a temporary host buffer and copy to device once.
                 std::vector<float> host_boxes(elems);
                 for (std::size_t i = 0; i < n; ++i) {
@@ -110,12 +123,12 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
                     host_boxes[i * 4 + 2] = b.x2;
                     host_boxes[i * 4 + 3] = b.y2;
                 }
-                cudaMemcpyAsync(mem.ptr, host_boxes.data(),
+                cudaMemcpyAsync(gpu_boxes_mem_.ptr, host_boxes.data(),
                                 elems * sizeof(float),
                                 cudaMemcpyHostToDevice,
                                 static_cast<cudaStream_t>(ctx.stream));
                 GpuRoiBuffer buf;
-                buf.d_boxes = static_cast<float*>(mem.ptr);
+                buf.d_boxes = static_cast<float*>(gpu_boxes_mem_.ptr);
                 buf.d_scores = nullptr; // 可按需扩展
                 buf.d_cls = nullptr;    // 可按需扩展
                 buf.count = static_cast<int32_t>(n);
@@ -128,6 +141,22 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
     auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.nms");
     VA_LOG_THROTTLED(lvl, "ms.nms", thr) << "boxes=" << mo.boxes.size();
     return true;
+}
+
+void NodeNmsYolo::close(NodeContext& ctx) {
+    (void)ctx;
+#if VA_MS_NMS_HAS_CUDA
+    if (gpu_boxes_mem_.ptr) {
+        if (gpu_pool_) {
+            gpu_pool_->release(std::move(gpu_boxes_mem_));
+        } else {
+            // 理论上不会走到这里，作为兜底直接释放
+            cudaFree(gpu_boxes_mem_.ptr);
+        }
+        gpu_boxes_mem_ = {};
+    }
+    gpu_pool_ = nullptr;
+#endif
 }
 
 } } } // namespace

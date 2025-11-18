@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <regex>
+#include <cctype>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -41,7 +42,124 @@ namespace {
 struct VaConvJob { std::mutex mu; std::vector<std::string> logs; std::string phase; std::string model; std::string version; float progress{0.f}; int pid{-1}; bool cancel{false}; };
 static std::mutex g_va_conv_mu;
 static std::unordered_map<std::string, std::shared_ptr<VaConvJob>> g_va_conv_jobs;
+
+struct TrtexecShapeHint {
+    std::string input_name;
+    std::vector<int64_t> dims;
+    int64_t max_batch{0};
+};
+
+static TrtexecShapeHint infer_shape_from_config(const va::analyzer::TritonInprocServerHost::Options& hopt,
+                                                const std::string& model) {
+    TrtexecShapeHint out;
+    std::string content;
+    bool got = false;
+    // 仅支持 S3/MinIO 仓库：s3://...（与 RepoGetConfig 路径保持一致）
+    if (hopt.repo.rfind("s3://", 0) == 0) {
+        auto repo = hopt.repo.substr(5);
+        std::string endpoint, bucket, prefix;
+        if (repo.rfind("http://", 0) == 0 || repo.rfind("https://", 0) == 0) {
+            auto pos = repo.find('/', repo.find("://") + 3);
+            if (pos != std::string::npos) {
+                endpoint = repo.substr(0, pos);
+                auto rest = repo.substr(pos + 1);
+                auto p2 = rest.find('/');
+                if (p2 != std::string::npos) { bucket = rest.substr(0, p2); prefix = rest.substr(p2 + 1); }
+                else { bucket = rest; prefix.clear(); }
+            }
+        } else {
+            auto p = repo.find('/');
+            if (p != std::string::npos) { bucket = repo.substr(0, p); prefix = repo.substr(p + 1); }
+            else { bucket = repo; prefix.clear(); }
+            const char* ep = std::getenv("AWS_ENDPOINT_URL_S3"); if (!ep) ep = std::getenv("AWS_S3_ENDPOINT"); if (!ep) ep = std::getenv("AWS_ENDPOINT_URL");
+            if (ep) endpoint = ep;
+        }
+        if (!bucket.empty() && !endpoint.empty()) {
+            if (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+            std::string key = prefix.empty()? (model+"/config.pbtxt") : (prefix+"/"+model+"/config.pbtxt");
+            std::string region = std::getenv("AWS_REGION")? std::getenv("AWS_REGION"): (std::getenv("S3_REGION")? std::getenv("S3_REGION"): "us-east-1");
+            const char* ak = std::getenv("AWS_ACCESS_KEY_ID"); if (!ak) ak = std::getenv("S3_ACCESS_KEY_ID");
+            const char* sk = std::getenv("AWS_SECRET_ACCESS_KEY"); if (!sk) sk = std::getenv("S3_SECRET_ACCESS_KEY");
+            std::ostringstream cmd;
+            cmd << "curl -s --fail --connect-timeout 3 --max-time 8 ";
+            cmd << "--aws-sigv4 \"aws:amz:" << region << ":s3\" ";
+            if (ak && sk) { cmd << "-u '" << ak << ":" << sk << "' "; }
+            cmd << "'" << endpoint << "/" << bucket << "/" << key << "'";
+            std::string out_buf; out_buf.reserve(32768);
+            FILE* fp = popen(cmd.str().c_str(), "r");
+            if (fp) {
+                char buf[4096]; size_t n;
+                while ((n=fread(buf,1,sizeof(buf),fp))>0) out_buf.append(buf,n);
+                pclose(fp);
+            }
+            if (!out_buf.empty()) {
+                content = std::move(out_buf);
+                got = true;
+            }
+        }
+    }
+
+    if (!got || content.empty()) {
+        return out;
+    }
+
+    // Parse max_batch_size
+    {
+        std::regex re_mb(R"(max_batch_size\s*:\s*([0-9]+))");
+        std::smatch m;
+        if (std::regex_search(content, m, re_mb)) {
+            try {
+                out.max_batch = std::stoll(m[1].str());
+            } catch (...) {
+                out.max_batch = 0;
+            }
+        }
+    }
+
+    // Parse first input block
+    std::regex re_input(R"(input\s*\{\s*([^}]*)\})", std::regex::icase);
+    std::smatch minput;
+    if (!std::regex_search(content, minput, re_input)) {
+        return out;
+    }
+    std::string block = minput[1].str();
+
+    // name: "..."
+    {
+        std::regex re_name(R"(name\s*:\s*\"([^\"]+)\")");
+        std::smatch m;
+        if (std::regex_search(block, m, re_name)) {
+            out.input_name = m[1].str();
+        }
+    }
+
+    // dims: [..]
+    {
+        std::regex re_dims(R"(dims\s*:\s*\[([^\]]+)\])");
+        std::smatch m;
+        if (std::regex_search(block, m, re_dims)) {
+            std::string s = m[1].str();
+            std::stringstream ss(s);
+            std::string tok;
+            while (std::getline(ss, tok, ',')) {
+                // trim
+                size_t b = 0;
+                while (b < tok.size() && std::isspace(static_cast<unsigned char>(tok[b]))) ++b;
+                size_t e = tok.size();
+                while (e > b && std::isspace(static_cast<unsigned char>(tok[e - 1]))) --e;
+                if (e <= b) continue;
+                try {
+                    long long v = std::stoll(tok.substr(b, e - b));
+                    out.dims.push_back(static_cast<int64_t>(v));
+                } catch (...) {
+                    // ignore invalid piece
+                }
+            }
+        }
+    }
+    return out;
 }
+} // anonymous namespace
 #endif
 
 class AnalyzerControlServiceImpl final : public va::v1::AnalyzerControl::Service {
@@ -768,9 +886,34 @@ public:
                 for (const char* c : candidates) { if (access(c, X_OK) == 0) { trtexec = c; break; } }
                 if (trtexec.empty()) trtexec = "trtexec";
             }
-            std::ostringstream cmd; cmd << trtexec << " --onnx='" << onnx_tmp << "' --saveEngine='" << plan_tmp << "' --fp16";
+            // Infer dynamic batch/profile from config.pbtxt when possible
+            TrtexecShapeHint shape_hint = infer_shape_from_config(hopt, model);
+            std::string min_shapes_arg;
+            std::string opt_shapes_arg;
+            std::string max_shapes_arg;
+            if (shape_hint.max_batch > 1 && !shape_hint.input_name.empty() && !shape_hint.dims.empty()) {
+                auto build_shape = [&](int64_t b) {
+                    std::ostringstream ss;
+                    ss << shape_hint.input_name << ":" << b;
+                    for (auto d : shape_hint.dims) {
+                        ss << "x" << d;
+                    }
+                    return ss.str();
+                };
+                int64_t maxb = shape_hint.max_batch;
+                int64_t optb = maxb >= 32 ? 32 : maxb;
+                min_shapes_arg = std::string("--minShapes=") + build_shape(1);
+                opt_shapes_arg = std::string("--optShapes=") + build_shape(optb);
+                max_shapes_arg = std::string("--maxShapes=") + build_shape(maxb);
+            }
+            std::ostringstream cmd;
+            cmd << trtexec << " --onnx='" << onnx_tmp << "' --saveEngine='" << plan_tmp << "' --fp16";
+            if (!min_shapes_arg.empty()) {
+                cmd << " " << min_shapes_arg << " " << opt_shapes_arg << " " << max_shapes_arg;
+            }
             // Conversion thread
-            std::thread([job, job_id, onnx_path=std::string(onnx_tmp), plan_tmp, cmd_str=cmd.str(), hopt, model, version, trtexec]() {
+            std::thread([job, job_id, onnx_path=std::string(onnx_tmp), plan_tmp, cmd_str=cmd.str(), hopt, model, version, trtexec,
+                         min_shapes_arg, opt_shapes_arg, max_shapes_arg]() {
                 auto set_phase = [&](const char* ph, float prog){ std::lock_guard<std::mutex> lk(job->mu); job->phase = ph; if (prog >= 0.f) job->progress = prog; };
                 set_phase("running", 5.f);
                 // fork/exec trtexec silently, track pid for cancellation
@@ -781,8 +924,23 @@ public:
                     if (devnull >= 0) { dup2(devnull, 1); dup2(devnull, 2); }
                     std::string arg1 = std::string("--onnx=") + onnx_path;
                     std::string arg2 = std::string("--saveEngine=") + plan_tmp;
+                    std::string arg_fp16 = "--fp16";
+                    std::string arg_min_shapes = min_shapes_arg;
+                    std::string arg_opt_shapes = opt_shapes_arg;
+                    std::string arg_max_shapes = max_shapes_arg;
                     const char* argv0 = trtexec.c_str();
-                    const char* argvv[] = { argv0, arg1.c_str(), arg2.c_str(), "--fp16", nullptr };
+                    const char* argvv[16];
+                    int ai = 0;
+                    argvv[ai++] = argv0;
+                    argvv[ai++] = arg1.c_str();
+                    argvv[ai++] = arg2.c_str();
+                    argvv[ai++] = arg_fp16.c_str();
+                    if (!arg_min_shapes.empty()) {
+                        argvv[ai++] = arg_min_shapes.c_str();
+                        argvv[ai++] = arg_opt_shapes.c_str();
+                        argvv[ai++] = arg_max_shapes.c_str();
+                    }
+                    argvv[ai] = nullptr;
                     execvp(argv0, (char* const*)argvv);
                     _exit(127);
                 }
@@ -1107,9 +1265,9 @@ OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl) {
     auto* svc = new AnalyzerControlServiceImpl(ctl, nullptr);
     auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
-    // Allow large ONNX uploads
-    b.SetMaxReceiveMessageSize(256 * 1024 * 1024);
-    b.SetMaxSendMessageSize(256 * 1024 * 1024);
+    // Allow large ONNX uploads (up to 1024MB)
+    b.SetMaxReceiveMessageSize(1024 * 1024 * 1024);
+    b.SetMaxSendMessageSize(1024 * 1024 * 1024);
     auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
     std::shared_ptr<grpc::ServerCredentials> creds;
     {
@@ -1141,9 +1299,9 @@ OpaquePtr StartGrpcServer(const std::string& addr, PipelineController* ctl, va::
     auto* svc = new AnalyzerControlServiceImpl(ctl, app);
     auto* whep = new WhepControlServiceImpl();
     grpc::ServerBuilder b;
-    // Allow large ONNX uploads
-    b.SetMaxReceiveMessageSize(256 * 1024 * 1024);
-    b.SetMaxSendMessageSize(256 * 1024 * 1024);
+    // Allow large ONNX uploads (up to 1024MB)
+    b.SetMaxReceiveMessageSize(1024 * 1024 * 1024);
+    b.SetMaxSendMessageSize(1024 * 1024 * 1024);
     auto read_all = [](const std::string& p){ std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
     std::shared_ptr<grpc::ServerCredentials> creds;
     {
