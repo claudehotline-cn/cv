@@ -29,6 +29,7 @@ namespace va { namespace analyzer { namespace multistage {
     std::string triton_input_override_;       // 可选：按节点覆盖 Triton 输入名（如 "images"/"input"）
     std::string triton_outputs_override_;     // 可选：按节点固定 Triton 输出名列表（如 "output0"）
     std::string triton_gpu_output_override_;  // 可选：按节点覆盖 Triton GPU 输出开关（如 "0"/"1"）
+    std::string triton_gpu_input_override_;   // 可选：按节点覆盖 Triton GPU 输入开关（如 "0"/"1"）
     std::atomic<uint64_t> infer_fail_count_{0};
   };
 

@@ -87,13 +87,14 @@ private:
     bool  embedding_off_   {false}; // 关闭外观关联
     bool  aw_off_          {false}; // 关闭自适应权重，使用固定 w_assoc_emb_
     int next_id_ {1};
-    int max_tracks_ {256};
+    int max_tracks_ {128};
 
     // CPU fallback 状态
     std::vector<Track> tracks_;
 
 #if defined(USE_CUDA)
     // GPU 路径状态：仅在 VA_HAS_CUDA_KERNELS + 有有效 gpu_pool 时启用
+    bool prefer_gpu_{true};
     bool use_gpu_{false};
     bool gpu_state_ready_{false};
     va::analyzer::cudaops::OcsortGpuState gpu_state_;

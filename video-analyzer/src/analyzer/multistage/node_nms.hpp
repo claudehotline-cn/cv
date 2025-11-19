@@ -21,6 +21,7 @@ private:
     // GPU ROI 缓冲的简单生命周期管理：每帧复用/归还，避免显存持续增长
     va::core::GpuBufferPool* gpu_pool_ {nullptr};
     va::core::GpuBufferPool::Memory gpu_boxes_mem_;
+    va::core::GpuBufferPool::Memory gpu_scores_mem_;
 };
 
 } } } // namespace

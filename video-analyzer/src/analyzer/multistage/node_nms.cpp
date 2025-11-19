@@ -45,6 +45,10 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
         gpu_pool_->release(std::move(gpu_boxes_mem_));
         gpu_boxes_mem_ = {};
     }
+    if (gpu_scores_mem_.ptr && gpu_pool_) {
+        gpu_pool_->release(std::move(gpu_scores_mem_));
+        gpu_scores_mem_ = {};
+    }
     {
         // 输入形状与cuda偏好日志
         std::string shp; for (size_t i=0;i<it->second.shape.size();++i){ shp += (i?"x":""); shp += std::to_string(it->second.shape[i]); }
@@ -102,34 +106,48 @@ bool NodeNmsYolo::process(Packet& p, NodeContext& ctx) {
 #if VA_MS_NMS_HAS_CUDA
         const std::size_t n = mo.boxes.size();
         if (n > 0) {
-            // Allocate a GPU buffer for [N,4] boxes (x1,y1,x2,y2)
+            // Allocate GPU buffers for [N,4] boxes (x1,y1,x2,y2) 和 [N] scores
             const std::size_t elems = n * 4;
+            const std::size_t score_bytes = n * sizeof(float);
             gpu_pool_ = ctx.gpu_pool;
             if (gpu_boxes_mem_.ptr && gpu_boxes_mem_.bytes < elems * sizeof(float)) {
                 // 当前缓存不足时先归还旧块，再申请更大的块
                 gpu_pool_->release(std::move(gpu_boxes_mem_));
                 gpu_boxes_mem_ = {};
             }
+            if (gpu_scores_mem_.ptr && gpu_scores_mem_.bytes < score_bytes) {
+                gpu_pool_->release(std::move(gpu_scores_mem_));
+                gpu_scores_mem_ = {};
+            }
             if (!gpu_boxes_mem_.ptr) {
                 gpu_boxes_mem_ = gpu_pool_->acquire(elems * sizeof(float));
             }
-            if (gpu_boxes_mem_.ptr) {
-                // Prepare a temporary host buffer and copy to device once.
+            if (!gpu_scores_mem_.ptr) {
+                gpu_scores_mem_ = gpu_pool_->acquire(score_bytes);
+            }
+            if (gpu_boxes_mem_.ptr && gpu_scores_mem_.ptr) {
+                // Prepare temporary host buffers and copy to device once.
                 std::vector<float> host_boxes(elems);
+                std::vector<float> host_scores(n);
                 for (std::size_t i = 0; i < n; ++i) {
                     const auto& b = mo.boxes[i];
                     host_boxes[i * 4 + 0] = b.x1;
                     host_boxes[i * 4 + 1] = b.y1;
                     host_boxes[i * 4 + 2] = b.x2;
                     host_boxes[i * 4 + 3] = b.y2;
+                    host_scores[i] = b.score;
                 }
                 cudaMemcpyAsync(gpu_boxes_mem_.ptr, host_boxes.data(),
                                 elems * sizeof(float),
                                 cudaMemcpyHostToDevice,
                                 static_cast<cudaStream_t>(ctx.stream));
+                cudaMemcpyAsync(gpu_scores_mem_.ptr, host_scores.data(),
+                                score_bytes,
+                                cudaMemcpyHostToDevice,
+                                static_cast<cudaStream_t>(ctx.stream));
                 GpuRoiBuffer buf;
                 buf.d_boxes = static_cast<float*>(gpu_boxes_mem_.ptr);
-                buf.d_scores = nullptr; // 可按需扩展
+                buf.d_scores = static_cast<float*>(gpu_scores_mem_.ptr);
                 buf.d_cls = nullptr;    // 可按需扩展
                 buf.count = static_cast<int32_t>(n);
                 p.gpu_rois["det"] = buf;
@@ -154,6 +172,14 @@ void NodeNmsYolo::close(NodeContext& ctx) {
             cudaFree(gpu_boxes_mem_.ptr);
         }
         gpu_boxes_mem_ = {};
+    }
+    if (gpu_scores_mem_.ptr) {
+        if (gpu_pool_) {
+            gpu_pool_->release(std::move(gpu_scores_mem_));
+        } else {
+            cudaFree(gpu_scores_mem_.ptr);
+        }
+        gpu_scores_mem_ = {};
     }
     gpu_pool_ = nullptr;
 #endif

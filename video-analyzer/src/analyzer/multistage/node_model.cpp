@@ -34,6 +34,7 @@ NodeModel::NodeModel(const std::unordered_map<std::string,std::string>& cfg) {
     if (auto itTi = cfg.find("triton_input"); itTi != cfg.end()) triton_input_override_ = itTi->second;
     if (auto itTo = cfg.find("triton_outputs"); itTo != cfg.end()) triton_outputs_override_ = itTo->second;
     if (auto itGo = cfg.find("triton_gpu_output"); itGo != cfg.end()) triton_gpu_output_override_ = itGo->second;
+    if (auto itGi = cfg.find("triton_gpu_input"); itGi != cfg.end()) triton_gpu_input_override_ = itGi->second;
 }
 
 bool NodeModel::open(NodeContext& ctx) {
@@ -63,6 +64,9 @@ bool NodeModel::open(NodeContext& ctx) {
     }
     if (!triton_gpu_output_override_.empty()) {
         try { desc.options["triton_gpu_output"] = triton_gpu_output_override_; } catch (...) { /* ignore */ }
+    }
+    if (!triton_gpu_input_override_.empty()) {
+        try { desc.options["triton_gpu_input"] = triton_gpu_input_override_; } catch (...) { /* ignore */ }
     }
 
     auto now_ms = [](){ using namespace std::chrono; return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); };
