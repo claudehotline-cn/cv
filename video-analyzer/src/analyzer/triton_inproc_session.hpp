@@ -61,6 +61,11 @@ private:
     // device-side persistent output buffers（每个输出一块，可复用）
     std::vector<void*> out_dev_bufs_;
     std::vector<size_t> out_capacity_;
+
+    // 内部实现：支持在 GPU 输入失败时自动回退到 CPU staging，避免整条管线被 Triton CUDA 拷贝错误“毒死”。
+    bool run_impl(const core::TensorView& input,
+                  std::vector<core::TensorView>& outputs,
+                  bool force_cpu_input);
 };
 
 } // namespace va::analyzer

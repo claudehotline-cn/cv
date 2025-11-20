@@ -31,6 +31,18 @@ struct OcsortGpuState {
     float*   d_view_boxes  {nullptr};    // [T_max,4] (x1,y1,x2,y2) visible tracks
     int32_t* d_view_ids    {nullptr};    // [T_max]   visible track ids
     int32_t* d_view_count  {nullptr};    // [1]       visible track count
+
+    // 匈牙利/多阶段匹配的 GPU 侧 scratch 缓冲（避免在 kernel 内使用大栈数组导致大量 local memory）
+    float*   d_cost_ext    {nullptr};    // [H_max,H_max] 匈牙利扩展代价矩阵
+    float*   d_hung_u      {nullptr};    // [H_max+1]
+    float*   d_hung_v      {nullptr};    // [H_max+1]
+    int32_t* d_hung_p      {nullptr};    // [H_max+1]
+    int32_t* d_hung_way    {nullptr};    // [H_max+1]
+    float*   d_hung_minv   {nullptr};    // [H_max+1]
+    int8_t*  d_hung_used   {nullptr};    // [H_max+1]
+
+    float*   d_cost_buf    {nullptr};    // [T_max,D_max] 多阶段匹配的代价矩阵缓冲
+    int32_t* d_match_row_to_col {nullptr}; // [T_max] 匈牙利输出：轨迹 -> 检测
     int32_t  max_tracks {0};
     int32_t  feat_dim   {0};
 };

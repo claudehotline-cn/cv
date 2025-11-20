@@ -40,6 +40,9 @@ engine:
     force_provider: triton
     # 可选：启用 In‑Process Triton（不改 provider，减少 gRPC/IPC 开销）
     triton_inproc: true
+    # In‑Process Triton CUDA 内存池：显式限制大小，避免占满整卡显存（示例：256MiB）
+    triton_cuda_pool_device_id: 0
+    triton_cuda_pool_bytes: "268435456"
     # In‑Process GPU I/O（避免拷贝）：
     triton_gpu_input: true
     triton_gpu_output: true
@@ -110,15 +113,15 @@ security:
     source_per_stream_per_sec: 0.2
     model_per_stream_per_sec: 0.5
 observability:
-  log_level: debug
+  log_level: info
   log_format: text
-  module_levels:
-    analyzer.trt: debug
-    analyzer.triton: debug
-    ms.node_model: debug
-    composition: info
-    transport.webrtc: debug
-    encoder.ffmpeg: debug
+  # module_levels:
+  #   analyzer.trt: debug
+  #   analyzer.triton: debug
+  #   ms.node_model: debug
+  #   composition: info
+  #   transport.webrtc: debug
+  #   encoder.ffmpeg: debug
   console: true
   file:
     path: /logs/video-analyzer-release.log

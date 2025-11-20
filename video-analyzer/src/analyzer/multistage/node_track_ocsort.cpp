@@ -491,11 +491,13 @@ NodeTrackOcsort::NodeTrackOcsort(const std::unordered_map<std::string,std::strin
 
 bool NodeTrackOcsort::open(NodeContext& ctx) {
 #if defined(USE_CUDA)
-    // 编译启用 CUDA 时，默认在存在 GPU 上下文时优先走 GPU 追踪路径
+    // 当前实现：多阶段匈牙利匹配与 Kalman 状态全部由 CPU Deep OC-SORT 负责，
+    // GPU 仅用于构造 rois["track"] 的 GpuRoiBuffer 供 overlay.cuda 使用。
+    // 因此禁用 GPU 追踪路径，仅记录 gpu_pool 以便构造 GPU ROI 视图。
     gpu_state_ready_ = false;
     gpu_pool_ = ctx.gpu_pool;
-    use_gpu_ = (prefer_gpu_ && ctx.gpu_pool != nullptr && ctx.stream != nullptr);
-    (void)ctx; // 仅通过成员记录 stream 是否可用
+    use_gpu_ = false;
+    (void)ctx;
 #else
     (void)ctx;
 #endif
@@ -580,37 +582,15 @@ float NodeTrackOcsort::cosine(const std::vector<float>& a, const float* b, int D
 bool NodeTrackOcsort::process(Packet& p, NodeContext& ctx) {
     // 统一在入口处推进帧计数，CPU/GPU 路径共用同一时间轴
     frame_count_++;
-    bool used_gpu = false;
-
-#if defined(USE_CUDA)
-    // 在编译启用 CUDA 且运行时存在有效 GPU 上下文时，优先尝试 GPU 追踪路径
-    if (use_gpu_) {
-        if (process_gpu(p, ctx)) {
-            used_gpu = true;
-            auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
-            auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
-            VA_LOG_THROTTLED(lvl, "ms.track", thr) << "path=gpu";
-        } else {
-            // GPU 路径失败或条件不满足时，清理本帧可能残留的 GPU ROI，安全回退到 CPU
-            p.gpu_rois.erase(out_rois_key_);
-            auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
-            auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
-            VA_LOG_THROTTLED(lvl, "ms.track", thr) << "path=gpu_fallback -> cpu";
-        }
-    }
-#endif
-
-    if (!used_gpu) {
-        // 匹配逻辑统一走 CPU Deep OC-SORT，实现更完整的匈牙利多阶段匹配
-        bool ok = process_cpu(p);
-        if (!ok) {
-            return false;
-        }
+    // 统一走 CPU Deep OC-SORT：多阶段匈牙利匹配与 Kalman 状态完全在 CPU 上执行
+    bool ok = process_cpu(p);
+    if (!ok) {
+        return false;
     }
 
 #if defined(USE_CUDA)
-    // 当 GPU 追踪未启用或已回退到 CPU 时，仍然为 overlay.cuda 构造 rois["track"] 的 GPU 视图
-    if (!used_gpu) {
+    // 为 overlay.cuda 构造 rois["track"] 的 GPU 视图（仅基于 CPU Deep OC-SORT 的输出）
+    {
         auto it = p.rois.find(out_rois_key_);
         if (it != p.rois.end() && ctx.gpu_pool && ctx.stream) {
             const auto& rois = it->second;
@@ -1285,13 +1265,6 @@ bool NodeTrackOcsort::process_gpu(Packet& p, NodeContext& ctx) {
         return false;
     }
     const auto& gdet = itg->second;
-    {
-        // 记录当前帧 GPU 追踪输入规模，用于排查显存占用与 ReID 维度问题
-        auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
-        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
-        VA_LOG_THROTTLED(lvl, "ms.track", thr)
-            << "gpu_path_enter count=" << gdet.count;
-    }
     if (!gdet.d_boxes || gdet.count <= 0) {
         // 只有轨迹衰减，无新的检测框：仅更新内部状态，不再对外输出轨迹框，避免在画面上保留“幽灵”轨迹
         if (!gpu_state_ready_) {
@@ -1350,43 +1323,6 @@ bool NodeTrackOcsort::process_gpu(Packet& p, NodeContext& ctx) {
         if (!gpu_state_ready_) {
             int use_feat_dim = feat_dim;
             if (use_feat_dim < 0) use_feat_dim = 0;
-            // 在首次分配 OCSORT GPU 状态前记录预估显存占用与当前可用显存，便于定位 30G 显存来源
-            std::size_t mt = static_cast<std::size_t>(max_tracks_);
-            std::size_t fd = static_cast<std::size_t>(use_feat_dim);
-            std::size_t approx_bytes = 0;
-            approx_bytes += mt * 4u * sizeof(float);        // d_track_boxes
-            approx_bytes += mt * fd * sizeof(float);        // d_track_feats
-            approx_bytes += mt * sizeof(int32_t);           // d_track_ids
-            approx_bytes += mt * sizeof(int32_t);           // d_track_missed
-            approx_bytes += mt * sizeof(int32_t);           // d_track_age
-            approx_bytes += mt * sizeof(int32_t);           // d_track_hit_streak
-            approx_bytes += mt * sizeof(uint8_t);           // d_track_has_feat
-            approx_bytes += mt * 2u * sizeof(float);        // d_track_vel
-            approx_bytes += mt * 7u * sizeof(float);        // d_kf_x
-            approx_bytes += mt * 7u * 7u * sizeof(float);   // d_kf_P
-            approx_bytes += sizeof(int32_t);                // d_track_count
-            approx_bytes += sizeof(int32_t);                // d_next_id
-            approx_bytes += mt * 4u * sizeof(float);        // d_view_boxes
-            approx_bytes += mt * sizeof(int32_t);           // d_view_ids
-            approx_bytes += sizeof(int32_t);                // d_view_count
-#if defined(USE_CUDA)
-            std::size_t free_b = 0;
-            std::size_t total_b = 0;
-            (void)cudaMemGetInfo(&free_b, &total_b);
-#endif
-            {
-                auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
-                auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
-                VA_LOG_THROTTLED(lvl, "ms.track", thr)
-                    << "gpu_state_alloc_plan max_tracks=" << max_tracks_
-                    << " feat_dim=" << use_feat_dim
-                    << " approx_bytes=" << static_cast<double>(approx_bytes) / (1024.0 * 1024.0) << " MiB"
-#if defined(USE_CUDA)
-                    << " cuda_free_before=" << static_cast<double>(free_b) / (1024.0 * 1024.0) << " MiB"
-                    << " cuda_total=" << static_cast<double>(total_b) / (1024.0 * 1024.0) << " MiB"
-#endif
-                    ;
-            }
             auto err_alloc = va::analyzer::cudaops::ocsort_alloc_state(
                 gpu_state_, max_tracks_, use_feat_dim);
             if (err_alloc != cudaSuccess) {

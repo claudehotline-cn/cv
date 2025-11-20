@@ -42,8 +42,8 @@ analyzer:
           # PASS-ReID 模型在 ONNX/Triton config 中输入名为 input
           triton_input: "input"
           triton_outputs: "feat"
-          # 仅启用 GPU 输出，输入走 CPU staging，避免 In-Process Triton 对 GPU 输入执行不兼容的 CUDA 拷贝
-          # triton_gpu_input: "1"
+          # 如需对 ReID 节点单独覆盖 GPU I/O，可在此设置 triton_gpu_input / triton_gpu_output；默认继承 engine 级配置。
+          triton_gpu_input: "0"
           # triton_gpu_output: "1"
       - name: track
         type: track.ocsort
@@ -52,7 +52,7 @@ analyzer:
           out_rois: "track"
           feat_key: "tensor:reid"
           # 是否启用 GPU 追踪分支（1=启用，0=禁用，默认启用）
-          use_gpu: "0"
+          use_gpu: "1"
           # Kalman + IoU 相关
           iou_thresh: "0.30"
           max_missed: "30"

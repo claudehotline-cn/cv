@@ -54,6 +54,32 @@ cudaError_t ocsort_alloc_state(OcsortGpuState& state, int max_tracks, int feat_d
                           static_cast<size_t>(max_tracks) * sizeof(int32_t))) != cudaSuccess) return err;
     if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_view_count),
                           sizeof(int32_t))) != cudaSuccess) return err;
+
+    // 匈牙利 / 多阶段匹配 scratch：使用全局设备缓冲避免在 kernel 内分配大栈数组
+    constexpr int H_MAX_N = 128;
+    constexpr int SCR_MAX_TRACKS = 128;
+    constexpr int SCR_MAX_DETS   = 128;
+    // 匈牙利扩展代价矩阵 [H_MAX_N,H_MAX_N]
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_cost_ext),
+                          static_cast<size_t>(H_MAX_N) * static_cast<size_t>(H_MAX_N) * sizeof(float))) != cudaSuccess) return err;
+    // 匈牙利辅助向量 [H_MAX_N+1]
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_hung_u),
+                          static_cast<size_t>(H_MAX_N + 1) * sizeof(float))) != cudaSuccess) return err;
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_hung_v),
+                          static_cast<size_t>(H_MAX_N + 1) * sizeof(float))) != cudaSuccess) return err;
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_hung_minv),
+                          static_cast<size_t>(H_MAX_N + 1) * sizeof(float))) != cudaSuccess) return err;
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_hung_p),
+                          static_cast<size_t>(H_MAX_N + 1) * sizeof(int32_t))) != cudaSuccess) return err;
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_hung_way),
+                          static_cast<size_t>(H_MAX_N + 1) * sizeof(int32_t))) != cudaSuccess) return err;
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_hung_used),
+                          static_cast<size_t>(H_MAX_N + 1) * sizeof(int8_t))) != cudaSuccess) return err;
+    // 多阶段匹配代价矩阵与输出
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_cost_buf),
+                          static_cast<size_t>(SCR_MAX_TRACKS) * static_cast<size_t>(SCR_MAX_DETS) * sizeof(float))) != cudaSuccess) return err;
+    if ((err = alloc_zero(reinterpret_cast<void**>(&state.d_match_row_to_col),
+                          static_cast<size_t>(SCR_MAX_TRACKS) * sizeof(int32_t))) != cudaSuccess) return err;
     return cudaSuccess;
 }
 
@@ -77,6 +103,16 @@ void ocsort_free_state(OcsortGpuState& state) {
     safe_free(reinterpret_cast<void*&>(state.d_view_boxes));
     safe_free(reinterpret_cast<void*&>(state.d_view_ids));
     safe_free(reinterpret_cast<void*&>(state.d_view_count));
+    // 匈牙利 / scratch
+    safe_free(reinterpret_cast<void*&>(state.d_cost_ext));
+    safe_free(reinterpret_cast<void*&>(state.d_hung_u));
+    safe_free(reinterpret_cast<void*&>(state.d_hung_v));
+    safe_free(reinterpret_cast<void*&>(state.d_hung_minv));
+    safe_free(reinterpret_cast<void*&>(state.d_hung_p));
+    safe_free(reinterpret_cast<void*&>(state.d_hung_way));
+    safe_free(reinterpret_cast<void*&>(state.d_hung_used));
+    safe_free(reinterpret_cast<void*&>(state.d_cost_buf));
+    safe_free(reinterpret_cast<void*&>(state.d_match_row_to_col));
     state.max_tracks = 0;
     state.feat_dim   = 0;
 }
@@ -367,12 +403,22 @@ __device__ inline void kf_update(float* x, float* P, const float* z) {
 
 // 匈牙利算法（Kuhn-Munkres）的单线程 device 实现，用于小规模代价矩阵。
 // 约定：cost 为行优先，行=轨迹，列=检测，尺寸 row_count x col_count。
+// 为避免在 kernel 内使用大栈数组导致大量 local memory，本实现使用传入的 scratch 缓冲。
 // 输出：match_row_to_col[r] = c 或 -1。
-__device__ int hungarian_minimize_device(const float* cost,
-                                         int row_count,
-                                         int col_count,
-                                         int* match_row_to_col) {
-    const int MAX_N = 128;
+__device__ int hungarian_minimize_device(
+    const float* cost,
+    int row_count,
+    int col_count,
+    int* match_row_to_col,
+    float* cost_ext,
+    float* u,
+    float* v,
+    int*   p,
+    int*   way,
+    float* minv,
+    char*  used)
+{
+    const int MAX_N = 128;      // 与 scratch 分配时保持一致
     const float INF = 1e20f;
     if (row_count <= 0 || col_count <= 0) {
         for (int r = 0; r < row_count; ++r) {
@@ -384,7 +430,6 @@ __device__ int hungarian_minimize_device(const float* cost,
     if (n > MAX_N) n = MAX_N;
 
     // 扩展为 n x n 矩阵，缺省填 0
-    float cost_ext[MAX_N * MAX_N];
     for (int i = 0; i < n * n; ++i) cost_ext[i] = 0.0f;
     for (int r = 0; r < row_count && r < MAX_N; ++r) {
         for (int c = 0; c < col_count && c < MAX_N; ++c) {
@@ -392,10 +437,6 @@ __device__ int hungarian_minimize_device(const float* cost,
         }
     }
 
-    float u[MAX_N + 1];
-    float v[MAX_N + 1];
-    int   p[MAX_N + 1];
-    int   way[MAX_N + 1];
     for (int i = 0; i <= n; ++i) {
         u[i] = 0.0f;
         v[i] = 0.0f;
@@ -406,8 +447,6 @@ __device__ int hungarian_minimize_device(const float* cost,
     for (int i = 1; i <= n; ++i) {
         p[0] = i;
         int j0 = 0;
-        float minv[MAX_N + 1];
-        char used[MAX_N + 1];
         for (int j = 1; j <= n; ++j) {
             minv[j] = INF;
             used[j] = 0;
@@ -601,501 +640,139 @@ __global__ void k_ocsort_step(
         return;
     }
 
-    // 标记数组：记录哪些轨迹/检测已匹配
+    // 标记数组：记录哪些轨迹/检测已匹配。
     uint8_t track_used[MAX_TRACKS];
     uint8_t det_used[MAX_DETS];
     for (int t = 0; t < T; ++t) track_used[t] = 0;
     for (int i = 0; i < N; ++i) det_used[i] = 0;
 
-    // 使用匈牙利算法完成多阶段全局匹配：复用单一代价缓冲，分别构造各阶段 cost 矩阵
-    const float large_cost = 1e6f;
-    float cost_buf[MAX_TRACKS * MAX_DETS];
-    for (int t = 0; t < T; ++t) {
-        for (int d = 0; d < N; ++d) {
-            cost_buf[t * N + d] = large_cost;
-        }
-    }
-    for (int t = 0; t < T; ++t) {
-        const float* tb = state.d_track_boxes ? (state.d_track_boxes + t * 4) : nullptr;
-        if (!tb) break;
-        // 轨迹速度方向（用于角度一致性代价）
-        float vel_nx = 0.0f, vel_ny = 0.0f;
-        if (state.d_track_vel) {
-            float vx = state.d_track_vel[t * 2 + 0];
-            float vy = state.d_track_vel[t * 2 + 1];
-            float n = sqrtf(vx * vx + vy * vy);
-            if (n > 1e-6f) {
-                vel_nx = vx / n;
-                vel_ny = vy / n;
+    // --- Stage1：基于 IoU + ReID + 角度一致性的全局匈牙利匹配 ---
+    if (state.d_cost_buf && state.d_cost_ext && state.d_hung_u &&
+        state.d_hung_v && state.d_hung_minv && state.d_hung_p &&
+        state.d_hung_way && state.d_hung_used && state.d_match_row_to_col) {
+        const float large_cost = 1e6f;
+        float* cost_buf = state.d_cost_buf;
+        // 初始化代价矩阵
+        for (int t = 0; t < T; ++t) {
+            for (int d = 0; d < N; ++d) {
+                cost_buf[t * N + d] = large_cost;
             }
         }
-        float tcx = 0.5f * (tb[0] + tb[2]);
-        float tcy = 0.5f * (tb[1] + tb[3]);
-        for (int d = 0; d < N; ++d) {
-            const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
-            if (!db) break;
-            // 仅对高分检测参与 Stage1 匹配
-            if (det_scores) {
-                float s = det_scores[d];
-                if (s <= det_thresh_local) continue;
-            }
-            float v_iou = iou_yxyx(tb, db);
-            if (v_iou < iou_thresh) continue;
-
-            float v_reid = 0.0f;
-            if (D > 0 && d_det_feats && state.d_track_feats && state.d_track_has_feat) {
-                if (state.d_track_has_feat[t]) {
-                    const float* tf = state.d_track_feats + t * D;
-                    const float* df = d_det_feats + d * D;
-                    v_reid = cosine_normed(tf, df, D);
-                }
-            }
-
-            // 角度一致性代价：检测方向与轨迹速度方向的一致性
-            float dcx = 0.5f * (db[0] + db[2]);
-            float dcy = 0.5f * (db[1] + db[3]);
-            float dx = dcx - tcx;
-            float dy = dcy - tcy;
-            float dn = sqrtf(dx * dx + dy * dy);
-            float angle_score = 0.0f;
-            if (dn > 1e-6f && (vel_nx != 0.0f || vel_ny != 0.0f)) {
-                float dirx = dx / dn;
-                float diry = dy / dn;
-                float cosv = vel_nx * dirx + vel_ny * diry;
-                if (cosv > 1.0f) cosv = 1.0f;
-                if (cosv < -1.0f) cosv = -1.0f;
-                float ang = acosf(cosv);
-                const float pi = 3.14159265358979323846f;
-                angle_score = (0.5f * pi - fabsf(ang)) / pi;
-                if (angle_score < 0.0f) angle_score = 0.0f;
-            }
-            const float inertia = 0.2f;
-            // 运动相似度：IoU + 角度一致性
-            float motion_sim = w_iou * v_iou + inertia * angle_score;
-            // 外观相似度：基于 ReID 嵌入（若已存在特征）
-            float emb_sim = 0.0f;
-            if (!embedding_off_local && D > 0 && d_det_feats && state.d_track_feats && state.d_track_has_feat) {
-                if (state.d_track_has_feat[t]) {
-                    emb_sim = v_reid;
-                }
-            }
-            // 自适应权重：根据检测分数在 motion / appearance 之间插值（对齐 CPU integrated OCSORT）
-            float combined_sim = motion_sim;
-            if (!embedding_off_local) {
-                float w = w_assoc_emb_local;
-                if (!aw_off_local && det_scores) {
-                    float det_score = det_scores[d];
-                    float trust = 0.0f;
-                    if (det_score > det_thresh_local) {
-                        trust = (det_score - det_thresh_local) / (1.0f - det_thresh_local);
-                        if (trust < 0.0f) trust = 0.0f;
-                        if (trust > 1.0f) trust = 1.0f;
-                    }
-                    float aw = aw_param_local * trust + (1.0f - aw_param_local);
-                    w = w_assoc_emb_local * aw + (1.0f - w_assoc_emb_local) * (1.0f - aw);
-                }
-                if (w < 0.0f) w = 0.0f;
-                if (w > 1.0f) w = 1.0f;
-                combined_sim = w * emb_sim + (1.0f - w) * motion_sim;
-            }
-            if (combined_sim <= 0.0f) continue;
-            if (combined_sim > 1.0f) combined_sim = 1.0f;
-            float cost_val = 1.0f - combined_sim;
-            cost_buf[t * N + d] = cost_val;
-        }
-    }
-
-    int match_row_to_col[MAX_TRACKS];
-    hungarian_minimize_device(cost_buf, T, N, match_row_to_col);
-
-    // Stage1：根据匈牙利输出更新轨迹状态（高分匹配）
-    for (int t = 0; t < T; ++t) {
-        int d = match_row_to_col[t];
-        if (d < 0 || d >= N) continue;
-        float cost_val = cost_buf[t * N + d];
-        if (cost_val >= large_cost * 0.5f) continue;
-
-        const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
-        if (!db) continue;
-
-        // 先记录更新前的中心点，用于后续速度估计
-        float prev_cx = 0.0f, prev_cy = 0.0f;
-        if (state.d_track_vel && state.d_track_boxes) {
-            const float* tb_prev = state.d_track_boxes + t * 4;
-            prev_cx = 0.5f * (tb_prev[0] + tb_prev[2]);
-            prev_cy = 0.5f * (tb_prev[1] + tb_prev[3]);
-        }
-
-        // 先更新 Kalman 状态，再从状态推回 bbox
-        if (state.d_kf_x && state.d_kf_P) {
-            float* x = state.d_kf_x + t * KF_DIM_X;
-            float* P = state.d_kf_P + t * KF_DIM_X * KF_DIM_X;
-            float z[4];
-            bbox_to_z(db, z);
-            kf_update(x, P, z);
-            float* tb = state.d_track_boxes + t * 4;
-            x_to_bbox(x, tb);
-        } else if (state.d_track_boxes) {
-            float* tb = state.d_track_boxes + t * 4;
-            tb[0] = db[0];
-            tb[1] = db[1];
-            tb[2] = db[2];
-            tb[3] = db[3];
-        }
-        // 更新速度向量：基于更新前后的 bbox 中心差
-        if (state.d_track_vel && state.d_track_boxes) {
-            const float* tb_cur = state.d_track_boxes + t * 4;
-            float cur_cx = 0.5f * (tb_cur[0] + tb_cur[2]);
-            float cur_cy = 0.5f * (tb_cur[1] + tb_cur[3]);
-            float* vel = state.d_track_vel + t * 2;
-            vel[0] = cur_cx - prev_cx;
-            vel[1] = cur_cy - prev_cy;
-        }
-        if (state.d_track_missed) {
-            state.d_track_missed[t] = 0;
-        }
-        if (state.d_track_hit_streak) {
-            int prev = state.d_track_hit_streak[t];
-            if (prev < 0) prev = 0;
-            state.d_track_hit_streak[t] = prev + 1;
-        }
-
-        if (D > 0 && d_det_feats && state.d_track_feats) {
-            float* tf = state.d_track_feats + t * D;
-            const float* df = d_det_feats + d * D;
-            if (state.d_track_has_feat && state.d_track_has_feat[t]) {
-                float det_score = det_scores ? det_scores[d] : 0.0f;
-                float trust = 0.0f;
-                if (det_score > det_thresh_local) {
-                    trust = (det_score - det_thresh_local) / (1.0f - det_thresh_local);
-                    if (trust < 0.0f) trust = 0.0f;
-                    if (trust > 1.0f) trust = 1.0f;
-                }
-                float det_alpha = alpha_fixed_emb_local + (1.0f - alpha_fixed_emb_local) * (1.0f - trust);
-                if (det_alpha < 0.0f) det_alpha = 0.0f;
-                if (det_alpha > 1.0f) det_alpha = 1.0f;
-                float beta = 1.0f - det_alpha;
-                for (int k = 0; k < D; ++k) {
-                    tf[k] = det_alpha * tf[k] + beta * df[k];
-                }
-            } else {
-                for (int k = 0; k < D; ++k) tf[k] = df[k];
-            }
-            l2_normalize(tf, D);
-            if (state.d_track_has_feat) state.d_track_has_feat[t] = 1;
-        }
-
-        track_used[t] = 1;
-        det_used[d] = 1;
-    }
-
-    // Stage2：对未匹配轨迹和未匹配检测（高分），使用 IoU 构造第二阶段代价矩阵，再执行一次匈牙利匹配
-    int unmatched_tracks[MAX_TRACKS];
-    int unmatched_dets[MAX_DETS];
-    int UT = 0;
-    int UD = 0;
-    for (int t = 0; t < T; ++t) {
-        if (!track_used[t]) {
-            unmatched_tracks[UT++] = t;
-        }
-    }
-    for (int d = 0; d < N; ++d) {
-        if (!det_used[d]) {
-            // Stage2 高分检测再匹配：仅保留高分检测
-            if (det_scores) {
-                float s = det_scores[d];
-                if (s <= det_thresh_local) continue;
-            }
-            unmatched_dets[UD++] = d;
-        }
-    }
-
-    if (UT > 0 && UD > 0) {
-        for (int ui = 0; ui < UT; ++ui) {
-            for (int uj = 0; uj < UD; ++uj) {
-                cost_buf[ui * UD + uj] = large_cost;
-            }
-        }
-        for (int ui = 0; ui < UT; ++ui) {
-            int t = unmatched_tracks[ui];
+        for (int t = 0; t < T; ++t) {
             const float* tb = state.d_track_boxes ? (state.d_track_boxes + t * 4) : nullptr;
             if (!tb) break;
-            for (int uj = 0; uj < UD; ++uj) {
-                int d = unmatched_dets[uj];
+            // 轨迹速度方向（用于角度一致性代价）
+            float vel_nx = 0.0f, vel_ny = 0.0f;
+            if (state.d_track_vel) {
+                float vx = state.d_track_vel[t * 2 + 0];
+                float vy = state.d_track_vel[t * 2 + 1];
+                float n = sqrtf(vx * vx + vy * vy);
+                if (n > 1e-6f) {
+                    vel_nx = vx / n;
+                    vel_ny = vy / n;
+                }
+            }
+            float tcx = 0.5f * (tb[0] + tb[2]);
+            float tcy = 0.5f * (tb[1] + tb[3]);
+            for (int d = 0; d < N; ++d) {
                 const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
                 if (!db) break;
+                // 仅对高分检测参与 Stage1 匹配
+                if (det_scores) {
+                    float s = det_scores[d];
+                    if (s <= det_thresh_local) continue;
+                }
                 float v_iou = iou_yxyx(tb, db);
                 if (v_iou < iou_thresh) continue;
-                float cost_val = 1.0f - v_iou;
-                cost_buf[ui * UD + uj] = cost_val;
-            }
-        }
 
-        int match_row_to_col2[MAX_TRACKS];
-        hungarian_minimize_device(cost_buf, UT, UD, match_row_to_col2);
-
-        for (int ui = 0; ui < UT; ++ui) {
-            int uj = match_row_to_col2[ui];
-            if (uj < 0 || uj >= UD) continue;
-            float cost_val = cost_buf[ui * UD + uj];
-            if (cost_val >= large_cost * 0.5f) continue;
-            int t = unmatched_tracks[ui];
-            int d = unmatched_dets[uj];
-            const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
-            if (!db) continue;
-
-            // 更新前中心
-            float prev_cx = 0.0f, prev_cy = 0.0f;
-            if (state.d_track_vel && state.d_track_boxes) {
-                const float* tb_prev = state.d_track_boxes + t * 4;
-                prev_cx = 0.5f * (tb_prev[0] + tb_prev[2]);
-                prev_cy = 0.5f * (tb_prev[1] + tb_prev[3]);
-            }
-
-            if (state.d_kf_x && state.d_kf_P) {
-                float* x = state.d_kf_x + t * KF_DIM_X;
-                float* P = state.d_kf_P + t * KF_DIM_X * KF_DIM_X;
-                float z[4];
-                bbox_to_z(db, z);
-                kf_update(x, P, z);
-                float* tb = state.d_track_boxes + t * 4;
-                x_to_bbox(x, tb);
-            } else if (state.d_track_boxes) {
-                float* tb = state.d_track_boxes + t * 4;
-                tb[0] = db[0];
-                tb[1] = db[1];
-                tb[2] = db[2];
-                tb[3] = db[3];
-            }
-            // 更新速度
-            if (state.d_track_vel && state.d_track_boxes) {
-                const float* tb_cur = state.d_track_boxes + t * 4;
-                float cur_cx = 0.5f * (tb_cur[0] + tb_cur[2]);
-                float cur_cy = 0.5f * (tb_cur[1] + tb_cur[3]);
-                float* vel = state.d_track_vel + t * 2;
-                vel[0] = cur_cx - prev_cx;
-                vel[1] = cur_cy - prev_cy;
-            }
-            if (state.d_track_missed) {
-                state.d_track_missed[t] = 0;
-            }
-            if (state.d_track_hit_streak) {
-                int prev = state.d_track_hit_streak[t];
-                if (prev < 0) prev = 0;
-                state.d_track_hit_streak[t] = prev + 1;
-            }
-
-            if (D > 0 && d_det_feats && state.d_track_feats) {
-                float* tf = state.d_track_feats + t * D;
-                const float* df = d_det_feats + d * D;
-                if (state.d_track_has_feat && state.d_track_has_feat[t]) {
-                    float det_score = det_scores ? det_scores[d] : 0.0f;
-                    float trust = 0.0f;
-                    if (det_score > det_thresh_local) {
-                        trust = (det_score - det_thresh_local) / (1.0f - det_thresh_local);
-                        if (trust < 0.0f) trust = 0.0f;
-                        if (trust > 1.0f) trust = 1.0f;
+                float v_reid = 0.0f;
+                if (D > 0 && d_det_feats && state.d_track_feats && state.d_track_has_feat) {
+                    if (state.d_track_has_feat[t]) {
+                        const float* tf = state.d_track_feats + t * D;
+                        const float* df = d_det_feats + d * D;
+                        v_reid = cosine_normed(tf, df, D);
                     }
-                    float det_alpha = alpha_fixed_emb_local + (1.0f - alpha_fixed_emb_local) * (1.0f - trust);
-                    if (det_alpha < 0.0f) det_alpha = 0.0f;
-                    if (det_alpha > 1.0f) det_alpha = 1.0f;
-                    float beta = 1.0f - det_alpha;
-                    for (int k = 0; k < D; ++k) {
-                        tf[k] = det_alpha * tf[k] + beta * df[k];
+                }
+
+                // 角度一致性代价：检测方向与轨迹速度方向的一致性
+                float dcx = 0.5f * (db[0] + db[2]);
+                float dcy = 0.5f * (db[1] + db[3]);
+                float dx = dcx - tcx;
+                float dy = dcy - tcy;
+                float dn = sqrtf(dx * dx + dy * dy);
+                float angle_score = 0.0f;
+                if (dn > 1e-6f && (vel_nx != 0.0f || vel_ny != 0.0f)) {
+                    float dirx = dx / dn;
+                    float diry = dy / dn;
+                    float cosv = vel_nx * dirx + vel_ny * diry;
+                    if (cosv > 1.0f) cosv = 1.0f;
+                    if (cosv < -1.0f) cosv = -1.0f;
+                    float ang = acosf(cosv);
+                    const float pi = 3.14159265358979323846f;
+                    angle_score = (0.5f * pi - fabsf(ang)) / pi;
+                    if (angle_score < 0.0f) angle_score = 0.0f;
+                }
+                const float inertia = 0.2f;
+                // 运动相似度：IoU + 角度一致性
+                float motion_sim = w_iou * v_iou + inertia * angle_score;
+                // 外观相似度：基于 ReID 嵌入（若已存在特征）
+                float emb_sim = 0.0f;
+                if (!embedding_off_local && D > 0 && d_det_feats && state.d_track_feats && state.d_track_has_feat) {
+                    if (state.d_track_has_feat[t]) {
+                        emb_sim = v_reid;
                     }
-                } else {
-                    for (int k = 0; k < D; ++k) tf[k] = df[k];
                 }
-                l2_normalize(tf, D);
-                if (state.d_track_has_feat) state.d_track_has_feat[t] = 1;
-            }
-
-            track_used[t] = 1;
-            det_used[d] = 1;
-        }
-    }
-
-    // Stage2.BYTE：可选，对剩余轨迹和低分检测（low_score_thresh < score <= det_thresh）再执行一轮 IoU 匈牙利匹配
-    if (use_byte_local && det_scores) {
-        int unmatched_tracks_b[MAX_TRACKS];
-        int low_dets[MAX_DETS];
-        int UTb = 0;
-        int DL = 0;
-        for (int t = 0; t < T; ++t) {
-            if (!track_used[t]) {
-                unmatched_tracks_b[UTb++] = t;
-            }
-        }
-        for (int d = 0; d < N; ++d) {
-            if (!det_used[d]) {
-                float s = det_scores[d];
-                if (s > low_score_thresh_local && s <= det_thresh_local) {
-                    low_dets[DL++] = d;
-                }
-            }
-        }
-        if (UTb > 0 && DL > 0) {
-            for (int ui = 0; ui < UTb; ++ui) {
-                for (int uj = 0; uj < DL; ++uj) {
-                    cost_buf[ui * DL + uj] = large_cost;
-                }
-            }
-            for (int ui = 0; ui < UTb; ++ui) {
-                int t = unmatched_tracks_b[ui];
-                const float* tb = state.d_track_boxes ? (state.d_track_boxes + t * 4) : nullptr;
-                if (!tb) break;
-                for (int uj = 0; uj < DL; ++uj) {
-                    int d = low_dets[uj];
-                    const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
-                    if (!db) break;
-                    float v_iou = iou_yxyx(tb, db);
-                    if (v_iou < iou_thresh) continue;
-                    float cost_val = 1.0f - v_iou;
-                    cost_buf[ui * DL + uj] = cost_val;
-                }
-            }
-
-            int match_row_to_col_byte[MAX_TRACKS];
-            hungarian_minimize_device(cost_buf, UTb, DL, match_row_to_col_byte);
-
-            for (int ui = 0; ui < UTb; ++ui) {
-                int uj = match_row_to_col_byte[ui];
-                if (uj < 0 || uj >= DL) continue;
-                float cost_val = cost_buf[ui * DL + uj];
-                if (cost_val >= large_cost * 0.5f) continue;
-                int t = unmatched_tracks_b[ui];
-                int d = low_dets[uj];
-                const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
-                if (!db) continue;
-
-                // 更新前中心
-                float prev_cx = 0.0f, prev_cy = 0.0f;
-                if (state.d_track_vel && state.d_track_boxes) {
-                    const float* tb_prev = state.d_track_boxes + t * 4;
-                    prev_cx = 0.5f * (tb_prev[0] + tb_prev[2]);
-                    prev_cy = 0.5f * (tb_prev[1] + tb_prev[3]);
-                }
-
-                if (state.d_kf_x && state.d_kf_P) {
-                    float* x = state.d_kf_x + t * KF_DIM_X;
-                    float* P = state.d_kf_P + t * KF_DIM_X * KF_DIM_X;
-                    float z[4];
-                    bbox_to_z(db, z);
-                    kf_update(x, P, z);
-                    float* tb = state.d_track_boxes + t * 4;
-                    x_to_bbox(x, tb);
-                } else if (state.d_track_boxes) {
-                    float* tb = state.d_track_boxes + t * 4;
-                    tb[0] = db[0];
-                    tb[1] = db[1];
-                    tb[2] = db[2];
-                    tb[3] = db[3];
-                }
-                // 更新速度
-                if (state.d_track_vel && state.d_track_boxes) {
-                    const float* tb_cur = state.d_track_boxes + t * 4;
-                    float cur_cx = 0.5f * (tb_cur[0] + tb_cur[2]);
-                    float cur_cy = 0.5f * (tb_cur[1] + tb_cur[3]);
-                    float* vel = state.d_track_vel + t * 2;
-                    vel[0] = cur_cx - prev_cx;
-                    vel[1] = cur_cy - prev_cy;
-                }
-                if (state.d_track_missed) {
-                    state.d_track_missed[t] = 0;
-                }
-                if (state.d_track_hit_streak) {
-                    int prev = state.d_track_hit_streak[t];
-                    if (prev < 0) prev = 0;
-                    state.d_track_hit_streak[t] = prev + 1;
-                }
-
-                if (D > 0 && d_det_feats && state.d_track_feats) {
-                    float* tf = state.d_track_feats + t * D;
-                    const float* df = d_det_feats + d * D;
-                    if (state.d_track_has_feat && state.d_track_has_feat[t]) {
-                        float det_score = det_scores ? det_scores[d] : 0.0f;
+                // 自适应权重：根据检测分数在 motion / appearance 之间插值（对齐 CPU integrated OCSORT）
+                float combined_sim = motion_sim;
+                if (!embedding_off_local) {
+                    float w = w_assoc_emb_local;
+                    if (!aw_off_local && det_scores) {
+                        float det_score = det_scores[d];
                         float trust = 0.0f;
                         if (det_score > det_thresh_local) {
                             trust = (det_score - det_thresh_local) / (1.0f - det_thresh_local);
                             if (trust < 0.0f) trust = 0.0f;
                             if (trust > 1.0f) trust = 1.0f;
                         }
-                        float det_alpha = alpha_fixed_emb_local + (1.0f - alpha_fixed_emb_local) * (1.0f - trust);
-                        if (det_alpha < 0.0f) det_alpha = 0.0f;
-                        if (det_alpha > 1.0f) det_alpha = 1.0f;
-                        float beta = 1.0f - det_alpha;
-                        for (int k = 0; k < D; ++k) {
-                            tf[k] = det_alpha * tf[k] + beta * df[k];
-                        }
-                    } else {
-                        for (int k = 0; k < D; ++k) tf[k] = df[k];
+                        float aw = aw_param_local * trust + (1.0f - aw_param_local);
+                        w = w_assoc_emb_local * aw + (1.0f - w_assoc_emb_local) * (1.0f - aw);
                     }
-                    l2_normalize(tf, D);
-                    if (state.d_track_has_feat) state.d_track_has_feat[t] = 1;
+                    if (w < 0.0f) w = 0.0f;
+                    if (w > 1.0f) w = 1.0f;
+                    combined_sim = w * emb_sim + (1.0f - w) * motion_sim;
                 }
-
-                track_used[t] = 1;
-                det_used[d] = 1;
-            }
-        }
-    }
-
-    // Stage3：对仍未更新的轨迹和剩余检测，再使用当前轨迹框与检测框的 IoU 做一次重匹配
-    int unmatched_tracks_stage3[MAX_TRACKS];
-    int unmatched_dets_stage3[MAX_DETS];
-    int UT3 = 0;
-    int UD3 = 0;
-    for (int t = 0; t < T; ++t) {
-        if (!track_used[t]) {
-            unmatched_tracks_stage3[UT3++] = t;
-        }
-    }
-    for (int d = 0; d < N; ++d) {
-        if (!det_used[d]) {
-            // Stage3 仅对高分检测进行最后一次重匹配
-            if (det_scores) {
-                float s = det_scores[d];
-                if (s <= det_thresh_local) continue;
-            }
-            unmatched_dets_stage3[UD3++] = d;
-        }
-    }
-
-    if (UT3 > 0 && UD3 > 0) {
-        for (int ui = 0; ui < UT3; ++ui) {
-            for (int uj = 0; uj < UD3; ++uj) {
-                cost_buf[ui * UD3 + uj] = large_cost;
-            }
-        }
-        for (int ui = 0; ui < UT3; ++ui) {
-            int t = unmatched_tracks_stage3[ui];
-            const float* last_box = state.d_track_boxes ? (state.d_track_boxes + t * 4) : nullptr;
-            if (!last_box) break;
-            for (int uj = 0; uj < UD3; ++uj) {
-                int d = unmatched_dets_stage3[uj];
-                const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
-                if (!db) break;
-                float v_iou = iou_yxyx(last_box, db);
-                if (v_iou < iou_thresh) continue;
-                float cost_val = 1.0f - v_iou;
-                cost_buf[ui * UD3 + uj] = cost_val;
+                if (combined_sim <= 0.0f) continue;
+                if (combined_sim > 1.0f) combined_sim = 1.0f;
+                float cost_val = 1.0f - combined_sim;
+                cost_buf[t * N + d] = cost_val;
             }
         }
 
-        int match_row_to_col3[MAX_TRACKS];
-        hungarian_minimize_device(cost_buf, UT3, UD3, match_row_to_col3);
+        int* match_row_to_col = state.d_match_row_to_col;
+        hungarian_minimize_device(
+            cost_buf,
+            T,
+            N,
+            match_row_to_col,
+            state.d_cost_ext,
+            state.d_hung_u,
+            state.d_hung_v,
+            state.d_hung_p,
+            state.d_hung_way,
+            state.d_hung_minv,
+            reinterpret_cast<char*>(state.d_hung_used));
 
-        for (int ui = 0; ui < UT3; ++ui) {
-            int uj = match_row_to_col3[ui];
-            if (uj < 0 || uj >= UD3) continue;
-            float cost_val = cost_buf[ui * UD3 + uj];
+        // 根据匈牙利输出更新轨迹状态（高分匹配）
+        for (int t = 0; t < T; ++t) {
+            int d = match_row_to_col[t];
+            if (d < 0 || d >= N) continue;
+            float cost_val = cost_buf[t * N + d];
             if (cost_val >= large_cost * 0.5f) continue;
-            int t = unmatched_tracks_stage3[ui];
-            int d = unmatched_dets_stage3[uj];
+
             const float* db = det_rois.d_boxes ? (det_rois.d_boxes + d * 4) : nullptr;
             if (!db) continue;
 
-            // 更新前中心
+            // 先记录更新前的中心点，用于后续速度估计
             float prev_cx = 0.0f, prev_cy = 0.0f;
             if (state.d_track_vel && state.d_track_boxes) {
                 const float* tb_prev = state.d_track_boxes + t * 4;
@@ -1103,6 +780,7 @@ __global__ void k_ocsort_step(
                 prev_cy = 0.5f * (tb_prev[1] + tb_prev[3]);
             }
 
+            // 先更新 Kalman 状态，再从状态推回 bbox
             if (state.d_kf_x && state.d_kf_P) {
                 float* x = state.d_kf_x + t * KF_DIM_X;
                 float* P = state.d_kf_P + t * KF_DIM_X * KF_DIM_X;
@@ -1118,7 +796,7 @@ __global__ void k_ocsort_step(
                 tb[2] = db[2];
                 tb[3] = db[3];
             }
-            // 更新速度
+            // 更新速度向量：基于更新前后的 bbox 中心差
             if (state.d_track_vel && state.d_track_boxes) {
                 const float* tb_cur = state.d_track_boxes + t * 4;
                 float cur_cx = 0.5f * (tb_cur[0] + tb_cur[2]);

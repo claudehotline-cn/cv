@@ -86,6 +86,12 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
 }
 
 bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<core::TensorView>& outputs) {
+    return run_impl(input, outputs, false);
+}
+
+bool TritonInprocModelSession::run_impl(const core::TensorView& input,
+                                        std::vector<core::TensorView>& outputs,
+                                        bool force_cpu_input) {
     outputs.clear();
 #if defined(USE_TRITON_INPROCESS)
     // DebugSeg：入口打点，改用节流日志，避免每帧刷 Info。
@@ -108,7 +114,10 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
     if (!warmed_ && !in_warmup_ && opt_.warmup_runs != 0) {
         int n = (opt_.warmup_runs < 0) ? 1 : opt_.warmup_runs;
         in_warmup_ = true;
-        for (int i=0;i<n;i++) { std::vector<va::core::TensorView> toss; (void)this->run(input, toss); }
+        for (int i = 0; i < n; ++i) {
+            std::vector<va::core::TensorView> toss;
+            (void)this->run_impl(input, toss, force_cpu_input);
+        }
         in_warmup_ = false; warmed_ = true;
     }
     if (!host_ || !host_->isReady()) {
@@ -144,7 +153,7 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
     std::vector<uint8_t> host_stage;
     const uint8_t* host_ptr = reinterpret_cast<const uint8_t*>(input.data);
     bool use_gpu_input = false;
-    if (input.on_gpu && opt_.use_gpu_input) {
+    if (input.on_gpu && opt_.use_gpu_input && !force_cpu_input) {
 #if defined(USE_CUDA)
         use_gpu_input = true;
         // ensure device
@@ -167,10 +176,38 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
 #endif
     } else if (input.on_gpu) {
 #if defined(USE_CUDA)
-        host_stage.resize(bytes);
-        auto err = cudaMemcpy(host_stage.data(), input.data, bytes, cudaMemcpyDeviceToHost);
-        if (err != cudaSuccess) { VA_LOG_WARN() << "[inproc.triton] cudaMemcpy D2H failed: " << cudaGetErrorString(err); return false; }
-        host_ptr = host_stage.data();
+        // CPU staging 路径：优先根据指针属性判断其所属 device，并切换到对应 device 后再执行 D2H。
+        cudaPointerAttributes attrs{};
+        bool is_dev_ptr = false;
+        int dev_for_copy = opt_.device_id;
+        if (cudaSuccess == cudaPointerGetAttributes(&attrs, input.data)) {
+#if CUDART_VERSION >= 10000
+            if (attrs.type == cudaMemoryTypeDevice || attrs.type == cudaMemoryTypeManaged) {
+                is_dev_ptr = true;
+                dev_for_copy = attrs.device;
+            }
+#else
+            is_dev_ptr = true;
+            dev_for_copy = attrs.device;
+#endif
+        }
+        if (!is_dev_ptr) {
+            // 指针并非设备内存（例如误标记为 on_gpu），直接当作 host 指针使用，避免错误的 D2H。
+            host_ptr = reinterpret_cast<const uint8_t*>(input.data);
+        } else {
+            int cur_dev = -1;
+            (void)cudaGetDevice(&cur_dev);
+            if (cur_dev != dev_for_copy) {
+                (void)cudaSetDevice(dev_for_copy);
+            }
+            host_stage.resize(bytes);
+            auto err = cudaMemcpy(host_stage.data(), input.data, bytes, cudaMemcpyDeviceToHost);
+            if (err != cudaSuccess) {
+                VA_LOG_WARN() << "[inproc.triton] cudaMemcpy D2H failed: " << cudaGetErrorString(err);
+                return false;
+            }
+            host_ptr = host_stage.data();
+        }
 #else
         VA_LOG_WARN() << "[inproc.triton] input.on_gpu=true but CUDA not enabled"; return false;
 #endif
@@ -388,11 +425,12 @@ bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<co
         return false;
     }
 
-    // Check response error explicitly to avoid undefined behavior and hard crashes
+    // Check response error explicitly；若有错误直接返回，避免在错误上下文中继续执行 CUDA 拷贝。
     if (auto* rerr = TRITONSERVER_InferenceResponseError(resp); rerr != nullptr) {
         const char* emsg = TRITONSERVER_ErrorMessage(rerr);
-        VA_LOG_WARN() << "[inproc.triton] response error: " << (emsg ? emsg : "<unknown>");
+        std::string msg = emsg ? emsg : "";
         TRITONSERVER_ErrorDelete(rerr);
+        VA_LOG_WARN() << "[inproc.triton] response error: " << (msg.empty() ? "<unknown>" : msg);
         TRITONSERVER_InferenceResponseDelete(resp);
         if (allocator) {
             TRITONSERVER_ResponseAllocatorDelete(allocator);
