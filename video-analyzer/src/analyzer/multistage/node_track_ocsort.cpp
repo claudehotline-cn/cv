@@ -1285,6 +1285,13 @@ bool NodeTrackOcsort::process_gpu(Packet& p, NodeContext& ctx) {
         return false;
     }
     const auto& gdet = itg->second;
+    {
+        // 记录当前帧 GPU 追踪输入规模，用于排查显存占用与 ReID 维度问题
+        auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
+        VA_LOG_THROTTLED(lvl, "ms.track", thr)
+            << "gpu_path_enter count=" << gdet.count;
+    }
     if (!gdet.d_boxes || gdet.count <= 0) {
         // 只有轨迹衰减，无新的检测框：仅更新内部状态，不再对外输出轨迹框，避免在画面上保留“幽灵”轨迹
         if (!gpu_state_ready_) {
@@ -1343,6 +1350,43 @@ bool NodeTrackOcsort::process_gpu(Packet& p, NodeContext& ctx) {
         if (!gpu_state_ready_) {
             int use_feat_dim = feat_dim;
             if (use_feat_dim < 0) use_feat_dim = 0;
+            // 在首次分配 OCSORT GPU 状态前记录预估显存占用与当前可用显存，便于定位 30G 显存来源
+            std::size_t mt = static_cast<std::size_t>(max_tracks_);
+            std::size_t fd = static_cast<std::size_t>(use_feat_dim);
+            std::size_t approx_bytes = 0;
+            approx_bytes += mt * 4u * sizeof(float);        // d_track_boxes
+            approx_bytes += mt * fd * sizeof(float);        // d_track_feats
+            approx_bytes += mt * sizeof(int32_t);           // d_track_ids
+            approx_bytes += mt * sizeof(int32_t);           // d_track_missed
+            approx_bytes += mt * sizeof(int32_t);           // d_track_age
+            approx_bytes += mt * sizeof(int32_t);           // d_track_hit_streak
+            approx_bytes += mt * sizeof(uint8_t);           // d_track_has_feat
+            approx_bytes += mt * 2u * sizeof(float);        // d_track_vel
+            approx_bytes += mt * 7u * sizeof(float);        // d_kf_x
+            approx_bytes += mt * 7u * 7u * sizeof(float);   // d_kf_P
+            approx_bytes += sizeof(int32_t);                // d_track_count
+            approx_bytes += sizeof(int32_t);                // d_next_id
+            approx_bytes += mt * 4u * sizeof(float);        // d_view_boxes
+            approx_bytes += mt * sizeof(int32_t);           // d_view_ids
+            approx_bytes += sizeof(int32_t);                // d_view_count
+#if defined(USE_CUDA)
+            std::size_t free_b = 0;
+            std::size_t total_b = 0;
+            (void)cudaMemGetInfo(&free_b, &total_b);
+#endif
+            {
+                auto lvl = va::analyzer::logutil::log_level_for_tag("ms.track");
+                auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("ms.track");
+                VA_LOG_THROTTLED(lvl, "ms.track", thr)
+                    << "gpu_state_alloc_plan max_tracks=" << max_tracks_
+                    << " feat_dim=" << use_feat_dim
+                    << " approx_bytes=" << static_cast<double>(approx_bytes) / (1024.0 * 1024.0) << " MiB"
+#if defined(USE_CUDA)
+                    << " cuda_free_before=" << static_cast<double>(free_b) / (1024.0 * 1024.0) << " MiB"
+                    << " cuda_total=" << static_cast<double>(total_b) / (1024.0 * 1024.0) << " MiB"
+#endif
+                    ;
+            }
             auto err_alloc = va::analyzer::cudaops::ocsort_alloc_state(
                 gpu_state_, max_tracks_, use_feat_dim);
             if (err_alloc != cudaSuccess) {
