@@ -42,9 +42,9 @@ analyzer:
           # PASS-ReID 模型在 ONNX/Triton config 中输入名为 input
           triton_input: "input"
           triton_outputs: "feat"
-          # 如需对 ReID 节点单独覆盖 GPU I/O，可在此设置 triton_gpu_input / triton_gpu_output；默认继承 engine 级配置。
-          triton_gpu_input: "0"
-          # triton_gpu_output: "1"
+          # 显式启用 GPU 输入/输出，避免 roi_batch D2H 触发 invalid argument
+          triton_gpu_input: "1"
+          triton_gpu_output: "1"
       - name: track
         type: track.ocsort
         params:
