@@ -191,6 +191,31 @@ static TrainerBase parse_trainer_base() {
   return tb;
 }
 
+// -------------------- Agent service proxy helpers --------------------
+struct AgentBase { std::string host; int port{8000}; std::string prefix; bool ok{false}; };
+static AgentBase parse_agent_base() {
+  AgentBase ab;
+  const char* base = std::getenv("CP_AGENT_BASE_URL");
+  std::string s = base && *base ? std::string(base) : std::string("http://agent:8000");
+  ab.ok = true;
+  // strip scheme
+  if (s.rfind("http://", 0) == 0) s = s.substr(7);
+  else if (s.rfind("https://", 0) == 0) s = s.substr(8); // no TLS support in proxy
+  // split host[:port][/prefix]
+  auto slash = s.find('/');
+  std::string hp = (slash == std::string::npos) ? s : s.substr(0, slash);
+  ab.prefix = (slash == std::string::npos) ? std::string("") : s.substr(slash);
+  auto colon = hp.rfind(':');
+  if (colon != std::string::npos) {
+    ab.host = hp.substr(0, colon);
+    try { ab.port = std::stoi(hp.substr(colon + 1)); } catch (...) { ab.port = 8000; }
+  } else {
+    ab.host = hp; ab.port = 8000;
+  }
+  if (ab.prefix.empty()) ab.prefix = std::string("");
+  return ab;
+}
+
 int main(int argc, char** argv) {
   using namespace controlplane;
   using nlohmann::json;
@@ -677,6 +702,19 @@ int main(int argc, char** argv) {
       nlohmann::json data; data["items"] = nlohmann::json::array(); data["next"] = 0;
       out["data"] = data;
       r.status = 200; r.body = out.dump(); emit("/api/events/recent", r.status); return r;
+    }
+    // Agent control proxy: /api/agent/threads/{thread_id}/invoke
+    if (path.rfind("/api/agent/threads/", 0) == 0 && method == "POST") {
+      auto ab = parse_agent_base();
+      if (!ab.ok) { r.status=501; r.body = "{\"code\":\"AGENT_UNAVAILABLE\"}"; emit("/api/agent/threads", r.status); return r; }
+      // Map /api/agent/threads/{id}/invoke -> /v1/agent/threads/{id}/invoke on Agent
+      const std::string prefix = "/api/agent";
+      std::string suffix = path.substr(prefix.size()); // e.g., "/threads/{id}/invoke"
+      std::string target = ab.prefix + "/v1/agent" + suffix;
+      controlplane::HttpResponse proxyResp;
+      bool ok = controlplane::proxy_http_simple(ab.host, ab.port, method, target, headers, body, &proxyResp, nullptr);
+      if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/agent/threads", r.status); return r; }
+      r = proxyResp; emit("/api/agent/threads", r.status); return r;
     }
     // Training: start
     if (path == "/api/train/start" && method == "POST") {

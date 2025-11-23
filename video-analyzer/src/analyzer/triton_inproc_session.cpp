@@ -86,7 +86,18 @@ bool TritonInprocModelSession::loadModel(const std::string&, bool) {
 }
 
 bool TritonInprocModelSession::run(const core::TensorView& input, std::vector<core::TensorView>& outputs) {
-    return run_impl(input, outputs, false);
+    outputs.clear();
+    bool ok = run_impl(input, outputs, false);
+    // 若 GPU 输入路径失败，自动回退到 CPU staging 再试一次，避免整条管线被 GPU 拷贝错误中断
+    if (!ok && input.on_gpu && opt_.use_gpu_input) {
+        auto lvl = va::analyzer::logutil::log_level_for_tag("inproc.triton");
+        auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("inproc.triton");
+        VA_LOG_THROTTLED(lvl, "inproc.triton", thr)
+            << "[inproc.triton] GPU input failed, retry with CPU staging for model '" << opt_.model_name << "'";
+        outputs.clear();
+        ok = run_impl(input, outputs, true);
+    }
+    return ok;
 }
 
 bool TritonInprocModelSession::run_impl(const core::TensorView& input,
@@ -147,12 +158,14 @@ bool TritonInprocModelSession::run_impl(const core::TensorView& input,
         return false;
     }
 
-    // Prepare input (支持 GPU 直通)
+    // Prepare input (支持 GPU 直通，若设备不匹配则回退到 CPU staging)
     size_t elem = 1; for (auto d : input.shape) elem *= static_cast<size_t>(d);
     const size_t bytes = elem * sizeof(float);
     std::vector<uint8_t> host_stage;
     const uint8_t* host_ptr = reinterpret_cast<const uint8_t*>(input.data);
     bool use_gpu_input = false;
+    int ptr_dev = opt_.device_id;
+    bool is_dev_ptr = false;
     if (input.on_gpu && opt_.use_gpu_input && !force_cpu_input) {
 #if defined(USE_CUDA)
         use_gpu_input = true;
@@ -162,57 +175,60 @@ bool TritonInprocModelSession::run_impl(const core::TensorView& input,
         cudaPointerAttributes attrs{};
         if (cudaSuccess == cudaPointerGetAttributes(&attrs, input.data)) {
 #if CUDART_VERSION >= 10000
-            int ptr_dev = attrs.device;
-#else
-            int ptr_dev = attrs.device;
-#endif
-            if (ptr_dev != opt_.device_id) {
-                VA_LOG_WARN() << "[inproc.triton] input device pointer on GPU " << ptr_dev << ", expected GPU " << opt_.device_id;
+            if (attrs.type == cudaMemoryTypeDevice || attrs.type == cudaMemoryTypeManaged) {
+                is_dev_ptr = true;
+                ptr_dev = attrs.device;
             }
+#else
+            is_dev_ptr = true;
+            ptr_dev = attrs.device;
+#endif
+            if (!is_dev_ptr || ptr_dev != opt_.device_id) {
+                // 设备不匹配或指针属性异常，回退到 CPU staging
+                use_gpu_input = false;
+                auto lvl = va::analyzer::logutil::log_level_for_tag("inproc.triton");
+                auto thr = va::analyzer::logutil::log_throttle_ms_for_tag("inproc.triton");
+                VA_LOG_THROTTLED(lvl, "inproc.triton", thr)
+                    << "[inproc.triton] input ptr device " << ptr_dev << " != expected " << opt_.device_id
+                    << ", fallback to CPU staging";
+            }
+        } else {
+            use_gpu_input = false;
         }
 #else
         VA_LOG_WARN() << "[inproc.triton] input.on_gpu=true but CUDA not enabled";
         return false;
 #endif
-    } else if (input.on_gpu) {
+    }
+    if (!use_gpu_input && input.on_gpu) {
 #if defined(USE_CUDA)
         // CPU staging 路径：优先根据指针属性判断其所属 device，并切换到对应 device 后再执行 D2H。
         cudaPointerAttributes attrs{};
-        bool is_dev_ptr = false;
-        int dev_for_copy = opt_.device_id;
-        if (cudaSuccess == cudaPointerGetAttributes(&attrs, input.data)) {
+        bool has_attr = (cudaSuccess == cudaPointerGetAttributes(&attrs, input.data));
+        int dev_for_copy = ptr_dev;
 #if CUDART_VERSION >= 10000
-            if (attrs.type == cudaMemoryTypeDevice || attrs.type == cudaMemoryTypeManaged) {
-                is_dev_ptr = true;
-                dev_for_copy = attrs.device;
-            }
-#else
-            is_dev_ptr = true;
+        if (has_attr && (attrs.type == cudaMemoryTypeDevice || attrs.type == cudaMemoryTypeManaged)) {
             dev_for_copy = attrs.device;
+        }
+#else
+        if (has_attr) dev_for_copy = attrs.device;
 #endif
+        int cur_dev = -1;
+        (void)cudaGetDevice(&cur_dev);
+        if (cur_dev != dev_for_copy) {
+            (void)cudaSetDevice(dev_for_copy);
         }
-        if (!is_dev_ptr) {
-            // 指针并非设备内存（例如误标记为 on_gpu），直接当作 host 指针使用，避免错误的 D2H。
-            host_ptr = reinterpret_cast<const uint8_t*>(input.data);
-        } else {
-            int cur_dev = -1;
-            (void)cudaGetDevice(&cur_dev);
-            if (cur_dev != dev_for_copy) {
-                (void)cudaSetDevice(dev_for_copy);
-            }
-            host_stage.resize(bytes);
-            auto err = cudaMemcpy(host_stage.data(), input.data, bytes, cudaMemcpyDeviceToHost);
-            if (err != cudaSuccess) {
-                VA_LOG_WARN() << "[inproc.triton] cudaMemcpy D2H failed: " << cudaGetErrorString(err);
-                return false;
-            }
-            host_ptr = host_stage.data();
+        host_stage.resize(bytes);
+        auto err = cudaMemcpy(host_stage.data(), input.data, bytes, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            VA_LOG_WARN() << "[inproc.triton] cudaMemcpy D2H failed: " << cudaGetErrorString(err);
+            return false;
         }
+        host_ptr = host_stage.data();
 #else
         VA_LOG_WARN() << "[inproc.triton] input.on_gpu=true but CUDA not enabled"; return false;
 #endif
     }
-
     // Shape: remove batch if assume_no_batch
     std::vector<int64_t> send_shape = input.shape;
     if (opt_.assume_no_batch && send_shape.size() == 4 && send_shape.front() == 1) {

@@ -36,6 +36,8 @@
       <el-menu-item index="/observability/sessions">Sessions</el-menu-item>
     </el-sub-menu>
 
+    <el-menu-item index="/agent"><el-icon><DataAnalysis/></el-icon><span>Agent</span></el-menu-item>
+
     <el-menu-item index="/orchestration"><el-icon><Connection/></el-icon><span>Orchestration</span></el-menu-item>
     <el-menu-item index="/settings"><el-icon><Setting/></el-icon><span>设置</span></el-menu-item>
     <el-menu-item index="/about"><el-icon><InfoFilled/></el-icon><span>关于</span></el-menu-item>

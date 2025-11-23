@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Star, StarFilled } from '@element-plus/icons-vue'
 import { dataProvider } from '@/api/dataProvider'
+import { agentApi, isAgentEnabled, type AgentControlResult } from '@/api/agent'
 import sample from '@/widgets/GraphEditor/samples/demo.json'
 
 const router = useRouter()
@@ -17,6 +18,7 @@ const selection = ref<any[]>([])
 const pageSize = ref(10)
 const currentPage = ref(1)
 const pageSizes = [10, 20, 50]
+const agentEnabled = isAgentEnabled()
 
 const favKey = 'pipeline_favorites'
 function loadFav(): Set<string> { try{ return new Set(JSON.parse(localStorage.getItem(favKey)||'[]')) }catch{ return new Set() } }
@@ -73,6 +75,69 @@ function onSelChange(arr:any[]){ selection.value = arr }
 function startSelected(){ selection.value.forEach(r => { r.running = true; r.status='Running'; r.updatedAt=Date.now() }) }
 function stopSelected(){ selection.value.forEach(r => { r.running = false; r.status='Stopped'; r.updatedAt=Date.now() }) }
 function deleteSelected(){ rows.value = rows.value.filter(r => !selection.value.includes(r)); selection.value = [] }
+
+async function confirmDelete(row:any){
+  if (!agentEnabled) {
+    // 保持旧行为：本地直接删除（仅前端列表）
+    const ok = await ElMessageBox.confirm(
+      `确定要从列表中删除 pipeline “${row.name}” 吗？该操作不会真正调用后端删除。`,
+      '确认删除',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    ).catch(() => false)
+    if (ok) removeRow(row)
+    return
+  }
+
+  const threadId = `pipeline:${encodeURIComponent(row.name)}`
+  try {
+    const resp = await agentApi.invokeThread(threadId, {
+      messages: [
+        { role: 'user', content: `计划删除 pipeline '${row.name}'。` },
+      ],
+      control: {
+        op: 'pipeline.delete',
+        mode: 'plan',
+        params: { pipeline_name: row.name, node: null, model_uri: null, timeout_sec: null },
+        confirm: false,
+      },
+    })
+    const cr: AgentControlResult | null | undefined = resp.control_result
+    const plan = cr?.plan || {}
+    const found = !!plan?.found
+    const details = found
+      ? `graph_id=${plan?.plan?.graph_id ?? '-'}, default_model_id=${plan?.plan?.default_model_id ?? '-'}`
+      : '后端未找到该 pipeline（可能已删除）。'
+
+    const ok = await ElMessageBox.confirm(
+      `Agent 生成的删除计划：\n\n- 名称：${row.name}\n- 是否存在：${found ? '是' : '否'}\n- 详情：${details}\n\n确定要让 Agent 调用后端删除接口吗？`,
+      '确认删除（Agent）',
+      { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' }
+    ).catch(() => false)
+    if (!ok) return
+
+    const respExec = await agentApi.invokeThread(threadId, {
+      messages: [
+        { role: 'user', content: `确认删除 pipeline '${row.name}'。` },
+      ],
+      control: {
+        op: 'pipeline.delete',
+        mode: 'execute',
+        params: { pipeline_name: row.name, node: null, model_uri: null, timeout_sec: null },
+        confirm: true,
+      },
+    })
+    const crExec: AgentControlResult | null | undefined = respExec.control_result
+    const statusCode = crExec?.result?.status_code
+    if (statusCode && statusCode >= 200 && statusCode < 300) {
+      ElMessage.success('已请求删除 pipeline（ACCEPTED），请稍后刷新列表。')
+      await load()
+    } else {
+      ElMessage.error(`删除请求返回非成功状态：${statusCode ?? '未知'}`)
+    }
+  } catch (e:any) {
+    ElMessage.error(e?.message || '调用 Agent 删除失败')
+  }
+}
 
 const statusCounts = computed(()=>{
   const c = { All: rows.value.length, Running: 0, Stopped: 0, Error: 0 } as Record<'All'|'Running'|'Stopped'|'Error', number>
@@ -176,7 +241,7 @@ watch(() => route.query.status, (val) => {
         <template #default="{ row }">
           <el-button link @click="router.push({ path: '/pipelines/detail/'+encodeURIComponent(row.name) })">详情</el-button>
           <el-button link type="primary" @click="edit(row)">编辑</el-button>
-          <el-button link type="danger" @click="removeRow(row)">删除</el-button>
+          <el-button link type="danger" @click="confirmDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
