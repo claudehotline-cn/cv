@@ -39,8 +39,9 @@ security:
   rate_limit:
     rps: 0
 db:
-  driver: mysql           # 经典 MySQL 接口（libmysqlcppconn）
-  host: mysql            # 指向 compose 内的 mysql 服务名
+  # 使用经典 MySQL Connector/C++（JDBC 风格）访问 ControlPlane 配置库
+  driver: mysql
+  host: mysql
   port: 3306
   user: root
   password: 123456

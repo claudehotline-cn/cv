@@ -85,6 +85,30 @@ static void append_log(std::shared_ptr<ConvertJob> job, const std::string& line)
   job->logs.push_back(line);
 }
 
+// Agent 角色说明（系统提示）：在 CP 侧注入到 /api/agent/threads/{id}/invoke 请求的 messages[0] 位置。
+static const char* kAgentSystemPrompt = R"SYS(
+你是 CV 项目的控制平面智能 Agent，职责是协助用户安全地查看与管理视频分析管线（pipeline）、查询系统状态，以及根据项目文档回答问题。
+
+【总体原则】
+- 优先使用真实系统接口（控制平面和后端工具）获取信息，而不是凭经验想象。
+- 涉及删除、热切换、drain 等高危操作时，必须先给出变更计划和影响分析，仅在用户再次明确确认后才执行。
+- 所有后端访问都通过控制平面提供的能力完成，你不需要也不能绕过控制平面直接访问其他组件。
+
+【能力概览】
+- 管线只读查询：列出当前已配置的 pipelines（名称、graph_id、默认模型 ID 等），查询指定 pipeline 在 VA 中的运行状态与指标（phase/FPS/processed_frames 等）。
+- 规划能力（plan / dry-run）：在删除、调整配置、drain、热切换之前，生成包含当前状态和目标状态的计划与 diff，不做实际修改，用于人机协同确认。
+- 高危执行能力：在用户确认后，真实执行删除、drain、热切换等操作；执行前后都要明确说明影响与结果。
+- 文档检索：基于项目文档知识库检索接口规范、设计说明、测试策略等，再据此回答问题。
+
+【使用约束】
+- 用户不会告诉你具体的工具名称，你也不应该要求用户“调用某个工具”，而是根据自然语言需求自行选择合适的能力。
+- 当用户第一次提出删除/切换/停止类请求时，只生成计划（包括影响面和风险），不要立刻执行。
+- 只有在你给出计划之后，用户用自然语言明确表示“确认按这个计划执行”“可以执行删除/切换/drain”等时，才可以调用高危执行能力。
+- 当问题是“当前有哪些 / 某个 pipeline 现在怎样”的实时状态问题时，应通过只读查询获取真实数据；当问题是“接口/协议/设计”的文档问题时，应优先检索项目文档。
+
+在整个对话过程中，请遵守上述原则，自主选择和组合你已有的能力为用户提供帮助。不要臆造不存在的 pipeline、接口或字段，如信息不足，请如实说明并给出可行的下一步建议。
+)SYS";
+
 static int run_trtexec_and_upload(const std::string& trtexec_cmd,
                                   const std::string& plan_path,
                                   const std::string& va_addr,
@@ -706,14 +730,60 @@ int main(int argc, char** argv) {
     // Agent control proxy: /api/agent/threads/{thread_id}/invoke
     if (path.rfind("/api/agent/threads/", 0) == 0 && method == "POST") {
       auto ab = parse_agent_base();
-      if (!ab.ok) { r.status=501; r.body = "{\"code\":\"AGENT_UNAVAILABLE\"}"; emit("/api/agent/threads", r.status); return r; }
+      if (!ab.ok) {
+        std::cerr << "[cp.agent] AGENT_UNAVAILABLE: path=" << path << std::endl;
+        r.status=501; r.body = "{\"code\":\"AGENT_UNAVAILABLE\"}"; emit("/api/agent/threads", r.status); return r;
+      }
       // Map /api/agent/threads/{id}/invoke -> /v1/agent/threads/{id}/invoke on Agent
       const std::string prefix = "/api/agent";
       std::string suffix = path.substr(prefix.size()); // e.g., "/threads/{id}/invoke"
       std::string target = ab.prefix + "/v1/agent" + suffix;
+
+      // 在转发给 Agent 之前，尝试将系统角色说明插入到请求体的 messages[0] 中。
+      std::string patched_body = body;
+      try {
+        if (!body.empty()) {
+          auto j = nlohmann::json::parse(body);
+          if (j.is_object() && j.contains("messages") && j["messages"].is_array()) {
+            auto& msgs = j["messages"];
+            nlohmann::json sys_msg;
+            sys_msg["role"] = "system";
+            sys_msg["content"] = std::string(kAgentSystemPrompt);
+            msgs.insert(msgs.begin(), sys_msg);
+            patched_body = j.dump();
+          }
+        }
+      } catch (...) {
+        // JSON 解析失败时保持原始请求体，避免在代理层直接失败。
+        patched_body = body;
+      }
+
+      std::cerr << "[cp.agent] proxy start"
+                << " method=" << method
+                << " cp_path=" << path
+                << " agent_host=" << ab.host
+                << " agent_port=" << ab.port
+                << " agent_target=" << target
+                << " body_len=" << patched_body.size()
+                << std::endl;
+
       controlplane::HttpResponse proxyResp;
-      bool ok = controlplane::proxy_http_simple(ab.host, ab.port, method, target, headers, body, &proxyResp, nullptr);
-      if (!ok) { r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/agent/threads", r.status); return r; }
+      bool ok = controlplane::proxy_http_simple(ab.host, ab.port, method, target, headers, patched_body, &proxyResp, nullptr);
+      if (!ok) {
+        std::cerr << "[cp.agent] proxy_http_simple failed"
+                  << " host=" << ab.host
+                  << " port=" << ab.port
+                  << " target=" << target
+                  << " body_len=" << patched_body.size()
+                  << std::endl;
+        r.status=502; r.body = "{\"code\":\"BACKEND_ERROR\"}"; emit("/api/agent/threads", r.status); return r;
+      }
+
+      std::cerr << "[cp.agent] proxy_ok"
+                << " status=" << proxyResp.status
+                << " content_type=" << proxyResp.contentType
+                << " body_len=" << proxyResp.body.size()
+                << std::endl;
       r = proxyResp; emit("/api/agent/threads", r.status); return r;
     }
     // Training: start

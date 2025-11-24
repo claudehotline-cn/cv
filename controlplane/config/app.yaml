@@ -42,7 +42,7 @@ security:
     rps: 0
 
 
-# DB classic (MySQL Connector/C++)
+# DB：本地开发使用经典 MySQL Connector/C++（与 docker 配置保持一致）
 db:
   driver: mysql
   host: 127.0.0.1

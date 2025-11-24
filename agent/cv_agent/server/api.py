@@ -5,8 +5,16 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from fastapi import Depends, FastAPI, Header
 from pydantic import BaseModel, Field
 
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_ollama import ChatOllama
+
 from ..config import get_settings
-from ..graph import build_state_from_tuples, get_control_plane_agent
+from ..graph import (
+    AgentState,
+    build_state_from_tuples,
+    get_control_plane_agent,
+    get_stategraph_agent,
+)
 from ..tools.pipelines import (
     _fetch_pipelines,
     _fetch_pipeline_status,
@@ -325,8 +333,11 @@ async def _invoke_agent_graph(
 
     settings = get_settings()
 
-    # Offline fallback: no API key → 使用本地“假模型”直接查询 pipelines。
-    if not settings.openai_api_key:
+    # 当前 provider
+    provider = getattr(settings, "llm_provider", "openai").lower()
+
+    # 情况一：provider=openai 且缺少 OPENAI_API_KEY → 使用本地“假模型”直接查询 pipelines。
+    if provider == "openai" and not settings.openai_api_key:
         pipelines = await _fetch_pipelines()
         if not pipelines:
             content = "当前处于本地测试模式（未配置 OPENAI_API_KEY），且未从 ControlPlane 查询到任何 pipeline。"
@@ -360,10 +371,123 @@ async def _invoke_agent_graph(
         }
         return state
 
+    # 情况二：其余情况（包括 provider=ollama，或 provider=openai 且已配置 OPENAI_API_KEY） →
+    # 统一走预构建 ReAct Agent，由大模型根据工具描述与上下文自行决定是否调用工具。
     agent_graph = get_control_plane_agent()
     state = build_state_from_tuples(messages)
 
-    # 把用户上下文附加到 config 或 state 中，后续可用于权限控制与审计
+    # 为无 thread_id 的一问一答调用分配独立虚拟线程，避免复用历史导致 LangGraph
+    # 出现“不匹配的 tool_calls/ToolMessage”错误。
+    from uuid import uuid4
+    effective_thread_id = thread_id or f"invoke-{uuid4()}"
+
+    # 把用户上下文附加到 config 中，后续可用于权限控制与审计
+    config: Dict[str, Any] = {
+        "configurable": {
+            "user_id": user.user_id,
+            "role": user.role,
+            "tenant": user.tenant,
+            "thread_id": effective_thread_id,
+        }
+    }
+
+    # 兼容同步/异步 Graph 接口，并在出现已知的“聊天历史不一致”错误时做一次自愈重试：
+    # 当线程历史中残留带 tool_calls 但缺少对应 ToolMessage 的 AIMessage 时，
+    # LangGraph 会抛出 INVALID_CHAT_HISTORY，此时改用新的 thread_id 重新开始该轮调用。
+    try:
+        if hasattr(agent_graph, "ainvoke"):
+            result = await agent_graph.ainvoke(state, config=config)  # type: ignore[call-arg]
+        else:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, lambda: agent_graph.invoke(state, config=config)
+            )
+        return result
+    except ValueError as exc:
+        msg = str(exc)
+        if "Found AIMessages with tool_calls" not in msg:
+            logger.exception("agent_graph invoke failed: %s", exc)
+            raise
+
+        # 已知的 INVALID_CHAT_HISTORY 场景：尝试用全新的虚拟线程重试一次，
+        # 避免单个损坏线程状态让对话永久失效。
+        logger.warning(
+            "agent_graph invalid chat history for thread_id=%s, resetting thread and retrying once",
+            effective_thread_id,
+        )
+        from uuid import uuid4
+
+        reset_thread_id = f"reset-{uuid4()}"
+        reset_config: Dict[str, Any] = {
+            "configurable": {
+                "user_id": user.user_id,
+                "role": user.role,
+                "tenant": user.tenant,
+                "thread_id": reset_thread_id,
+            }
+        }
+        if hasattr(agent_graph, "ainvoke"):
+            return await agent_graph.ainvoke(state, config=reset_config)  # type: ignore[call-arg]
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: agent_graph.invoke(state, config=reset_config)
+        )
+
+
+def _to_lc_messages(messages: List[Message]) -> List[BaseMessage]:
+    """将 HTTP 层的 Message 转换为 LangChain BaseMessage 列表。"""
+
+    out: List[BaseMessage] = []
+    for m in messages:
+        if m.role == "user":
+            out.append(HumanMessage(content=m.content))
+        elif m.role == "assistant":
+            out.append(AIMessage(content=m.content))
+        elif m.role == "system":
+            out.append(SystemMessage(content=m.content))
+        else:
+            # tool 或未知角色：先按 assistant 文本处理，后续如有需要再细分
+            out.append(AIMessage(content=m.content))
+    return out
+
+
+async def _invoke_stategraph_agent(
+    request_messages: List[Message],
+    user: UserContext,
+    thread_id: Optional[str],
+) -> Dict[str, Any]:
+    """
+    调用基于 StateGraph 的实验性 Agent。
+
+    - 若未配置 OPENAI_API_KEY，则复用现有 _invoke_agent_graph 的离线逻辑；
+    - 否则将 HTTP messages 转为 BaseMessage 列表，并以 AgentState 形式交给 StateGraph。
+    """
+
+    settings = get_settings()
+
+    # 复用离线 fallback 逻辑：仅在 provider=openai 且缺少 OPENAI_API_KEY 时走本地模式；
+    # 当 provider=ollama 时，即使没有 OPENAI_API_KEY 也始终调用远程 LLM。
+    provider = getattr(settings, "llm_provider", "openai").lower()
+    if provider == "openai" and not settings.openai_api_key:
+        message_tuples: List[Tuple[str, str]] = [
+            (m.role, m.content) for m in request_messages
+        ]
+        return await _invoke_agent_graph(message_tuples, user=user, thread_id=thread_id)
+
+    agent_graph = get_stategraph_agent()
+    lc_messages = _to_lc_messages(request_messages)
+
+    state_in: Dict[str, Any] = AgentState(
+        messages=lc_messages,
+        user={"user_id": user.user_id, "role": user.role, "tenant": user.tenant},
+        cv_context={},
+        plan=[],
+        pending_tools=[],
+        last_control_op=None,
+        last_control_mode=None,
+        last_control_result=None,
+    ).dict()
+
     config: Dict[str, Any] = {
         "configurable": {
             "user_id": user.user_id,
@@ -375,14 +499,20 @@ async def _invoke_agent_graph(
 
     # 兼容同步/异步 Graph 接口
     if hasattr(agent_graph, "ainvoke"):
-        result = await agent_graph.ainvoke(state, config=config)  # type: ignore[call-arg]
+        result = await agent_graph.ainvoke(state_in, config=config)  # type: ignore[call-arg]
     else:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
-            None, lambda: agent_graph.invoke(state, config=config)
+            None, lambda: agent_graph.invoke(state_in, config=config)
         )
 
-    return result
+    # StateGraph 返回的 result 即为最新状态 dict
+    if isinstance(result, AgentState):
+        return result.dict()
+    if isinstance(result, dict):
+        return result
+    # 兜底：包装为状态字典
+    return {"messages": lc_messages + [AIMessage(content=str(result))]}
 
 
 def _extract_reply_message(state: Dict[str, Any]) -> Message:
@@ -562,3 +692,54 @@ async def agent_thread_invoke(
     )
 
     return AgentInvokeResponse(message=reply, raw_state=state)
+
+
+@app.post("/v1/agent/stategraph/threads/{thread_id}/invoke", response_model=AgentInvokeResponse)
+async def agent_stategraph_thread_invoke(
+    thread_id: str,
+    request: AgentInvokeRequest,
+    user: UserContext = Depends(get_user_context),
+) -> AgentInvokeResponse:
+    """
+    实验性：基于 StateGraph 的多轮对话接口。
+
+    - 与 `/v1/agent/threads/{thread_id}/invoke` 不同，本入口使用自定义 StateGraph Agent；
+    - 当前仅支持普通对话（忽略 control 字段），控制类操作仍建议使用已有 control 协议。
+    """
+
+    if request.control is not None:
+        msg = Message(
+            role="assistant",
+            content="StateGraph 实验入口暂不支持 control 字段，请使用 /v1/agent/threads/{thread_id}/invoke。",
+        )
+        return AgentInvokeResponse(message=msg, raw_state=None, control_result=None)
+
+    logger.info(
+        "agent_stategraph_thread_invoke start",
+        extra={
+            "user_id": user.user_id,
+            "role": user.role,
+            "tenant": user.tenant,
+            "thread_id": thread_id,
+        },
+    )
+
+    state = await _invoke_stategraph_agent(
+        request_messages=request.messages,
+        user=user,
+        thread_id=thread_id,
+    )
+    reply = _extract_reply_message(state)
+
+    logger.info(
+        "agent_stategraph_thread_invoke done",
+        extra={
+            "user_id": user.user_id,
+            "role": user.role,
+            "tenant": user.tenant,
+            "thread_id": thread_id,
+        },
+    )
+
+    # raw_state 暂不返回（StateGraph 状态包含 BaseMessage，序列化开销较大），仅返回最终回复
+    return AgentInvokeResponse(message=reply, raw_state=None, control_result=None)

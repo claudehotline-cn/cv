@@ -18,6 +18,22 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: pgvector
+    environment:
+      POSTGRES_USER: "cv_kb"
+      POSTGRES_PASSWORD: "cv_kb_pass"
+      POSTGRES_DB: "cv_kb"
+    ports:
+      - "15432:5432"   # 宿主 15432 → 容器 5432，以免与本机 Postgres 冲突
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -264,8 +280,14 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AGENT_CP_BASE_URL=http://cp:18080
-      - AGENT_OPENAI_MODEL=gpt-4o-mini
+      - AGENT_OPENAI_MODEL=qwen3:8b
+      - AGENT_LLM_PROVIDER=ollama
+      - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       - AGENT_LOG_LEVEL=INFO
+      # RAG 向量检索：使用 Ollama 作为 embedding 提供方
+      - AGENT_RAG_EMBEDDING_PROVIDER=ollama
+      - AGENT_RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - AGENT_RAG_OLLAMA_MODEL=bge-m3:567m
     depends_on:
       cp:
         condition: service_healthy
@@ -285,3 +307,4 @@ volumes:
   minio-data:
   mysql-data:
   mlflow-artifacts:
+  pgvector-data:

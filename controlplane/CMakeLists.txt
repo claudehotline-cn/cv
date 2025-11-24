@@ -79,8 +79,11 @@ if (NOT mysql-concpp_FOUND AND NOT TARGET unofficial::mysql-connector-cpp::conne
     message(STATUS "Found MySQL Connector/C++ (fallback): inc=${MYSQLX_INCLUDE_DIR} lib=${MYSQLX_LIBRARY}")
     set(HAVE_MYSQLX_FALLBACK TRUE)
   endif()
-  # Classic JDBC-like API header/lib
-  find_path(MYSQL_JDBC_INCLUDE_DIR mysql/jdbc.h PATH_SUFFIXES include)
+  # Classic JDBC-like API header/lib（兼容 Ubuntu 提供的 1.1 版 Connector）
+  # 优先查找新版头文件 mysql/jdbc.h，若不存在则回退到 legacy 头 mysql_connection.h。
+  find_path(MYSQL_JDBC_INCLUDE_DIR
+            NAMES mysql/jdbc.h mysql_connection.h
+            PATH_SUFFIXES include)
   find_library(MYSQL_JDBC_LIBRARY NAMES mysqlcppconn)
   if (MYSQL_JDBC_INCLUDE_DIR AND MYSQL_JDBC_LIBRARY)
     message(STATUS "Found MySQL Connector/C++ classic (fallback): inc=${MYSQL_JDBC_INCLUDE_DIR} lib=${MYSQL_JDBC_LIBRARY}")

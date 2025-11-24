@@ -13,7 +13,18 @@
 #  include <nlohmann/json.hpp>
 #endif
 #ifdef HAVE_MYSQL_JDBC
-#  include <mysql/jdbc.h>
+// 兼容 MySQL Connector/C++ 不同版本的头文件布局：
+// - 新版（8.x）通常提供 <mysql/jdbc.h>
+// - Ubuntu 自带的 1.1 版仅提供 mysql_connection.h/mysql_driver.h + <cppconn/...>
+#  if __has_include(<mysql/jdbc.h>)
+#    include <mysql/jdbc.h>
+#  else
+#    include <mysql_connection.h>
+#    include <mysql_driver.h>
+#    include <cppconn/statement.h>
+#    include <cppconn/resultset.h>
+#    include <cppconn/prepared_statement.h>
+#  endif
 #  include <nlohmann/json.hpp>
 #endif
 

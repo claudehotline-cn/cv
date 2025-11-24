@@ -15,6 +15,7 @@
 #  include <arpa/inet.h>
 #  include <unistd.h>
 #  include <netinet/tcp.h>
+#  include <iostream>
 #endif
 
 namespace controlplane {
@@ -95,16 +96,34 @@ bool proxy_http_simple(const std::string& host,
 #ifndef _WIN32
   out->status = 502; out->contentType = "application/json"; out->body = "{}"; out->extraHeaders.clear(); if (out_location) *out_location = {};
   // POSIX implementation using BSD sockets
+  // Debug hint: log basic proxy target when talking to Agent service
+  bool debug_agent = (host == "agent");
+  if (debug_agent) {
+    std::cerr << "[http_proxy] proxy_http_simple host=" << host
+              << " port=" << port
+              << " method=" << method
+              << " path=" << path_and_query
+              << " body_len=" << body.size() << std::endl;
+  }
   int sock = -1;
   struct addrinfo hints{}; hints.ai_socktype = SOCK_STREAM; hints.ai_family = AF_UNSPEC; hints.ai_protocol = IPPROTO_TCP;
   struct addrinfo* res = nullptr;
-  if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) return false;
+  if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) {
+    if (debug_agent) {
+      std::cerr << "[http_proxy] getaddrinfo failed for host=" << host
+                << " port=" << port << std::endl;
+    }
+    return false;
+  }
   bool ok = false;
   for (auto p = res; p != nullptr; p = p->ai_next) {
     int s = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
     if (s < 0) continue;
-    // Timeouts
-    struct timeval tv; tv.tv_sec = 5; tv.tv_usec = 0;
+    // Timeouts：默认 30 秒；对 Agent 服务（host == "agent"）进一步放宽到 120 秒，
+    // 避免长上下文 LLM/工具调用导致的长响应被误判为错误。
+    struct timeval tv;
+    tv.tv_sec = debug_agent ? 120 : 30;
+    tv.tv_usec = 0;
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     int yes = 1; setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
@@ -112,7 +131,13 @@ bool proxy_http_simple(const std::string& host,
     ::close(s);
   }
   freeaddrinfo(res);
-  if (!ok) return false;
+  if (!ok) {
+    if (debug_agent) {
+      std::cerr << "[http_proxy] connect failed for host=" << host
+                << " port=" << port << std::endl;
+    }
+    return false;
+  }
 
   auto req_h = parse_headers_ci(in_headers);
   std::map<std::string, std::string> fwd_h;
@@ -145,7 +170,14 @@ bool proxy_http_simple(const std::string& host,
   char buf[4096]; for (;;) { ssize_t n = ::recv(sock, buf, sizeof(buf), 0); if (n <= 0) break; resp.append(buf, buf+n); }
   ::close(sock);
 
-  auto h_end = resp.find("\r\n\r\n"); if (h_end == std::string::npos) return false;
+  auto h_end = resp.find("\r\n\r\n");
+  if (h_end == std::string::npos) {
+    if (debug_agent) {
+      std::cerr << "[http_proxy] invalid HTTP response (no CRLFCRLF), size="
+                << resp.size() << std::endl;
+    }
+    return false;
+  }
   std::string head = resp.substr(0, h_end); std::string body_raw = resp.substr(h_end + 4);
   // status line
   int status = 502; { auto sp1 = head.find(' '); if (sp1 != std::string::npos) { auto sp2 = head.find(' ', sp1+1); if (sp2 != std::string::npos) { try { status = std::stoi(head.substr(sp1+1, sp2-sp1-1)); } catch (...) {} } } }
