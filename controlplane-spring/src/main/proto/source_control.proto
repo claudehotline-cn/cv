@@ -1,0 +1,60 @@
+syntax = "proto3";
+package vsm.v1;
+
+option java_multiple_files = true;
+
+service SourceControl {
+  rpc Attach(AttachRequest) returns (AttachReply);
+  rpc Detach(DetachRequest) returns (DetachReply);
+  rpc GetHealth(GetHealthRequest) returns (GetHealthReply);
+  // Plan B: stream current sources snapshot periodically for instant reaction
+  rpc WatchState(WatchStateRequest) returns (stream WatchStateReply);
+  rpc Update(UpdateRequest) returns (UpdateReply);
+}
+
+message AttachRequest {
+  string attach_id   = 1;
+  string source_uri  = 2;
+  string pipeline_id = 3;
+  map<string,string> options = 4;
+}
+message AttachReply { bool accepted = 1; string msg = 2; }
+
+message DetachRequest { string attach_id = 1; }
+message DetachReply   { bool removed = 1; string msg = 2; }
+
+message GetHealthRequest {}
+message GetHealthReply {
+  repeated StreamStat streams = 1;
+}
+message StreamStat {
+  string attach_id = 1;
+  double fps       = 2;
+  double rtt_ms    = 3;
+  double jitter_ms = 4;
+  double loss_pct  = 5;
+  string phase     = 6; // Ready/Connecting/Backoff/Failed
+}
+
+// Streaming watch API
+message WatchStateRequest {
+  int32 interval_ms = 1; // default 1000
+}
+message SourceItem {
+  string attach_id = 1;
+  string source_uri = 2;
+  string phase = 3;
+  double fps = 4;
+  string profile = 5;   // optional desired profile id for VA
+  string model_id = 6;  // optional desired model id for VA
+}
+message WatchStateReply {
+  int64 ts_ms = 1;
+  repeated SourceItem items = 2;
+}
+
+message UpdateRequest {
+  string attach_id = 1;
+  map<string,string> options = 2; // profile/model_id, etc.
+}
+message UpdateReply { bool ok = 1; string msg = 2; }

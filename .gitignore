@@ -198,6 +198,10 @@ docker/model/*.engine
 
 # Data files
 data/
+
+# Java / Maven build outputs
+controlplane-spring/target/
+.repository/
 datasets/
 *.csv
 

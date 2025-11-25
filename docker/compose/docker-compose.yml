@@ -159,11 +159,43 @@ services:
         condition: service_healthy
       trainer:
         condition: service_healthy
-    ports:
-      - "18080:18080"
+    # 不再暴露到宿主机端口，避免与 cp-spring 冲突；仍可在 compose 网络内被访问
     volumes:
       - ../config/cp:/app/config:ro
       - ../../controlplane/config/certs:/app/config/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18080/api/system/info >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  cp-spring:
+    build:
+      context: ../..
+      dockerfile: docker/cp-spring/Dockerfile
+    image: cv/cp-spring:latest
+    container_name: cp-spring
+    environment:
+      # 覆盖 Spring Boot 配置，使其在 compose 网络中访问下游
+      - CP_VA_GRPC_ADDR=va:50051
+      - CP_VSM_GRPC_ADDR=vsm:7070
+      - CP_DB_HOST=mysql
+      - CP_DB_PORT=3306
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/cv_cp?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=123456
+    depends_on:
+      mysql:
+        condition: service_healthy
+      va:
+        condition: service_healthy
+      vsm:
+        condition: service_healthy
+    ports:
+      - "18080:18080"
+    volumes:
+      # 挂载 Maven 依赖仓库到项目根目录下的 .repository，方便持久化与调试
+      - /home/chaisen/projects/cv/.repository:/root/.m2/repository
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:18080/api/system/info >/dev/null || exit 1"]
       interval: 10s
