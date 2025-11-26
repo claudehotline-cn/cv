@@ -31,7 +31,7 @@ public class VideoSourceManagerClient {
 
   private SourceControlBlockingStub unaryStub() {
     return SourceControlGrpc.newBlockingStub(channel)
-        .withDeadlineAfter(5, TimeUnit.SECONDS);
+        .withDeadlineAfter(500, TimeUnit.MILLISECONDS);
   }
 
   private SourceControlBlockingStub streamingStub() {
