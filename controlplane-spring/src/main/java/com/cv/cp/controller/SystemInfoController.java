@@ -1,7 +1,7 @@
 package com.cv.cp.controller;
 
-import com.cv.cp.config.AppProperties;
 import com.cv.cp.dto.SystemInfoDto;
+import com.cv.cp.service.CacheService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -11,21 +11,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/system")
 public class SystemInfoController {
 
-  private final AppProperties properties;
+  private final CacheService cacheService;
 
-  public SystemInfoController(AppProperties properties) {
-    this.properties = properties;
+  public SystemInfoController(CacheService cacheService) {
+    this.cacheService = cacheService;
   }
 
   @GetMapping("/info")
   public ResponseEntity<CpResponse<SystemInfoDto>> getSystemInfo() {
-    SystemInfoDto dto = new SystemInfoDto();
-    SystemInfoDto.RestreamInfo restreamInfo = new SystemInfoDto.RestreamInfo();
-    if (properties.getRestream() != null) {
-      restreamInfo.setRtspBase(properties.getRestream().getRtspBase());
-    }
-    dto.setRestream(restreamInfo);
+    SystemInfoDto dto = cacheService.getSystemInfo();
     return ResponseEntity.ok(CpResponse.ok(dto));
   }
 }
-
