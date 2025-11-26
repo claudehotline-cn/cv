@@ -26,8 +26,8 @@ def http(method, path, data=None, headers=None):
 
 def main():
     # Create
-    payload = {"stream_id":"s1","profile":"p1","source_uri":"rtsp://127.0.0.1:8554/camera_01"}
-    qs = "?stream_id=s1&profile=p1&source_uri="+parse.quote("rtsp://127.0.0.1:8554/camera_01")
+    payload = {"stream_id":"s1","profile":"det_720p","source_uri":"rtsp://127.0.0.1:8554/camera_01"}
+    qs = "?stream_id=s1&profile=det_720p&source_uri="+parse.quote("rtsp://127.0.0.1:8554/camera_01")
     code, headers, body = http("POST","/api/subscriptions"+qs, payload)
     if code == 502:
         print("SKIP: backend not available (VA)")

@@ -10,11 +10,11 @@ tls:
 
 # Outbound to VideoAnalyzer (AnalyzerControl gRPC)
 va:
-  addr: "127.0.0.1:50051"
+  addr: "va:50051"
   tls:
     enabled: true
     root_cert_file: "certs/ca.pem"
-    # 指向 VA 目录下生成的专用客户端证书（绝对路径，避免相对路径歧义）
-    client_cert_file: "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/config/certs/va_client.crt"
-    client_key_file: "D:/Projects/ai/cv/video-analyzer/build-ninja/bin/config/certs/va_client.key"
+    # 在 Docker 环境下使用本配置目录中的客户端证书连接 VA
+    client_cert_file: "certs/cp_client.crt"
+    client_key_file: "certs/cp_client.key"
     server_name: "localhost"                   # SNI/authority，需与 VA 证书 SAN 匹配
