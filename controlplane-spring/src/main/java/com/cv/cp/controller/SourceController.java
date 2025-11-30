@@ -1,6 +1,7 @@
 package com.cv.cp.controller;
 
 import com.cv.cp.dto.SourcesListDto;
+import com.cv.cp.logging.AuditLogger;
 import com.cv.cp.service.CacheService;
 import com.cv.cp.service.SourceService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -35,12 +36,25 @@ public class SourceController {
       @RequestParam("attach_id") String attachId,
       @RequestParam("source_uri") String sourceUri,
       @RequestParam(value = "pipeline_id", required = false) String pipelineId) {
+    String corrId = java.util.UUID.randomUUID().toString();
     if (attachId == null || attachId.isEmpty() || sourceUri == null || sourceUri.isEmpty()) {
+      AuditLogger.log(
+          "sources.attach.reject",
+          corrId,
+          java.util.Map.of("reason", "missing attach_id/source_uri"));
       return ResponseEntity.status(HttpStatus.BAD_REQUEST)
           .body(CpResponse.invalidArgument(null));
     }
+    AuditLogger.log(
+        "sources.attach.request",
+        corrId,
+        java.util.Map.of("attach_id", attachId, "source_uri", sourceUri));
     sourceService.attach(attachId, sourceUri, pipelineId);
     cacheService.evictSources();
+    AuditLogger.log(
+        "sources.attach.response",
+        corrId,
+        java.util.Map.of("attach_id", attachId, "status", 202));
     return ResponseEntity.status(HttpStatus.ACCEPTED).body(CpResponse.accepted(null));
   }
 

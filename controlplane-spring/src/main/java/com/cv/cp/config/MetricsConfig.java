@@ -1,6 +1,7 @@
 package com.cv.cp.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -26,5 +27,15 @@ public class MetricsConfig {
       }
     }
   }
-}
 
+  @Bean
+  public AtomicInteger sseConnections(MeterRegistry registry) {
+    AtomicInteger gauge = new AtomicInteger(0);
+    try {
+      registry.gauge("cp.sse.connections", gauge);
+    } catch (Exception ex) {
+      log.warn("Failed to register cp.sse.connections gauge", ex);
+    }
+    return gauge;
+  }
+}

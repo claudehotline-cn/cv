@@ -32,6 +32,8 @@ import va.v1.SubscribePipelineReply;
 import va.v1.SubscribePipelineRequest;
 import va.v1.UnsubscribePipelineReply;
 import va.v1.UnsubscribePipelineRequest;
+import va.v1.WatchRequest;
+import va.v1.PhaseEvent;
 
 @Component
 public class VideoAnalyzerClient {
@@ -211,5 +213,16 @@ public class VideoAnalyzerClient {
   @CircuitBreaker(name = "va")
   public java.util.List<PipelineItem> listPipelineItems() throws StatusRuntimeException {
     return listPipelines().getItemsList();
+  }
+
+  @CircuitBreaker(name = "va")
+  public java.util.Iterator<PhaseEvent> watch(String subscriptionId)
+      throws StatusRuntimeException {
+    WatchRequest request =
+        WatchRequest.newBuilder().setSubscriptionId(subscriptionId).build();
+    meterRegistry
+        .counter("cp.grpc.client.stream.open", "svc", "va", "method", "Watch")
+        .increment();
+    return blockingStub().watch(request);
   }
 }

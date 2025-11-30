@@ -2,6 +2,7 @@ package com.cv.cp.controller;
 
 import com.cv.cp.service.ControlService;
 import com.cv.cp.service.SourceService;
+import com.cv.cp.logging.AuditLogger;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,6 +37,7 @@ public class OrchestratorController {
       @RequestParam(value = "source_uri", required = false) String sourceUriParam,
       @RequestParam(value = "source_id", required = false) String sourceIdParam,
       @RequestParam(value = "pipeline_name", required = false) String pipelineNameParam) {
+    String corrId = java.util.UUID.randomUUID().toString();
     String attachId = attachIdParam;
     String sourceUri = sourceUriParam;
     String sourceId = sourceIdParam;
@@ -84,9 +86,21 @@ public class OrchestratorController {
       // 这里不强制拼接，保持最小实现，要求调用方传入 source_uri。
     }
     if (attachId == null || attachId.isEmpty() || sourceUri == null || sourceUri.isEmpty()) {
+      AuditLogger.log(
+          "orch.attach_apply.reject",
+          corrId,
+          java.util.Map.of("reason", "missing attach_id/source_uri"));
       return ResponseEntity.status(HttpStatus.BAD_REQUEST)
           .body(CpResponse.invalidArgument(null));
     }
+
+    AuditLogger.log(
+        "orch.attach_apply.request",
+        corrId,
+        java.util.Map.of(
+            "attach_id", attachId,
+            "source_uri", sourceUri,
+            "pipeline_name", pipelineName == null ? "" : pipelineName));
 
     // 1) 调用 VSM Attach（通过 SourceService 封装）
     sourceService.attach(attachId, sourceUri, pipelineName);
@@ -96,6 +110,11 @@ public class OrchestratorController {
       String effectiveName = pipelineName != null ? pipelineName : attachId;
       controlService.applyPipeline(effectiveName, yamlPath, graphId, serialized);
     }
+
+    AuditLogger.log(
+        "orch.attach_apply.response",
+        corrId,
+        java.util.Map.of("attach_id", attachId, "pipeline_name", pipelineName == null ? "" : pipelineName, "status", 202));
 
     return ResponseEntity.status(HttpStatus.ACCEPTED)
         .body(CpResponse.accepted(null));
