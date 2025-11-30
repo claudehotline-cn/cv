@@ -1,5 +1,6 @@
 package com.cv.cp.controller;
 
+import com.cv.cp.config.AppProperties;
 import com.cv.cp.service.ControlService;
 import com.cv.cp.service.SourceService;
 import com.cv.cp.logging.AuditLogger;
@@ -22,12 +23,17 @@ public class OrchestratorController {
   private final SourceService sourceService;
   private final ControlService controlService;
   private final ObjectMapper objectMapper;
+  private final AppProperties appProperties;
 
   public OrchestratorController(
-      SourceService sourceService, ControlService controlService, ObjectMapper objectMapper) {
+      SourceService sourceService,
+      ControlService controlService,
+      ObjectMapper objectMapper,
+      AppProperties appProperties) {
     this.sourceService = sourceService;
     this.controlService = controlService;
     this.objectMapper = objectMapper;
+    this.appProperties = appProperties;
   }
 
   @PostMapping("/attach_apply")
@@ -82,8 +88,16 @@ public class OrchestratorController {
     }
 
     if (sourceUri == null && sourceId != null && !sourceId.isEmpty()) {
-      // 兼容 C++ 行为：允许通过 source_id 组装 RTSP URI，具体前缀由前端或 restream 配置控制；
-      // 这里不强制拼接，保持最小实现，要求调用方传入 source_uri。
+      String base = null;
+      if (appProperties.getRestream() != null) {
+        base = appProperties.getRestream().getRtspBase();
+      }
+      if (base != null && !base.isEmpty()) {
+        if (!base.endsWith("/")) {
+          base = base + "/";
+        }
+        sourceUri = base + sourceId;
+      }
     }
     if (attachId == null || attachId.isEmpty() || sourceUri == null || sourceUri.isEmpty()) {
       AuditLogger.log(

@@ -1,95 +1,105 @@
-# CONTEXT（2025-11-26，controlplane Spring 重写与 VA/VSM 集成现状）
+# CONTEXT（2025-11-30，cp-spring 完全接管 C++ CP 现状）
 
-本文件汇总当前围绕 **controlplane Spring Boot 重写（cp-spring）** 的关键实现、配置与测试结论，作为后续路线图与排障的统一上下文。
-
----
-
-## 一、总体目标与架构轮廓
-
-- 将现有 C++ ControlPlane 的 HTTP/SSE 行为，逐步重写为独立的 `controlplane-spring` 子项目：
-  - 技术栈：Spring Boot 3.1.x + Java 21 + Maven。
-  - gRPC 客户端：`VideoAnalyzerClient`（VA）、`VideoSourceManagerClient`（VSM）。
-  - 数据访问：MyBatis-Plus + MySQL（复用 `cv_cp`）。
-  - 部署：Docker 多阶段构建 `cv/cp-spring` 镜像，通过 `docker/compose` 与 VA/VSM/MySQL 在同一网络中运行。
-- 兼容性目标：
-  - 与现有 C++ CP 在 HTTP 路由、JSON 结构与错误语义上尽量保持一致（特别是 `controlplane/test/scripts` 下的 Python 回归脚本）。
-  - 提前预留 SSE 与观测能力（Micrometer + Prometheus）。
+本文件梳理 **controlplane-spring（cp-spring） 完整接管 C++ ControlPlane** 后的整体状态，覆盖架构、API 迁移范围、Docker 拓扑与测试结论，作为后续运维与演进的统一上下文。
 
 ---
 
-## 二、cp-spring 项目实现现状
+## 一、总体目标与当前达成度
 
-### 2.1 基础骨架
-
-- `ControlPlaneApplication`：主启动类，启用 `AppProperties` 配置绑定。
-- `AppProperties`：
-  - `cp.va` / `cp.vsm`：gRPC 地址、TLS 证书路径、超时/重试参数。
-  - `cp.restream` / `cp.sfu`：RTSP/WHEP 基础配置。
-  - `cp.security` / `cp.db`：安全与数据库连接信息。
-- Actuator：
-  - 已开放 `/actuator/health` `/actuator/info` `/actuator/metrics` `/actuator/prometheus`。
-
-### 2.2 VA/VSM gRPC 客户端
-
-- `GrpcChannelConfig`：
-  - VA/VSM 通道使用 Netty + TLS/mTLS，优先从 `cp.*.tls` 读取 CA 与 client cert/key。
-  - 通过 `.overrideAuthority("localhost")` 对齐开发证书 SAN。
-  - TLS 失败时回退 plaintext 模式。
-- `VideoAnalyzerClient`：
-  - 封装 VA 核心 RPC：`SubscribePipeline/UnsubscribePipeline/ApplyPipeline/Drain/ListPipelines/QueryRuntime/RemovePipeline/HotSwapModel/SetEngine`。
-  - 超时从 `cp.va.timeout-ms` 注入；所有方法使用 `@CircuitBreaker(name="va")`。
-- `VideoSourceManagerClient`：
-  - 封装 VSM RPC：`Attach/Detach/Update(GetHealth)/WatchState`。
-  - unary 调用从 `cp.vsm.timeout-ms` 读取 deadline（默认 500ms，可按环境调大），避免在 VSM 不可用时拖垮 HTTP 请求，同时兼顾在真实 VA/VSM 环境下的稳定性。
-
-### 2.3 HTTP/API 层
-
-- 订阅与系统信息：
-  - `/api/subscriptions`（POST/GET/DELETE）：与 Python 脚本对齐，支持 query + JSON 混合传参，ETag/304，以及 demo SSE `/api/subscriptions/{id}/events`。
-  - `/api/system/info`：返回 `restream.rtsp_base`，经 Caffeine 缓存（TTL 5s）。
-- 源管理：
-  - `/api/sources:attach|:detach|:enable|:disable`：
-    - 直接调用 VSM gRPC Attach/Detach/Update。
-    - 源列表 `/api/sources` 通过 VSM `GetHealth` 构建，不再维护本地 `SourceItem` 状态。
-  - SSE：`/api/sources/watch_sse` 使用 `WatchState` 流输出 `event: state`，满足 `check_cp_sources_watch_sse.py`。
-- 控制与 VA Runtime：
-  - `/api/control/apply_pipeline/remove_pipeline/hotswap/drain/set_engine/pipelines` 通过 `ControlService` 调用 VA gRPC，实现管线控制与引擎配置。
-  - `/api/va/runtime` 返回 VA 当前 provider/gpu_active/io_binding/device_binding。
-- 全局异常处理：
-  - `GlobalExceptionHandler` 将 `StatusRuntimeException` 映射为 HTTP 400/404/409/503/500，并设置 `code/msg`。
+- 目标：用 cp-spring 完全替代 C++ 版 ControlPlane，对前端、Agent 与脚本透明，C++ CP 仅作为可选回退，不再承载生产流量。
+- 达成度：
+  - cp-spring 已在 Docker 中以 `cv/cp-spring:latest` 运行并暴露 `18080`，是唯一对外 CP 入口。
+  - C++ `cp` 容器保留但不暴露端口，不再被 web 或 agent 依赖。
+  - `controlplane/test/scripts` 下的关键 Python 回归脚本全部在 cp-spring 下 PASS。
+  - web 前端与 Agent 均通过环境变量指向 cp-spring。
 
 ---
 
-## 三、VSM 行为与当前限制
+## 二、架构与部署拓扑（Docker 视角）
 
-- VSM 服务：
-  - Docker 镜像 `cv/vsm:latest`，在 7070 提供 gRPC SourceControl、7071 提供 HTTP health。
-  - 内置 `SourceController` 使用 `FfmpegRtspReader`（在无 OpenCV 的情况下为 stub，不真正拉 RTSP）。
-  - gRPC 服务在 `GrpcServer` 中通过 TLS 启动，CA 与 server cert 从 `video-source-manager/config/certs` 提供。
-- 当前观察：
-  - cp-spring → VSM gRPC Attach 在 500ms 内经常返回 `DEADLINE_EXCEEDED`，导致 `/api/sources:attach` 返回 500，Python 脚本判断为 `backend not available (VSM)` 并 SKIP；
-  - 源列表 `/api/sources` 已改为依赖 VSM `GetHealth`，不存在本地 SourceItem 偏差，但前提是 Attach 调用至少成功一次。
-
----
-
-## 四、测试现状（controlplane/test/scripts）
-
-- 已稳定 PASS：
-  - `check_cp_system_info.py`：验证 `restream.rtsp_base`。
-  - `check_cp_json_negative.py`：多处 JSON 负向用例（subscriptions/sources/control/drain）。
-  - `check_cp_min_api_once.py`：已将 profile 从 `p1` 调整为 VA 存在的 `det_720p`，在 cp-spring + VA 配置下 PASS。
-  - `check_cp_sse_placeholder.py`：`/api/subscriptions/demo-id/events` 返回 501。
-  - `check_cp_sse_watch.py`：设 `CP_TEST_PROFILE=det_720p` 时，SSE 事件流 PASS。
-  - `check_cp_sources_watch_sse.py`：`/api/sources/watch_sse` SSE STATS PASS。
-- 受 VSM 状态影响而 SKIP：
-  - `check_cp_sources_attach_detach.py`、`check_cp_sources_enable_disable.py`：在 VSM gRPC Attach/Update 报错或超时时，按约定打印 `SKIP: backend not available (VSM)`。
+- 技术栈：Spring Boot 3.1.x + Java 21 + Maven。
+- gRPC 通道：
+  - `VideoAnalyzerClient`：通过 `CP_VA_GRPC_ADDR=va:50051` 调用 VA `AnalyzerControl` 服务，封装订阅、管线控制、Repo 管理与转换等 RPC。
+  - `VideoSourceManagerClient`：通过 `CP_VSM_GRPC_ADDR=vsm:7070` 调用 VSM `SourceControl` 服务，封装 Attach/Detach/Update/GetHealth/WatchState。
+- 数据层：
+  - 使用 MyBatis-Plus 访问 MySQL `cv_cp`，实体包括 `sources/pipelines/graphs/models/train_jobs/events/logs` 等。
+- Docker compose 拓扑：
+  - `cp-spring`：暴露 `18080:18080`，环境中配置 VA/VSM/DB 地址；healthcheck 使用 `/api/system/info`。
+  - `web`：依赖 `cp-spring`，通过 `VITE_API_BASE=http://cp-spring:18080` 和 `VITE_CP_BASE_URL=http://cp-spring:18080` 访问 CP。
+  - `agent`：使用 `AGENT_CP_BASE_URL=http://cp-spring:18080` 调用 `/api/agent/threads/{id}/invoke`。
+  - `cp`（C++）：仍构建但不暴露端口，仅在内部网络中存在，作为回退/对比工具。
 
 ---
 
-## 五、后续工作方向（与 ROADMAP 对应的要点）
+## 三、API 迁移覆盖范围
 
-1. **Phase E（TE3/TE4）**：补全缓存层行为，系统性验证冷启动/异常场景下 DB + 缓存的一致性。
-2. **Phase F（TF1–TF4）**：接入 Spring Security、Micrometer 指标与 Prometheus/Grafana 仪表盘，增加审计日志。
-3. **Phase G（TG1–TG4）**：扩充单元/集成测试，设计 C++ CP 与 Spring CP 并行灰度方案与回滚预案。
+### 3.1 核心业务接口
 
-以上内容作为 cp-spring 与 VA/VSM 集成的当前事实基础，ROADMAP 将在此基础上拆解里程碑与阶段计划。 
+- 系统与配置：
+  - `/api/system/info`：返回 `restream.rtsp_base` 等基础信息（Caffeine 缓存）。
+  - `/api/models`：从 DB 读取模型元数据，结构兼容 C++ CP。
+  - `/api/pipelines`：通过 `PipelineReadService` 列出管线。
+  - `/api/graphs`：通过 `GraphReadService` 列出图配置，供 GUI 选择。
+
+- 订阅与源管理：
+  - `/api/subscriptions`（POST/GET/DELETE）与 `/api/subscriptions/{id}/events` SSE：支持 query+JSON 混合、ETag/304、`demo-id` 501 占位、`CP_FAKE_WATCH` 模式。
+  - `/api/sources:attach|:detach|:enable|:disable`、`/api/sources`、`/api/sources/watch_sse`：完全通过 VSM gRPC 实现，与 Python 脚本行为契合。
+
+- 控制与编排：
+  - `/api/control/apply_pipeline/apply_pipelines/drain/remove_pipeline/hotswap/set_engine/pipelines`：封装 VA 控制 RPC。
+  - `/api/orch/attach_apply/detach_remove/health`：编排端点；`attach_apply` 支持仅传 `source_id` 时基于 `cp.restream.rtsp_base` 拼 RTSP URI。
+
+### 3.2 Repo 与训练管理
+
+- Repo 管理：
+  - `/api/repo/load/unload/poll/remove/upload/add/list/config`：经 gRPC 调 VA 的 RepoLoad/Unload/Poll/List/GetConfig/SaveConfig/PutFile/RemoveModel。
+  - `/api/repo/convert_upload/convert/cancel/convert/events`：封装 VA RepoConvertUpload/Cancel/Stream，用于 ONNX → TensorRT 转换与进度观察。
+
+- 训练管理：
+  - `/api/train/start/status/list/deploy/artifacts/artifacts/download`：通过 `CP_TRAINER_BASE_URL` 代理 trainer 服务；`/api/train/start` 会在返回中补写 `data.events="/api/train/events?id=..."`。
+  - `/api/train/events`：SSE 代理训练事件流；trainer 不可用时返回 `TRAINER_UNAVAILABLE` 事件。
+
+### 3.3 Agent、调试与观测
+
+- Agent 代理：
+  - `/api/agent/threads/{threadId}/invoke`：从 `cp.agent.base-url` 或 `CP_AGENT_BASE_URL` 解析 Agent 地址，将请求代理到 `/v1/agent/threads/{id}/invoke`，在 body `messages` 前插入 system 提示，并通过 `AuditLogger` 记录 request/response/error。
+
+- 调试接口：
+  - `/api/_debug/echo`：回显 `path`。
+  - `/api/_debug/sub/get`：返回 `{id, found=false}` 的占位结构。
+  - `/api/_debug/db`：返回 `{"errors":{last_error?}, "cfg":{driver,host,port,user,schema,connected}}`，用于快速检查 DB 连接状态。
+
+- 观测与兼容性：
+  - `/metrics`：`MetricsAliasController` 使用 `RestTemplate` 代理到 `/actuator/prometheus`，为前端与 Prometheus 保留 C++ CP 的 `/metrics` 路径。
+  - `/api/events/stream`：通用 SSE 心跳流。
+  - `/api/events/recent`：返回 `{"code":"OK","data":{"items":[],"next":0}}` 的占位结构，保持前端兼容。
+
+---
+
+## 四、测试与验证
+
+- 在 `CP_BASE_URL=http://127.0.0.1:18080` 环境下，以下脚本已在 cp-spring 上稳定 PASS：
+  - `check_cp_system_info.py`
+  - `check_cp_min_api_once.py`
+  - `check_cp_json_negative.py`
+  - `check_cp_sse_placeholder.py`
+  - `check_cp_sse_watch.py`（`CP_TEST_PROFILE=det_720p`）
+  - `check_cp_sources_watch_sse.py`
+  - `check_cp_sources_attach_detach.py`
+  - `check_cp_sources_enable_disable.py`
+  - `check_cp_orch_attach_apply.py`
+  - `check_cp_orch_detach_remove.py`
+  - `check_cp_orch_health.py`
+- `/metrics` 返回 Prometheus 文本；`/api/events/recent` 返回空列表；前端 `dataProvider.metrics*` 与 `eventsRecent` 仍可正常工作。
+
+---
+
+## 五、C++ CP 下线状态与后续建议
+
+- C++ CP 已从以下路径上退出生产：
+  - 不再对外暴露端口；
+  - `web` 与 `agent` 仅依赖 cp-spring；
+  - 所有脚本与配置均以 cp-spring 为主。
+- 后续建议：
+  - 如无遗留系统直接访问 `cp:18080`，可在 compose 中移除 `cp` 服务，或单独维护一个仅用于对比/回归的 C++ CP 环境。
+  - 所有新特性与调试接口优先在 cp-spring 中实现，并同步更新本 CONTEXT 与 ROADMAP。

@@ -103,6 +103,95 @@ public class ControlController {
     return ResponseEntity.status(HttpStatus.ACCEPTED).body(CpResponse.accepted(null));
   }
 
+  @PostMapping("/apply_pipelines")
+  public ResponseEntity<CpResponse<Map<String, Object>>> applyPipelines(
+      @RequestBody(required = false) String body) {
+    String corrId = java.util.UUID.randomUUID().toString();
+    if (body == null || body.isBlank()) {
+      AuditLogger.log(
+          "control.apply_pipelines.reject",
+          corrId,
+          java.util.Map.of("reason", "empty body"));
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(CpResponse.invalidArgument("INVALID_JSON"));
+    }
+    JsonNode root;
+    try {
+      root = objectMapper.readTree(body);
+    } catch (JsonProcessingException ex) {
+      AuditLogger.log(
+          "control.apply_pipelines.reject",
+          corrId,
+          java.util.Map.of("reason", "invalid json"));
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(CpResponse.invalidArgument("INVALID_JSON"));
+    }
+    JsonNode itemsNode = null;
+    if (root.isArray()) {
+      itemsNode = root;
+    } else if (root.has("items") && root.get("items").isArray()) {
+      itemsNode = root.get("items");
+    }
+    if (itemsNode == null) {
+      AuditLogger.log(
+          "control.apply_pipelines.reject",
+          corrId,
+          java.util.Map.of("reason", "items array required"));
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(CpResponse.invalidArgument("items array required"));
+    }
+    int total = 0;
+    int accepted = 0;
+    for (JsonNode item : itemsNode) {
+      if (!item.isObject()) {
+        continue;
+      }
+      total++;
+      String pipelineName = null;
+      if (item.has("pipeline_name") && item.get("pipeline_name").isTextual()) {
+        pipelineName = item.get("pipeline_name").asText();
+      } else if (item.has("name") && item.get("name").isTextual()) {
+        pipelineName = item.get("name").asText();
+      }
+      JsonNode spec = item.has("spec") && item.get("spec").isObject()
+          ? item.get("spec")
+          : item;
+      String yamlPath = null;
+      String graphId = null;
+      String serialized = null;
+      if (spec.has("yaml_path") && spec.get("yaml_path").isTextual()) {
+        yamlPath = spec.get("yaml_path").asText();
+      }
+      if (spec.has("graph_id") && spec.get("graph_id").isTextual()) {
+        graphId = spec.get("graph_id").asText();
+      }
+      if (spec.has("serialized") && spec.get("serialized").isTextual()) {
+        serialized = spec.get("serialized").asText();
+      }
+      if (pipelineName == null
+          || (yamlPath == null && graphId == null && serialized == null)) {
+        continue;
+      }
+      controlService.applyPipeline(pipelineName, yamlPath, graphId, serialized);
+      accepted++;
+    }
+    if (accepted == 0) {
+      AuditLogger.log(
+          "control.apply_pipelines.reject",
+          corrId,
+          java.util.Map.of("reason", "no valid items", "total", total));
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(CpResponse.invalidArgument(null));
+    }
+    Map<String, Object> data = new HashMap<>();
+    data.put("accepted", accepted);
+    AuditLogger.log(
+        "control.apply_pipelines.response",
+        corrId,
+        java.util.Map.of("total", total, "accepted", accepted));
+    return ResponseEntity.status(HttpStatus.ACCEPTED).body(CpResponse.accepted(data));
+  }
+
   @PostMapping("/drain")
   public ResponseEntity<CpResponse<Void>> drain(@RequestBody(required = false) String body) {
     String corrId = java.util.UUID.randomUUID().toString();

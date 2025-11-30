@@ -1,75 +1,51 @@
 # 路线图总览
 
-- **M0：Spring 版 CP 骨架可用**
-  - 目标：`controlplane-spring` 能在 Docker 环境下编译、启动，并通过核心 Python 脚本的最小回归（system.info / subscriptions / sources 列表 / VA runtime）。
+- **M0：cp-spring 完全接管控制平面**
+  - 目标：在 Docker 环境下由 cp-spring 独立承担所有 CP 职责，对前端、Agent 与测试脚本透明，C++ CP 不再承载任何线上流量。
   - 验收标准：
-    - `cp-spring` 容器健康 (`/api/system/info` 200)；
-    - `check_cp_system_info.py`、`check_cp_min_api_once.py`、`check_cp_json_negative.py`、`check_cp_sse_placeholder.py`、`check_cp_sse_watch.py`、`check_cp_sources_watch_sse.py` 全部 PASS 或约定内 SKIP；
-    - `/api/va/runtime` 能返回 VA 真实状态。
-
-- **M1：控制与源管理链路对齐 C++ CP**
-  - 目标：Spring 版 CP 在 `/api/control/*` 与 `/api/sources*` 上实现与 C++ 版等价的行为（语义上兼容，性能可稍弱），并在 VA/VSM 正常可用时通过大部分 controlplane 脚本。
+    - 所有 `controlplane/test/scripts/check_cp_*` 在 cp-spring 下通过。
+    - web-front 与 agent 仅依赖 `cp-spring:18080`，docker-compose 中不再暴露 C++ CP 端口。
+    - `/metrics`、`/api/events/*`、Repo / Train / Agent / `_debug/db` 等接口行为与历史预期兼容。
+- **M1：观测、安全与可运维性增强**
+  - 目标：在 cp-spring 上构建比 C++ CP 更强的观测、审计和安全能力，支撑长时间稳定运行。
   - 验收标准：
-    - `/api/control/apply_pipeline/remove_pipeline/hotswap/drain/set_engine/pipelines` 端到端跑通与 VA 的交互；
-    - `/api/sources:attach|:detach|:enable|:disable` / `/api/sources` 与 VSM 行为一致，脚本不再因为 cp-spring 本身而 FAIL；
-    - SSE `/api/subscriptions/{id}/events` / `/api/sources/watch_sse` 在具备下游条件时能持续输出事件。
-
-- **M2：观测、安全与灰度发布完善**
-  - 目标：Spring 版 CP 拥有稳定的观测、安全与灰度切换能力，允许与 C++ CP 并行部署并可安全回滚。
+    - Prometheus 中覆盖 HTTP/gRPC/SSE/Repo/Train 等关键指标，Grafana 提供 cp-spring 总览大盘。
+    - 关键控制接口支持可配置 Bearer Token 鉴权，并有结构化审计日志。
+    - 发生 VA/VSM/DB/Trainer 故障时，能够通过指标与日志快速定位并恢复。
+- **M2：长期演进与 C++ CP 彻底下线**
+  - 目标：在保持兼容的前提下简化架构、清理遗留依赖，并为后续特性预留空间。
   - 验收标准：
-    - Micrometer + Prometheus 暴露控制平面关键指标，Grafana 仪表盘覆盖主要视图；
-    - Spring Security（或等价机制）保护敏感控制接口；
-    - 完成 C++ CP / cp-spring 的灰度切换与回滚演练，有文档化预案。
+    - docker-compose 与发布文档中删除 C++ CP 作为依赖，仅保留独立“对比环境”（可选）。
+    - 所有新特性在 cp-spring 上统一实现，旧 C++ 代码库标记为只读/归档。
+    - CONTEXT / ROADMAP / memo 中有完整的迁移与下线记录。
 
 # 分阶段计划（表格）
 
 | 阶段 | 关键交付物 | 技术要点 | 风险/缓解 | 指标门槛 |
 |---|---|---|---|---|
-| Phase A–B | cp-spring 骨架 + gRPC 通道 | Spring Boot 3.1 + Java 21；Netty gRPC 通道；TLS/mTLS 与 SAN override | TLS 证书/SAN 不匹配 → 对齐 CA & 使用 `overrideAuthority("localhost")` | cp-spring 可在 Docker 启停；`/api/system/info` 200 |
-| Phase C | VA/VSM gRPC 客户端封装 | `VideoAnalyzerClient` / `VideoSourceManagerClient`；Resilience4j circuit breaker；合理 deadline | 下游超时导致 HTTP 卡死 → 设置 per-call deadline + 全局异常映射 | VA `Subscribe/Apply/Drain/ListPipelines/QueryRuntime`、VSM `Attach/Update/GetHealth/WatchState` 在健康环境可用 |
-| Phase D | REST + SSE 对齐 CP 语义 | `/api/subscriptions`、`/api/sources*`、`/api/control/*`、`/api/va/runtime`；`/api/subscriptions/{id}/events` / `/api/sources/watch_sse` | 与旧 CP 行为差异 → 以 Python 脚本为契约回归；必要时保留小差异并文档化 | 当前所有 `controlplane/test/scripts` 在 VA/VSM 就绪时 PASS 或仅因后端缺失而 SKIP |
-| Phase E | 缓存层与一致性 | Caffeine 缓存 `system.info` / sources；必要时引入 Redis；冷启动/异常场景一致性验证 | 缓存陈旧/双写不一致 → 严格 TTL + 写路径显式失效；在异常场景关闭缓存 | `/api/system/info`、`/api/sources` 在缓存开启时无错误，且与 C++ CP 行为一致 |
-| Phase F | 安全与观测 | Spring Security / Token 校验；Micrometer 自定义指标；Prometheus/Grafana 仪表盘 | 权限模型不一致 → 先复刻 C++ CP 的 token 行为，再逐步增强 | 对关键接口的 QPS/latency/error-rate 在 Grafana 中可见，安全策略通过测试脚本验证 |
-| Phase G | 测试与灰度/回滚 | Spring Boot 单测/集成测试；灰度切换策略；回滚预案 | 灰度中出现行为分裂 → 前后端/Agent 层支持按环境切换目标 CP；统一日志与指标标签 | 至少一套成功的灰度演练记录（包括切换和回滚），并有可复用脚本/文档 |
+| Phase A | cp-spring 基础骨架与配置（已完成） | Spring Boot 3.x、AppProperties、Actuator、CI 构建 | 依赖版本漂移 → 锁定 BOM 与 JDK 版本 | `/actuator/health` 稳定 200 |
+| Phase B | VA/VSM gRPC 客户端与 Repo/Train 接口（已完成） | Netty gRPC、Resilience4j、Trainer 反向代理 | TLS/地址配置错误 → 统一 env key 并提供明文回退 | gRPC error rate < 1% |
+| Phase C | HTTP/SSE API 迁移与兼容层（已完成） | 订阅、源管理、控制、编排、Repo、Train、Agent 代理、`_debug/db`、`/metrics` alias | 行为偏差 → 以 Python 脚本和前端为契约对齐 | 所有 CP 回归脚本通过 |
+| Phase D | 观测、安全与审计增强（进行中） | Micrometer 指标、Grafana 看板、Bearer Token、审计日志 | 指标/告警缺失 → 以 C++ CP 指标表为基线补齐 | 关键接口都有 QPS/延迟/错误率曲线 |
+| Phase E | 清理 C++ CP 依赖与文档收束（待办） | 更新 docker-compose、部署手册、CONTEXT/ROADMAP | 误删仍被使用的端点 → 全仓搜引用并观察访问日志 | 线上无直接访问 C++ CP 的流量 |
 
 # 依赖矩阵
 
-- **内部依赖：**
-  - `video-analyzer`：`AnalyzerControl` gRPC 服务（订阅/管线/引擎/模型仓库）。
-  - `video-source-manager`：`SourceControl` gRPC 服务（源 attach/detach/update/health/watch）。
-  - `controlplane/test/scripts`：Python/PowerShell 回归脚本，是 HTTP 语义的事实契约。
-  - `db/` + `cv_cp`：MySQL 控制平面配置库，用于 models/pipelines/graphs/train_jobs。
-
-- **外部依赖（库/服务/硬件）：**
-  - Spring Boot 3.1.x、Java 21、Maven（Docker 内构建工具链）。
-  - gRPC Java（1.77），protobuf（4.33.1）。
-  - Resilience4j、Caffeine、Micrometer + Prometheus。
-  - Docker 环境（VA/VSM/mysql/minio/pgvector 等 Service 依赖）。
-  - GPU 资源（主要由 VA 使用；cp-spring 本身只需 CPU）。
+- 内部依赖：
+  - `video-analyzer`（VA）：AnalyzerControl gRPC、Repo/模型转换能力。
+  - `video-source-manager`（VSM）：源管理 gRPC 与 RTSP 拉流。
+  - `model-trainer`：训练 HTTP + SSE 事件流。
+  - MySQL `cv_cp`：pipelines / graphs / models / train_jobs 等配置与状态。
+  - `web-frontend`、`agent`：通过 `VITE_CP_BASE_URL` / `AGENT_CP_BASE_URL` 访问 cp-spring。
+- 外部依赖（库/服务/硬件）：
+  - Spring Boot、Micrometer、Resilience4j、MyBatis-Plus。
+  - Prometheus / Grafana、Docker / docker compose。
+  - GPU 服务器、RTSP 摄像头与网络。
 
 # 风险清单（Top-5）
 
-- **VA/VSM gRPC 不稳定 → HTTP 层频繁 5xx**
-  - 触发条件：TLS 配置错误、SAN 不匹配、网络抖动、VA/VSM 重启。
-  - 监控信号：`StatusRuntimeException` 日志、Resilience4j 断路器状态、Micrometer error-rate。
-  - 预案：为所有下游调用设置合理 deadline；在 cp-spring 中对某些操作（如 sources 列表）提供降级路径或 SKIP 语义。
-
-- **cp-spring 与 C++ CP 行为偏差**
-  - 触发条件：JSON 字段名/错误码不一致；缺失某些边缘路由或特殊处理。
-  - 监控信号：控制平面脚本 FAIL；前端/Agent 逻辑针对 cp-spring 报错。
-  - 预案：以脚本为准进行约束回归；必要时保留兼容层（如 profile/source_id 的映射），并在文档中明确差异。
-
-- **缓存带来的数据陈旧或一致性问题**
-  - 触发条件：源状态或 system.info 频繁变动；缓存 TTL 设置过长或失效策略不当。
-  - 监控信号：用户报告“列表不刷新”；日志中的 cache miss/hit 比例异常。
-  - 预案：将缓存应用限制在只读、非关键路径；写操作后显式失效；异常场景可动态关闭缓存。
-
-- **安全配置与旧 CP 不一致**
-  - 触发条件：引入 Spring Security 后未同步 C++ CP 的 token/权限语义。
-  - 监控信号：脚本或前端请求被 401/403 拒绝；日志中出现大量认证失败。
-  - 预案：先以“兼容旧 CP”模式启用安全（如仅校验已有 token），再逐步增强；为敏感接口添加 feature flag 控制。
-
-- **灰度切换期间前端/Agent 行为分裂**
-  - 触发条件：部分请求指向 C++ CP，部分指向 cp-spring，而两者行为尚未完全统一。
-  - 监控信号：相同操作在不同会话中结果不一致；日志中出现混合来源的异常。
-  - 预案：设计明确的切换策略（基于域名/路径/配置开关）；在灰度期只开放读操作到 cp-spring，写操作仍走 C++ CP；若发现问题，按预案快速回滚流量。 
+- 行为与历史不一致 → 前端或脚本异常 → 日志出现大量 4xx/5xx → 以契约测试（Python 脚本 + UI 冒烟）覆盖所有关键接口，变更前后必跑一轮对比。
+- gRPC/Trainer 链路不稳定 → Repo/Train 操作失败 → 指标中 error rate 或重试暴增 → 为 VA/VSM/Trainer 配置超时与重试上限，必要时降级关闭相关功能入口。
+- 观测缺口 → 故障仅能通过用户反馈发现 → 无相关指标或告警 → 先为核心路径补齐指标，再在 Grafana 中配置基本告警阈值。
+- 配置漂移或环境不一致 → 不同环境行为不一 → 同一接口在 dev/stage/prod 返回差异结构 → 关键配置集中在 env 与 `application-*.yml` 并在 CONTEXT 中记录，定期比对。
+- C++ CP 依赖未完全清理 → 某些脚本/工具仍访问旧地址 → 访问日志中出现对 C++ CP 的请求 → 在完全下线前通过日志与全仓 grep 确认引用，必要时为少量遗留调用提供短期兼容跳转。

@@ -138,6 +138,60 @@ public class SseController {
     }
   }
 
+  @GetMapping(
+      path = "/repo/convert/events",
+      produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+  public void repoConvertEvents(
+      @org.springframework.web.bind.annotation.RequestParam("job") String jobId,
+      HttpServletResponse response) throws IOException {
+    response.setStatus(HttpServletResponse.SC_OK);
+    response.setContentType(MediaType.TEXT_EVENT_STREAM_VALUE);
+    response.setHeader("Cache-Control", "no-cache");
+    response.setHeader("Connection", "keep-alive");
+    PrintWriter writer = response.getWriter();
+    writer.flush();
+
+    sseConnections.incrementAndGet();
+    try {
+      java.util.Iterator<va.v1.RepoConvertEvent> it = vaClient.repoConvertStream(jobId);
+      long lastKeep = System.currentTimeMillis();
+      while (it.hasNext()) {
+        va.v1.RepoConvertEvent ev = it.next();
+        String kind = ev.getKind();
+        String phase = ev.getPhase();
+        float progress = ev.getProgress();
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"phase\":\"").append(escape(phase)).append("\"");
+        if (progress > 0.0f) {
+          sb.append(",\"progress\":").append(progress);
+        }
+        sb.append("}");
+        String eventName = "state";
+        if ("done".equalsIgnoreCase(kind)) {
+          eventName = "done";
+        }
+        writer.write("event: " + eventName + "\n");
+        writer.write("data:" + sb + "\n\n");
+        writer.flush();
+        lastKeep = System.currentTimeMillis();
+        if ("done".equalsIgnoreCase(kind)) {
+          break;
+        }
+        if (System.currentTimeMillis() - lastKeep > 8000L) {
+          writer.write(": keepalive\n\n");
+          writer.flush();
+          lastKeep = System.currentTimeMillis();
+        }
+      }
+    } catch (Exception ex) {
+      writer.write("event: error\n");
+      writer.write("data:{\"code\":\"VA_STREAM_ERROR\"}\n\n");
+      writer.flush();
+    } finally {
+      sseConnections.decrementAndGet();
+    }
+  }
+
   private boolean isFakeWatchEnabled() {
     String v = System.getenv("CP_FAKE_WATCH");
     if (v == null) {

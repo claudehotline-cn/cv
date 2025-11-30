@@ -13,6 +13,7 @@ public class AppProperties {
   private SfuProperties sfu;
   private SecurityProperties security;
   private DbProperties db;
+  private AgentProperties agent;
 
   public VaProperties getVa() {
     return va;
@@ -60,6 +61,14 @@ public class AppProperties {
 
   public void setDb(DbProperties db) {
     this.db = db;
+  }
+
+  public AgentProperties getAgent() {
+    return agent;
+  }
+
+  public void setAgent(AgentProperties agent) {
+    this.agent = agent;
   }
 
   public static class VaProperties {
@@ -350,6 +359,18 @@ public class AppProperties {
 
     public void setTimeoutMs(int timeoutMs) {
       this.timeoutMs = timeoutMs;
+    }
+  }
+
+  public static class AgentProperties {
+    private String baseUrl;
+
+    public String getBaseUrl() {
+      return baseUrl;
+    }
+
+    public void setBaseUrl(String baseUrl) {
+      this.baseUrl = baseUrl;
     }
   }
 }

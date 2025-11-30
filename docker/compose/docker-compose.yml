@@ -209,7 +209,7 @@ services:
     image: cv/web:latest
     container_name: web
     depends_on:
-      cp:
+      cp-spring:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -311,7 +311,7 @@ services:
     container_name: agent
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - AGENT_CP_BASE_URL=http://cp:18080
+      - AGENT_CP_BASE_URL=http://cp-spring:18080
       - AGENT_OPENAI_MODEL=qwen3:8b
       - AGENT_LLM_PROVIDER=ollama
       - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
@@ -321,7 +321,7 @@ services:
       - AGENT_RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434
       - AGENT_RAG_OLLAMA_MODEL=bge-m3:567m
     depends_on:
-      cp:
+      cp-spring:
         condition: service_healthy
     ports:
       - "18081:8000"
