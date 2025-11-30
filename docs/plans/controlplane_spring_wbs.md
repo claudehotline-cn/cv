@@ -47,4 +47,12 @@
 - 7.1 单元与集成测试：围绕领域服务、gRPC 客户端、REST/SSE 接口编写 Spring Boot Test，保证核心路径的回归能力。
 - 7.2 复用现有 Python 测试脚本：对新 Spring CP 使用 `controlplane/test/scripts` 下既有用例跑通主要场景，验证行为兼容性。
 - 7.3 灰度发布方案：规划“C++ CP 与 Spring CP 并行运行”的阶段，按路由或流量比例切换前端/Agent/VA 调用目标。
+  - 7.3.1 端口与域名规划：C++ CP 暴露 `cp:18080`，Spring CP 暴露 `cp-spring:18080`，通过 Nginx/Ingress 或前端配置选择目标。
+  - 7.3.2 前端灰度：在 web-frontend 中增加 CP 基础 URL 开关（如 `CP_BASE_URL`），支持按环境变量或用户组切换到 cp-spring。
+  - 7.3.3 Agent 灰度：在 Agent 配置中引入 `AGENT_CP_BASE_URL`，允许仅对部分线程/用户将调用指向 cp-spring，其余保持 C++ CP。
+  - 7.3.4 分阶段放量：从内网/开发账号开始（0%→10%→50%→100%），每一步都通过 Python 脚本与 Grafana 仪表盘验证错误率和延迟。
 - 7.4 回滚预案：定义在 Spring CP 出现问题时快速切回 C++ CP 的操作步骤与配置开关，确保线上风险可控。
+  - 7.4.1 配置级回滚：将前端与 Agent 的 `CP_BASE_URL/AGENT_CP_BASE_URL` 从 cp-spring 改回 C++ CP，对应配置存入 Git 并有一键脚本。
+  - 7.4.2 流量级回滚：如通过反向代理实现灰度，则保留独立 Upstream，支持将 cp-spring 权重直接调为 0，将所有流量切回 C++ CP。
+  - 7.4.3 数据兼容性检查：在灰度前确认 cp-spring 仅执行读操作或幂等写操作，必要时提供只读模式开关，避免回滚后出现状态分裂。
+  - 7.4.4 演练与记录：在测试环境中至少完成一次完整“切换→观察→回滚”的演练，并在 docs/memo 中记录步骤与耗时，为生产变更提供 SOP。

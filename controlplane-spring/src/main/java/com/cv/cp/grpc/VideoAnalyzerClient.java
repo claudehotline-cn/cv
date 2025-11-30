@@ -5,6 +5,7 @@ import com.google.protobuf.ByteString;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -37,11 +38,15 @@ public class VideoAnalyzerClient {
 
   private final ManagedChannel channel;
   private final AppProperties properties;
+  private final MeterRegistry meterRegistry;
 
   public VideoAnalyzerClient(
-      @Qualifier("vaChannel") ManagedChannel channel, AppProperties properties) {
+      @Qualifier("vaChannel") ManagedChannel channel,
+      AppProperties properties,
+      MeterRegistry meterRegistry) {
     this.channel = channel;
     this.properties = properties;
+    this.meterRegistry = meterRegistry;
   }
 
   private AnalyzerControlBlockingStub blockingStub() {
@@ -65,15 +70,25 @@ public class VideoAnalyzerClient {
     if (modelId != null) {
       builder.setModelId(modelId);
     }
-    SubscribePipelineReply reply = blockingStub().subscribePipeline(builder.build());
-    return reply.getSubscriptionId();
+    return meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "SubscribePipeline")
+        .record(
+            () -> {
+              SubscribePipelineReply reply = blockingStub().subscribePipeline(builder.build());
+              return reply.getSubscriptionId();
+            });
   }
 
   @CircuitBreaker(name = "va")
   public void unsubscribePipeline(String streamId, String profile) throws StatusRuntimeException {
     UnsubscribePipelineRequest request =
         UnsubscribePipelineRequest.newBuilder().setStreamId(streamId).setProfile(profile).build();
-    UnsubscribePipelineReply unused = blockingStub().unsubscribePipeline(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "UnsubscribePipeline")
+        .record(
+            () -> {
+              UnsubscribePipelineReply unused = blockingStub().unsubscribePipeline(request);
+            });
   }
 
   @CircuitBreaker(name = "va")
@@ -92,33 +107,54 @@ public class VideoAnalyzerClient {
     }
     ApplyPipelineRequest request =
         ApplyPipelineRequest.newBuilder().setPipelineName(pipelineName).setSpec(spec).build();
-    ApplyPipelineReply unused = blockingStub().applyPipeline(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "ApplyPipeline")
+        .record(
+            () -> {
+              ApplyPipelineReply unused = blockingStub().applyPipeline(request);
+            });
   }
 
   @CircuitBreaker(name = "va")
   public void drainPipeline(String pipelineName, int timeoutSec) throws StatusRuntimeException {
     DrainRequest request =
         DrainRequest.newBuilder().setPipelineName(pipelineName).setTimeoutSec(timeoutSec).build();
-    DrainReply unused = blockingStub().drain(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "Drain")
+        .record(
+            () -> {
+              DrainReply unused = blockingStub().drain(request);
+            });
   }
 
   @CircuitBreaker(name = "va")
   public ListPipelinesReply listPipelines() throws StatusRuntimeException {
     ListPipelinesRequest request = ListPipelinesRequest.newBuilder().build();
-    return blockingStub().listPipelines(request);
+    return meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "ListPipelines")
+        .record(
+            () -> blockingStub().listPipelines(request));
   }
 
   @CircuitBreaker(name = "va")
   public QueryRuntimeReply queryRuntime() throws StatusRuntimeException {
     QueryRuntimeRequest request = QueryRuntimeRequest.newBuilder().build();
-    return blockingStub().queryRuntime(request);
+    return meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "QueryRuntime")
+        .record(
+            () -> blockingStub().queryRuntime(request));
   }
 
   @CircuitBreaker(name = "va")
   public void removePipeline(String pipelineName) throws StatusRuntimeException {
     RemovePipelineRequest request =
         RemovePipelineRequest.newBuilder().setPipelineName(pipelineName).build();
-    RemovePipelineReply unused = blockingStub().removePipeline(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "RemovePipeline")
+        .record(
+            () -> {
+              RemovePipelineReply unused = blockingStub().removePipeline(request);
+            });
   }
 
   @CircuitBreaker(name = "va")
@@ -130,7 +166,12 @@ public class VideoAnalyzerClient {
             .setNode(node)
             .setModelUri(modelUri)
             .build();
-    HotSwapModelReply unused = blockingStub().hotSwapModel(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "HotSwapModel")
+        .record(
+            () -> {
+              HotSwapModelReply unused = blockingStub().hotSwapModel(request);
+            });
   }
 
   @CircuitBreaker(name = "va")
@@ -159,7 +200,12 @@ public class VideoAnalyzerClient {
       }
     }
     SetEngineRequest request = builder.build();
-    SetEngineReply unused = blockingStub().setEngine(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "SetEngine")
+        .record(
+            () -> {
+              SetEngineReply unused = blockingStub().setEngine(request);
+            });
   }
 
   @CircuitBreaker(name = "va")

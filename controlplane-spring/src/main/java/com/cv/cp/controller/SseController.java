@@ -4,16 +4,16 @@ import com.cv.cp.grpc.VideoSourceManagerClient;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Iterator;
-import java.util.concurrent.CompletableFuture;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import vsm.v1.WatchStateReply;
 import vsm.v1.SourceItem;
 
@@ -30,21 +30,14 @@ public class SseController {
   }
 
   @GetMapping(
-      path = "/subscriptions/{id}/events",
-      produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-  public SseEmitter subscriptionEvents(@PathVariable("id") String id) {
-    SseEmitter emitter = new SseEmitter(15_000L);
-    CompletableFuture.runAsync(
-        () -> {
-          try {
-            String payload = "{\"id\":\"" + id + "\",\"phase\":\"ready\"}";
-            emitter.send(SseEmitter.event().name("phase").data(payload));
-            emitter.complete();
-          } catch (IOException ex) {
-            emitter.completeWithError(ex);
-          }
-        });
-    return emitter;
+      path = "/subscriptions/{id}/events")
+  public ResponseEntity<CpResponse<Void>> subscriptionEvents(@PathVariable("id") String id) {
+    // 当前阶段 SSE 订阅事件仍为占位实现，对应脚本 check_cp_sse_placeholder.py 期待 501。
+    CpResponse<Void> body = new CpResponse<>();
+    body.setCode("NOT_IMPLEMENTED");
+    body.setMsg("subscription events SSE not implemented");
+    body.setData(null);
+    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(body);
   }
 
   @GetMapping(

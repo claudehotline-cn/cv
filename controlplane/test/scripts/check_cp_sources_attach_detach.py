@@ -3,6 +3,7 @@ import json, sys, os, time
 from urllib import request, parse, error
 
 BASE = os.environ.get("CP_BASE_URL", "http://127.0.0.1:8080")
+RTSP_URI = os.environ.get("CP_TEST_RTSP_URI", "rtsp://127.0.0.1:8554/camera_01")
 
 def http(method, path, data=None, headers=None):
     url = BASE + path
@@ -27,7 +28,7 @@ def http(method, path, data=None, headers=None):
 def main():
     aid = "cp_test_a1"
     # attach (prefer querystring to match naive parser)
-    qs = "/api/sources:attach?attach_id="+aid+"&source_uri="+parse.quote("rtsp://127.0.0.1:8554/camera_01")+"&pipeline_id=p1"
+    qs = "/api/sources:attach?attach_id="+aid+"&source_uri="+parse.quote(RTSP_URI)+"&pipeline_id=p1"
     code, h, b = http("POST", qs)
     if code in (500,502,503):
         print("SKIP: backend not available (VSM)")

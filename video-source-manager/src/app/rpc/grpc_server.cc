@@ -3,6 +3,7 @@
 #include "app/config.hpp"
 #include <fstream>
 #include <cstdlib>
+#include <iostream>
 
 #if defined(USE_GRPC)
 #include <grpcpp/grpcpp.h>
@@ -22,6 +23,9 @@ struct GrpcServer::Impl {
     explicit ServiceImpl(vsm::SourceController& c) : ctl_(c) {}
     ::grpc::Status Attach(::grpc::ServerContext*, const vsm::v1::AttachRequest* req,
                           vsm::v1::AttachReply* resp) override {
+      std::cout << "[vsm.grpc] Attach begin id=" << req->attach_id()
+                << " uri=" << req->source_uri()
+                << " pipeline=" << req->pipeline_id() << std::endl;
       std::unordered_map<std::string,std::string> opts(req->options().begin(), req->options().end());
       std::string err; bool ok = ctl_.Attach(req->attach_id(), req->source_uri(), req->pipeline_id(), opts, &err);
       if (ok) { resp->set_accepted(true); return ::grpc::Status::OK; }
@@ -32,7 +36,10 @@ struct GrpcServer::Impl {
         case ErrorCode::INVALID_ARG: return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, err);
         case ErrorCode::ALREADY_EXISTS: return ::grpc::Status(::grpc::StatusCode::ALREADY_EXISTS, err);
         case ErrorCode::UNAVAILABLE: return ::grpc::Status(::grpc::StatusCode::UNAVAILABLE, err);
-        default: return ::grpc::Status(::grpc::StatusCode::INTERNAL, err);
+        default:
+          std::cout << "[vsm.grpc] Attach error id=" << req->attach_id()
+                    << " msg=" << err << std::endl;
+          return ::grpc::Status(::grpc::StatusCode::INTERNAL, err);
       }
     }
     ::grpc::Status Detach(::grpc::ServerContext*, const vsm::v1::DetachRequest* req,

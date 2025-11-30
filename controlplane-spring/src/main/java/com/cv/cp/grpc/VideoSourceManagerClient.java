@@ -1,8 +1,10 @@
 package com.cv.cp.grpc;
 
+import com.cv.cp.config.AppProperties;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -24,14 +26,25 @@ import vsm.v1.WatchStateRequest;
 public class VideoSourceManagerClient {
 
   private final ManagedChannel channel;
+  private final AppProperties properties;
+  private final MeterRegistry meterRegistry;
 
-  public VideoSourceManagerClient(@Qualifier("vsmChannel") ManagedChannel channel) {
+  public VideoSourceManagerClient(
+      @Qualifier("vsmChannel") ManagedChannel channel,
+      AppProperties properties,
+      MeterRegistry meterRegistry) {
     this.channel = channel;
+    this.properties = properties;
+    this.meterRegistry = meterRegistry;
   }
 
   private SourceControlBlockingStub unaryStub() {
+    int timeoutMs =
+        properties.getVsm() != null && properties.getVsm().getTimeoutMs() > 0
+            ? properties.getVsm().getTimeoutMs()
+            : 500;
     return SourceControlGrpc.newBlockingStub(channel)
-        .withDeadlineAfter(500, TimeUnit.MILLISECONDS);
+        .withDeadlineAfter(timeoutMs, TimeUnit.MILLISECONDS);
   }
 
   private SourceControlBlockingStub streamingStub() {
@@ -48,13 +61,23 @@ public class VideoSourceManagerClient {
             .setSourceUri(sourceUri)
             .setPipelineId(pipelineId == null ? "" : pipelineId)
             .build();
-    AttachReply unused = unaryStub().attach(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "vsm", "method", "Attach")
+        .record(
+            () -> {
+              AttachReply unused = unaryStub().attach(request);
+            });
   }
 
   @CircuitBreaker(name = "vsm")
   public void detach(String attachId) throws StatusRuntimeException {
     DetachRequest request = DetachRequest.newBuilder().setAttachId(attachId).build();
-    DetachReply unused = unaryStub().detach(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "vsm", "method", "Detach")
+        .record(
+            () -> {
+              DetachReply unused = unaryStub().detach(request);
+            });
   }
 
   @CircuitBreaker(name = "vsm")
@@ -64,13 +87,21 @@ public class VideoSourceManagerClient {
             .setAttachId(attachId)
             .putOptions("enabled", enabled ? "true" : "false")
             .build();
-    UpdateReply unused = unaryStub().update(request);
+    meterRegistry
+        .timer("cp.grpc.client", "svc", "vsm", "method", "Update")
+        .record(
+            () -> {
+              UpdateReply unused = unaryStub().update(request);
+            });
   }
 
   @CircuitBreaker(name = "vsm")
   public GetHealthReply getHealth() throws StatusRuntimeException {
     GetHealthRequest request = GetHealthRequest.newBuilder().build();
-    return unaryStub().getHealth(request);
+    return meterRegistry
+        .timer("cp.grpc.client", "svc", "vsm", "method", "GetHealth")
+        .record(
+            () -> unaryStub().getHealth(request));
   }
 
   /**
@@ -80,6 +111,8 @@ public class VideoSourceManagerClient {
   public Iterator<WatchStateReply> watchState(int intervalMs) throws StatusRuntimeException {
     WatchStateRequest request =
         WatchStateRequest.newBuilder().setIntervalMs(intervalMs).build();
+    meterRegistry.counter("cp.grpc.client.stream.open", "svc", "vsm", "method", "WatchState")
+        .increment();
     return streamingStub().watchState(request);
   }
 }

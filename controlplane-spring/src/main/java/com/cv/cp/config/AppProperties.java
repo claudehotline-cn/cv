@@ -103,6 +103,7 @@ public class AppProperties {
 
   public static class VsmProperties {
     private String grpcAddr;
+    private int timeoutMs;
     private int retries;
     private TlsProperties tls;
 
@@ -112,6 +113,14 @@ public class AppProperties {
 
     public void setGrpcAddr(String grpcAddr) {
       this.grpcAddr = grpcAddr;
+    }
+
+    public int getTimeoutMs() {
+      return timeoutMs;
+    }
+
+    public void setTimeoutMs(int timeoutMs) {
+      this.timeoutMs = timeoutMs;
     }
 
     public int getRetries() {
@@ -344,4 +353,3 @@ public class AppProperties {
     }
   }
 }
-

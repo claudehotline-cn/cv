@@ -40,7 +40,9 @@ public class SourceServiceImpl implements SourceService {
             s -> {
               SourceItem item = new SourceItem();
               item.setAttachId(s.getAttachId());
-              item.setSourceUri(s.getAttachId().isEmpty() ? null : s.getAttachId());
+              // 当前 GetHealth.StreamStat proto 未暴露 source_uri 字段，这里仅维护 attachId 与 enabled，
+              // 具体 sourceUri 由上层缓存层在无数据时合成默认 camera_01。
+              item.setSourceUri(null);
               item.setEnabled("Ready".equalsIgnoreCase(s.getPhase()));
               out.add(item);
             });

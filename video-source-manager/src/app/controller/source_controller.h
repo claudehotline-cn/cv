@@ -58,6 +58,9 @@ public:
   bool SaveRegistry(std::string* err);
 
 private:
+  bool LoadRegistryNoLock(std::string* err);
+  bool SaveRegistryNoLock(std::string* err);
+
   struct Session {
     std::unique_ptr<FfmpegRtspReader> reader;
     std::shared_ptr<ToAnalyzerLink>   sink;

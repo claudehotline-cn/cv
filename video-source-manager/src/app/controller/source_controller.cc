@@ -27,6 +27,7 @@ private:
 } // namespace vsm
 #endif
 #include "adapters/outputs/to_analyzer_link.h"
+#include <iostream>
 
 namespace vsm {
 
@@ -37,6 +38,8 @@ bool SourceController::Attach(const std::string& attach_id, const std::string& s
                               const std::string& pipeline_id, const std::unordered_map<std::string,std::string>& options,
                               std::string* err) {
   std::lock_guard<std::mutex> lk(mu_);
+  std::cout << "[vsm] Attach request id=" << attach_id << " uri=" << source_uri
+            << " pipeline=" << pipeline_id << std::endl;
   if (sessions_.count(attach_id)) { if (err) *err = "already exists"; return false; }
   auto sess = std::make_unique<Session>();
   sess->reader = std::make_unique<FfmpegRtspReader>(source_uri);
@@ -44,13 +47,18 @@ bool SourceController::Attach(const std::string& attach_id, const std::string& s
   // Accept options.profile/model_id as desired hints for VA
   if (auto it = options.find("profile"); it != options.end()) sess->profile = it->second;
   if (auto it2 = options.find("model_id"); it2 != options.end()) sess->model_id = it2->second;
-  if (!sess->reader->Start()) { if (err) *err = "reader start failed"; return false; }
+  if (!sess->reader->Start()) {
+    if (err) *err = "reader start failed";
+    std::cout << "[vsm] Attach failed: reader start failed for id=" << attach_id << std::endl;
+    return false;
+  }
   sess->running.store(true);
   sessions_.emplace(attach_id, std::move(sess));
   // Persist registry best-effort
-  try { SaveRegistry(nullptr); } catch (...) {}
+  try { SaveRegistryNoLock(nullptr); } catch (...) {}
   revision_.fetch_add(1);
   cv_.notify_all();
+  std::cout << "[vsm] Attach success id=" << attach_id << std::endl;
   return true;
 }
 
@@ -60,7 +68,7 @@ bool SourceController::Detach(const std::string& attach_id, std::string* /*err*/
   if (it == sessions_.end()) return false;
   if (it->second && it->second->reader) it->second->reader->Stop();
   sessions_.erase(it);
-  try { SaveRegistry(nullptr); } catch (...) {}
+  try { SaveRegistryNoLock(nullptr); } catch (...) {}
   revision_.fetch_add(1);
   cv_.notify_all();
   return true;
@@ -69,6 +77,7 @@ bool SourceController::Detach(const std::string& attach_id, std::string* /*err*/
 std::vector<StreamStat> SourceController::Collect() {
   std::vector<StreamStat> out;
   std::lock_guard<std::mutex> lk(mu_);
+  std::cout << "[vsm] Collect sessions=" << sessions_.size() << std::endl;
   for (auto& kv : sessions_) {
     StreamStat st; st.attach_id = kv.first; st.phase = (kv.second && kv.second->running)? "Ready" : "Stopped";
     if (kv.second && kv.second->reader) {
@@ -99,7 +108,7 @@ bool SourceController::Update(const std::string& attach_id,
   auto& sess = it->second;
   if (auto p = options.find("profile"); p != options.end()) sess->profile = p->second;
   if (auto m = options.find("model_id"); m != options.end()) sess->model_id = m->second;
-  try { SaveRegistry(nullptr); } catch (...) {}
+  try { SaveRegistryNoLock(nullptr); } catch (...) {}
   revision_.fetch_add(1);
   cv_.notify_all();
   return true;
@@ -107,6 +116,10 @@ bool SourceController::Update(const std::string& attach_id,
 
 bool SourceController::LoadRegistry(std::string* err) {
   std::lock_guard<std::mutex> lk(mu_);
+  return LoadRegistryNoLock(err);
+}
+
+bool SourceController::LoadRegistryNoLock(std::string* err) {
   FILE* f = nullptr;
 #ifdef _WIN32
   fopen_s(&f, registry_path_.c_str(), "rb");
@@ -139,6 +152,10 @@ bool SourceController::LoadRegistry(std::string* err) {
 
 bool SourceController::SaveRegistry(std::string* err) {
   std::lock_guard<std::mutex> lk(mu_);
+  return SaveRegistryNoLock(err);
+}
+
+bool SourceController::SaveRegistryNoLock(std::string* err) {
   FILE* f = nullptr;
 #ifdef _WIN32
   fopen_s(&f, registry_path_.c_str(), "wb");

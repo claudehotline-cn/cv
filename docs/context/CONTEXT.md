@@ -1,99 +1,95 @@
-# CONTEXT（2025-11-19，Triton + ReID 动态 Batch + OCSORT GPU 内核对齐）
+# CONTEXT（2025-11-26，controlplane Spring 重写与 VA/VSM 集成现状）
 
-本文件汇总当前围绕 **VA In-Process Triton 集成、ReID 动态 Batch、OCSORT 多阶段 GPU 追踪与日志/内存行为** 的关键结论，作为后续开发与调试的统一上下文。
-
----
-
-## 一、整体链路与运行环境
-
-- **GPU 与编译目标**
-  - 实际 GPU：RTX 5090D，运行时支持较新架构。
-  - VA GPU 镜像当前编译参数：`-DCMAKE_CUDA_ARCHITECTURES="120"`，NVCC 目标为 `compute_120,sm_120`。
-  - 由于目标架构为 sm_120，`track_ocsort_kernels.cu` 中的 CUDA 核必须严格控制 per‑thread 本地内存使用（否则易触发 `cudaErrorInvalidValue`）。
-
-- **Graph：`analyzer_multistage_ocsort` 汇总**
-  - pre → det（Triton YOLOv12x）→ nms → roi.batch.cuda → reid（Triton ReID）→ track.ocsort（OCSORT）→ overlay.cuda。
-  - 检测模型：`yolov12x`（Triton In-Process），输入 `images`，输出 `output0`，GPU I/O。
-  - ReID 模型：`reid_passvitb`（Triton In-Process），输入 `input`，[N,3,384,128]，输出 `feat`，[N,1536]，GPU 输出。
+本文件汇总当前围绕 **controlplane Spring Boot 重写（cp-spring）** 的关键实现、配置与测试结论，作为后续路线图与排障的统一上下文。
 
 ---
 
-## 二、In-Process Triton 与 ReID 动态 Batch（GPU I/O）
+## 一、总体目标与架构轮廓
 
-- **TritonInprocModelSession 行为**
-  - 代码：`video-analyzer/src/analyzer/triton_inproc_session.cpp/.hpp`。
-  - 支持 `use_gpu_input` 与 `use_gpu_output`：
-    - `use_gpu_input=true` 时，`AppendInputData` 使用 `TRITONSERVER_MEMORY_GPU` + device_id；
-    - 通过 `cudaPointerGetAttributes` 校验输入指针所属 device，并在必要时 `cudaSetDevice`。
-  - ReID 路径：
-    - `roi.batch.cuda` 生成 `[N,3,384,128]` 的 GPU tensor `tensor:roi_batch`；
-    - ReID 节点 `NodeModel` 以 `in="tensor:roi_batch"` 调用 `session_->run`；
-    - Triton In-Process 使用 `triton_input: "input"`、`triton_outputs: "feat"`、`triton_gpu_output: "1"`，由 ResponseAllocator 将特征输出直接写入 GPU buffer，形成 `tensor:reid: [N,1536](gpu)`。
-
-- **错误排查与现状**
-  - 早期 ReID 路径出现 `input: failed to perform CUDA copy: invalid argument`：
-    - 原因：Triton 内部对 GPU 输入执行 CUDA 拷贝时，认为指针/大小/设备不合法。
-    - 通过日志增强与 config 检查，确认 MinIO 中 `reid_passvitb/config.pbtxt` 与 plan 一致后，该错误已在当前环境下消失。
-  - 当前状态：
-    - ReID 节点输出 log 形如 `out0..2=Nx1536(gpu)`，`feat_dim=1536` 成功进入 OCSORT GPU 核心；
-    - Triton In-Process 对 YOLO 与 ReID 的 GPU 输入/输出行为稳定。
+- 将现有 C++ ControlPlane 的 HTTP/SSE 行为，逐步重写为独立的 `controlplane-spring` 子项目：
+  - 技术栈：Spring Boot 3.1.x + Java 21 + Maven。
+  - gRPC 客户端：`VideoAnalyzerClient`（VA）、`VideoSourceManagerClient`（VSM）。
+  - 数据访问：MyBatis-Plus + MySQL（复用 `cv_cp`）。
+  - 部署：Docker 多阶段构建 `cv/cp-spring` 镜像，通过 `docker/compose` 与 VA/VSM/MySQL 在同一网络中运行。
+- 兼容性目标：
+  - 与现有 C++ CP 在 HTTP 路由、JSON 结构与错误语义上尽量保持一致（特别是 `controlplane/test/scripts` 下的 Python 回归脚本）。
+  - 提前预留 SSE 与观测能力（Micrometer + Prometheus）。
 
 ---
 
-## 三、OCSORT GPU 内核与多阶段匹配对齐
+## 二、cp-spring 项目实现现状
 
-- **核心文件：**
-  - `video-analyzer/src/analyzer/cuda/track_ocsort_kernels.hpp/.cu`（GPU 内核接口与实现）。
-  - `video-analyzer/src/analyzer/multistage/node_track_ocsort.hpp/.cpp`（多阶段 OC-SORT 节点）。
+### 2.1 基础骨架
 
-- **OcsortGpuState**
-  - 设备侧持久化结构：
-    - 轨迹几何：`d_track_boxes[T,4]`；
-    - 轨迹特征：`d_track_feats[T,D]`、`d_track_has_feat[T]`；
-    - 生命周期：`d_track_ids[T]`、`d_track_missed[T]`、`d_track_age[T]`、`d_track_hit_streak[T]`；
-    - 运动与 Kalman 状态：`d_track_vel[T,2]`、`d_kf_x[T,7]`、`d_kf_P[T,7*7]`；
-    - 计数：`d_track_count[1]`、`d_next_id[1]`。
+- `ControlPlaneApplication`：主启动类，启用 `AppProperties` 配置绑定。
+- `AppProperties`：
+  - `cp.va` / `cp.vsm`：gRPC 地址、TLS 证书路径、超时/重试参数。
+  - `cp.restream` / `cp.sfu`：RTSP/WHEP 基础配置。
+  - `cp.security` / `cp.db`：安全与数据库连接信息。
+- Actuator：
+  - 已开放 `/actuator/health` `/actuator/info` `/actuator/metrics` `/actuator/prometheus`。
 
-- **k_ocsort_step 设计**
-  - 单线程 kernel（`<<<1,1>>>`），核心步骤：
-    1. 统一 `age++`；基于 `d_kf_x/d_kf_P` 预测轨迹框；  
-    2. Stage1：对高分检测（score > det_thresh）构造 IoU+ReID+角度综合代价矩阵，调用匈牙利（GPU 版 `hungarian_minimize_device`）进行全局匹配；  
-    3. Stage2：对未匹配轨迹与未匹配高分检测再做 IoU 匈牙利补充；  
-    4. Stage2.BYTE：若开启 `use_byte`，对剩余轨迹与低分检测（low_score_thresh < s <= det_thresh）做 BYTE 风格 IoU 匈牙利匹配；  
-    5. Stage3：对仍未更新轨迹与剩余高分检测做 IoU 匈牙利 rematch；  
-    6. 为未匹配检测新建轨迹（初始化 Kalman/feat/age/hit_streak/missed）；  
-    7. 对未匹配轨迹 `missed++`、`hit_streak=0`，按 `missed>max_missed` 压缩数组。
-  - 为适配 sm_120 编译目标，内核内设置上限：
-    - `MAX_TRACKS = 128`，`MAX_DETS = 128`，`MAX_N = 128`；
-    - 所有本地矩阵（`cost_buf`、`cost_ext` 等）基于上述上限构建，以控制 per‑thread 栈消耗；在实际场景（T≈36、N≈10~20）远未触及该上限。
+### 2.2 VA/VSM gRPC 客户端
 
-- **NodeTrackOcsort 行为**
-  - `open()`：若 `USE_CUDA` 且存在 `ctx.gpu_pool && ctx.stream`，默认启用 `use_gpu_`，准备 GPU 状态。
-  - `process()`：
-    - 若 `use_gpu_` 为 true：
-      - 调用 `process_gpu()`，成功则标记 `path=gpu` 并完全走 GPU 追踪；
-      - 若失败（通过日志标记原因，如 `gpu_path_no_input_gpu_rois` / `gpu_state_alloc_failed` / `ocsort_match_and_update_failed err=X`），清理 `gpu_rois["track"]` 后回退 `process_cpu()`；
-    - 若未启用 GPU，则直接走 CPU Deep OC-SORT 实现。
-  - GPU 成功路径：只输出 `p.gpu_rois[out_rois_key_]`，由 `overlay.cuda(use_gpu_rois=1)` 直接消费；CPU `rois["track"]` 被清空。
+- `GrpcChannelConfig`：
+  - VA/VSM 通道使用 Netty + TLS/mTLS，优先从 `cp.*.tls` 读取 CA 与 client cert/key。
+  - 通过 `.overrideAuthority("localhost")` 对齐开发证书 SAN。
+  - TLS 失败时回退 plaintext 模式。
+- `VideoAnalyzerClient`：
+  - 封装 VA 核心 RPC：`SubscribePipeline/UnsubscribePipeline/ApplyPipeline/Drain/ListPipelines/QueryRuntime/RemovePipeline/HotSwapModel/SetEngine`。
+  - 超时从 `cp.va.timeout-ms` 注入；所有方法使用 `@CircuitBreaker(name="va")`。
+- `VideoSourceManagerClient`：
+  - 封装 VSM RPC：`Attach/Detach/Update(GetHealth)/WatchState`。
+  - unary 调用从 `cp.vsm.timeout-ms` 读取 deadline（默认 500ms，可按环境调大），避免在 VSM 不可用时拖垮 HTTP 请求，同时兼顾在真实 VA/VSM 环境下的稳定性。
 
----
+### 2.3 HTTP/API 层
 
-## 四、当前状态与已知约束
-
-- 已实现：
-  - ReID & YOLO 节点通过 Triton In-Process 完成 GPU 输入 / 输出；
-  - `roi.batch.cuda` 在 GPU 上生成 ReID 所需 `[N,3,384,128]` 输入；
-  - OCSORT GPU 路径具备多阶段匈牙利与 BYTE 低分阶段，并在 sm_120 目标编译下稳定运行（`ms.track path=gpu` 无错误）。
-
-- 已知约束：
-  - 由于 CMake 目标架构设置为 `120`，必须控制内核本地内存；如需充分利用 RTX 5090D 的资源，建议后续在 CI/镜像中增加更高架构（如 `sm_89`）的编译配置；
-  - CPU Deep OC-SORT 实现仍然是“行为金标准”，GPU 内核在复杂场景下的轨迹一致性仍需对比和迭代细化（特别是 CMC 与观测历史的影响）。
+- 订阅与系统信息：
+  - `/api/subscriptions`（POST/GET/DELETE）：与 Python 脚本对齐，支持 query + JSON 混合传参，ETag/304，以及 demo SSE `/api/subscriptions/{id}/events`。
+  - `/api/system/info`：返回 `restream.rtsp_base`，经 Caffeine 缓存（TTL 5s）。
+- 源管理：
+  - `/api/sources:attach|:detach|:enable|:disable`：
+    - 直接调用 VSM gRPC Attach/Detach/Update。
+    - 源列表 `/api/sources` 通过 VSM `GetHealth` 构建，不再维护本地 `SourceItem` 状态。
+  - SSE：`/api/sources/watch_sse` 使用 `WatchState` 流输出 `event: state`，满足 `check_cp_sources_watch_sse.py`。
+- 控制与 VA Runtime：
+  - `/api/control/apply_pipeline/remove_pipeline/hotswap/drain/set_engine/pipelines` 通过 `ControlService` 调用 VA gRPC，实现管线控制与引擎配置。
+  - `/api/va/runtime` 返回 VA 当前 provider/gpu_active/io_binding/device_binding。
+- 全局异常处理：
+  - `GlobalExceptionHandler` 将 `StatusRuntimeException` 映射为 HTTP 400/404/409/503/500，并设置 `code/msg`。
 
 ---
 
-## 五、后续验证重点
+## 三、VSM 行为与当前限制
 
-1. 在静态/简单场景下对比 CPU/GPU 轨迹 ID 与框位置，确认匹配一致性；
-2. 在遮挡、交叉、短时丢检的场景中观察 BYTE 阶段和 Stage3 的实际效果；
-3. 长时间运行下验证 `OcsortGpuState` 与 GpuBufferPool 不出现显存泄漏或碎片问题；
-4. 梳理 ReID/OCSORT/Triton 相关配置在 MinIO 与本地 Graph 中的一致性，确保后续变更可追溯。 
+- VSM 服务：
+  - Docker 镜像 `cv/vsm:latest`，在 7070 提供 gRPC SourceControl、7071 提供 HTTP health。
+  - 内置 `SourceController` 使用 `FfmpegRtspReader`（在无 OpenCV 的情况下为 stub，不真正拉 RTSP）。
+  - gRPC 服务在 `GrpcServer` 中通过 TLS 启动，CA 与 server cert 从 `video-source-manager/config/certs` 提供。
+- 当前观察：
+  - cp-spring → VSM gRPC Attach 在 500ms 内经常返回 `DEADLINE_EXCEEDED`，导致 `/api/sources:attach` 返回 500，Python 脚本判断为 `backend not available (VSM)` 并 SKIP；
+  - 源列表 `/api/sources` 已改为依赖 VSM `GetHealth`，不存在本地 SourceItem 偏差，但前提是 Attach 调用至少成功一次。
+
+---
+
+## 四、测试现状（controlplane/test/scripts）
+
+- 已稳定 PASS：
+  - `check_cp_system_info.py`：验证 `restream.rtsp_base`。
+  - `check_cp_json_negative.py`：多处 JSON 负向用例（subscriptions/sources/control/drain）。
+  - `check_cp_min_api_once.py`：已将 profile 从 `p1` 调整为 VA 存在的 `det_720p`，在 cp-spring + VA 配置下 PASS。
+  - `check_cp_sse_placeholder.py`：`/api/subscriptions/demo-id/events` 返回 501。
+  - `check_cp_sse_watch.py`：设 `CP_TEST_PROFILE=det_720p` 时，SSE 事件流 PASS。
+  - `check_cp_sources_watch_sse.py`：`/api/sources/watch_sse` SSE STATS PASS。
+- 受 VSM 状态影响而 SKIP：
+  - `check_cp_sources_attach_detach.py`、`check_cp_sources_enable_disable.py`：在 VSM gRPC Attach/Update 报错或超时时，按约定打印 `SKIP: backend not available (VSM)`。
+
+---
+
+## 五、后续工作方向（与 ROADMAP 对应的要点）
+
+1. **Phase E（TE3/TE4）**：补全缓存层行为，系统性验证冷启动/异常场景下 DB + 缓存的一致性。
+2. **Phase F（TF1–TF4）**：接入 Spring Security、Micrometer 指标与 Prometheus/Grafana 仪表盘，增加审计日志。
+3. **Phase G（TG1–TG4）**：扩充单元/集成测试，设计 C++ CP 与 Spring CP 并行灰度方案与回滚预案。
+
+以上内容作为 cp-spring 与 VA/VSM 集成的当前事实基础，ROADMAP 将在此基础上拆解里程碑与阶段计划。 
