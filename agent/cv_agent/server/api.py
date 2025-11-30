@@ -483,6 +483,7 @@ async def _invoke_stategraph_agent(
         cv_context={},
         plan=[],
         pending_tools=[],
+        task=None,
         last_control_op=None,
         last_control_mode=None,
         last_control_result=None,

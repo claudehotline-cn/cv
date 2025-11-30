@@ -29,6 +29,9 @@ class AgentState(BaseModel):
     # 待执行的工具调用队列（保留扩展位，当前实现中暂未使用）
     pending_tools: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # 当前任务/路由意图（例如 pipeline/debug/model），由 Router 节点判定
+    task: Optional[str] = Field(default=None)
+
     # 可选：最近一次控制操作摘要（便于在前端/审计中快速展示）
     last_control_op: Optional[str] = Field(default=None)
     last_control_mode: Optional[str] = Field(default=None)
@@ -36,4 +39,3 @@ class AgentState(BaseModel):
 
 
 __all__ = ["AgentState"]
-

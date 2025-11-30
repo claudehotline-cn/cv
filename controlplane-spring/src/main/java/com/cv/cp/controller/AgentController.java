@@ -74,6 +74,26 @@ public class AgentController {
     Map<String, Object> auditPayload = new HashMap<>();
     auditPayload.put("thread_id", threadId);
     auditPayload.put("agent_base", base);
+    // 尝试从请求体中提取 control 字段，补充审计信息（op/mode/confirm）
+    if (patchedBody != null && !patchedBody.isBlank()) {
+      try {
+        JsonNode root = objectMapper.readTree(patchedBody);
+        JsonNode control = root.get("control");
+        if (control != null && control.isObject()) {
+          if (control.hasNonNull("op")) {
+            auditPayload.put("op", control.get("op").asText());
+          }
+          if (control.hasNonNull("mode")) {
+            auditPayload.put("mode", control.get("mode").asText());
+          }
+          if (control.has("confirm")) {
+            auditPayload.put("confirm", control.get("confirm").asBoolean(false));
+          }
+        }
+      } catch (Exception ex) {
+        // ignore parse errors for audit enrichment
+      }
+    }
     AuditLogger.log("agent.invoke.request", corrId, auditPayload);
 
     HttpHeaders headers = new HttpHeaders();
@@ -86,6 +106,27 @@ public class AgentController {
       ResponseEntity<String> resp = restTemplate.exchange(req, String.class);
       Map<String, Object> respAudit = new HashMap<>();
       respAudit.put("status", resp.getStatusCode().value());
+      // 尝试从响应中提取 control_result 关键字段，用于审计
+      String respBody = resp.getBody();
+      if (respBody != null && !respBody.isBlank()) {
+        try {
+          JsonNode root = objectMapper.readTree(respBody);
+          JsonNode cr = root.get("control_result");
+          if (cr != null && cr.isObject()) {
+            if (cr.hasNonNull("op")) {
+              respAudit.put("op", cr.get("op").asText());
+            }
+            if (cr.hasNonNull("mode")) {
+              respAudit.put("mode", cr.get("mode").asText());
+            }
+            if (cr.has("success")) {
+              respAudit.put("success", cr.get("success").asBoolean(false));
+            }
+          }
+        } catch (Exception ex) {
+          // ignore parse errors for audit enrichment
+        }
+      }
       AuditLogger.log("agent.invoke.response", corrId, respAudit);
       return ResponseEntity.status(resp.getStatusCode()).body(resp.getBody());
     } catch (RestClientException ex) {
@@ -114,4 +155,3 @@ public class AgentController {
     return "http://" + hostPort + prefix;
   }
 }
-
