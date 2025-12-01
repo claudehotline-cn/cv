@@ -77,6 +77,34 @@
       </el-card>
     </el-col>
   </el-row>
+
+  <el-row :gutter="16" style="margin-top:12px">
+    <el-col :span="24">
+      <el-card>
+        <template #header>
+          <div class="card-header">
+            <span>Agent 控制操作统计（当前进程内摘要）</span>
+            <el-button size="small" @click="loadAgentStats">刷新</el-button>
+          </div>
+        </template>
+        <div v-if="!agentStats.length" class="agent-empty">
+          暂无 Agent 控制操作统计，可在 Agent 控制台或 Pipeline 详情页与 Agent 交互后再查看。
+        </div>
+        <el-table
+          v-else
+          :data="agentStats"
+          size="small"
+          border
+          style="width: 100%"
+        >
+          <el-table-column prop="op" label="操作类型" min-width="160" />
+          <el-table-column prop="mode" label="模式" min-width="80" />
+          <el-table-column prop="success_count" label="成功次数" min-width="100" />
+          <el-table-column prop="failure_count" label="失败次数" min-width="100" />
+        </el-table>
+      </el-card>
+    </el-col>
+  </el-row>
 </template>
 
 <script setup lang="ts">
@@ -93,10 +121,22 @@ onUnmounted(()=>{ if(timer) clearInterval(timer) })
 const sys = ref<any>(null)
 async function loadSys(){ try{ const r:any = await getSystemInfo(); sys.value = r?.data || r } catch(e) { sys.value = { error: String(e) } } }
 onMounted(()=>{ loadSys() })
+
+const agentStats = ref<any[]>([])
+async function loadAgentStats(){
+  try{
+    const stats = await http.get<any[]>('/api/agent/stats')
+    agentStats.value = stats
+  }catch(e){
+    agentStats.value = []
+  }
+}
+onMounted(()=>{ loadAgentStats() })
 </script>
 
 <style scoped>
 .card-header{ display:flex; align-items:center; justify-content:space-between; }
 .nav-card{ cursor: pointer; user-select:none }
 .sys-grid{ display:grid; grid-template-columns: repeat(2, minmax(200px, 1fr)); gap:8px; font-size:13px; }
+.agent-empty{ font-size:13px; opacity:.8; }
 </style>

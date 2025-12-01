@@ -2,6 +2,8 @@ package com.cv.cp.service.impl;
 
 import com.cv.cp.grpc.VideoAnalyzerClient;
 import com.cv.cp.service.ControlService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -13,9 +15,11 @@ import va.v1.PipelineItem;
 public class ControlServiceImpl implements ControlService {
 
   private final VideoAnalyzerClient videoAnalyzerClient;
+  private final ObjectMapper objectMapper;
 
-  public ControlServiceImpl(VideoAnalyzerClient videoAnalyzerClient) {
+  public ControlServiceImpl(VideoAnalyzerClient videoAnalyzerClient, ObjectMapper objectMapper) {
     this.videoAnalyzerClient = videoAnalyzerClient;
+    this.objectMapper = objectMapper;
   }
 
   @Override
@@ -73,5 +77,22 @@ public class ControlServiceImpl implements ControlService {
     }
     return result;
   }
-}
 
+  @Override
+  public Map<String, Object> getPipelineStatus(String pipelineName) {
+    var reply = videoAnalyzerClient.getStatus(pipelineName);
+    Map<String, Object> m = new HashMap<>();
+    m.put("pipeline_name", pipelineName);
+    m.put("phase", reply.getPhase());
+    String metricsJson = reply.getMetricsJson();
+    if (metricsJson != null && !metricsJson.isEmpty()) {
+      try {
+        JsonNode node = objectMapper.readTree(metricsJson);
+        m.put("metrics", node);
+      } catch (Exception ignore) {
+        // ignore invalid metrics_json to keep compatibility
+      }
+    }
+    return m;
+  }
+}

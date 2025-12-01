@@ -122,18 +122,45 @@ def _build_stategraph_agent() -> Any:
         return _copy_state_with(state, messages=msgs, task=task)
 
     def _agent_step(state: AgentState, *, agent_kind: str) -> AgentState:
-        """通用 Agent 节点步骤：调用 LLM，生成一条回复。"""
+        """通用 Agent 节点步骤：调用 LLM，生成一条回复（带一次简单重试）。"""
 
         msgs: List[BaseMessage] = list(state.messages)
         if not msgs:
             # 没有历史消息时不调用模型，直接返回
             return state
 
-        reply = bound_model.invoke(msgs)
-        if not isinstance(reply, BaseMessage):
-            reply = AIMessage(content=str(reply))
-        msgs.append(reply)
+        # 当前不在 Agent 内部注入系统提示，统一由上游控制平面（包括 C++ CP 与 Spring CP）
+        # 在 HTTP 层插入系统角色说明；此处仅透传已有消息。
+        prompt_msgs: List[BaseMessage] = list(msgs)
 
+        # 为兼容部分 LLM 客户端（如 ChatOllama 对消息类型较严格），
+        # 将不属于 Human/System/AI 的消息统一降级为 HumanMessage。
+        normalized: List[BaseMessage] = []
+        for m in prompt_msgs:
+            if isinstance(m, (HumanMessage, SystemMessage, AIMessage)):
+                normalized.append(m)
+            else:
+                content = getattr(m, "content", str(m))
+                normalized.append(HumanMessage(content=str(content)))
+
+        reply: BaseMessage
+        attempt = 0
+        last_error: Exception | None = None
+        while attempt < 2:
+            try:
+                reply = bound_model.invoke(normalized)
+                if not isinstance(reply, BaseMessage):
+                    reply = AIMessage(content=str(reply))
+                break
+            except Exception as exc:  # pragma: no cover - 运行时防御 + 重试
+                last_error = exc
+                attempt += 1
+        else:
+            # 两次尝试均失败时，追加一条错误提示消息
+            error_text = f"调用 LLM 失败：{last_error}" if last_error else "调用 LLM 失败：未知错误"
+            reply = AIMessage(content=error_text)
+
+        msgs.append(reply)
         return _copy_state_with(state, messages=msgs, task=agent_kind)
 
     def pipeline_agent_node(state: AgentState) -> AgentState:
@@ -151,7 +178,7 @@ def _build_stategraph_agent() -> Any:
 
         return _agent_step(state, agent_kind="model")
 
-    def tool_executor_node(state: AgentState) -> AgentState:
+    async def tool_executor_node(state: AgentState) -> AgentState:
         """
         工具执行节点：读取最后一条 AIMessage 中的 tool_calls，并顺序执行对应工具。
 
@@ -188,8 +215,13 @@ def _build_stategraph_agent() -> Any:
                     result = f"Unknown tool: {name}"
                 else:
                     try:
-                        # LangChain 工具统一通过 invoke 调用
-                        result = tool_impl.invoke(args)
+                        # LangChain 工具优先使用异步 ainvoke 调用，以兼容基于
+                        # StructuredTool 封装的 async 函数（如 list_pipelines_tool）；
+                        # 对于仅提供同步接口的工具，则回退到 invoke。
+                        if hasattr(tool_impl, "ainvoke"):
+                            result = await tool_impl.ainvoke(args)  # type: ignore[func-returns-value]
+                        else:
+                            result = tool_impl.invoke(args)  # type: ignore[func-returns-value]
                     except Exception as exc:  # pragma: no cover - 运行时保障
                         result = f"Tool {name} execution error: {exc}"
 

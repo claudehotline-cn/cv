@@ -37,6 +37,20 @@ export interface AgentInvokeResponse {
   message: AgentMessage
   raw_state?: any
   control_result?: AgentControlResult | null
+  agent_data?: {
+    status?: string
+    steps?: any[]
+  } | null
+}
+
+export interface AgentThreadSummary {
+  thread_id: string
+  last_user_message?: string | null
+  last_assistant_message?: string | null
+  last_control_op?: string | null
+  last_control_mode?: string | null
+  last_control_success?: boolean | null
+  updated_at?: string | null
 }
 
 // 通过 CP 代理到 Agent：/api/agent/threads/{thread_id}/invoke
@@ -47,6 +61,13 @@ export const agentApi = {
   ): Promise<AgentInvokeResponse> {
     const path = `/api/agent/threads/${encodeURIComponent(threadId)}/invoke`
     return http.post<AgentInvokeResponse>(path, payload)
+  },
+  async listThreads(): Promise<AgentThreadSummary[]> {
+    return http.get<AgentThreadSummary[]>('/api/agent/threads')
+  },
+  async getThreadSummary(threadId: string): Promise<AgentThreadSummary> {
+    const path = `/api/agent/threads/${encodeURIComponent(threadId)}/summary`
+    return http.get<AgentThreadSummary>(path)
   },
 }
 

@@ -19,6 +19,8 @@ import va.v1.DrainReply;
 import va.v1.DrainRequest;
 import va.v1.HotSwapModelReply;
 import va.v1.HotSwapModelRequest;
+import va.v1.GetStatusReply;
+import va.v1.GetStatusRequest;
 import va.v1.ListPipelinesReply;
 import va.v1.ListPipelinesRequest;
 import va.v1.PipelineItem;
@@ -169,6 +171,16 @@ public class VideoAnalyzerClient {
         .timer("cp.grpc.client", "svc", "va", "method", "QueryRuntime")
         .record(
             () -> blockingStub().queryRuntime(request));
+  }
+
+  @CircuitBreaker(name = "va")
+  public GetStatusReply getStatus(String pipelineName) throws StatusRuntimeException {
+    GetStatusRequest request =
+        GetStatusRequest.newBuilder().setPipelineName(pipelineName).build();
+    return meterRegistry
+        .timer("cp.grpc.client", "svc", "va", "method", "GetStatus")
+        .record(
+            () -> blockingStub().getStatus(request));
   }
 
   @CircuitBreaker(name = "va")

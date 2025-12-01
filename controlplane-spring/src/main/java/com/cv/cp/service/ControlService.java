@@ -16,5 +16,6 @@ public interface ControlService {
   void setEngine(Map<String, Object> engineOptions);
 
   List<Map<String, Object>> listPipelines();
-}
 
+  Map<String, Object> getPipelineStatus(String pipelineName);
+}

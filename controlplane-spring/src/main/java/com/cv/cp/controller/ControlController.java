@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -26,6 +27,35 @@ public class ControlController {
   public ControlController(ObjectMapper objectMapper, ControlService controlService) {
     this.objectMapper = objectMapper;
     this.controlService = controlService;
+  }
+
+  @GetMapping("/status")
+  public ResponseEntity<CpResponse<Map<String, Object>>> getStatus(
+      @RequestParam(name = "pipeline_name", required = false) String pipelineName,
+      @RequestParam(name = "name", required = false) String altName) {
+    String corrId = java.util.UUID.randomUUID().toString();
+    String effectiveName = pipelineName;
+    if (effectiveName == null || effectiveName.isBlank()) {
+      effectiveName = altName;
+    }
+    if (effectiveName == null || effectiveName.isBlank()) {
+      AuditLogger.log(
+          "control.status.reject",
+          corrId,
+          java.util.Map.of("reason", "missing pipeline_name"));
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(CpResponse.invalidArgument(null));
+    }
+    AuditLogger.log(
+        "control.status.request",
+        corrId,
+        java.util.Map.of("pipeline_name", effectiveName));
+    Map<String, Object> data = controlService.getPipelineStatus(effectiveName);
+    AuditLogger.log(
+        "control.status.response",
+        corrId,
+        java.util.Map.of("pipeline_name", effectiveName, "status", 200));
+    return ResponseEntity.ok(CpResponse.ok(data));
   }
 
   @PostMapping("/apply_pipeline")

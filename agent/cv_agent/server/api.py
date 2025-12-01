@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
+from langgraph.errors import GraphRecursionError
 
 from ..config import get_settings
 from ..graph import (
@@ -14,6 +15,13 @@ from ..graph import (
     build_state_from_tuples,
     get_control_plane_agent,
     get_stategraph_agent,
+)
+from ..store.thread_summary import (
+    get_agent_stats,
+    get_thread_summary,
+    list_thread_summaries,
+    update_summary_for_control,
+    update_summary_for_messages,
 )
 from ..tools.pipelines import (
     _fetch_pipelines,
@@ -115,6 +123,10 @@ class AgentInvokeResponse(BaseModel):
     control_result: Optional[ControlResult] = Field(
         default=None,
         description="高危控制操作（delete/hotswap/drain）的结构化结果",
+    )
+    agent_data: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="结构化的 Agent 步骤信息（thinking/tool/response），用于前端可视化。",
     )
 
 
@@ -451,6 +463,81 @@ def _to_lc_messages(messages: List[Message]) -> List[BaseMessage]:
     return out
 
 
+def _build_agent_data_from_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    从 LangGraph state 中提取结构化步骤信息，近似 openAgent 的 agent_data.steps 结构。
+
+    - type: user / thinking / tool / response
+    - content: 简要文本
+    - tool_name/tool_call_id: 对于工具调用步骤的附加信息
+    """
+
+    raw_messages: List[Any] = state.get("messages", []) or []
+    steps: List[Dict[str, Any]] = []
+    step_id = 0
+
+    def add_step(**kwargs: Any) -> None:
+        nonlocal step_id
+        data = {"id": step_id}
+        data.update(kwargs)
+        steps.append(data)
+        step_id += 1
+
+    for m in raw_messages:
+        role = None
+        content: str = ""
+        tool_calls: Any = None
+        tool_call_id: str | None = None
+
+        if isinstance(m, tuple) and len(m) >= 2:
+            role = str(m[0])
+            content = str(m[1])
+        elif isinstance(m, dict):
+            role = m.get("type") or m.get("role")
+            content = str(m.get("content") or "")
+            tool_calls = m.get("tool_calls") or []
+            tool_call_id = m.get("tool_call_id")
+        else:
+            role = getattr(m, "type", getattr(m, "role", None))
+            if role == "ai":
+                role = "assistant"
+            content = str(getattr(m, "content", m))
+            tool_calls = getattr(m, "tool_calls", None)
+            tool_call_id = getattr(m, "tool_call_id", None)
+
+        if role in ("user", "human"):
+            add_step(type="user", content=content)
+        elif role in ("assistant", "ai"):
+            # 如果包含工具调用，则视为思考 + 工具计划
+            if tool_calls:
+                add_step(type="thinking", content=content or "大模型正在规划工具调用")
+                for call in tool_calls:
+                    if isinstance(call, dict):
+                        name = call.get("name") or ""
+                        cid = call.get("id") or ""
+                    else:
+                        name = getattr(call, "name", "") or ""
+                        cid = getattr(call, "id", "") or ""
+                    add_step(
+                        type="tool",
+                        tool_name=name,
+                        tool_call_id=cid,
+                        content=f"准备调用工具 {name or 'unknown'}",
+                        status="pending",
+                    )
+            else:
+                add_step(type="response", content=content, status="ok")
+        elif role == "tool":
+            add_step(
+                type="tool",
+                content=content,
+                tool_call_id=tool_call_id,
+                status="success",
+            )
+
+    return {"status": "done", "steps": steps}
+
+
 async def _invoke_stategraph_agent(
     request_messages: List[Message],
     user: UserContext,
@@ -489,23 +576,38 @@ async def _invoke_stategraph_agent(
         last_control_result=None,
     ).dict()
 
+    settings = get_settings()
     config: Dict[str, Any] = {
         "configurable": {
             "user_id": user.user_id,
             "role": user.role,
             "tenant": user.tenant,
             "thread_id": thread_id,
-        }
+        },
+        # 限制 StateGraph 递归深度，避免 agent→tools→agent 无止境循环
+        "recursion_limit": max(4, int(getattr(settings, "recursion_limit", 12))),
     }
 
-    # 兼容同步/异步 Graph 接口
-    if hasattr(agent_graph, "ainvoke"):
-        result = await agent_graph.ainvoke(state_in, config=config)  # type: ignore[call-arg]
-    else:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: agent_graph.invoke(state_in, config=config)
-        )
+    # 兼容同步/异步 Graph 接口，并对递归超限单独兜底
+    try:
+        if hasattr(agent_graph, "ainvoke"):
+            result = await agent_graph.ainvoke(state_in, config=config)  # type: ignore[call-arg]
+        else:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, lambda: agent_graph.invoke(state_in, config=config)
+            )
+    except GraphRecursionError as exc:
+        logger.warning("stategraph recursion_limit reached: %s", exc)
+        # 返回一条友好的错误提示，而不是 500
+        return {
+            "messages": lc_messages
+            + [
+                AIMessage(
+                    content="Agent 在当前问题上的思考与工具调用步数超过上限，请缩小问题范围或分步提问后重试。"
+                )
+            ]
+        }
 
     # StateGraph 返回的 result 即为最新状态 dict
     if isinstance(result, AgentState):
@@ -581,15 +683,20 @@ async def agent_invoke(
                 "success": control_result.success,
             },
         )
+        try:
+            update_summary_for_control(
+                thread_id=None,
+                user=user,
+                control_result=control_result,
+            )
+        except Exception:  # pragma: no cover - 容错
+            logger.warning("update_summary_for_control failed for agent_invoke", exc_info=True)
         return AgentInvokeResponse(
             message=msg,
             raw_state=None,
             control_result=control_result,
+            agent_data=None,
         )
-
-    message_tuples: List[Tuple[str, str]] = [
-        (msg.role, msg.content) for msg in request.messages
-    ]
 
     logger.info(
         "agent_invoke start",
@@ -601,7 +708,11 @@ async def agent_invoke(
         },
     )
 
-    state = await _invoke_agent_graph(message_tuples, user=user, thread_id=None)
+    state = await _invoke_stategraph_agent(
+        request_messages=request.messages,
+        user=user,
+        thread_id=None,
+    )
     reply = _extract_reply_message(state)
 
     logger.info(
@@ -614,7 +725,23 @@ async def agent_invoke(
         },
     )
 
-    return AgentInvokeResponse(message=reply, raw_state=state)
+    try:
+        update_summary_for_messages(
+            thread_id=None,
+            user=user,
+            messages=request.messages + [reply],
+        )
+    except Exception:  # pragma: no cover - 容错
+        logger.warning("update_summary_for_messages failed for agent_invoke", exc_info=True)
+
+    agent_data: Optional[Dict[str, Any]] = None
+    try:
+        if isinstance(state, dict):
+            agent_data = _build_agent_data_from_state(state)
+    except Exception:  # pragma: no cover - 容错
+        logger.warning("build_agent_data_from_state failed for agent_invoke", exc_info=True)
+
+    return AgentInvokeResponse(message=reply, raw_state=state, control_result=None, agent_data=agent_data)
 
 
 @app.post("/v1/agent/threads/{thread_id}/invoke", response_model=AgentInvokeResponse)
@@ -655,15 +782,22 @@ async def agent_thread_invoke(
                 "success": control_result.success,
             },
         )
+        try:
+            update_summary_for_control(
+                thread_id=thread_id,
+                user=user,
+                control_result=control_result,
+            )
+        except Exception:  # pragma: no cover - 容错
+            logger.warning(
+                "update_summary_for_control failed for thread %s", thread_id, exc_info=True
+            )
         return AgentInvokeResponse(
             message=msg,
             raw_state=None,
             control_result=control_result,
+            agent_data=None,
         )
-
-    message_tuples: List[Tuple[str, str]] = [
-        (msg.role, msg.content) for msg in request.messages
-    ]
 
     logger.info(
         "agent_thread_invoke start",
@@ -675,8 +809,8 @@ async def agent_thread_invoke(
         },
     )
 
-    state = await _invoke_agent_graph(
-        message_tuples,
+    state = await _invoke_stategraph_agent(
+        request_messages=request.messages,
         user=user,
         thread_id=thread_id,
     )
@@ -692,7 +826,27 @@ async def agent_thread_invoke(
         },
     )
 
-    return AgentInvokeResponse(message=reply, raw_state=state)
+    try:
+        update_summary_for_messages(
+            thread_id=thread_id,
+            user=user,
+            messages=request.messages + [reply],
+        )
+    except Exception:  # pragma: no cover - 容错
+        logger.warning(
+            "update_summary_for_messages failed for thread %s", thread_id, exc_info=True
+        )
+
+    agent_data = None
+    try:
+        if isinstance(state, dict):
+            agent_data = _build_agent_data_from_state(state)
+    except Exception:  # pragma: no cover - 容错
+        logger.warning(
+            "build_agent_data_from_state failed for thread %s", thread_id, exc_info=True
+        )
+
+    return AgentInvokeResponse(message=reply, raw_state=state, control_result=None, agent_data=agent_data)
 
 
 @app.post("/v1/agent/stategraph/threads/{thread_id}/invoke", response_model=AgentInvokeResponse)
@@ -701,19 +855,7 @@ async def agent_stategraph_thread_invoke(
     request: AgentInvokeRequest,
     user: UserContext = Depends(get_user_context),
 ) -> AgentInvokeResponse:
-    """
-    实验性：基于 StateGraph 的多轮对话接口。
-
-    - 与 `/v1/agent/threads/{thread_id}/invoke` 不同，本入口使用自定义 StateGraph Agent；
-    - 当前仅支持普通对话（忽略 control 字段），控制类操作仍建议使用已有 control 协议。
-    """
-
-    if request.control is not None:
-        msg = Message(
-            role="assistant",
-            content="StateGraph 实验入口暂不支持 control 字段，请使用 /v1/agent/threads/{thread_id}/invoke。",
-        )
-        return AgentInvokeResponse(message=msg, raw_state=None, control_result=None)
+    """实验性：基于 StateGraph 的多轮对话接口（保留向后兼容的独立入口）。"""
 
     logger.info(
         "agent_stategraph_thread_invoke start",
@@ -742,5 +884,61 @@ async def agent_stategraph_thread_invoke(
         },
     )
 
+    try:
+        update_summary_for_messages(
+            thread_id=thread_id,
+            user=user,
+            messages=request.messages + [reply],
+        )
+    except Exception:  # pragma: no cover - 容错
+        logger.warning(
+            "update_summary_for_messages failed for stategraph thread %s",
+            thread_id,
+            exc_info=True,
+        )
+
+    agent_data = None
+    try:
+        if isinstance(state, dict):
+            agent_data = _build_agent_data_from_state(state)
+    except Exception:  # pragma: no cover - 容错
+        logger.warning(
+            "build_agent_data_from_state failed for stategraph thread %s",
+            thread_id,
+            exc_info=True,
+        )
+
     # raw_state 暂不返回（StateGraph 状态包含 BaseMessage，序列化开销较大），仅返回最终回复
-    return AgentInvokeResponse(message=reply, raw_state=None, control_result=None)
+    return AgentInvokeResponse(message=reply, raw_state=None, control_result=None, agent_data=agent_data)
+
+
+@app.get("/v1/agent/threads", response_model=List[Dict[str, Any]])
+async def list_agent_threads() -> List[Dict[str, Any]]:
+    """返回当前进程内已记录的线程摘要列表（用于前端线程视图）。"""
+
+    return list_thread_summaries()
+
+
+@app.get("/v1/agent/threads/{thread_id}/summary", response_model=Dict[str, Any])
+async def get_agent_thread_summary(thread_id: str) -> Dict[str, Any]:
+    """按 thread_id 查询最近一次对话与控制操作摘要。"""
+
+    summary = get_thread_summary(thread_id)
+    if summary is None:
+        return {
+            "thread_id": thread_id,
+            "last_user_message": None,
+            "last_assistant_message": None,
+            "last_control_op": None,
+            "last_control_mode": None,
+            "last_control_success": None,
+            "updated_at": None,
+        }
+    return summary
+
+
+@app.get("/v1/agent/stats", response_model=List[Dict[str, Any]])
+async def get_agent_control_stats() -> List[Dict[str, Any]]:
+    """返回 Agent 控制操作按 (op, mode) 聚合的统计信息。"""
+
+    return get_agent_stats()

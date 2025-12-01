@@ -118,6 +118,13 @@ class Settings(BaseSettings):
         alias="AGENT_LOG_LEVEL",
     )
 
+    # LangGraph recursion limit（用于防止 agent→tools 循环过深）
+    recursion_limit: int = Field(
+        default=12,
+        description="StateGraph 执行的最大递归步数（recursion_limit）",
+        alias="AGENT_RECURSION_LIMIT",
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
