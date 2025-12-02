@@ -1,2 +1,28 @@
 /docker/compose/google-chrome-stable_current_amd64.deb
+controlplane-spring/target/
 
+# IDE / editor
+.idea/
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Build / cache artifacts
+.ort_trt_cache/
+.trt_native_cache/
+video-analyzer/build/
+video-analyzer/build-ninja/
+
+# Logs
+logs/
+
+# Local Maven repository for cp-spring
+.repository/
+
+# Local env files
+docker/compose/.env
+
+# Local clones of external repos
+third-party/langgraph/

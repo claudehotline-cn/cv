@@ -316,6 +316,12 @@ services:
       - AGENT_LLM_PROVIDER=ollama
       - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       - AGENT_LOG_LEVEL=INFO
+      # 默认：使用 SQLite 作为 LangGraph checkpoint 后端，并将文件写入持久化卷。
+      # 如需在多实例部署中共享线程状态，可切换为 MySQL：
+      #   AGENT_CHECKPOINT_BACKEND=mysql
+      #   AGENT_CHECKPOINT_MYSQL_DSN=mysql+pymysql://root:123456@mysql:3306/cv_cp
+      - AGENT_CHECKPOINT_BACKEND=sqlite
+      - AGENT_CHECKPOINT_SQLITE_CONN=/data/checkpoints/checkpoints.sqlite
       # RAG 向量检索：使用 Ollama 作为 embedding 提供方
       - AGENT_RAG_EMBEDDING_PROVIDER=ollama
       - AGENT_RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434
@@ -325,6 +331,9 @@ services:
         condition: service_healthy
     ports:
       - "18081:8000"
+    volumes:
+      # LangGraph SQLite checkpoint 持久化卷
+      - agent-checkpoints:/data/checkpoints
     healthcheck:
       test: ["CMD-SHELL","curl -fsS http://localhost:8000/healthz >/dev/null || exit 1"]
       interval: 10s
@@ -340,3 +349,4 @@ volumes:
   mysql-data:
   mlflow-artifacts:
   pgvector-data:
+  agent-checkpoints:

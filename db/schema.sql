@@ -143,4 +143,19 @@ CREATE TABLE IF NOT EXISTS `train_jobs` (
   CHECK (JSON_VALID(`artifacts`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 9) Agent checkpoints: share LangGraph thread state across agent replicas
+CREATE TABLE IF NOT EXISTS `agent_checkpoints` (
+  `id`            BIGINT       NOT NULL AUTO_INCREMENT,
+  `thread_id`     VARCHAR(255) NOT NULL,
+  `checkpoint_ns` VARCHAR(255) NOT NULL,
+  `checkpoint`    JSON         NOT NULL,
+  `version`       INT          NOT NULL DEFAULT 1,
+  `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  INDEX `idx_agent_chk_thread_ns` (`thread_id`, `checkpoint_ns`),
+  INDEX `idx_agent_chk_updated` (`updated_at`),
+  CHECK (JSON_VALID(`checkpoint`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- End of schema

@@ -18,11 +18,14 @@ class ThreadSummary:
     last_control_op: Optional[str]
     last_control_mode: Optional[str]
     last_control_success: Optional[bool]
+    last_error: Optional[str]
     updated_at: str
 
 
 _THREAD_SUMMARIES: Dict[str, ThreadSummary] = {}
 _AGENT_STATS: Dict[tuple, Dict[str, int]] = {}
+# Tool 维度统计：按 tool_name 聚合调用次数与总耗时
+_TOOL_STATS: Dict[str, Dict[str, float]] = {}
 
 
 def _now_iso() -> str:
@@ -60,6 +63,7 @@ def update_summary_for_messages(
         last_control_op=existing.last_control_op if existing else None,
         last_control_mode=existing.last_control_mode if existing else None,
         last_control_success=existing.last_control_success if existing else None,
+        last_error=existing.last_error if existing else None,
         updated_at=_now_iso(),
     )
     _THREAD_SUMMARIES[thread_id] = summary
@@ -87,6 +91,7 @@ def update_summary_for_control(
         last_control_op=control_result.op,
         last_control_mode=control_result.mode,
         last_control_success=control_result.success,
+        last_error=control_result.error if not control_result.success else (existing.last_error if existing else None),
         updated_at=_now_iso(),
     )
     _THREAD_SUMMARIES[thread_id] = summary
@@ -98,6 +103,30 @@ def update_summary_for_control(
         stat["success"] += 1
     else:
         stat["failure"] += 1
+
+
+def record_tool_call(
+    tool_name: str,
+    *,
+    success: bool,
+    elapsed_ms: float,
+) -> None:
+    """记录单次工具调用的成功/失败与耗时，用于后续统计与可观测性。"""
+
+    stat = _TOOL_STATS.setdefault(
+        tool_name,
+        {
+            "success": 0.0,
+            "failure": 0.0,
+            "total_ms": 0.0,
+        },
+    )
+    if success:
+        stat["success"] += 1.0
+    else:
+        stat["failure"] += 1.0
+    if elapsed_ms >= 0.0:
+        stat["total_ms"] += float(elapsed_ms)
 
 
 def get_thread_summary(thread_id: str) -> Optional[Dict[str, Any]]:
@@ -116,7 +145,7 @@ def list_thread_summaries(limit: int = 50) -> List[Dict[str, Any]]:
 
 
 def get_agent_stats() -> List[Dict[str, Any]]:
-    """返回 Agent 控制操作按 (op, mode) 聚合的计数。"""
+    """返回 Agent 控制操作与 Tool 调用的基础统计信息。"""
 
     out: List[Dict[str, Any]] = []
     for (op, mode), stat in _AGENT_STATS.items():
@@ -128,5 +157,19 @@ def get_agent_stats() -> List[Dict[str, Any]]:
                 "failure_count": stat.get("failure", 0),
             }
         )
+
+    for tool_name, stat in _TOOL_STATS.items():
+        total_calls = stat.get("success", 0.0) + stat.get("failure", 0.0)
+        avg_latency = stat["total_ms"] / total_calls if total_calls > 0 else 0.0
+        out.append(
+            {
+                "op": f"tool.{tool_name}",
+                "mode": "invoke",
+                "success_count": int(stat.get("success", 0.0)),
+                "failure_count": int(stat.get("failure", 0.0)),
+                "avg_latency_ms": avg_latency,
+            }
+        )
+
     out.sort(key=lambda x: (x["op"], x["mode"]))
     return out

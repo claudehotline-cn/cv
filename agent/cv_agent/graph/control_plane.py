@@ -1,4 +1,6 @@
 from typing import Any, List, Tuple
+import logging
+import time
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -8,12 +10,15 @@ from langgraph.prebuilt import create_react_agent
 
 from ..config import get_settings
 from ..store import get_checkpointer
+from ..store.thread_summary import record_tool_call
 from ..tools import get_all_tools
 from ..tools.rag import SearchCvDocsInput, search_cv_docs_tool
 from .state_graph import AgentState
 
 _CONTROL_PLANE_AGENT: Any | None = None
 _STATEGRAPH_AGENT: Any | None = None
+
+_LOGGER = logging.getLogger("cv_agent")
 
 
 def _build_agent() -> Any:
@@ -214,6 +219,8 @@ def _build_stategraph_agent() -> Any:
                 if not tool_impl:
                     result = f"Unknown tool: {name}"
                 else:
+                    start_ts = time.perf_counter()
+                    success = False
                     try:
                         # LangChain 工具优先使用异步 ainvoke 调用，以兼容基于
                         # StructuredTool 封装的 async 函数（如 list_pipelines_tool）；
@@ -222,8 +229,20 @@ def _build_stategraph_agent() -> Any:
                             result = await tool_impl.ainvoke(args)  # type: ignore[func-returns-value]
                         else:
                             result = tool_impl.invoke(args)  # type: ignore[func-returns-value]
+                        success = True
                     except Exception as exc:  # pragma: no cover - 运行时保障
                         result = f"Tool {name} execution error: {exc}"
+                        _LOGGER.warning("tool %s execution failed in stategraph: %s", name, exc)
+                    finally:
+                        elapsed_ms = (time.perf_counter() - start_ts) * 1000.0
+                        try:
+                            record_tool_call(
+                                tool_name=str(name),
+                                success=success,
+                                elapsed_ms=elapsed_ms,
+                            )
+                        except Exception:  # pragma: no cover - 容错
+                            _LOGGER.debug("record_tool_call failed for %s", name, exc_info=True)
 
             outputs.append(
                 ToolMessage(

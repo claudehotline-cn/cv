@@ -4,6 +4,7 @@ from typing import Any
 from langgraph.checkpoint.memory import MemorySaver
 
 from ..config import get_settings
+from .checkpoint_mysql import MySQLSaver
 
 
 @lru_cache(maxsize=1)
@@ -16,8 +17,9 @@ def get_checkpointer() -> Any:
       - 尝试导入 `langgraph.checkpoint.sqlite.SqliteSaver`；
       - 使用 `AGENT_CHECKPOINT_SQLITE_CONN` 或默认 `checkpoints.sqlite`；
       - 若导入失败则回退到 `MemorySaver` 并记录警告。
-
-    MySQL 后端目前预留配置字段但未实现，使用时会抛出异常。
+    - 当 `AGENT_CHECKPOINT_BACKEND=mysql` 且配置有效 DSN 时：
+      - 使用 `AGENT_CHECKPOINT_MYSQL_DSN` 构造 MySQLSaver；
+      - 连接或初始化失败时回退到 `MemorySaver` 并记录警告。
     """
 
     settings = get_settings()
@@ -46,10 +48,22 @@ def get_checkpointer() -> Any:
         return SqliteSaver.from_conn_string(conn_str)
 
     if backend == "mysql":
-        # 预留：后续可接入 MySQL/Postgres 型 checkpoint 库
-        raise RuntimeError(
-            "AGENT_CHECKPOINT_BACKEND=mysql 尚未实现，请使用 memory 或 sqlite。"
-        )
+        import logging
+
+        dsn = settings.checkpoint_mysql_dsn
+        if not dsn:
+            logging.getLogger("cv_agent").warning(
+                "AGENT_CHECKPOINT_BACKEND=mysql 但未设置 AGENT_CHECKPOINT_MYSQL_DSN，回退至 MemorySaver。"
+            )
+            return MemorySaver()
+
+        try:
+            return MySQLSaver.from_dsn(dsn)
+        except Exception as exc:  # pragma: no cover - 运行时防御
+            logging.getLogger("cv_agent").warning(
+                "初始化 MySQLSaver 失败（%s），回退至 MemorySaver。", exc
+            )
+            return MemorySaver()
 
     # 未知后端：回退 memory
     import logging
@@ -58,4 +72,3 @@ def get_checkpointer() -> Any:
         "未知 checkpoint 后端 '%s'，回退至 MemorySaver。", backend
     )
     return MemorySaver()
-

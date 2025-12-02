@@ -32,6 +32,9 @@ def search_kb(
     collection: str,
     embedding: List[float],
     top_k: int = 5,
+    *,
+    module: Optional[str] = None,
+    doc_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     在 kb_docs 表中按向量相似度搜索。
@@ -46,7 +49,10 @@ def search_kb(
           doc_title    TEXT NOT NULL,
           chunk_index  INT  NOT NULL,
           content      TEXT NOT NULL,
-          embedding    vector(1536) NOT NULL
+          embedding    vector(1536) NOT NULL,
+          module       TEXT,
+          doc_type     TEXT,
+          updated_at   TIMESTAMPTZ
         );
         CREATE INDEX IF NOT EXISTS idx_kb_docs_collection ON kb_docs(collection);
         CREATE INDEX IF NOT EXISTS idx_kb_docs_embedding
@@ -61,7 +67,19 @@ def search_kb(
     # pgvector 兼容的向量字面量表示，如 '[0.1,0.2,...]'
     emb_literal = "[" + ",".join(f"{x:.6f}" for x in embedding) + "]"
 
-    sql = """
+    conditions = ["collection = %s"]
+    params: List[Any] = [collection]
+
+    if module is not None:
+        conditions.append("module = %s")
+        params.append(module)
+    if doc_type is not None:
+        conditions.append("doc_type = %s")
+        params.append(doc_type)
+
+    where_clause = " AND ".join(conditions)
+
+    sql = f"""
         SELECT
           id,
           doc_title,
@@ -69,7 +87,7 @@ def search_kb(
           chunk_index,
           content
         FROM kb_docs
-        WHERE collection = %s
+        WHERE {where_clause}
         ORDER BY embedding <-> %s::vector
         LIMIT %s
     """
@@ -78,7 +96,7 @@ def search_kb(
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, (collection, emb_literal, top_k))
+            cur.execute(sql, (*params, emb_literal, top_k))
             for row in cur.fetchall():
                 rid, title, path, idx, content = row
                 results.append(
@@ -94,4 +112,3 @@ def search_kb(
         conn.close()
 
     return results
-

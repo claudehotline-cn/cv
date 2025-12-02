@@ -25,10 +25,14 @@ from ..store.thread_summary import (
 )
 from ..tools.pipelines import (
     _fetch_pipelines,
-    _fetch_pipeline_status,
-    _call_delete_pipeline,
-    _call_hotswap_model,
-    _call_drain_pipeline,
+)
+from ..tools import (
+    delete_pipeline_tool,
+    drain_pipeline_tool,
+    hotswap_model_tool,
+    plan_delete_pipeline_tool,
+    plan_drain_pipeline_tool,
+    plan_hotswap_model_tool,
 )
 
 
@@ -100,6 +104,14 @@ class ControlResult(BaseModel):
     result: Optional[Dict[str, Any]] = Field(
         default=None, description="执行工具返回的结果（execute 模式下）"
     )
+    plan_steps: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="计划步骤列表，通常基于 plan_* 工具返回值抽象。",
+    )
+    execute_result: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="执行阶段聚合结果（成功/失败/错误信息等），便于前端直接展示。",
+    )
     error: Optional[str] = Field(
         default=None, description="失败时的错误信息（如果有）"
     )
@@ -144,6 +156,53 @@ async def get_user_context(
     return UserContext(user_id=x_user_id, role=x_user_role, tenant=x_tenant)
 
 
+def _normalize_role(role: Optional[str]) -> str:
+    return (role or "").strip().lower()
+
+
+def _check_permission(user: UserContext, op: str, mode: str) -> None:
+    """
+    基于 UserContext 的最小权限控制：
+
+    - 所有用户均可发起 plan 模式（只读 dry-run）；
+    - 高危 execute（pipeline.delete/hotswap/drain）仅允许 admin/operator；
+    - 对于无权限用户抛出 PermissionError，由上层统一转换为 ControlResult.error。
+    """
+
+    if mode != "execute":
+        return
+
+    high_risk_ops = {
+        "pipeline.delete",
+        "pipeline.hotswap",
+        "pipeline.drain",
+    }
+    if op not in high_risk_ops:
+        return
+
+    role = _normalize_role(user.role)
+    allowed_roles = {"admin", "administrator", "operator"}
+    if role in allowed_roles:
+        return
+
+    raise PermissionError(
+        f"当前用户（role={user.role or 'unknown'}）无权执行 {op}（mode=execute），仅 admin/operator 可执行高危控制操作。"
+    )
+
+
+async def _invoke_structured_tool(tool: Any, args: Dict[str, Any]) -> Any:
+    """
+    以统一方式调用 LangChain Tool 实例，用于结构化 control 协议。
+
+    - 若工具实现了 `ainvoke`，优先使用；
+    - 否则回退到同步 `invoke`。
+    """
+
+    if hasattr(tool, "ainvoke"):
+        return await tool.ainvoke(args)  # type: ignore[func-returns-value]
+    return tool.invoke(args)  # type: ignore[func-returns-value]
+
+
 async def _handle_control(
     control: ControlRequest,
     user: UserContext,
@@ -160,36 +219,20 @@ async def _handle_control(
     mode = control.mode
     params = control.params
 
+    # 最小权限校验：在进入具体逻辑前快速拒绝无权限操作
+    _check_permission(user, op=op, mode=mode)
+
     try:
         if op == "pipeline.delete":
             pipeline_name = params.pipeline_name
             if not pipeline_name:
                 raise ValueError("pipeline_name 不能为空")
 
-            # 生成删除计划（直接使用底层 _fetch_pipelines）
-            pipelines = await _fetch_pipelines()
-            target = None
-            for pipeline in pipelines:
-                if pipeline.get("name") == pipeline_name:
-                    target = pipeline
-                    break
-
-            if target is None:
-                plan: Dict[str, Any] = {
-                    "pipeline_name": pipeline_name,
-                    "found": False,
-                    "reason": "pipeline_not_found",
-                }
-            else:
-                plan = {
-                    "pipeline_name": pipeline_name,
-                    "found": True,
-                    "plan": {
-                        "action": "delete",
-                        "graph_id": target.get("graph_id"),
-                        "default_model_id": target.get("default_model_id"),
-                    },
-                }
+            # 使用 plan_delete_pipeline_tool 生成删除计划（与自然语言路径复用同一实现）
+            plan = await _invoke_structured_tool(
+                plan_delete_pipeline_tool,
+                {"pipeline_name": pipeline_name, "tenant": user.tenant},
+            )
 
             if mode == "plan":
                 msg = Message(
@@ -197,19 +240,32 @@ async def _handle_control(
                     content=f"计划删除 pipeline '{pipeline_name}'，请在确认前检查相关影响。",
                 )
                 return msg, ControlResult(
-                    op=op, mode=mode, success=True, plan=plan
+                    op=op,
+                    mode=mode,
+                    success=True,
+                    plan=plan,
+                    plan_steps=[plan],
                 )
 
             if not control.confirm:
                 raise ValueError("执行删除前必须设置 confirm=true")
 
-            result = await _call_delete_pipeline(pipeline_name=pipeline_name)
+            result = await _invoke_structured_tool(
+                delete_pipeline_tool,
+                {"pipeline_name": pipeline_name, "confirm": True, "tenant": user.tenant},
+            )
             msg = Message(
                 role="assistant",
                 content=f"已请求删除 pipeline '{pipeline_name}'，请关注 ControlPlane 审计与 VA 状态。",
             )
             return msg, ControlResult(
-                op=op, mode=mode, success=True, plan=plan, result=result
+                op=op,
+                mode=mode,
+                success=True,
+                plan=plan,
+                plan_steps=[plan],
+                result=result,
+                execute_result=result,
             )
 
         if op == "pipeline.hotswap":
@@ -219,19 +275,15 @@ async def _handle_control(
             if not pipeline_name or not node or not model_uri:
                 raise ValueError("pipeline_name/node/model_uri 不能为空")
 
-            pipelines = await _fetch_pipelines()
-            exists = any(
-                pipeline.get("name") == pipeline_name for pipeline in pipelines
-            )
-            plan = {
-                "pipeline_name": pipeline_name,
-                "exists": exists,
-                "plan": {
-                    "action": "hotswap",
+            plan = await _invoke_structured_tool(
+                plan_hotswap_model_tool,
+                {
+                    "pipeline_name": pipeline_name,
                     "node": node,
                     "model_uri": model_uri,
+                    "tenant": user.tenant,
                 },
-            }
+            )
 
             if mode == "plan":
                 msg = Message(
@@ -242,16 +294,25 @@ async def _handle_control(
                     ),
                 )
                 return msg, ControlResult(
-                    op=op, mode=mode, success=True, plan=plan
+                    op=op,
+                    mode=mode,
+                    success=True,
+                    plan=plan,
+                    plan_steps=[plan],
                 )
 
             if not control.confirm:
                 raise ValueError("执行 hotswap 前必须设置 confirm=true")
 
-            result = await _call_hotswap_model(
-                pipeline_name=pipeline_name,
-                node=node,
-                model_uri=model_uri,
+            result = await _invoke_structured_tool(
+                hotswap_model_tool,
+                {
+                    "pipeline_name": pipeline_name,
+                    "node": node,
+                    "model_uri": model_uri,
+                    "confirm": True,
+                    "tenant": user.tenant,
+                },
             )
             msg = Message(
                 role="assistant",
@@ -261,7 +322,13 @@ async def _handle_control(
                 ),
             )
             return msg, ControlResult(
-                op=op, mode=mode, success=True, plan=plan, result=result
+                op=op,
+                mode=mode,
+                success=True,
+                plan=plan,
+                plan_steps=[plan],
+                result=result,
+                execute_result=result,
             )
 
         if op == "pipeline.drain":
@@ -270,20 +337,14 @@ async def _handle_control(
             if not pipeline_name:
                 raise ValueError("pipeline_name 不能为空")
 
-            pipelines = await _fetch_pipelines()
-            exists = any(
-                pipeline.get("name") == pipeline_name for pipeline in pipelines
-            )
-            status = await _fetch_pipeline_status(pipeline_name)
-            plan = {
-                "pipeline_name": pipeline_name,
-                "exists": exists,
-                "plan": {
-                    "action": "drain",
+            plan = await _invoke_structured_tool(
+                plan_drain_pipeline_tool,
+                {
+                    "pipeline_name": pipeline_name,
                     "timeout_sec": timeout_sec,
+                    "tenant": user.tenant,
                 },
-                "current_status": status,
-            }
+            )
 
             if mode == "plan":
                 msg = Message(
@@ -294,15 +355,24 @@ async def _handle_control(
                     ),
                 )
                 return msg, ControlResult(
-                    op=op, mode=mode, success=True, plan=plan
+                    op=op,
+                    mode=mode,
+                    success=True,
+                    plan=plan,
+                    plan_steps=[plan],
                 )
 
             if not control.confirm:
                 raise ValueError("执行 drain 前必须设置 confirm=true")
 
-            result = await _call_drain_pipeline(
-                pipeline_name=pipeline_name,
-                timeout_sec=timeout_sec,
+            result = await _invoke_structured_tool(
+                drain_pipeline_tool,
+                {
+                    "pipeline_name": pipeline_name,
+                    "timeout_sec": timeout_sec,
+                    "confirm": True,
+                    "tenant": user.tenant,
+                },
             )
             msg = Message(
                 role="assistant",
@@ -312,7 +382,13 @@ async def _handle_control(
                 ),
             )
             return msg, ControlResult(
-                op=op, mode=mode, success=True, plan=plan, result=result
+                op=op,
+                mode=mode,
+                success=True,
+                plan=plan,
+                plan_steps=[plan],
+                result=result,
+                execute_result=result,
             )
 
         raise ValueError(f"不支持的控制操作类型: {op}")
@@ -350,7 +426,7 @@ async def _invoke_agent_graph(
 
     # 情况一：provider=openai 且缺少 OPENAI_API_KEY → 使用本地“假模型”直接查询 pipelines。
     if provider == "openai" and not settings.openai_api_key:
-        pipelines = await _fetch_pipelines()
+        pipelines = await _fetch_pipelines(tenant=user.tenant)
         if not pipelines:
             content = "当前处于本地测试模式（未配置 OPENAI_API_KEY），且未从 ControlPlane 查询到任何 pipeline。"
         else:
@@ -659,6 +735,7 @@ async def agent_invoke(
 
     # 若包含结构化控制描述，则优先按控制协议执行，不使用 LLM
     if request.control is not None:
+        start_ts = asyncio.get_event_loop().time()
         logger.info(
             "agent_invoke control start",
             extra={
@@ -671,6 +748,7 @@ async def agent_invoke(
             },
         )
         msg, control_result = await _handle_control(request.control, user=user)
+        duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
         logger.info(
             "agent_invoke control done",
             extra={
@@ -681,6 +759,7 @@ async def agent_invoke(
                 "op": request.control.op,
                 "mode": request.control.mode,
                 "success": control_result.success,
+                "duration_ms": duration_ms,
             },
         )
         try:
@@ -698,6 +777,7 @@ async def agent_invoke(
             agent_data=None,
         )
 
+    start_ts = asyncio.get_event_loop().time()
     logger.info(
         "agent_invoke start",
         extra={
@@ -715,6 +795,7 @@ async def agent_invoke(
     )
     reply = _extract_reply_message(state)
 
+    duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
     logger.info(
         "agent_invoke done",
         extra={
@@ -722,6 +803,7 @@ async def agent_invoke(
             "role": user.role,
             "tenant": user.tenant,
             "thread_id": None,
+            "duration_ms": duration_ms,
         },
     )
 
@@ -758,6 +840,7 @@ async def agent_thread_invoke(
     """
 
     if request.control is not None:
+        start_ts = asyncio.get_event_loop().time()
         logger.info(
             "agent_thread_invoke control start",
             extra={
@@ -770,6 +853,7 @@ async def agent_thread_invoke(
             },
         )
         msg, control_result = await _handle_control(request.control, user=user)
+        duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
         logger.info(
             "agent_thread_invoke control done",
             extra={
@@ -780,6 +864,7 @@ async def agent_thread_invoke(
                 "op": request.control.op,
                 "mode": request.control.mode,
                 "success": control_result.success,
+                "duration_ms": duration_ms,
             },
         )
         try:
@@ -799,6 +884,7 @@ async def agent_thread_invoke(
             agent_data=None,
         )
 
+    start_ts = asyncio.get_event_loop().time()
     logger.info(
         "agent_thread_invoke start",
         extra={
@@ -816,6 +902,7 @@ async def agent_thread_invoke(
     )
     reply = _extract_reply_message(state)
 
+    duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
     logger.info(
         "agent_thread_invoke done",
         extra={
@@ -823,6 +910,7 @@ async def agent_thread_invoke(
             "role": user.role,
             "tenant": user.tenant,
             "thread_id": thread_id,
+            "duration_ms": duration_ms,
         },
     )
 
@@ -857,6 +945,7 @@ async def agent_stategraph_thread_invoke(
 ) -> AgentInvokeResponse:
     """实验性：基于 StateGraph 的多轮对话接口（保留向后兼容的独立入口）。"""
 
+    start_ts = asyncio.get_event_loop().time()
     logger.info(
         "agent_stategraph_thread_invoke start",
         extra={
@@ -874,6 +963,7 @@ async def agent_stategraph_thread_invoke(
     )
     reply = _extract_reply_message(state)
 
+    duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
     logger.info(
         "agent_stategraph_thread_invoke done",
         extra={
@@ -881,6 +971,7 @@ async def agent_stategraph_thread_invoke(
             "role": user.role,
             "tenant": user.tenant,
             "thread_id": thread_id,
+            "duration_ms": duration_ms,
         },
     )
 
@@ -932,6 +1023,7 @@ async def get_agent_thread_summary(thread_id: str) -> Dict[str, Any]:
             "last_control_op": None,
             "last_control_mode": None,
             "last_control_success": None,
+            "last_error": None,
             "updated_at": None,
         }
     return summary

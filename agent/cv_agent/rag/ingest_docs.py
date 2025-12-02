@@ -8,6 +8,7 @@ from langchain_openai import OpenAIEmbeddings
 
 from ..config import get_settings
 from .pg_store import get_connection
+from datetime import datetime, timezone
 
 
 def _discover_markdown_files(root: Path) -> List[Path]:
@@ -110,7 +111,7 @@ def _ensure_schema(conn) -> None:
     """
     确保 pgvector 扩展和 kb_docs 表存在。
 
-    结构与 `pg_store.search_kb` 文档中示例保持一致。
+    结构与 `pg_store.search_kb` 文档中示例保持一致，并在初次运行时自动创建。
     """
 
     sql = """
@@ -122,7 +123,10 @@ def _ensure_schema(conn) -> None:
           doc_title    TEXT NOT NULL,
           chunk_index  INT  NOT NULL,
           content      TEXT NOT NULL,
-          embedding    vector(1536) NOT NULL
+          embedding    vector(1536) NOT NULL,
+          module       TEXT,
+          doc_type     TEXT,
+          updated_at   TIMESTAMPTZ
         );
         CREATE INDEX IF NOT EXISTS idx_kb_docs_collection ON kb_docs(collection);
         CREATE INDEX IF NOT EXISTS idx_kb_docs_embedding
@@ -130,13 +134,30 @@ def _ensure_schema(conn) -> None:
     """
     with conn.cursor() as cur:
         cur.execute(sql)
+        # 兼容已有表结构：为旧表补充新增列
+        cur.execute("ALTER TABLE kb_docs ADD COLUMN IF NOT EXISTS module TEXT;")
+        cur.execute("ALTER TABLE kb_docs ADD COLUMN IF NOT EXISTS doc_type TEXT;")
+        cur.execute("ALTER TABLE kb_docs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;")
 
 
-def _iter_chunks(root: Path) -> Iterable[Tuple[str, str, int, str]]:
+def _infer_doc_type(rel_path: str) -> str:
+    """
+    根据相对路径简单推断文档类型，例如 design/plans/references/requirements。
+    """
+
+    parts = rel_path.split(os.sep)
+    if parts:
+        head = parts[0].lower()
+        if head in ("design", "plans", "references", "requirements", "memo"):
+            return head
+    return "docs"
+
+
+def _iter_chunks(root: Path, module: str | None, doc_type: str | None) -> Iterable[Tuple[str, str, int, str, str, str]]:
     """
     遍历 docs 下的文档分片。
 
-    返回：(doc_path, doc_title, chunk_index, content)。
+    返回：(doc_path, doc_title, chunk_index, content, module, doc_type)。
     """
 
     files = _discover_markdown_files(root)
@@ -145,14 +166,18 @@ def _iter_chunks(root: Path) -> Iterable[Tuple[str, str, int, str]]:
         rel_path = os.path.relpath(path, root)
         title = _extract_title(text, fallback=rel_path)
         chunks = _split_into_chunks(text)
+        inferred_doc_type = doc_type or _infer_doc_type(rel_path)
+        module_name = module or inferred_doc_type
         for idx, chunk in enumerate(chunks):
-            yield rel_path, title, idx, chunk
+            yield rel_path, title, idx, chunk, module_name, inferred_doc_type
 
 
 def build_kb(
     docs_root: Path,
     collection: str = "cv_docs",
     reset_collection: bool = True,
+    module: str | None = None,
+    doc_type: str | None = None,
 ) -> None:
     """
     从 docs 构建/刷新知识库分片到 kb_docs。
@@ -169,20 +194,55 @@ def build_kb(
         with conn.cursor() as cur:
             if reset_collection:
                 cur.execute("DELETE FROM kb_docs WHERE collection = %s", (collection,))
+                existing_keys: set[tuple[str, int]] = set()
+            else:
+                existing_keys = set()
+                cur.execute(
+                    "SELECT doc_path, chunk_index FROM kb_docs WHERE collection = %s",
+                    (collection,),
+                )
+                for row in cur.fetchall():
+                    existing_keys.add((row[0], int(row[1])))
 
-            rows: List[Tuple[str, str, int, str, str]] = []
-            for doc_path, title, chunk_index, content in _iter_chunks(docs_root):
+            rows: List[Tuple[str, str, str, int, str, str, str, str]] = []
+            now_str = datetime.now(timezone.utc).isoformat()
+            for doc_path, title, chunk_index, content, module_name, doc_type_name in _iter_chunks(
+                docs_root, module=module, doc_type=doc_type
+            ):
+                # 去重：相同 collection + doc_path + chunk_index 仅保留一条
+                if (doc_path, chunk_index) in existing_keys:
+                    continue
                 vec = embeddings.embed_query(content)
                 emb_literal = "[" + ",".join(f"{x:.6f}" for x in vec) + "]"
                 rows.append(
-                    (collection, doc_path, title, chunk_index, content, emb_literal)
+                    (
+                        collection,
+                        doc_path,
+                        title,
+                        chunk_index,
+                        content,
+                        emb_literal,
+                        module_name,
+                        doc_type_name,
+                        now_str,
+                    )
                 )
 
             if rows:
                 cur.executemany(
                     """
-                    INSERT INTO kb_docs (collection, doc_path, doc_title, chunk_index, content, embedding)
-                    VALUES (%s, %s, %s, %s, %s, %s::vector)
+                    INSERT INTO kb_docs (
+                      collection,
+                      doc_path,
+                      doc_title,
+                      chunk_index,
+                      content,
+                      embedding,
+                      module,
+                      doc_type,
+                      updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s::vector, %s, %s, %s::timestamptz)
                     """,
                     rows,
                 )
@@ -211,6 +271,18 @@ def main(argv: List[str] | None = None) -> None:
         action="store_true",
         help="不在写入前清空该 collection 旧数据",
     )
+    parser.add_argument(
+        "--module",
+        type=str,
+        default=None,
+        help="可选模块标签（如 controlplane/va/web），将写入 kb_docs.module。",
+    )
+    parser.add_argument(
+        "--doc-type",
+        type=str,
+        default=None,
+        help="可选文档类型标签（如 design/plans/references/requirements），未提供则根据路径自动推断。",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.docs_root).resolve()
@@ -221,9 +293,10 @@ def main(argv: List[str] | None = None) -> None:
         docs_root=root,
         collection=args.collection,
         reset_collection=not args.no_reset,
+        module=args.module,
+        doc_type=args.doc_type,
     )
 
 
 if __name__ == "__main__":  # pragma: no cover - 手工执行入口
     main()
-
