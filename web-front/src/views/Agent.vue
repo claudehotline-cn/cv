@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, nextTick, watch } from 'vue'
+import MarkdownIt from 'markdown-it'
 import { ElMessage } from 'element-plus'
 import {
   agentApi,
@@ -23,6 +24,7 @@ const currentMode = ref<'default' | 'control' | 'rag'>('default')
 const showHistoryPanel = ref(false)
 const searchQuery = ref<string>('')
 const lastAgentData = ref<any | null>(null)
+const messagesContainer = ref<HTMLElement | null>(null)
 
 const chatModes = [
   {
@@ -41,6 +43,17 @@ const chatModes = [
     description: '结合项目文档知识库，回答配置说明、错误排障等问题。',
   },
 ]
+
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  typographer: true,
+})
+
+function renderMarkdown(content: string | undefined | null): string {
+  if (!content) return ''
+  return md.render(content)
+}
 
 function loadThreadHistory(): string[] {
   try {
@@ -104,7 +117,22 @@ async function refreshThreadSummaries() {
 
 onMounted(() => {
   void refreshThreadSummaries()
+  void scrollMessagesToBottom()
 })
+
+async function scrollMessagesToBottom() {
+  await nextTick()
+  const el = messagesContainer.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+watch(
+  () => messages.value.length,
+  () => {
+    void scrollMessagesToBottom()
+  },
+)
 
 async function send() {
   if (!input.value.trim()) return
@@ -133,6 +161,7 @@ async function send() {
     lastAgentData.value = resp.agent_data ?? null
     input.value = ''
     void refreshThreadSummaries()
+    void scrollMessagesToBottom()
   } catch (e: any) {
     ElMessage.error(e?.message || '调用 Agent 失败')
   } finally {
@@ -163,6 +192,7 @@ const filteredThreadSummaries = computed(() => {
 </script>
 
 <template>
+  <div class="agent-page">
   <el-card shadow="never" class="agent-card">
     <template #header>
       <div class="head">
@@ -179,18 +209,6 @@ const filteredThreadSummaries = computed(() => {
           <el-tag v-if="!agentEnabled" type="info">Agent 已禁用（仅前端模拟）</el-tag>
           <el-tag v-else type="success">Agent 已启用</el-tag>
         </div>
-      </div>
-      <div v-if="threadHistory.length" class="history">
-        <span class="label">最近线程：</span>
-        <el-tag
-          v-for="tid in threadHistory"
-          :key="tid"
-          size="small"
-          class="thread-tag"
-          @click="threadId = tid"
-        >
-          {{ tid }}
-        </el-tag>
       </div>
     </template>
 
@@ -303,7 +321,10 @@ const filteredThreadSummaries = computed(() => {
       <el-tab-pane label="对话" name="chat">
         <div class="agent-main">
           <div class="chat-panel">
-            <div class="messages-container">
+            <div
+              ref="messagesContainer"
+              class="messages-container"
+            >
               <div v-if="!messages.length" class="welcome">
                 <h3>开始与控制平面 Agent 对话</h3>
                 <p>可以用自然语言执行管线查询、plan/execute 控制等操作。</p>
@@ -345,11 +366,11 @@ const filteredThreadSummaries = computed(() => {
                             ? 'Agent'
                             : m.role === 'system'
                               ? 'System'
-                              : 'Tool'
+                            : 'Tool'
                       }}
                     </span>
                   </div>
-                  <div class="content">{{ m.content }}</div>
+                  <div class="content" v-html="renderMarkdown(m.content)" />
                 </div>
               </div>
             </div>
@@ -403,9 +424,10 @@ const filteredThreadSummaries = computed(() => {
                         {{ step.status }}
                       </span>
                     </div>
-                    <div class="content">
-                      {{ step.content || '...' }}
-                    </div>
+                    <div
+                      class="content"
+                      v-html="renderMarkdown(step.content || '...')"
+                    />
                   </div>
                 </li>
               </ul>
@@ -526,18 +548,27 @@ const filteredThreadSummaries = computed(() => {
       </el-tab-pane>
     </el-tabs>
   </el-card>
+  </div>
 </template>
 
 <style scoped>
-.agent-card {
+.agent-page {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.agent-card {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 .agent-card :deep(.el-card__body) {
-  height: 100%;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 .head {
   display: flex;
@@ -560,10 +591,12 @@ const filteredThreadSummaries = computed(() => {
 .agent-tabs :deep(.el-tabs__content) {
   flex: 1 1 auto;
   display: flex;
+  min-height: 0;
 }
 .agent-tabs :deep(.el-tab-pane) {
   flex: 1 1 auto;
   display: flex;
+  min-height: 0;
 }
 .mode-bar {
   margin: 8px 0;
@@ -671,15 +704,19 @@ const filteredThreadSummaries = computed(() => {
   display: flex;
   gap: 12px;
   flex: 1 1 auto;
-  min-height: 360px;
+  min-height: 0;
 }
 .chat-panel {
   flex: 1 1 0;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 .messages-container {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  height: 58vh;
+  max-height: 58vh;
+  min-height: 120px;
   overflow-y: auto;
   padding: 8px 12px;
   border: 1px solid var(--va-border);
@@ -736,8 +773,21 @@ const filteredThreadSummaries = computed(() => {
   margin-bottom: 2px;
 }
 .bubble .content {
-  white-space: pre-wrap;
+  white-space: normal;
   font-size: 13px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.bubble .content p {
+  margin: 4px 0;
+}
+.bubble .content ul,
+.bubble .content ol {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.bubble .content li {
+  margin: 2px 0;
 }
 .input-area {
   margin-top: 8px;
@@ -760,6 +810,8 @@ const filteredThreadSummaries = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
 }
 .side-card {
   flex: 0 0 auto;
@@ -845,7 +897,7 @@ const filteredThreadSummaries = computed(() => {
   opacity: .8;
 }
 .agent-step .content {
-  white-space: pre-wrap;
+  white-space: normal;
   opacity: .9;
 }
 .detail {

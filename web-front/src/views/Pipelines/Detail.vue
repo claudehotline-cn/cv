@@ -181,6 +181,8 @@ async function sendToPipelineAgent() {
 }
 .agent-msg .content{
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .agent-msg.user .role{ color:#3b82f6; }
 .agent-msg.assistant .role{ color:#22c55e; }

@@ -4,6 +4,12 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+try:
+    # 可选依赖：若未安装 prometheus_client，则仅保留内存统计，不暴露 Prometheus 指标。
+    from prometheus_client import Counter, Histogram  # type: ignore[import]
+except Exception:  # pragma: no cover - 可选依赖
+    Counter = Histogram = None  # type: ignore[assignment]
+
 
 @dataclass
 class ThreadSummary:
@@ -26,6 +32,28 @@ _THREAD_SUMMARIES: Dict[str, ThreadSummary] = {}
 _AGENT_STATS: Dict[tuple, Dict[str, int]] = {}
 # Tool 维度统计：按 tool_name 聚合调用次数与总耗时
 _TOOL_STATS: Dict[str, Dict[str, float]] = {}
+
+# Prometheus 指标（可选）：用于将 _AGENT_STATS / _TOOL_STATS 以指标形式暴露。
+if Counter is not None and Histogram is not None:  # pragma: no cover - 依赖存在时才注册
+    _CONTROL_METRIC = Counter(
+        "cv_agent_control_operations_total",
+        "Agent control operations aggregated by (op, mode, success)",
+        ["op", "mode", "success"],
+    )
+    _TOOL_CALLS_METRIC = Counter(
+        "cv_agent_tool_calls_total",
+        "Tool calls issued by cv_agent, labeled by tool_name and success flag",
+        ["tool_name", "success"],
+    )
+    _TOOL_LATENCY_METRIC = Histogram(
+        "cv_agent_tool_call_duration_seconds",
+        "Tool call latency observed by cv_agent (seconds)",
+        ["tool_name"],
+    )
+else:  # pragma: no cover - 未安装 prometheus_client
+    _CONTROL_METRIC = None
+    _TOOL_CALLS_METRIC = None
+    _TOOL_LATENCY_METRIC = None
 
 
 def _now_iso() -> str:
@@ -104,6 +132,14 @@ def update_summary_for_control(
     else:
         stat["failure"] += 1
 
+    # Prometheus 指标（如可用）：按 (op, mode, success) 维度累加控制操作次数。
+    if _CONTROL_METRIC is not None:  # pragma: no cover - 简单指标聚合
+        _CONTROL_METRIC.labels(
+            op=str(control_result.op),
+            mode=str(control_result.mode),
+            success="true" if control_result.success else "false",
+        ).inc()
+
 
 def record_tool_call(
     tool_name: str,
@@ -127,6 +163,17 @@ def record_tool_call(
         stat["failure"] += 1.0
     if elapsed_ms >= 0.0:
         stat["total_ms"] += float(elapsed_ms)
+
+    # Prometheus 指标（如可用）：记录工具调用次数与延迟。
+    if _TOOL_CALLS_METRIC is not None:  # pragma: no cover - 简单指标聚合
+        _TOOL_CALLS_METRIC.labels(
+            tool_name=str(tool_name),
+            success="true" if success else "false",
+        ).inc()
+    if _TOOL_LATENCY_METRIC is not None and elapsed_ms >= 0.0:  # pragma: no cover
+        _TOOL_LATENCY_METRIC.labels(tool_name=str(tool_name)).observe(
+            float(elapsed_ms) / 1000.0
+        )
 
 
 def get_thread_summary(thread_id: str) -> Optional[Dict[str, Any]]:

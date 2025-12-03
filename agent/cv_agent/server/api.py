@@ -18,6 +18,8 @@ from ..graph import (
 )
 from ..excel.graph import invoke_excel_chart_agent
 from ..excel.schema import ExcelAnalysisRequest, ExcelAgentResponse
+from ..db.graph import invoke_db_chart_agent
+from ..db.schema import DbAnalysisRequest, DbAgentResponse
 from ..store.thread_summary import (
     get_agent_stats,
     get_thread_summary,
@@ -832,6 +834,56 @@ async def excel_chart(
         },
     )
     _record_http_metrics("/v1/agent/excel/chart", "POST", duration_ms)
+
+    return response
+
+
+@app.post("/v1/agent/db/chart", response_model=DbAgentResponse)
+async def db_chart(
+    request: DbAnalysisRequest,
+) -> DbAgentResponse:
+    """数据库分析与图表生成接口。
+
+    输入数据库名称（可选）与自然语言问题，由 LLM 自动选择合适的表/维度/指标与图表类型，返回 ECharts 配置与分析结论。
+    """
+
+    start_ts = asyncio.get_event_loop().time()
+    logger.info(
+        "db_chart start",
+        extra={
+            "session_id": request.session_id,
+            "db_name": request.db_name,
+        },
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        response = await loop.run_in_executor(
+            None, lambda: invoke_db_chart_agent(request)
+        )
+    except Exception as exc:
+        duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
+        logger.exception(
+            "db_chart failed",
+            extra={
+                "session_id": request.session_id,
+                "db_name": request.db_name,
+                "duration_ms": duration_ms,
+            },
+        )
+        raise HTTPException(status_code=500, detail="数据库分析失败，请稍后重试") from exc
+
+    duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
+    logger.info(
+        "db_chart done",
+        extra={
+            "session_id": request.session_id,
+            "db_name": request.db_name,
+            "used_db_name": response.used_db_name,
+            "duration_ms": duration_ms,
+        },
+    )
+    _record_http_metrics("/v1/agent/db/chart", "POST", duration_ms)
 
     return response
 

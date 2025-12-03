@@ -52,7 +52,7 @@
 
 2.2 API 与 StateGraph 绑定
 
-2.2.1 将 invoke_agent() 主路径改为调用 _invoke_stategraph_agent()
+2.2.1 将 invoke_agent() 主路径改为调用_invoke_stategraph_agent()
 
 2.2.2 将 invoke_agent_thread() 主路径改为调用 _invoke_stategraph_agent()
 
@@ -64,7 +64,7 @@
 
 2.3.2 在 _invoke_stategraph_agent() 中实现：
 
-openai 且无 api_key 时 fallback 到 _invoke_agent_graph()
+openai 且无 api_key 时 fallback 到_invoke_agent_graph()
 
 2.3.3 文档中注明未来新功能只挂 StateGraph，不再扩展 ReAct Agent
 
@@ -104,7 +104,7 @@ openai 且无 api_key 时 fallback 到 _invoke_agent_graph()
 
 4.2 API 层权限检查实现
 
-4.2.1 在 cv_agent/server/api.py 实现 _check_permission(user, op)
+4.2.1 在 cv_agent/server/api.py 实现_check_permission(user, op)
 
 4.2.2 在 _handle_control() 开头插入权限校验逻辑
 

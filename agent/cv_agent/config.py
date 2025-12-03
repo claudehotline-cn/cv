@@ -111,6 +111,33 @@ class Settings(BaseSettings):
         alias="AGENT_RAG_OLLAMA_MODEL",
     )
 
+    # 数据库（MySQL）分析相关配置
+    db_host: str = Field(
+        default="mysql",
+        description="用于数据分析的 MySQL 主机名（通常为 Docker 服务名）",
+        alias="AGENT_DB_HOST",
+    )
+    db_port: int = Field(
+        default=3306,
+        description="用于数据分析的 MySQL 端口",
+        alias="AGENT_DB_PORT",
+    )
+    db_user: str = Field(
+        default="root",
+        description="用于数据分析的 MySQL 用户名",
+        alias="AGENT_DB_USER",
+    )
+    db_password: str = Field(
+        default="123456",
+        description="用于数据分析的 MySQL 密码",
+        alias="AGENT_DB_PASSWORD",
+    )
+    db_default_name: str = Field(
+        default="cv_cp",
+        description="默认用于数据分析的数据库名；请求未显式指定时使用",
+        alias="AGENT_DB_DEFAULT_NAME",
+    )
+
     # Service behaviour
     log_level: str = Field(
         default="INFO",

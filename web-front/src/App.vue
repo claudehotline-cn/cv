@@ -38,18 +38,67 @@ const collapsed = ref(false)
 </script>
 
 <style scoped>
-.shell { height: 100vh; width: 100%; overflow: hidden; display: flex; flex-direction: column; }
-.content { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-x: hidden; }
-.aside { position: relative; background: linear-gradient(180deg, #101421, #0c1019); border-right: 1px solid var(--va-border); overflow: hidden; }
-.header{ width: 100%; background: rgba(9, 12, 20, .65); backdrop-filter: blur(6px); border-bottom: 1px solid var(--va-border); box-sizing: border-box; }
-.main  { height: 100%; padding: 16px; background: var(--va-surface-1); box-sizing: border-box; overflow-x: hidden; min-width: 0; }
-.main.fullscreen { padding: 0; }
-.footer{ width: 100%; border-top: 1px solid var(--va-border); color: var(--va-text-2); padding: 6px 12px; box-sizing: border-box; }
+.shell {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.content {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+}
+.aside {
+  position: relative;
+  background: linear-gradient(180deg, #101421, #0c1019);
+  border-right: 1px solid var(--va-border);
+  overflow: hidden;
+}
+.header{
+  width: 100%;
+  background: rgba(9, 12, 20, .65);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--va-border);
+  box-sizing: border-box;
+}
+.main  {
+  height: 100%;
+  padding: 16px;
+  background: var(--va-surface-1);
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.main > :last-child {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.main.fullscreen {
+  padding: 0;
+}
+.footer{
+  width: 100%;
+  border-top: 1px solid var(--va-border);
+  color: var(--va-text-2);
+  padding: 6px 12px;
+  box-sizing: border-box;
+}
 </style>
 
 <style>
-/* 全局防横向滚动条（避免 100vw 与滚动条宽度造成溢出） */
-html, body, #app { max-width: 100%; overflow-x: hidden; }
+/* 根节点铺满视口，禁止整页滚动，只允许内部区域滚动 */
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
 </style>
 
 
