@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from fastapi import Depends, FastAPI, Header
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -16,6 +16,8 @@ from ..graph import (
     get_control_plane_agent,
     get_stategraph_agent,
 )
+from ..excel.graph import invoke_excel_chart_agent
+from ..excel.schema import ExcelAnalysisRequest, ExcelAgentResponse
 from ..store.thread_summary import (
     get_agent_stats,
     get_thread_summary,
@@ -35,8 +37,42 @@ from ..tools import (
     plan_hotswap_model_tool,
 )
 
-
 logger = logging.getLogger("cv_agent")
+
+try:
+    # 可选依赖：若未安装 prometheus_client，则不暴露 /metrics 端点，也不记录 HTTP 指标。
+    from prometheus_client import Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest  # type: ignore[import]
+except Exception:  # pragma: no cover - 可选依赖
+    Counter = Histogram = None  # type: ignore[assignment]
+    CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
+    generate_latest = None  # type: ignore[assignment]
+
+
+if Counter is not None and Histogram is not None:  # pragma: no cover - 依赖存在时才注册
+    _HTTP_REQUEST_COUNTER = Counter(
+        "cv_agent_http_requests_total",
+        "Total HTTP requests handled by cv_agent, labeled by path and method",
+        ["path", "method"],
+    )
+    _HTTP_REQUEST_LATENCY = Histogram(
+        "cv_agent_http_request_duration_seconds",
+        "HTTP request latency observed by cv_agent (seconds)",
+        ["path", "method"],
+    )
+else:  # pragma: no cover - 未安装 prometheus_client
+    _HTTP_REQUEST_COUNTER = None
+    _HTTP_REQUEST_LATENCY = None
+
+
+def _record_http_metrics(path: str, method: str, duration_ms: float) -> None:
+    """将 HTTP 请求的基本指标写入 Prometheus（如已启用）。"""
+
+    if _HTTP_REQUEST_COUNTER is not None:
+        _HTTP_REQUEST_COUNTER.labels(path=path, method=method).inc()
+    if _HTTP_REQUEST_LATENCY is not None and duration_ms >= 0.0:
+        _HTTP_REQUEST_LATENCY.labels(path=path, method=method).observe(
+            float(duration_ms) / 1000.0
+        )
 
 
 def _configure_logging() -> None:
@@ -51,6 +87,16 @@ def _configure_logging() -> None:
 _configure_logging()
 
 app = FastAPI(title="CV Agent Service", version="0.1.0")
+
+
+if generate_latest is not None:  # pragma: no cover - 仅在安装 prometheus_client 时启用
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        """Prometheus 指标导出端点。"""
+
+        data = generate_latest()
+        return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 
 class Message(BaseModel):
@@ -726,6 +772,70 @@ async def healthz() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/v1/agent/excel/chart", response_model=ExcelAgentResponse)
+async def excel_chart(
+    request: ExcelAnalysisRequest,
+) -> ExcelAgentResponse:
+    """Excel 分析与图表生成接口。
+
+    输入 Excel 文件标识与自然语言问题，返回可直接用于前端渲染的 ECharts 配置与分析结论。
+    """
+
+    start_ts = asyncio.get_event_loop().time()
+    logger.info(
+        "excel_chart start",
+        extra={
+            "session_id": request.session_id,
+            "file_id": request.file_id,
+            "sheet_name": request.sheet_name,
+        },
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        response = await loop.run_in_executor(
+            None, lambda: invoke_excel_chart_agent(request)
+        )
+    except FileNotFoundError as exc:
+        duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
+        logger.warning(
+            "excel_chart file not found",
+            extra={
+                "session_id": request.session_id,
+                "file_id": request.file_id,
+                "sheet_name": request.sheet_name,
+                "duration_ms": duration_ms,
+            },
+        )
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
+        logger.exception(
+            "excel_chart failed",
+            extra={
+                "session_id": request.session_id,
+                "file_id": request.file_id,
+                "sheet_name": request.sheet_name,
+                "duration_ms": duration_ms,
+            },
+        )
+        raise HTTPException(status_code=500, detail="Excel 分析失败，请稍后重试") from exc
+
+    duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
+    logger.info(
+        "excel_chart done",
+        extra={
+            "session_id": request.session_id,
+            "file_id": request.file_id,
+            "sheet_name": request.sheet_name,
+            "duration_ms": duration_ms,
+        },
+    )
+    _record_http_metrics("/v1/agent/excel/chart", "POST", duration_ms)
+
+    return response
+
+
 @app.post("/v1/agent/invoke", response_model=AgentInvokeResponse)
 async def agent_invoke(
     request: AgentInvokeRequest,
@@ -806,6 +916,7 @@ async def agent_invoke(
             "duration_ms": duration_ms,
         },
     )
+    _record_http_metrics("/v1/agent/invoke", "POST", duration_ms)
 
     try:
         update_summary_for_messages(
@@ -913,6 +1024,7 @@ async def agent_thread_invoke(
             "duration_ms": duration_ms,
         },
     )
+    _record_http_metrics("/v1/agent/threads/{thread_id}/invoke", "POST", duration_ms)
 
     try:
         update_summary_for_messages(
@@ -973,6 +1085,9 @@ async def agent_stategraph_thread_invoke(
             "thread_id": thread_id,
             "duration_ms": duration_ms,
         },
+    )
+    _record_http_metrics(
+        "/v1/agent/stategraph/threads/{thread_id}/invoke", "POST", duration_ms
     )
 
     try:

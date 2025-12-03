@@ -118,6 +118,28 @@ class Settings(BaseSettings):
         alias="AGENT_LOG_LEVEL",
     )
 
+    # Excel / DataFrame 分析相关配置
+    excel_file_base_dir: str = Field(
+        default="",
+        description="Excel 文件查找的基础目录，留空则直接使用 file_id 作为路径",
+        alias="AGENT_EXCEL_FILE_BASE_DIR",
+    )
+    excel_df_cache_max_items: int = Field(
+        default=16,
+        description="进程内 DataFrame 缓存的最大条目数（<=0 表示不限制）",
+        alias="AGENT_EXCEL_DF_CACHE_MAX_ITEMS",
+    )
+    excel_df_cache_ttl_sec: int = Field(
+        default=1800,
+        description="DataFrame 缓存条目的生存时间（秒，<=0 表示不过期）",
+        alias="AGENT_EXCEL_DF_CACHE_TTL_SEC",
+    )
+    excel_max_chart_rows: int = Field(
+        default=500,
+        description="单个图表允许返回的最大数据行数，超过时需要聚合或抽样",
+        alias="AGENT_EXCEL_MAX_CHART_ROWS",
+    )
+
     # LangGraph recursion limit（用于防止 agent→tools 循环过深）
     recursion_limit: int = Field(
         default=12,
