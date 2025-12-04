@@ -841,10 +841,12 @@ async def excel_chart(
 @app.post("/v1/agent/db/chart", response_model=DbAgentResponse)
 async def db_chart(
     request: DbAnalysisRequest,
+    user: UserContext = Depends(get_user_context),
 ) -> DbAgentResponse:
     """数据库分析与图表生成接口。
 
-    输入数据库名称（可选）与自然语言问题，由 LLM 自动选择合适的表/维度/指标与图表类型，返回 ECharts 配置与分析结论。
+    输入数据库名称（可选）与自然语言问题，由内部的 LangChain SQLDatabase + SQL Agent 生成并执行只读 SQL，
+    自动选择合适的表/维度/指标与图表类型，返回 ECharts 配置与分析结论。
     """
 
     start_ts = asyncio.get_event_loop().time()
@@ -853,14 +855,39 @@ async def db_chart(
         extra={
             "session_id": request.session_id,
             "db_name": request.db_name,
+            "user_id": user.user_id,
+            "role": user.role,
+            "tenant": user.tenant,
         },
     )
 
     loop = asyncio.get_running_loop()
     try:
+        user_ctx = {
+            "user_id": user.user_id,
+            "role": user.role,
+            "tenant": user.tenant,
+        }
         response = await loop.run_in_executor(
-            None, lambda: invoke_db_chart_agent(request)
+            None, lambda: invoke_db_chart_agent(request, user=user_ctx)
         )
+    except TimeoutError as exc:
+        duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
+        logger.warning(
+            "db_chart timeout",
+            extra={
+                "session_id": request.session_id,
+                "db_name": request.db_name,
+                "user_id": user.user_id,
+                "role": user.role,
+                "tenant": user.tenant,
+                "duration_ms": duration_ms,
+            },
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=str(exc) or "数据库分析超时，请稍后重试",
+        ) from exc
     except Exception as exc:
         duration_ms = (asyncio.get_event_loop().time() - start_ts) * 1000.0
         logger.exception(
@@ -868,6 +895,9 @@ async def db_chart(
             extra={
                 "session_id": request.session_id,
                 "db_name": request.db_name,
+                "user_id": user.user_id,
+                "role": user.role,
+                "tenant": user.tenant,
                 "duration_ms": duration_ms,
             },
         )
@@ -880,6 +910,17 @@ async def db_chart(
             "session_id": request.session_id,
             "db_name": request.db_name,
             "used_db_name": response.used_db_name,
+            "user_id": user.user_id,
+            "role": user.role,
+            "tenant": user.tenant,
+            "sql_agent_used": True,
+            "sql_count": len(response.charts),
+            "rows_total": sum(
+                max(0, len((chart.option.get("dataset", {}) or {}).get("source", [])) - 1)
+                if isinstance(chart.option.get("dataset", {}), dict)
+                else 0
+                for chart in response.charts
+            ),
             "duration_ms": duration_ms,
         },
     )

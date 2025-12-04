@@ -46,7 +46,7 @@ def _list_candidate_tables(conn: pymysql.connections.Connection, db_name: str, m
     """从 information_schema 中列出候选表名。"""
 
     sql = """
-    SELECT table_name
+    SELECT table_name AS table_name
     FROM information_schema.tables
     WHERE table_schema = %s
       AND table_type = 'BASE TABLE'
@@ -63,7 +63,7 @@ def _get_table_columns(conn: pymysql.connections.Connection, db_name: str, table
     """获取表的列名列表。"""
 
     sql = """
-    SELECT column_name
+    SELECT column_name AS column_name
     FROM information_schema.columns
     WHERE table_schema = %s AND table_name = %s
     ORDER BY ordinal_position ASC
@@ -169,4 +169,3 @@ def execute_chart_query(
         return cols, rows
     finally:
         conn.close()
-

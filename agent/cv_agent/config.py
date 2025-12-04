@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -136,6 +136,14 @@ class Settings(BaseSettings):
         default="cv_cp",
         description="默认用于数据分析的数据库名；请求未显式指定时使用",
         alias="AGENT_DB_DEFAULT_NAME",
+    )
+    db_extra_databases: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "额外数据源别名到数据库名的映射，例如 {'reporting': 'cv_reporting'}；"
+            "当请求中的 db_name 与某个别名匹配时，将被映射为实际数据库名。"
+        ),
+        alias="AGENT_DB_EXTRA_DATABASES",
     )
 
     # Service behaviour

@@ -11,11 +11,15 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
 from ..config import get_settings
-from ..excel.analysis import AnalyzedTable
-from ..excel.chart_spec import build_chart_spec_from_analysis
+from ..excel.analysis import (
+    AnalyzedTable,
+    _choose_group_by_column,
+    _choose_metric_columns,
+    _infer_column_types,
+)
 from ..excel.echarts_builder import build_chart_results_from_spec
-from ..excel.schema import ExcelChartResult
-from .loader import execute_chart_query, load_schema_preview
+from ..excel.schema import ExcelChartResult, ExcelChartSpec
+from .loader import load_schema_preview
 from .schema import (
     DbAgentResponse,
     DbAnalysisPlan,
@@ -23,6 +27,7 @@ from .schema import (
     DbChartPlan,
     DbSchemaPreview,
 )
+from .sql_agent import SqlQueryResult, get_sql_database, plan_and_run_sql
 
 _LOGGER = logging.getLogger("cv_agent.db")
 
@@ -265,26 +270,190 @@ def _build_db_insight_text(
             raise TimeoutError(f"生成数据库分析结论超时（>{timeout_sec}s）") from exc
 
 
+def _build_db_chart_spec_from_result(
+    result: SqlQueryResult,
+    request: DbAnalysisRequest,
+    chart_id: str,
+) -> ExcelChartSpec:
+    """基于 SQL 查询结果与用户请求，由 LLM 直接规划单个图表的 ChartSpec。"""
+
+    settings = get_settings()
+    provider = getattr(settings, "llm_provider", "openai").lower()
+    timeout_sec = float(getattr(settings, "request_timeout_sec", 30.0))
+
+    # 构建 LLM 客户端
+    if provider == "ollama":
+        _LOGGER.info(
+            "db.chart_spec.llm_init provider=ollama model=%s base_url=%s",
+            settings.llm_model,
+            getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
+        )
+        try:
+            llm: Any = ChatOllama(
+                model=settings.llm_model,
+                base_url=getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
+            )
+        except Exception as exc:  # pragma: no cover
+            _LOGGER.error("构建 Ollama LLM 客户端失败（db chart spec）：%s", exc)
+            raise RuntimeError("数据库图表规格 LLM 初始化失败（ollama）") from exc
+    else:
+        if not settings.openai_api_key:
+            _LOGGER.error("db.chart_spec.llm_init_failed provider=openai reason=missing_api_key")
+            raise RuntimeError("OPENAI_API_KEY 未配置，无法生成数据库图表规格")
+        _LOGGER.info(
+            "db.chart_spec.llm_init provider=openai model=%s",
+            settings.llm_model,
+        )
+        try:
+            llm = ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
+        except Exception as exc:  # pragma: no cover
+            _LOGGER.error("构建 OpenAI LLM 客户端失败（db chart spec）：%s", exc)
+            raise RuntimeError("数据库图表规格 LLM 初始化失败（openai）") from exc
+
+    import json
+
+    columns = result.columns or []
+    rows = result.rows or []
+
+    # 将 Decimal 等不可直接 JSON 序列化的类型转换为基础类型，便于放入提示词与响应。
+    from decimal import Decimal
+
+    def _to_jsonable(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, list):
+            return [_to_jsonable(v) for v in value]
+        if isinstance(value, tuple):
+            return [_to_jsonable(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _to_jsonable(v) for k, v in value.items()}
+        return value
+
+    json_rows = [_to_jsonable(r) for r in rows]
+    sample_rows = json_rows[: min(10, len(json_rows))]
+    preview_json = json.dumps(
+        {
+            "columns": columns,
+            "sample_rows": sample_rows,
+        },
+        ensure_ascii=False,
+    )
+
+    prompt = (
+        "你是一个数据库分析与图表规划助手。下面是一张已经通过 SQL 查询得到的结果表，以及用户的自然语言问题。\n\n"
+        "【结果表结构预览】\n"
+        f"{preview_json}\n\n"
+        "【用户问题】\n"
+        f"{request.query}\n\n"
+        "你的任务：基于这张结果表和用户问题，设计一个最合适的单个图表，并只输出一个 JSON 对象，字段如下：\n"
+        "{\n"
+        '  \"id\": \"db_chart_1\",  // 图表唯一标识\n'
+        '  \"title\": \"图表标题（简短中文）\",\n'
+        '  \"description\": \"可选的简短说明\",\n'
+        '  \"type\": \"line\" | \"bar\" | \"pie\" | \"area\",\n'
+        '  \"xField\": \"作为横轴的字段名，必须是 columns 之一\",\n'
+        '  \"xAxisType\": \"category\" | \"time\" | \"value\",\n'
+        '  \"yFields\": [\"一个或多个纵轴字段名，必须是 columns 之一且通常为数值列\"],\n'
+        '  \"yAxisType\": \"value\" | \"log\" | \"percent\"\n'
+        "}\n\n"
+        "要求：\n"
+        "1) 只能从 columns 中选择 xField 和 yFields，不要编造不存在的列名；\n"
+        "2) 如果存在时间/日期相关列，通常优先用作 xField；数值列用作 yFields；\n"
+        "3) 不要在返回的 JSON 中包含 dataset/rows 等真实数据，由后端注入；\n"
+        "4) 只输出 JSON 对象本身，不要添加解释性文字或 Markdown 代码块。\n"
+    )
+
+    def _invoke() -> str:
+        _LOGGER.info("db.chart_spec.llm_invoke.start")
+        result_obj = llm.invoke(prompt)  # type: ignore[call-arg]
+        text = getattr(result_obj, "content", str(result_obj))
+        _LOGGER.info("db.chart_spec.llm_invoke.done")
+        return str(text or "").strip()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_invoke)
+        try:
+            raw = future.result(timeout=timeout_sec)
+        except FuturesTimeoutError as exc:
+            _LOGGER.error("db.chart_spec.llm_timeout timeout_sec=%.1f", timeout_sec)
+            raise TimeoutError(f"生成数据库图表规格超时（>{timeout_sec}s）") from exc
+
+    import re
+
+    raw_str = str(raw or "").strip()
+    # 尝试从可能的 Markdown 包裹中提取 JSON 对象
+    match = re.search(r"\{.*\}", raw_str, flags=re.DOTALL)
+    json_text = match.group(0) if match else raw_str
+
+    try:
+        data = json.loads(json_text)
+    except Exception as exc:
+        _LOGGER.error("db.chart_spec.invalid_json raw=%s error=%s", raw, exc)
+        raise RuntimeError("数据库图表规格 LLM 返回的 JSON 无法解析") from exc
+
+    # 若顶层结构为 {\"charts\": [...] }，则取第一个图表对象
+    if isinstance(data, dict) and "charts" in data and isinstance(data["charts"], list) and data["charts"]:
+        data = data["charts"][0]
+
+    if not isinstance(data, dict):
+        _LOGGER.error("db.chart_spec.invalid_structure data=%s", data)
+        raise RuntimeError("数据库图表规格 LLM 返回了无效结构")
+
+    if not data.get("id"):
+        data["id"] = chart_id
+
+    if not data.get("title"):
+        data["title"] = request.query.strip() or "数据库分析图表"
+
+    # 注入实际数据集，避免由 LLM 生成大量 rows。
+    data["dataset"] = {
+        "columns": columns,
+        "rows": json_rows,
+    }
+
+    try:
+        spec = ExcelChartSpec.model_validate(data)
+    except ValidationError as exc:
+        _LOGGER.error("db.chart_spec.validation_error data=%s error=%s", data, exc)
+        raise RuntimeError("数据库图表规格字段校验失败") from exc
+
+    return spec
+
+
 def _build_db_graph() -> Any:
-    """构建数据库分析 StateGraph。"""
+    """构建数据库分析 StateGraph。
+
+    当前版本使用 LangChain SQLDatabase + SQL Query Chain 直接由 LLM 生成 SQL，
+    再由后端执行只读查询并构建图表。
+    """
 
     graph = StateGraph(dict)
 
     def load_schema_node(state: Dict[str, Any]) -> Dict[str, Any]:
         request: DbAnalysisRequest = state["request"]
         settings = get_settings()
-        db_name = request.db_name or getattr(settings, "db_default_name", None)
-        if not db_name:
+        # 先解析请求中的 db_name，若为空则使用默认库名，再通过 db_extra_databases 做别名映射。
+        raw_db_name = request.db_name or getattr(settings, "db_default_name", None)
+        if not raw_db_name:
             raise RuntimeError("未配置数据库名称（请求未指定且未设置 db_default_name）")
+        db_name = settings.db_extra_databases.get(raw_db_name, raw_db_name)
 
         _LOGGER.info(
-            "db.graph.load_schema.start session_id=%s db_name=%s",
+            "db.graph.load_schema.start session_id=%s db_name=%s raw_db_name=%s",
             request.session_id,
             db_name,
+            raw_db_name,
         )
         schema = load_schema_preview(db_name)
+        # 同时构造 SQLDatabase，供后续 SQL Agent 节点复用。
+        try:
+            sql_db = get_sql_database(db_name)
+        except Exception as exc:
+            _LOGGER.error("db.graph.load_schema.sql_db_failed db_name=%s error=%s", db_name, exc)
+            raise
         state["db_name"] = db_name
         state["schema_preview"] = schema
+        state["sql_db"] = sql_db
         _LOGGER.info(
             "db.graph.load_schema.done db_name=%s tables=%d",
             db_name,
@@ -292,103 +461,92 @@ def _build_db_graph() -> Any:
         )
         return state
 
-    def plan_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    def sql_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         request: DbAnalysisRequest = state["request"]
-        schema: DbSchemaPreview = state["schema_preview"]
+        db_name: str = state["db_name"]
+        sql_db = state.get("sql_db")
+        if sql_db is None:
+            raise RuntimeError("SQLDatabase 实例缺失，无法执行 SQL Agent 查询")
+
+        # 使用 Excel 的最大行数配置，避免返回数据过大。
+        max_rows = getattr(get_settings(), "excel_max_chart_rows", 500)
+        if max_rows <= 0:
+            max_rows = 500
+
         _LOGGER.info(
-            "db.graph.plan_node.start db_name=%s tables=%d",
-            schema.db_name,
-            len(schema.tables),
+            "db.graph.sql_agent_node.start db_name=%s max_rows=%d",
+            db_name,
+            max_rows,
         )
-        plan = _build_db_analysis_plan(schema, request)
-        state["analysis_plan"] = plan
-        state["chart_plans"] = plan.charts
-        first = plan.charts[0]
+        sql_results = plan_and_run_sql(
+            request=request,
+            db=sql_db,
+            db_name=db_name,
+            max_rows=max_rows,
+        )
+        state["sql_results"] = sql_results
         _LOGGER.info(
-            "db.graph.plan_node.done charts=%d first_id=%s first_table=%s first_group_by=%s first_metrics=%s first_agg=%s first_chart_type=%s",
-            len(plan.charts),
-            first.id,
-            first.table,
-            first.group_by,
-            first.metrics,
-            first.agg,
-            first.chart_type,
+            "db.graph.sql_agent_node.done db_name=%s results=%d",
+            db_name,
+            len(sql_results),
         )
         return state
 
     def analyze_node(state: Dict[str, Any]) -> Dict[str, Any]:
         db_name: str = state["db_name"]
-        schema: DbSchemaPreview = state["schema_preview"]
-        chart_plans: List[DbChartPlan] = state["chart_plans"]
+        request: DbAnalysisRequest = state["request"]
+
+        sql_results: List[SqlQueryResult] = state.get("sql_results") or []
         _LOGGER.info(
-            "db.graph.analyze_node.start db_name=%s charts=%d",
+            "db.graph.analyze_node.start db_name=%s sql_results=%d",
             db_name,
-            len(chart_plans),
+            len(sql_results),
         )
 
-        # 构造 schema 的表/列白名单，避免 SQL 注入。
-        table_columns: Dict[str, List[str]] = {
-            t.name: list(t.columns) for t in schema.tables
-        }
-
         analyzed_list: List[AnalyzedTable] = []
-        for cp in chart_plans:
-            if cp.table not in table_columns:
-                raise RuntimeError(f"图表计划引用了未知表名: {cp.table}")
+        if not sql_results:
+            raise RuntimeError("SQL Agent 未返回任何查询结果")
 
-            cols = table_columns[cp.table]
+        max_rows = getattr(get_settings(), "excel_max_chart_rows", 500)
+        if max_rows <= 0:
+            max_rows = 500
 
-            if cp.group_by is not None and cp.group_by not in cols:
-                raise RuntimeError(
-                    f"图表计划的 group_by 不存在于表 {cp.table} 中: {cp.group_by}"
+        for idx, result in enumerate(sql_results, start=1):
+            if not result.columns:
+                _LOGGER.warning(
+                    "db.graph.analyze_node.empty_columns index=%d sql=%s",
+                    idx,
+                    result.sql,
                 )
+                continue
 
-            for m in cp.metrics:
-                if m not in cols:
-                    raise RuntimeError(
-                        f"图表计划的 metric 列不存在于表 {cp.table} 中: {m}"
-                    )
-
-            _LOGGER.info(
-                "db.graph.analyze_node.query start table=%s group_by=%s metrics=%s agg=%s",
-                cp.table,
-                cp.group_by,
-                cp.metrics,
-                cp.agg,
-            )
-            col_names, rows = execute_chart_query(
-                db_name=db_name,
-                table=cp.table,
-                group_by=cp.group_by,
-                metrics=cp.metrics,
-                agg=cp.agg,
-            )
-            _LOGGER.info(
-                "db.graph.analyze_node.query done table=%s rows=%d",
-                cp.table,
-                len(rows),
-            )
-
-            if not rows:
-                # 没有数据时，也生成一个空表供后续节点感知。
-                df = pd.DataFrame(columns=col_names)
+            if not result.rows:
+                df = pd.DataFrame(columns=result.columns)
             else:
-                df = pd.DataFrame(rows, columns=col_names)
+                df = pd.DataFrame(result.rows, columns=result.columns)
 
-            # 复用 Excel 的列类型推断逻辑
-            from ..excel.analysis import _infer_column_types
-
-            column_types = _infer_column_types(df)
-            max_rows = getattr(get_settings(), "excel_max_chart_rows", 500)
             if max_rows > 0 and len(df) > max_rows:
                 df = df.head(max_rows)
+
+            column_types = _infer_column_types(df)
+
+            group_by = _choose_group_by_column(
+                df=df,
+                column_types=column_types,
+                query=request.query,
+            )
+            metrics = _choose_metric_columns(
+                df=df,
+                column_types=column_types,
+                query=request.query,
+            )
 
             analyzed = AnalyzedTable(
                 columns=list(df.columns),
                 rows=df.to_numpy().tolist(),
                 column_types=column_types,
-                group_by=cp.group_by,
-                metrics=list(cp.metrics or []),
+                group_by=group_by,
+                metrics=metrics,
             )
             analyzed_list.append(analyzed)
 
@@ -403,23 +561,21 @@ def _build_db_graph() -> Any:
 
     def chart_spec_node(state: Dict[str, Any]) -> Dict[str, Any]:
         request: DbAnalysisRequest = state["request"]
-        analyzed_list: List[AnalyzedTable] = state["analyzed_list"]
-        chart_plans: List[DbChartPlan] = state["chart_plans"]
+        sql_results: List[SqlQueryResult] = state.get("sql_results") or []
         _LOGGER.info(
-            "db.graph.chart_spec_node.start charts=%d",
-            len(chart_plans),
+            "db.graph.chart_spec_node.start results=%d",
+            len(sql_results),
         )
-        specs = []
-        fake_request = _DbAsExcelRequest(query=request.query)
-        for idx, (cp, analyzed) in enumerate(zip(chart_plans, analyzed_list), start=1):
-            chart_id = cp.id or f"db_chart_{idx}"
-            spec = build_chart_spec_from_analysis(
-                analyzed=analyzed,
-                request=fake_request,  # type: ignore[arg-type]
+        if not sql_results:
+            raise RuntimeError("SQL Agent 未返回任何查询结果，无法生成图表规格")
+
+        specs: List[ExcelChartSpec] = []
+        for idx, result in enumerate(sql_results, start=1):
+            chart_id = f"db_chart_{idx}"
+            spec = _build_db_chart_spec_from_result(
+                result=result,
+                request=request,
                 chart_id=chart_id,
-                preferred_chart_type=cp.chart_type,
-                chart_title=cp.title,
-                chart_description=cp.description,
             )
             specs.append(spec)
             _LOGGER.info(
@@ -473,15 +629,15 @@ def _build_db_graph() -> Any:
         return state
 
     graph.add_node("load_schema", load_schema_node)
-    graph.add_node("build_plan", plan_node)
+    graph.add_node("sql_agent", sql_agent_node)
     graph.add_node("analyze_db", analyze_node)
     graph.add_node("build_chart_spec", chart_spec_node)
     graph.add_node("build_chart", build_chart_node)
     graph.add_node("build_insight", insight_node)
 
     graph.add_edge(START, "load_schema")
-    graph.add_edge("load_schema", "build_plan")
-    graph.add_edge("build_plan", "analyze_db")
+    graph.add_edge("load_schema", "sql_agent")
+    graph.add_edge("sql_agent", "analyze_db")
     graph.add_edge("analyze_db", "build_chart_spec")
     graph.add_edge("build_chart_spec", "build_chart")
     graph.add_edge("build_chart", "build_insight")
@@ -500,13 +656,33 @@ def get_db_graph() -> Any:
     return _DB_GRAPH
 
 
-def invoke_db_chart_agent(request: DbAnalysisRequest) -> DbAgentResponse:
-    """以一问一答形式执行数据库分析 Agent。"""
+def invoke_db_chart_agent(
+    request: DbAnalysisRequest,
+    user: Dict[str, Any] | None = None,
+) -> DbAgentResponse:
+    """以一问一答形式执行数据库分析 Agent。
+
+    - user: 可选的用户上下文，将通过 LangGraph config 透传，便于后续做权限控制与审计。
+    """
 
     graph = get_db_graph()
     initial_state: Dict[str, Any] = {"request": request}
+
+    config: Dict[str, Any] | None = None
+    if user is not None:
+        config = {
+            "configurable": {
+                "user_id": user.get("user_id"),
+                "role": user.get("role"),
+                "tenant": user.get("tenant"),
+            }
+        }
+
     try:
-        result_state: Dict[str, Any] = graph.invoke(initial_state)  # type: ignore[assignment]
+        if config is not None:
+            result_state: Dict[str, Any] = graph.invoke(initial_state, config=config)  # type: ignore[assignment]
+        else:
+            result_state = graph.invoke(initial_state)  # type: ignore[assignment]
     except Exception as exc:
         _LOGGER.exception("invoke_db_chart_agent failed: %s", exc)
         raise
@@ -515,4 +691,3 @@ def invoke_db_chart_agent(request: DbAnalysisRequest) -> DbAgentResponse:
     if not isinstance(response, DbAgentResponse):
         raise ValueError("DB Agent 未返回有效的响应对象")
     return response
-
