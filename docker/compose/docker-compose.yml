@@ -316,6 +316,8 @@ services:
       - AGENT_LLM_PROVIDER=ollama
       - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       - AGENT_LOG_LEVEL=INFO
+      # SQL Agent：允许更长时间生成复杂多表查询 SQL，单位秒
+      - AGENT_DB_SQL_TIMEOUT_SEC=120
       # 默认：使用 SQLite 作为 LangGraph checkpoint 后端，并将文件写入持久化卷。
       # 如需在多实例部署中共享线程状态，可切换为 MySQL：
       #   AGENT_CHECKPOINT_BACKEND=mysql

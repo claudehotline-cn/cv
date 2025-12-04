@@ -42,6 +42,13 @@ class Settings(BaseSettings):
         alias="AGENT_REQUEST_TIMEOUT",
     )
 
+    # 数据库 SQL Agent 专用超时时间（LLM 生成 SQL + 执行）
+    db_sql_timeout_sec: float = Field(
+        default=60.0,
+        description="SQL Agent 生成数据库查询 SQL 的超时时间（秒），覆盖通用 request_timeout_sec",
+        alias="AGENT_DB_SQL_TIMEOUT_SEC",
+    )
+
     # Checkpoint backend
     checkpoint_backend: str = Field(
         default="memory",

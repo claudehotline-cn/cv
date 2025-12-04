@@ -8,7 +8,11 @@ import {
   type AgentMessage,
   type AgentControlResult,
   type AgentThreadSummary,
+  type AgentChartResult,
+  type DbChartResponse,
+  type ExcelChartResponse,
 } from '@/api/agent'
+import AgentChartCard from '@/components/analytics/AgentChartCard.vue'
 
 const agentEnabled = isAgentEnabled()
 const threadId = ref<string>(`manual-${Date.now()}`)
@@ -19,12 +23,31 @@ const sending = ref(false)
 const threadHistory = ref<string[]>(loadThreadHistory())
 const lastRawState = ref<any | null>(null)
 const threadSummaries = ref<AgentThreadSummary[]>([])
-const activeTab = ref<'chat' | 'threads'>('chat')
+const activeTab = ref<'chat' | 'threads' | 'charts'>('chat')
 const currentMode = ref<'default' | 'control' | 'rag'>('default')
 const showHistoryPanel = ref(false)
 const searchQuery = ref<string>('')
 const lastAgentData = ref<any | null>(null)
 const messagesContainer = ref<HTMLElement | null>(null)
+
+// 图表分析相关状态
+const dbForm = ref<{ dbName: string; query: string }>({ dbName: 'cv_cp', query: '' })
+const dbLoading = ref(false)
+const dbCharts = ref<AgentChartResult[]>([])
+const dbInsight = ref<string | null>(null)
+const dbError = ref<string | null>(null)
+const dbResponse = ref<DbChartResponse | null>(null)
+
+const excelForm = ref<{ fileId: string; sheetName: string; query: string }>({
+  fileId: '',
+  sheetName: '',
+  query: '',
+})
+const excelLoading = ref(false)
+const excelCharts = ref<AgentChartResult[]>([])
+const excelInsight = ref<string | null>(null)
+const excelError = ref<string | null>(null)
+const excelResponse = ref<ExcelChartResponse | null>(null)
 
 const chatModes = [
   {
@@ -166,6 +189,55 @@ async function send() {
     ElMessage.error(e?.message || '调用 Agent 失败')
   } finally {
     sending.value = false
+  }
+}
+
+async function runDbChart() {
+  if (!dbForm.value.query.trim()) return
+  if (!agentEnabled) {
+    ElMessage.info('Agent 已禁用，当前仅展示前端示例 UI。')
+    return
+  }
+  dbLoading.value = true
+  dbError.value = null
+  try {
+    const resp = await agentApi.dbChart({
+      session_id: threadId.value || `db-${Date.now()}`,
+      db_name: dbForm.value.dbName || undefined,
+      query: dbForm.value.query,
+    })
+    dbResponse.value = resp
+    dbCharts.value = resp.charts || []
+    dbInsight.value = resp.insight || null
+  } catch (e: any) {
+    dbError.value = e?.message || '数据库分析失败'
+  } finally {
+    dbLoading.value = false
+  }
+}
+
+async function runExcelChart() {
+  if (!excelForm.value.fileId.trim() || !excelForm.value.query.trim()) return
+  if (!agentEnabled) {
+    ElMessage.info('Agent 已禁用，当前仅展示前端示例 UI。')
+    return
+  }
+  excelLoading.value = true
+  excelError.value = null
+  try {
+    const resp = await agentApi.excelChart({
+      session_id: threadId.value || `excel-${Date.now()}`,
+      file_id: excelForm.value.fileId,
+      sheet_name: excelForm.value.sheetName || undefined,
+      query: excelForm.value.query,
+    })
+    excelResponse.value = resp
+    excelCharts.value = resp.charts || []
+    excelInsight.value = resp.insight || null
+  } catch (e: any) {
+    excelError.value = e?.message || 'Excel 分析失败'
+  } finally {
+    excelLoading.value = false
   }
 }
 
@@ -544,6 +616,133 @@ const filteredThreadSummaries = computed(() => {
               min-width="160"
             />
           </el-table>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="图表分析" name="charts">
+        <div class="charts-panel">
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-card shadow="never" header="数据库分析（SQL Agent）">
+                <el-form label-width="72px" size="small">
+                  <el-form-item label="数据库">
+                    <el-input
+                      v-model="dbForm.dbName"
+                      placeholder="默认 cv_cp，可留空"
+                    />
+                  </el-form-item>
+                  <el-form-item label="问题">
+                    <el-input
+                      v-model="dbForm.query"
+                      type="textarea"
+                      :rows="4"
+                      placeholder="例如：按城市统计订单总金额和订单数，画一个柱状图"
+                    />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :loading="dbLoading"
+                      :disabled="!agentEnabled || !dbForm.query.trim()"
+                      @click="runDbChart"
+                    >
+                      分析数据库
+                    </el-button>
+                  </el-form-item>
+                </el-form>
+                <p v-if="dbResponse?.used_db_name" class="hint">
+                  使用数据库：{{ dbResponse.used_db_name }}
+                </p>
+                <p v-if="dbError" class="error-text">
+                  {{ dbError }}
+                </p>
+              </el-card>
+
+              <el-card shadow="never" header="Excel 分析" style="margin-top: 12px">
+                <el-form label-width="72px" size="small">
+                  <el-form-item label="文件 ID">
+                    <el-input
+                      v-model="excelForm.fileId"
+                      placeholder="Excel 文件标识（file_id）"
+                    />
+                  </el-form-item>
+                  <el-form-item label="Sheet">
+                    <el-input
+                      v-model="excelForm.sheetName"
+                      placeholder="可选，留空则自动选择"
+                    />
+                  </el-form-item>
+                  <el-form-item label="问题">
+                    <el-input
+                      v-model="excelForm.query"
+                      type="textarea"
+                      :rows="4"
+                      placeholder="例如：按月份统计销售额和订单数，画一个双折线图"
+                    />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :loading="excelLoading"
+                      :disabled="!agentEnabled || !excelForm.fileId.trim() || !excelForm.query.trim()"
+                      @click="runExcelChart"
+                    >
+                      分析 Excel
+                    </el-button>
+                  </el-form-item>
+                </el-form>
+                <p v-if="excelResponse?.used_sheet_name" class="hint">
+                  使用 Sheet：{{ excelResponse.used_sheet_name }}
+                </p>
+                <p v-if="excelError" class="error-text">
+                  {{ excelError }}
+                </p>
+              </el-card>
+            </el-col>
+
+            <el-col :span="16">
+              <div v-if="dbCharts.length || excelCharts.length" class="charts-display">
+                <div v-if="dbCharts.length">
+                  <h4 class="charts-title">数据库图表</h4>
+                  <div class="charts-strip">
+                    <div
+                      v-for="c in dbCharts"
+                      :key="c.id"
+                      class="charts-strip-item"
+                    >
+                      <AgentChartCard :chart="c" />
+                    </div>
+                  </div>
+                  <div v-if="dbInsight" class="insight">
+                    <h5>分析结论</h5>
+                    <p>{{ dbInsight }}</p>
+                  </div>
+                </div>
+
+                <div v-if="excelCharts.length" style="margin-top: 16px">
+                  <h4 class="charts-title">Excel 图表</h4>
+                  <div class="charts-strip">
+                    <div
+                      v-for="c in excelCharts"
+                      :key="c.id"
+                      class="charts-strip-item"
+                    >
+                      <AgentChartCard :chart="c" />
+                    </div>
+                  </div>
+                  <div v-if="excelInsight" class="insight">
+                    <h5>分析结论</h5>
+                    <p>{{ excelInsight }}</p>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="charts-empty">
+                暂无图表结果，可在左侧输入问题并发起分析。
+              </div>
+            </el-col>
+          </el-row>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -938,6 +1137,54 @@ const filteredThreadSummaries = computed(() => {
   font-size: 13px;
   opacity: .8;
   padding: 8px;
+}
+
+.charts-panel {
+  padding: 4px;
+  width: 100%;
+}
+.charts-display {
+  padding: 4px 0;
+}
+.charts-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.charts-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.charts-strip-item {
+  flex: 0 0 360px;
+  max-width: 480px;
+}
+.charts-empty {
+  font-size: 13px;
+  opacity: .8;
+  padding: 12px;
+}
+.hint {
+  font-size: 12px;
+  opacity: .8;
+  margin-top: 4px;
+}
+.error-text {
+  font-size: 12px;
+  color: #f97373;
+  margin-top: 4px;
+}
+.insight {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.insight h5 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 @media (max-width: 1200px) {

@@ -46,6 +46,18 @@ export class HttpClient {
     if (!r.ok) throw new Error(await r.text())
     return r.json() as Promise<T>
   }
+  async postWithTimeout<T>(path: string, body: any, timeoutMs: number): Promise<T> {
+    const req = this.withTimeout({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.opts.headers || {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'omit',
+      timeoutMs,
+    } as any)
+    const r = await fetch(this.url(path), req)
+    if (!r.ok) throw new Error(await r.text())
+    return r.json() as Promise<T>
+  }
   async patch<T>(path: string, body?: any): Promise<T> {
     const req = this.withTimeout({
       method: 'PATCH',

@@ -131,6 +131,13 @@ class ExcelChartSpec(BaseModel):
         alias="yAxisType",
     )
 
+    # 可选：按某个维度拆分为多条系列（例如每个城市一条折线）。
+    series_dimension: Optional[str] = Field(
+        default=None,
+        description="用于拆分系列的维度列名（例如 'city_name'），可为空",
+        alias="seriesDimension",
+    )
+
     dataset: ExcelChartDataset = Field(description="用于绘图的数据集")
 
     class Config:

@@ -54,7 +54,8 @@ def _build_chart_planning_prompt(
         '      "xField": "作为横轴的字段名，必须是 columns 之一",\n'
         '      "xAxisType": "category" | "time" | "value",\n'
         '      "yFields": ["一个或多个纵轴字段名，必须是 columns 之一且通常为数值列"],\n'
-        '      "yAxisType": "value" | "log" | "percent"\n'
+        '      "yAxisType": "value" | "log" | "percent",\n'
+        '      "seriesDimension": "可选，用于将一列作为系列维度拆分为多条线/柱（例如按城市拆成多条折线，每个城市一条线）"\n'
         "    },\n"
         "    ...\n"
         "  ]\n"
@@ -63,6 +64,10 @@ def _build_chart_planning_prompt(
         "1) 只能从 columns 中选择 xField 和 yFields，不要编造不存在的列名；\n"
         "2) 如果存在时间/日期相关列，通常优先用作 xField；数值列用作 yFields；\n"
         f"3) charts 数量不超过 {max_charts}，至少 1 个；按重要性排序；\n"
+        "   - 当用户明确提到“多个图表”“两个折线图”“分别画两个图”等时，应尽量输出多个 chart，\n"
+        "     而不是把多个指标都放在同一个图表里；此时通常每个 chart 的 yFields 只包含一个核心指标。\n"
+        "   - 当用户描述的是“按某个维度的每个取值画一条线/一组柱”（例如“按月份统计每个城市的订单总金额，每个城市一条折线”）时，\n"
+        "     可以在该图表上设置 seriesDimension 为该维度列名（例如 \"city\" 或 \"city_name\"），而不是把城市字段当作 xField。\n"
         "4) 不要在返回中包含 dataset 或真实 rows，由后端注入；\n"
         "5) 只输出 JSON 对象本身，不要添加解释性文字或 Markdown 代码块。"
     )

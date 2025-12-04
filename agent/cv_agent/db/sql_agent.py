@@ -152,6 +152,21 @@ def _execute_sql(
     rows: List[List[Any]] = []
 
     with engine.connect() as conn:  # type: ignore[assignment]
+        # 在当前连接会话中关闭 ONLY_FULL_GROUP_BY，以兼容 LLM 生成的聚合 SQL。
+        # 该调整仅作用于本 Agent 会话，不影响全局 MySQL 配置。
+        try:
+            conn.execute(
+                text(
+                    "SET SESSION sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''))"
+                )
+            )
+        except Exception as exc:  # 容忍 SET 失败，记录告警但不中断查询
+            _LOGGER.warning(
+                "db.sql.execute_sql.set_sql_mode_failed db_name=%s error=%s",
+                db_name or "",
+                exc,
+            )
+
         result = conn.execute(text(safe_sql))
         try:
             columns = list(result.keys())
@@ -212,7 +227,8 @@ def plan_and_run_sql(
         raise ValueError("DbAnalysisRequest.query 不能为空")
 
     settings = get_settings()
-    timeout_sec = float(getattr(settings, "request_timeout_sec", 30.0))
+    # SQL Agent 允许单独配置超时时间；若未设置则回退到通用 request_timeout_sec。
+    timeout_sec = float(getattr(settings, "db_sql_timeout_sec", None) or getattr(settings, "request_timeout_sec", 30.0))
     if max_rows <= 0:
         max_rows = getattr(settings, "excel_max_chart_rows", 500) or 500
 
@@ -245,6 +261,8 @@ def plan_and_run_sql(
             "2. 然后必须至少调用一次 sql_db_query 工具，编写并执行一条只读的聚合查询 SQL；\n"
             "3. 该 SQL 必须只包含 SELECT 或 WITH 语句，不得包含任何 INSERT/UPDATE/DELETE/DDL 或事务相关语句；\n"
             "4. 优先使用 SUM/COUNT/AVG 等聚合函数和 GROUP BY，并根据用户问题选择合理的时间范围和维度；\n"
+            "   - 如果用户没有明确给出时间范围，请不要随意添加基于当前日期的过滤条件\n"
+            "     （例如 WHERE YEAR(created_at) = YEAR(CURDATE()) 或只查最近一年），而是直接按全量数据按时间维度汇总；\n"
             "5. 完成工具调用后，用简短中文回答结果；并在回答结尾追加一段 ```sql ... ``` 代码块，给出最终用于查询的数据 SQL；\n"
             "6. 该 SQL 必须能够直接在当前数据库中执行，且满足用户问题需求。\n\n"
             f"用户问题：{question}"

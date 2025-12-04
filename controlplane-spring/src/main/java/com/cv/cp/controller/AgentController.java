@@ -152,6 +152,70 @@ public class AgentController {
     }
   }
 
+  @PostMapping("/db/chart")
+  public ResponseEntity<String> dbChart(@RequestBody(required = false) String body) {
+    String corrId = UUID.randomUUID().toString();
+    String base = resolveAgentBase();
+    String target = base + "/v1/agent/db/chart";
+
+    Map<String, Object> auditPayload = new HashMap<>();
+    auditPayload.put("agent_base", base);
+    AuditLogger.log("agent.db_chart.request", corrId, auditPayload);
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    RequestEntity<String> req =
+        RequestEntity.post(URI.create(target))
+            .headers(headers)
+            .body(body != null && !body.isBlank() ? body : "{}");
+    try {
+      ResponseEntity<String> resp = restTemplate.exchange(req, String.class);
+      Map<String, Object> respAudit = new HashMap<>();
+      respAudit.put("status", resp.getStatusCode().value());
+      AuditLogger.log("agent.db_chart.response", corrId, respAudit);
+      return ResponseEntity.status(resp.getStatusCode()).body(resp.getBody());
+    } catch (RestClientException ex) {
+      Map<String, Object> respAudit = new HashMap<>();
+      respAudit.put("status", 502);
+      respAudit.put("error", ex.getMessage());
+      AuditLogger.log("agent.db_chart.error", corrId, respAudit);
+      return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+          .body("{\"code\":\"BACKEND_ERROR\"}");
+    }
+  }
+
+  @PostMapping("/excel/chart")
+  public ResponseEntity<String> excelChart(@RequestBody(required = false) String body) {
+    String corrId = UUID.randomUUID().toString();
+    String base = resolveAgentBase();
+    String target = base + "/v1/agent/excel/chart";
+
+    Map<String, Object> auditPayload = new HashMap<>();
+    auditPayload.put("agent_base", base);
+    AuditLogger.log("agent.excel_chart.request", corrId, auditPayload);
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    RequestEntity<String> req =
+        RequestEntity.post(URI.create(target))
+            .headers(headers)
+            .body(body != null && !body.isBlank() ? body : "{}");
+    try {
+      ResponseEntity<String> resp = restTemplate.exchange(req, String.class);
+      Map<String, Object> respAudit = new HashMap<>();
+      respAudit.put("status", resp.getStatusCode().value());
+      AuditLogger.log("agent.excel_chart.response", corrId, respAudit);
+      return ResponseEntity.status(resp.getStatusCode()).body(resp.getBody());
+    } catch (RestClientException ex) {
+      Map<String, Object> respAudit = new HashMap<>();
+      respAudit.put("status", 502);
+      respAudit.put("error", ex.getMessage());
+      AuditLogger.log("agent.excel_chart.error", corrId, respAudit);
+      return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+          .body("{\"code\":\"BACKEND_ERROR\"}");
+    }
+  }
+
   @PostMapping("/threads/{threadId}/invoke")
   public ResponseEntity<String> invokeThread(
       @PathVariable("threadId") String threadId,

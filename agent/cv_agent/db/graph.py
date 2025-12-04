@@ -218,12 +218,16 @@ def _build_db_insight_text(
         raise TimeoutError(f"生成数据库分析结论超时（>{timeout_sec}s）") from exc
 
 
-def _build_db_chart_spec_from_result(
+def _build_db_chart_specs_from_result(
     result: SqlQueryResult,
     request: DbAnalysisRequest,
-    chart_id: str,
-) -> ExcelChartSpec:
-    """基于 SQL 查询结果与用户请求，由通用图表规划器生成单个 ChartSpec。"""
+    chart_id_prefix: str,
+) -> List[ExcelChartSpec]:
+    """基于 SQL 查询结果与用户请求，由通用图表规划器生成一个或多个 ChartSpec。
+
+    - 允许通用图表规划器在同一结果表上规划多个图表（例如分别展示金额和数量）；
+    - 对于每个生成的图表，复用相同的数据集，仅调整 x/y 轴与图表类型。
+    """
 
     from decimal import Decimal
     import json
@@ -246,16 +250,20 @@ def _build_db_chart_spec_from_result(
     sample_rows = json_rows[: min(10, len(json_rows))]
 
     preview = TablePreview(columns=columns, sample_rows=sample_rows)
-    specs = plan_chart_specs_with_llm(
+    planner_specs = plan_chart_specs_with_llm(
         preview=preview,
         query=request.query,
         source_kind="db",
-        max_charts=1,
+        max_charts=3,
     )
-    spec = specs[0]
-    spec.id = chart_id
-    spec.dataset = spec.dataset.__class__(columns=columns, rows=json_rows)
-    return spec
+    specs: List[ExcelChartSpec] = []
+    for idx, spec in enumerate(planner_specs, start=1):
+        # 为每个图表分配稳定且带前缀的 ID，便于前端区分多个图表。
+        spec.id = f"{chart_id_prefix}_{idx}"
+        # 使用完整查询结果作为数据集，保证多个图表共享同一 source。
+        spec.dataset = spec.dataset.__class__(columns=columns, rows=json_rows)
+        specs.append(spec)
+    return specs
 
 
 def _build_db_graph() -> Any:
@@ -409,21 +417,22 @@ def _build_db_graph() -> Any:
 
         specs: List[ExcelChartSpec] = []
         for idx, result in enumerate(sql_results, start=1):
-            chart_id = f"db_chart_{idx}"
-            spec = _build_db_chart_spec_from_result(
+            chart_id_prefix = f"db_chart_{idx}"
+            per_result_specs = _build_db_chart_specs_from_result(
                 result=result,
                 request=request,
-                chart_id=chart_id,
+                chart_id_prefix=chart_id_prefix,
             )
-            specs.append(spec)
-            _LOGGER.info(
-                "db.graph.chart_spec_node.chart_done chart_id=%s type=%s x_field=%s y_fields=%s rows=%d",
-                spec.id,
-                spec.type,
-                spec.x_field,
-                spec.y_fields,
-                len(spec.dataset.rows),
-            )
+            for spec in per_result_specs:
+                specs.append(spec)
+                _LOGGER.info(
+                    "db.graph.chart_spec_node.chart_done chart_id=%s type=%s x_field=%s y_fields=%s rows=%d",
+                    spec.id,
+                    spec.type,
+                    spec.x_field,
+                    spec.y_fields,
+                    len(spec.dataset.rows),
+                )
         state["chart_specs"] = specs
         return state
 
