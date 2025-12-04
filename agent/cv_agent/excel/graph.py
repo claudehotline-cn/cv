@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Dict
-
-from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 
 from ..config import get_settings
+from ..llm_runtime import build_chat_llm, invoke_llm_with_timeout
+from ..charts_planner import TablePreview, plan_chart_specs_with_llm
 from .analysis import AnalyzedTable, analyze_dataframe_for_chart
-from .chart_spec import build_chart_spec_from_analysis
 from .echarts_builder import build_chart_results_from_spec
 from .loader import load_excel_for_session
-from .schema import ExcelAgentResponse, ExcelAnalysisPlan, ExcelAnalysisRequest, ExcelChartPlan
+from .schema import (
+    ExcelAgentResponse,
+    ExcelAnalysisPlan,
+    ExcelAnalysisRequest,
+    ExcelChartDataset,
+    ExcelChartPlan,
+)
 
 _LOGGER = logging.getLogger("cv_agent.excel")
 
@@ -24,28 +28,9 @@ def _build_analysis_plan(table_preview: Dict[str, Any], request: ExcelAnalysisRe
     """使用 LLM 根据表预览和用户请求生成整体分析计划（可包含多个图表）。"""
 
     settings = get_settings()
-    provider = getattr(settings, "llm_provider", "openai").lower()
     timeout_sec = float(getattr(settings, "request_timeout_sec", 30.0))
 
-    # 构建 LLM 客户端
-    if provider == "ollama":
-        try:
-            llm: Any = ChatOllama(
-                model=settings.llm_model,
-                base_url=getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-            )
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 Ollama LLM 客户端失败（analysis plan）：%s", exc)
-            raise RuntimeError("Excel 分析计划 LLM 初始化失败（ollama）") from exc
-    else:
-        if not settings.openai_api_key:
-            _LOGGER.error("excel.plan.llm_init_failed provider=openai reason=missing_api_key")
-            raise RuntimeError("OPENAI_API_KEY 未配置，无法生成 Excel 分析计划")
-        try:
-            llm = ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 OpenAI LLM 客户端失败（analysis plan）：%s", exc)
-            raise RuntimeError("Excel 分析计划 LLM 初始化失败（openai）") from exc
+    llm = build_chat_llm(task_name="excel_analysis_plan")
 
     columns = table_preview.get("columns") or []
     rows = table_preview.get("rows") or []
@@ -122,13 +107,16 @@ def _build_analysis_plan(table_preview: Dict[str, Any], request: ExcelAnalysisRe
     import json
     from pydantic import ValidationError
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_invoke)
-        try:
-            raw = future.result(timeout=timeout_sec)
-        except FuturesTimeoutError as exc:
-            _LOGGER.error("excel.plan.llm_timeout timeout_sec=%.1f", timeout_sec)
-            raise TimeoutError(f"生成 Excel 分析计划超时（>{timeout_sec}s）") from exc
+    try:
+        raw = invoke_llm_with_timeout(
+            task_name="excel_analysis_plan",
+            fn=_invoke,
+            timeout_sec=timeout_sec,
+        )
+    except TimeoutError as exc:
+        # 保持原有错误信息风格
+        _LOGGER.error("excel.plan.llm_timeout timeout_sec=%.1f", timeout_sec)
+        raise TimeoutError(f"生成 Excel 分析计划超时（>{timeout_sec}s）") from exc
 
     try:
         data = json.loads(raw)
@@ -163,36 +151,9 @@ def _build_insight_text(analyzed: AnalyzedTable, request: ExcelAnalysisRequest) 
     """基于聚合表与用户请求，使用 LLM 生成结论；任何失败均抛出异常，由上层返回失败。"""
 
     settings = get_settings()
-    provider = getattr(settings, "llm_provider", "openai").lower()
     timeout_sec = float(getattr(settings, "request_timeout_sec", 30.0))
 
-    # 构建 LLM 客户端；若配置不完整或初始化失败，直接抛错
-    if provider == "ollama":
-        _LOGGER.info(
-            "excel.insight.llm_init provider=ollama model=%s base_url=%s",
-            settings.llm_model,
-            getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-        )
-        try:
-            llm: Any = ChatOllama(
-                model=settings.llm_model,
-                base_url=getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-            )
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 Ollama LLM 客户端失败：%s", exc)
-            raise RuntimeError("Excel 分析结论 LLM 初始化失败（ollama）") from exc
-    else:
-        if not settings.openai_api_key:
-            _LOGGER.error("excel.insight.llm_init_failed provider=openai reason=missing_api_key")
-            raise RuntimeError("OPENAI_API_KEY 未配置，无法生成 Excel 分析结论")
-        _LOGGER.info(
-            "excel.insight.llm_init provider=openai model=%s", settings.llm_model
-        )
-        try:
-            llm = ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 OpenAI LLM 客户端失败：%s", exc)
-            raise RuntimeError("Excel 分析结论 LLM 初始化失败（openai）") from exc
+    llm = build_chat_llm(task_name="excel_insight")
 
     # 为避免传输过多数据，仅取前若干行样例
     sample_rows = analyzed.rows[: min(10, len(analyzed.rows))]
@@ -224,13 +185,15 @@ def _build_insight_text(analyzed: AnalyzedTable, request: ExcelAnalysisRequest) 
         _LOGGER.info("excel.insight.llm_invoke.done")
         return str(text or "").strip()
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_invoke)
-        try:
-            return future.result(timeout=timeout_sec)
-        except FuturesTimeoutError as exc:
-            _LOGGER.error("excel.insight.llm_timeout timeout_sec=%.1f", timeout_sec)
-            raise TimeoutError(f"生成 Excel 分析结论超时（>{timeout_sec}s）") from exc
+    try:
+        return invoke_llm_with_timeout(
+            task_name="excel_insight",
+            fn=_invoke,
+            timeout_sec=timeout_sec,
+        )
+    except TimeoutError as exc:
+        _LOGGER.error("excel.insight.llm_timeout timeout_sec=%.1f", timeout_sec)
+        raise TimeoutError(f"生成 Excel 分析结论超时（>{timeout_sec}s）") from exc
 
 
 def _build_excel_graph() -> Any:
@@ -315,13 +278,28 @@ def _build_excel_graph() -> Any:
         specs = []
         for idx, (cp, analyzed) in enumerate(zip(chart_plans, analyzed_list), start=1):
             chart_id = cp.id or f"excel_chart_{idx}"
-            spec = build_chart_spec_from_analysis(
-                analyzed=analyzed,
-                request=request,
-                chart_id=chart_id,
-                preferred_chart_type=cp.chart_type,
-                chart_title=cp.title,
-                chart_description=cp.description,
+            # 使用通用图表规划器基于聚合结果选择 x/y 轴与图表类型；
+            preview = TablePreview(
+                columns=analyzed.columns,
+                sample_rows=analyzed.rows[: min(10, len(analyzed.rows))],
+            )
+            planner_specs = plan_chart_specs_with_llm(
+                preview=preview,
+                query=request.query,
+                source_kind="excel",
+                max_charts=1,
+            )
+            spec = planner_specs[0]
+            spec.id = chart_id
+            # 若 LLM 规划未给出标题/描述，则优先使用分析计划中的标题/描述或用户查询。
+            title = cp.title or spec.title or request.query
+            spec.title = (title or "Excel 数据分析图表").strip()
+            description = cp.description or spec.description or None
+            spec.description = (description or "").strip() or None
+            # 注入聚合结果作为最终数据集。
+            spec.dataset = ExcelChartDataset(
+                columns=analyzed.columns,
+                rows=analyzed.rows,
             )
             specs.append(spec)
             _LOGGER.info(

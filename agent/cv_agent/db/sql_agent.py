@@ -234,6 +234,7 @@ def plan_and_run_sql(
         verbose=False,
         agent_executor_kwargs={
             "return_intermediate_steps": True,
+            "handle_parsing_errors": True,
         },
     )
 

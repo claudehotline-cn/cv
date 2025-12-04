@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, List
 
 import pandas as pd
-from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
 from ..config import get_settings
+from ..llm_runtime import build_chat_llm, invoke_llm_with_timeout
+from ..charts_planner import TablePreview, plan_chart_specs_with_llm
 from ..excel.analysis import (
     AnalyzedTable,
     _choose_group_by_column,
@@ -50,37 +50,9 @@ def _build_db_analysis_plan(schema: DbSchemaPreview, request: DbAnalysisRequest)
     """使用 LLM 基于数据库 schema 与用户请求生成整体分析计划。"""
 
     settings = get_settings()
-    provider = getattr(settings, "llm_provider", "openai").lower()
     timeout_sec = float(getattr(settings, "request_timeout_sec", 30.0))
 
-    # 构建 LLM 客户端；如失败则直接抛错，不做本地兜底。
-    if provider == "ollama":
-        _LOGGER.info(
-            "db.plan.llm_init provider=ollama model=%s base_url=%s",
-            settings.llm_model,
-            getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-        )
-        try:
-            llm: Any = ChatOllama(
-                model=settings.llm_model,
-                base_url=getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-            )
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 Ollama LLM 客户端失败（db analysis plan）：%s", exc)
-            raise RuntimeError("数据库分析计划 LLM 初始化失败（ollama）") from exc
-    else:
-        if not settings.openai_api_key:
-            _LOGGER.error("db.plan.llm_init_failed provider=openai reason=missing_api_key")
-            raise RuntimeError("OPENAI_API_KEY 未配置，无法生成数据库分析计划")
-        _LOGGER.info(
-            "db.plan.llm_init provider=openai model=%s",
-            settings.llm_model,
-        )
-        try:
-            llm = ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 OpenAI LLM 客户端失败（db analysis plan）：%s", exc)
-            raise RuntimeError("数据库分析计划 LLM 初始化失败（openai）") from exc
+    llm = build_chat_llm(task_name="db_analysis_plan")
 
     # 为避免 prompt 过大，仅保留每张表少量样本。
     import json
@@ -150,13 +122,15 @@ def _build_db_analysis_plan(schema: DbSchemaPreview, request: DbAnalysisRequest)
         _LOGGER.info("db.plan.llm_invoke.done")
         return str(text or "").strip()
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_invoke)
-        try:
-            raw = future.result(timeout=timeout_sec)
-        except FuturesTimeoutError as exc:
-            _LOGGER.error("db.plan.llm_timeout timeout_sec=%.1f", timeout_sec)
-            raise TimeoutError(f"生成数据库分析计划超时（>{timeout_sec}s）") from exc
+    try:
+        raw = invoke_llm_with_timeout(
+            task_name="db_analysis_plan",
+            fn=_invoke,
+            timeout_sec=timeout_sec,
+        )
+    except TimeoutError as exc:
+        _LOGGER.error("db.plan.llm_timeout timeout_sec=%.1f", timeout_sec)
+        raise TimeoutError(f"生成数据库分析计划超时（>{timeout_sec}s）") from exc
 
     import json
 
@@ -198,37 +172,9 @@ def _build_db_insight_text(
     """基于一个或多个聚合表与用户请求，使用 LLM 生成整体结论；失败直接抛错。"""
 
     settings = get_settings()
-    provider = getattr(settings, "llm_provider", "openai").lower()
     timeout_sec = float(getattr(settings, "request_timeout_sec", 30.0))
 
-    # 构建 LLM 客户端
-    if provider == "ollama":
-        _LOGGER.info(
-            "db.insight.llm_init provider=ollama model=%s base_url=%s",
-            settings.llm_model,
-            getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-        )
-        try:
-            llm: Any = ChatOllama(
-                model=settings.llm_model,
-                base_url=getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-            )
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 Ollama LLM 客户端失败（db insight）：%s", exc)
-            raise RuntimeError("数据库分析结论 LLM 初始化失败（ollama）") from exc
-    else:
-        if not settings.openai_api_key:
-            _LOGGER.error("db.insight.llm_init_failed provider=openai reason=missing_api_key")
-            raise RuntimeError("OPENAI_API_KEY 未配置，无法生成数据库分析结论")
-        _LOGGER.info(
-            "db.insight.llm_init provider=openai model=%s",
-            settings.llm_model,
-        )
-        try:
-            llm = ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 OpenAI LLM 客户端失败（db insight）：%s", exc)
-            raise RuntimeError("数据库分析结论 LLM 初始化失败（openai）") from exc
+    llm = build_chat_llm(task_name="db_insight")
 
     # 聚合多个图表的关键信息，用于提示词
     lines: List[str] = []
@@ -261,13 +207,15 @@ def _build_db_insight_text(
         _LOGGER.info("db.insight.llm_invoke.done")
         return str(text or "").strip()
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_invoke)
-        try:
-            return future.result(timeout=timeout_sec)
-        except FuturesTimeoutError as exc:
-            _LOGGER.error("db.insight.llm_timeout timeout_sec=%.1f", timeout_sec)
-            raise TimeoutError(f"生成数据库分析结论超时（>{timeout_sec}s）") from exc
+    try:
+        return invoke_llm_with_timeout(
+            task_name="db_insight",
+            fn=_invoke,
+            timeout_sec=timeout_sec,
+        )
+    except TimeoutError as exc:
+        _LOGGER.error("db.insight.llm_timeout timeout_sec=%.1f", timeout_sec)
+        raise TimeoutError(f"生成数据库分析结论超时（>{timeout_sec}s）") from exc
 
 
 def _build_db_chart_spec_from_result(
@@ -275,48 +223,13 @@ def _build_db_chart_spec_from_result(
     request: DbAnalysisRequest,
     chart_id: str,
 ) -> ExcelChartSpec:
-    """基于 SQL 查询结果与用户请求，由 LLM 直接规划单个图表的 ChartSpec。"""
+    """基于 SQL 查询结果与用户请求，由通用图表规划器生成单个 ChartSpec。"""
 
-    settings = get_settings()
-    provider = getattr(settings, "llm_provider", "openai").lower()
-    timeout_sec = float(getattr(settings, "request_timeout_sec", 30.0))
-
-    # 构建 LLM 客户端
-    if provider == "ollama":
-        _LOGGER.info(
-            "db.chart_spec.llm_init provider=ollama model=%s base_url=%s",
-            settings.llm_model,
-            getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-        )
-        try:
-            llm: Any = ChatOllama(
-                model=settings.llm_model,
-                base_url=getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
-            )
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 Ollama LLM 客户端失败（db chart spec）：%s", exc)
-            raise RuntimeError("数据库图表规格 LLM 初始化失败（ollama）") from exc
-    else:
-        if not settings.openai_api_key:
-            _LOGGER.error("db.chart_spec.llm_init_failed provider=openai reason=missing_api_key")
-            raise RuntimeError("OPENAI_API_KEY 未配置，无法生成数据库图表规格")
-        _LOGGER.info(
-            "db.chart_spec.llm_init provider=openai model=%s",
-            settings.llm_model,
-        )
-        try:
-            llm = ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
-        except Exception as exc:  # pragma: no cover
-            _LOGGER.error("构建 OpenAI LLM 客户端失败（db chart spec）：%s", exc)
-            raise RuntimeError("数据库图表规格 LLM 初始化失败（openai）") from exc
-
+    from decimal import Decimal
     import json
 
     columns = result.columns or []
     rows = result.rows or []
-
-    # 将 Decimal 等不可直接 JSON 序列化的类型转换为基础类型，便于放入提示词与响应。
-    from decimal import Decimal
 
     def _to_jsonable(value: Any) -> Any:
         if isinstance(value, Decimal):
@@ -331,92 +244,17 @@ def _build_db_chart_spec_from_result(
 
     json_rows = [_to_jsonable(r) for r in rows]
     sample_rows = json_rows[: min(10, len(json_rows))]
-    preview_json = json.dumps(
-        {
-            "columns": columns,
-            "sample_rows": sample_rows,
-        },
-        ensure_ascii=False,
+
+    preview = TablePreview(columns=columns, sample_rows=sample_rows)
+    specs = plan_chart_specs_with_llm(
+        preview=preview,
+        query=request.query,
+        source_kind="db",
+        max_charts=1,
     )
-
-    prompt = (
-        "你是一个数据库分析与图表规划助手。下面是一张已经通过 SQL 查询得到的结果表，以及用户的自然语言问题。\n\n"
-        "【结果表结构预览】\n"
-        f"{preview_json}\n\n"
-        "【用户问题】\n"
-        f"{request.query}\n\n"
-        "你的任务：基于这张结果表和用户问题，设计一个最合适的单个图表，并只输出一个 JSON 对象，字段如下：\n"
-        "{\n"
-        '  \"id\": \"db_chart_1\",  // 图表唯一标识\n'
-        '  \"title\": \"图表标题（简短中文）\",\n'
-        '  \"description\": \"可选的简短说明\",\n'
-        '  \"type\": \"line\" | \"bar\" | \"pie\" | \"area\",\n'
-        '  \"xField\": \"作为横轴的字段名，必须是 columns 之一\",\n'
-        '  \"xAxisType\": \"category\" | \"time\" | \"value\",\n'
-        '  \"yFields\": [\"一个或多个纵轴字段名，必须是 columns 之一且通常为数值列\"],\n'
-        '  \"yAxisType\": \"value\" | \"log\" | \"percent\"\n'
-        "}\n\n"
-        "要求：\n"
-        "1) 只能从 columns 中选择 xField 和 yFields，不要编造不存在的列名；\n"
-        "2) 如果存在时间/日期相关列，通常优先用作 xField；数值列用作 yFields；\n"
-        "3) 不要在返回的 JSON 中包含 dataset/rows 等真实数据，由后端注入；\n"
-        "4) 只输出 JSON 对象本身，不要添加解释性文字或 Markdown 代码块。\n"
-    )
-
-    def _invoke() -> str:
-        _LOGGER.info("db.chart_spec.llm_invoke.start")
-        result_obj = llm.invoke(prompt)  # type: ignore[call-arg]
-        text = getattr(result_obj, "content", str(result_obj))
-        _LOGGER.info("db.chart_spec.llm_invoke.done")
-        return str(text or "").strip()
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_invoke)
-        try:
-            raw = future.result(timeout=timeout_sec)
-        except FuturesTimeoutError as exc:
-            _LOGGER.error("db.chart_spec.llm_timeout timeout_sec=%.1f", timeout_sec)
-            raise TimeoutError(f"生成数据库图表规格超时（>{timeout_sec}s）") from exc
-
-    import re
-
-    raw_str = str(raw or "").strip()
-    # 尝试从可能的 Markdown 包裹中提取 JSON 对象
-    match = re.search(r"\{.*\}", raw_str, flags=re.DOTALL)
-    json_text = match.group(0) if match else raw_str
-
-    try:
-        data = json.loads(json_text)
-    except Exception as exc:
-        _LOGGER.error("db.chart_spec.invalid_json raw=%s error=%s", raw, exc)
-        raise RuntimeError("数据库图表规格 LLM 返回的 JSON 无法解析") from exc
-
-    # 若顶层结构为 {\"charts\": [...] }，则取第一个图表对象
-    if isinstance(data, dict) and "charts" in data and isinstance(data["charts"], list) and data["charts"]:
-        data = data["charts"][0]
-
-    if not isinstance(data, dict):
-        _LOGGER.error("db.chart_spec.invalid_structure data=%s", data)
-        raise RuntimeError("数据库图表规格 LLM 返回了无效结构")
-
-    if not data.get("id"):
-        data["id"] = chart_id
-
-    if not data.get("title"):
-        data["title"] = request.query.strip() or "数据库分析图表"
-
-    # 注入实际数据集，避免由 LLM 生成大量 rows。
-    data["dataset"] = {
-        "columns": columns,
-        "rows": json_rows,
-    }
-
-    try:
-        spec = ExcelChartSpec.model_validate(data)
-    except ValidationError as exc:
-        _LOGGER.error("db.chart_spec.validation_error data=%s error=%s", data, exc)
-        raise RuntimeError("数据库图表规格字段校验失败") from exc
-
+    spec = specs[0]
+    spec.id = chart_id
+    spec.dataset = spec.dataset.__class__(columns=columns, rows=json_rows)
     return spec
 
 
