@@ -312,7 +312,7 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AGENT_CP_BASE_URL=http://cp-spring:18080
-      - AGENT_OPENAI_MODEL=qwen3:8b
+      - AGENT_OPENAI_MODEL=qwen3:14b
       - AGENT_LLM_PROVIDER=ollama
       - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       - AGENT_LOG_LEVEL=INFO
@@ -341,6 +341,53 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  agent-langchain:
+    build:
+      context: ../..
+      dockerfile: docker/agent-langchain/Dockerfile
+    image: cv/agent-langchain:latest
+    container_name: agent-langchain
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # LLM 配置，与 agent 服务保持一致（默认通过 Ollama 调 qwen3:14b）
+      - AGENT_LLM_PROVIDER=ollama
+      - AGENT_OPENAI_MODEL=qwen3:14b
+      - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # 数据库配置：复用 mysql 服务
+      - AGENT_DB_HOST=mysql
+      - AGENT_DB_PORT=3306
+      - AGENT_DB_USER=root
+      - AGENT_DB_PASSWORD=123456
+      - AGENT_DB_DEFAULT_NAME=cv_cp
+      # SQL Agent 超时配置：允许较长时间生成复杂多表查询 SQL
+      - AGENT_DB_SQL_TIMEOUT_SEC=120
+      # Excel 相关配置：如需在容器内分析本地文件，可通过挂载卷调整基础目录
+      - AGENT_EXCEL_FILE_BASE_DIR=/data/excel
+      - AGENT_EXCEL_MAX_CHART_ROWS=500
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "18110:8100"
+    volumes:
+      # 可选：挂载 Excel 文件目录，供 Excel 图表 Agent 使用
+      - ../../logs:/logs:rw
+      - ../../docs:/docs:ro
+      # Excel 文件基础目录（可根据实际需要调整/新增挂载）
+      - ../../docs/examples:/data/excel:ro
+
+  agent-chat-ui:
+    build:
+      context: ../..
+      dockerfile: docker/agent-chat-ui/Dockerfile
+    image: cv/agent-chat-ui:latest
+    container_name: agent-chat-ui
+    depends_on:
+      agent-langchain:
+        condition: service_started
+    ports:
+      - "18120:3000"
 
 networks:
   default:

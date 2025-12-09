@@ -1,0 +1,14 @@
+{
+  "graphs": {
+    "db_chart": "agent_langchain.db.graph:get_db_graph",
+    "excel_chart": "agent_langchain.excel.graph:get_excel_graph",
+    "db_chat": "agent_langchain.db_chat_graph:get_db_chat_graph"
+  },
+  "dependencies": [
+    "agent-langchain",
+    "langgraph==1.0.3",
+    "langgraph-cli[inmem]",
+    "langgraph-prebuilt==1.0.5",
+    "langchain==1.0.8"
+  ]
+}

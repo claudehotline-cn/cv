@@ -1,0 +1,7 @@
+{
+  "graphs": {
+    "db_chart": "agent.cv_agent.db.graph:get_db_graph",
+    "excel_chart": "agent.cv_agent.excel.graph:get_excel_graph"
+  }
+}
+

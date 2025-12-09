@@ -150,3 +150,7 @@ curl -X POST http://localhost:18081/v1/agent/threads/demo-thread/invoke \
 
 
 后续 Phase 2 / Phase 3 将在此基础上扩展写操作工具、多 Agent StateGraph 与 RAG 工具。
+
+## 7. 后续规划
+
+后续如需扩展基于 LangChain CLI / LangGraph Studio 的专用调试与部署项目（例如只包含 DB/Excel 图表 Agent 的轻量化服务），建议在仓库根目录下新建独立子项目目录，并通过 LangChain/LangGraph 提供的官方模板初始化；当前 `agent/` 项目保持以 FastAPI + LangGraph 为主的控制平面 Agent 形态。
