@@ -99,6 +99,19 @@ def _ensure_safe_select_sql(sql: str) -> str:
         if kw in lowered:
             raise ValueError(f"SQL 中包含禁止关键字 {kw.strip()}: {sql!r}")
 
+    # 结构性校验：避免类似裸 "SELECT" 这样的语句直接打到数据库
+    # 对于以 SELECT 开头的语句，要求至少包含 FROM 子句
+    if lowered.startswith("select"):
+        normalized = " " + " ".join(lowered.split()) + " "
+        if " from " not in normalized:
+            raise ValueError(f"SQL 结构不完整，缺少 FROM 子句: {sql!r}")
+
+    # 对于以 WITH 开头的语句，要求整体包含 SELECT 和 FROM
+    if lowered.startswith("with"):
+        normalized = " " + " ".join(lowered.split()) + " "
+        if " select " not in normalized or " from " not in normalized:
+            raise ValueError(f"CTE SQL 结构不完整，缺少 SELECT/FROM 子句: {sql!r}")
+
     return stripped
 
 
@@ -391,4 +404,3 @@ def plan_and_run_sql(
         sql,
     )
     return [result]
-

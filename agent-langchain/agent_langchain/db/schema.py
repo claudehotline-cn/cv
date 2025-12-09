@@ -99,3 +99,7 @@ class DbAgentResponse(BaseModel):
         description="整体分析结论或要点摘要",
     )
 
+    sql_traces: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="调试用 SQL 执行摘要列表（语句、行数、列数等），供前端展示数据库工具调用过程",
+    )

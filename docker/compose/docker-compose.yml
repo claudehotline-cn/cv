@@ -312,7 +312,7 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AGENT_CP_BASE_URL=http://cp-spring:18080
-      - AGENT_OPENAI_MODEL=qwen3:14b
+      - AGENT_OPENAI_MODEL=qwen3:8b
       - AGENT_LLM_PROVIDER=ollama
       - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       - AGENT_LOG_LEVEL=INFO
@@ -352,7 +352,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # LLM 配置，与 agent 服务保持一致（默认通过 Ollama 调 qwen3:14b）
       - AGENT_LLM_PROVIDER=ollama
-      - AGENT_OPENAI_MODEL=qwen3:14b
+      - AGENT_OPENAI_MODEL=qwen3:8b
       - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # 数据库配置：复用 mysql 服务
       - AGENT_DB_HOST=mysql

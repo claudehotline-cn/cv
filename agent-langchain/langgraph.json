@@ -2,7 +2,8 @@
   "graphs": {
     "db_chart": "agent_langchain.db.graph:get_db_graph",
     "excel_chart": "agent_langchain.excel.graph:get_excel_graph",
-    "db_chat": "agent_langchain.db_chat_graph:get_db_chat_graph"
+    "db_chat": "agent_langchain.db_chat_graph:get_db_chat_graph",
+    "db_deep_agent": "agent_langchain.db_deep_graph:get_db_deep_agent_graph"
   },
   "dependencies": [
     "agent-langchain",

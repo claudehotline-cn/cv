@@ -429,10 +429,26 @@ def _build_db_graph() -> Any:
             )
 
         db_name: str = state.get("db_name", "")
+        sql_results: List[SqlQueryResult] = state.get("sql_results") or []
+        sql_traces: List[Dict[str, Any]] = []
+        for res in sql_results:
+            try:
+                sql_traces.append(
+                    {
+                        "sql": res.sql,
+                        "row_count": len(res.rows),
+                        "column_count": len(res.columns),
+                        "columns": list(res.columns),
+                    }
+                )
+            except Exception:  # pragma: no cover - 防御性
+                continue
+
         response = DbAgentResponse(
             used_db_name=db_name,
             charts=chart_results,
             insight=None,
+            sql_traces=sql_traces,
         )
         state["response"] = response
         return state
@@ -447,6 +463,7 @@ def _build_db_graph() -> Any:
             used_db_name=response.used_db_name,
             charts=response.charts,
             insight=insight,
+            sql_traces=response.sql_traces,
         )
         _LOGGER.info("db.graph.insight_node.done")
         return state

@@ -63,6 +63,9 @@ def _build_chart_planning_prompt(
         "要求：\n"
         "1) 只能从 columns 中选择 xField 和 yFields，不要编造不存在的列名；\n"
         "2) 如果存在时间/日期相关列，通常优先用作 xField；数值列用作 yFields；\n"
+        "   - 当用户问题中包含“按月份”“每月”“月度”“per month/by month”等词语时，\n"
+        "     必须选择表示“月份/日期/时间”的列作为 xField（例如 order_month、month、date 等），\n"
+        "     而不能将城市、品类等维度列当作 xField。\n"
         f"3) charts 数量不超过 {max_charts}，至少 1 个；按重要性排序；\n"
         "   - 当用户明确提到“多个图表”“两个折线图”“分别画两个图”等时，应尽量输出多个 chart，\n"
         "     而不是把多个指标都放在同一个图表里；此时通常每个 chart 的 yFields 只包含一个核心指标。\n"
@@ -153,4 +156,3 @@ def plan_chart_specs_with_llm(
         raise RuntimeError("图表规划结果全部无效，无法生成 ChartSpec")
 
     return specs
-
