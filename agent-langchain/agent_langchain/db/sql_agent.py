@@ -241,13 +241,14 @@ def plan_and_run_sql(
         prompt = (
             "你是数据库分析 SQL Agent。请严格按照以下步骤工作：\n"
             "1. 可以先使用 sql_db_list_tables 和 sql_db_schema 工具了解有哪些表和字段；\n"
-            "2. 然后必须至少调用一次 sql_db_query 工具，编写并执行一条只读的聚合查询 SQL；\n"
-            "3. 该 SQL 必须只包含 SELECT 或 WITH 语句，不得包含任何 INSERT/UPDATE/DELETE/DDL 或事务相关语句；\n"
-            "4. 优先使用 SUM/COUNT/AVG 等聚合函数和 GROUP BY，并根据用户问题选择合理的时间范围和维度；\n"
+            "2. 在编写或修改 SQL 时，所有表名和列名必须来自 sql_db_schema/sql_db_list_tables 返回的结构，禁止编造不存在的字段或表；\n"
+            "3. 然后必须至少调用一次 sql_db_query 工具，编写并执行一条只读的聚合查询 SQL；\n"
+            "4. 该 SQL 必须只包含 SELECT 或 WITH 语句，不得包含任何 INSERT/UPDATE/DELETE/DDL 或事务相关语句；\n"
+            "5. 优先使用 SUM/COUNT/AVG 等聚合函数和 GROUP BY，并根据用户问题选择合理的时间范围和维度；\n"
             "   - 如果用户没有明确给出时间范围，请不要随意添加基于当前日期的过滤条件\n"
             "     （例如 WHERE YEAR(created_at) = YEAR(CURDATE()) 或只查最近一年），而是直接按全量数据按时间维度汇总；\n"
-            "5. 完成工具调用后，用简短中文回答结果；并在回答结尾追加一段 ```sql ... ``` 代码块，给出最终用于查询的数据 SQL；\n"
-            "6. 该 SQL 必须能够直接在当前数据库中执行，且满足用户问题需求。\n\n"
+            "6. 完成工具调用后，用简短中文回答结果；并在回答结尾追加一段 ```sql ... ``` 代码块，给出最终用于查询的数据 SQL；\n"
+            "7. 该 SQL 必须能够直接在当前数据库中执行，且满足用户问题需求。\n\n"
             f"用户问题：{question}"
         )
         result = agent.invoke({"input": prompt})  # type: ignore[call-arg]
