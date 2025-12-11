@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import BaseMessage
 from langchain_core.tools import tool
-from langgraph.prebuilt import create_react_agent
+from deepagents import create_deep_agent
 
 from .config import get_settings
 from .db.graph import invoke_db_chart_agent
@@ -342,7 +342,7 @@ def get_db_deep_agent_graph() -> Any:
         "3) 不要在回答中粘贴完整 SQL 或全部原始数据行，只需引用必要的字段名和关键数字。\n"
     )
 
-    graph = create_react_agent(
+    return create_deep_agent(
         model=model,
         tools=[
             db_list_tables_tool,
@@ -350,6 +350,5 @@ def get_db_deep_agent_graph() -> Any:
             db_run_sql_tool,
             db_chart_tool,
         ],
-        prompt=instructions,
+        system_prompt=instructions,
     )
-    return graph

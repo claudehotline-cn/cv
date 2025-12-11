@@ -388,6 +388,32 @@ services:
         condition: service_started
     ports:
       - "18120:3000"
+    volumes:
+      # 挂载 article-agent 导出的 Markdown/图片目录，供下载路由使用
+      - ../../logs/articles:/articles:ro
+
+  article-agent:
+    build:
+      context: ../..
+      dockerfile: docker/article-agent/Dockerfile
+    image: cv/article-agent:latest
+    container_name: article-agent
+    environment:
+      # 默认使用本地 Ollama 的 qwen3:30b 模型进行推理
+      - ARTICLE_AGENT_LLM_PROVIDER=ollama
+      - ARTICLE_AGENT_LLM_MODEL=qwen3:14b
+      - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/articles
+      - ARTICLE_AGENT_ARTICLES_BASE_URL=/articles
+    depends_on:
+      agent-langchain:
+        condition: service_started
+    ports:
+      - "18130:8130"
+    volumes:
+      - ../../logs:/logs:rw
+      - ../../docs:/docs:ro
+      - ../../logs/articles:/data/articles:rw
 
 networks:
   default:

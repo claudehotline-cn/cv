@@ -1,0 +1,13 @@
+{
+  "graphs": {
+    "content-deep-agent": "article_agent.deep_graph:get_content_graph",
+    "content-chat-agent": "article_agent.chat_graph:get_content_chat_agent_graph"
+  },
+  "dependencies": [
+    "article_agent",
+    "langgraph==1.0.4",
+    "langgraph-cli[inmem]==0.4.9",
+    "langgraph-prebuilt==1.0.5",
+    "langchain==1.1.3"
+  ]
+}
