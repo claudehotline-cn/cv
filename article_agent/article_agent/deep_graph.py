@@ -248,8 +248,13 @@ def writer_audit_node(state: ContentState) -> ContentState:
     if not isinstance(drafts, dict):
         drafts = {}
 
+    image_metadata = state.get("image_metadata") or {}
+    if not isinstance(image_metadata, dict):
+        image_metadata = {}
+
     missing_sections: List[str] = []
     short_sections: List[str] = []
+    missing_image_placeholders: List[str] = []
     per_section_chars: Dict[str, int] = {}
 
     total_chars = 0
@@ -262,7 +267,8 @@ def writer_audit_node(state: ContentState) -> ContentState:
         is_core = bool(sec.get("is_core"))
         min_chars = MIN_CORE_SECTION_CHARS if is_core else MIN_NORMAL_SECTION_CHARS
 
-        body_chars = _section_body_chars(str(drafts.get(sec_id) or ""))
+        draft_text = str(drafts.get(sec_id) or "")
+        body_chars = _section_body_chars(draft_text)
         per_section_chars[sec_id] = body_chars
         total_chars += body_chars
 
@@ -271,13 +277,29 @@ def writer_audit_node(state: ContentState) -> ContentState:
         elif body_chars < min_chars:
             short_sections.append(sec_id)
 
-    draft_quality_ok = (total_chars >= MIN_TOTAL_DRAFT_CHARS) and (not missing_sections) and (not short_sections)
-    sections_to_rewrite = dedupe_preserve_order(missing_sections + short_sections)
+        # 若 Researcher 为本节提供了图片，但 Writer 没输出任何本节占位符，则要求重写该节。
+        candidates = image_metadata.get(sec_id) or []
+        if isinstance(candidates, list) and candidates:
+            if not re.search(
+                rf"<!--\s*IMAGE\s*:\s*{re.escape(sec_id)}\s*(?::|\s*-->)",
+                draft_text,
+                flags=re.IGNORECASE,
+            ):
+                missing_image_placeholders.append(sec_id)
+
+    draft_quality_ok = (
+        (total_chars >= MIN_TOTAL_DRAFT_CHARS)
+        and (not missing_sections)
+        and (not short_sections)
+        and (not missing_image_placeholders)
+    )
+    sections_to_rewrite = dedupe_preserve_order(missing_sections + short_sections + missing_image_placeholders)
 
     writer_audit = {
         "total_chars": total_chars,
         "missing_sections": missing_sections,
         "short_sections": short_sections,
+        "missing_image_placeholders": missing_image_placeholders,
         "sections_to_rewrite": sections_to_rewrite,
         "per_section_chars": per_section_chars,
         "thresholds": {

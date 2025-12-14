@@ -652,23 +652,6 @@ markdown 字段要求：
 
         drafts[section_id] = markdown.strip()
 
-        # 兜底：当本节有可用图片，但模型未给出任何占位符时，插入一个默认占位符。
-        # 这不会决定“插入哪张图”，只保证后续能按 image_metadata 替换出至少一张图片。
-        if prompt_obj.get("available_images") and f"<!--IMAGE:{section_id}" not in drafts[section_id]:
-            lines2 = drafts[section_id].splitlines()
-            if lines2:
-                insert_at = len(lines2)
-                # 尽量插在标题后的第一个自然段后：找到标题后第一个空行分隔点
-                i = 1
-                while i < len(lines2) and not lines2[i].strip():
-                    i += 1
-                while i < len(lines2) and lines2[i].strip():
-                    i += 1
-                insert_at = i if i > 1 else 1
-                insertion = ["", f"<!--IMAGE:{section_id}:1-->", ""]
-                lines2 = lines2[:insert_at] + insertion + lines2[insert_at:]
-                drafts[section_id] = "\n".join(lines2).strip()
-
         _LOGGER.debug(
             "section_writer.done section_id=%s heading=%s len=%d",
             section_id,
