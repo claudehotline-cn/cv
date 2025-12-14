@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from PyPDF2 import PdfReader
 import requests
 from bs4 import BeautifulSoup
+import time
 from urllib.parse import urljoin
 
 from .config import get_settings
@@ -25,8 +26,25 @@ def fetch_url_with_images(url: str, max_images: int = 5, max_text_chars: int = 6
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
     }
-    resp = requests.get(url, timeout=float(settings.http_timeout_sec), headers=headers)
-    resp.raise_for_status()
+    last_error: Exception | None = None
+    attempts = max(1, int(settings.http_max_attempts or 1))
+    timeout = float(settings.http_timeout_sec)
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = requests.get(url, timeout=timeout, headers=headers)
+            resp.raise_for_status()
+            break
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise
+            time.sleep(float(settings.http_retry_backoff_sec) * attempt)
+        except Exception as exc:
+            last_error = exc
+            raise
+    else:  # pragma: no cover
+        raise last_error or RuntimeError("fetch_url_with_images: unknown error")
+
     html = resp.text
 
     soup = BeautifulSoup(html, "html.parser")

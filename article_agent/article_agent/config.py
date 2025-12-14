@@ -75,6 +75,16 @@ class Settings(BaseSettings):
         description="抓取网页的 HTTP 超时（秒）。",
         alias="ARTICLE_AGENT_HTTP_TIMEOUT_SEC",
     )
+    http_max_attempts: int = Field(
+        default=3,
+        description="抓取网页的最大尝试次数（用于应对临时网络/SSL 抖动）。",
+        alias="ARTICLE_AGENT_HTTP_MAX_ATTEMPTS",
+    )
+    http_retry_backoff_sec: float = Field(
+        default=0.6,
+        description="抓取网页失败后的重试退避（秒，按 attempt 线性递增）。",
+        alias="ARTICLE_AGENT_HTTP_RETRY_BACKOFF_SEC",
+    )
 
     class Config:
         env_file = ".env"
