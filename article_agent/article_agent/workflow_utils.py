@@ -228,10 +228,119 @@ def insert_images_into_markdown(
     return "\n".join(lines).strip()
 
 
+def collect_source_images(sources: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从 sources 中提取去重后的图片列表（仅原始图片，不做生成）。"""
+
+    images: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    if not isinstance(sources, dict):
+        return images
+
+    for source_id, src in sources.items():
+        if not isinstance(src, dict):
+            continue
+        for img in (src.get("images") or []):
+            if not isinstance(img, dict):
+                continue
+            path = img.get("path_or_url") or img.get("url") or img.get("src") or img.get("path")
+            path = (str(path) if path is not None else "").strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            images.append(
+                {
+                    "source_id": str(source_id),
+                    "path_or_url": path,
+                    "caption_hint": (str(img.get("caption_hint") or img.get("alt") or "")).strip(),
+                }
+            )
+
+    return images
+
+
+def build_fallback_image_metadata(
+    outline: Dict[str, Any],
+    source_images: List[Dict[str, Any]],
+    prefer_section_ids: Optional[List[str]] = None,
+    *,
+    max_images_per_section: int = 2,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """当 LLM 未输出 image_metadata 时，使用纯规则将来源图片分配到章节中。"""
+
+    sections = outline.get("sections") if isinstance(outline, dict) else None
+    if not isinstance(sections, list) or not sections:
+        return {}
+
+    section_ids: List[str] = []
+    core_ids: List[str] = []
+    for sec in sections:
+        if not isinstance(sec, dict) or not sec.get("id"):
+            continue
+        sec_id = str(sec["id"])
+        section_ids.append(sec_id)
+        if bool(sec.get("is_core")):
+            core_ids.append(sec_id)
+
+    if not section_ids or not isinstance(source_images, list) or not source_images:
+        return {}
+
+    prefer: List[str] = []
+    if prefer_section_ids:
+        allowed = set(section_ids)
+        for sec_id in prefer_section_ids:
+            if sec_id in allowed and sec_id not in prefer:
+                prefer.append(sec_id)
+
+    target_ids = prefer or core_ids or section_ids[:1]
+    if not target_ids:
+        target_ids = section_ids[:1]
+
+    per_section_limit = max(0, int(max_images_per_section))
+    if per_section_limit <= 0:
+        return {sec_id: [] for sec_id in section_ids}
+
+    image_metadata: Dict[str, List[Dict[str, Any]]] = {sec_id: [] for sec_id in section_ids}
+
+    # round-robin 分配，优先填满 target_ids；如果图片多再继续循环 target_ids
+    idx = 0
+    for img in source_images:
+        if not isinstance(img, dict):
+            continue
+        source_id = (str(img.get("source_id") or "")).strip()
+        path = (str(img.get("path_or_url") or "")).strip()
+        if not source_id or not path:
+            continue
+
+        # 找到一个还有容量的 section
+        assigned = False
+        for _ in range(len(target_ids)):
+            sec_id = target_ids[idx % len(target_ids)]
+            idx += 1
+            if len(image_metadata.get(sec_id, [])) >= per_section_limit:
+                continue
+            image_metadata[sec_id].append(
+                {
+                    "source_id": source_id,
+                    "path_or_url": path,
+                    "caption_hint": (str(img.get("caption_hint") or "")).strip(),
+                }
+            )
+            assigned = True
+            break
+
+        if not assigned:
+            break
+
+    return image_metadata
+
+
 __all__ = [
     "dedupe_preserve_order",
     "ensure_article_id",
     "normalize_outline",
     "extract_markdown_headings",
     "insert_images_into_markdown",
+    "collect_source_images",
+    "build_fallback_image_metadata",
 ]

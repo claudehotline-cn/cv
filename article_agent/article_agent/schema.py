@@ -50,6 +50,15 @@ class ResearcherOutput(BaseModel):
     )
 
 
+class ImageSelectionOutput(BaseModel):
+    """用于在图片缺失时，二次让 LLM 仅选择图片并输出 image_metadata。"""
+
+    image_metadata: Dict[str, List[Dict[str, Any]]] = Field(
+        ...,
+        description="section_id -> 可用图片列表（只来自 sources.images）。",
+    )
+
+
 class SectionDraftOutput(BaseModel):
     """Section Writer 子 Agent 的结构化输出。"""
 
@@ -96,6 +105,7 @@ __all__ = [
     "OutlineSection",
     "OutlineOutput",
     "ResearcherOutput",
+    "ImageSelectionOutput",
     "SectionDraftOutput",
     "WriterAuditOutput",
     "parse_json_output",

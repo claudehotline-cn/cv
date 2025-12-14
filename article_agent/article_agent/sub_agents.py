@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from .llm_runtime import build_chat_llm, build_structured_chat_llm, invoke_llm_with_timeout
 from .prompts import COMMON_CONSTRAINTS_ZH
-from .schema import OutlineOutput, ResearcherOutput, SectionDraftOutput
+from .schema import ImageSelectionOutput, OutlineOutput, ResearcherOutput, SectionDraftOutput
 from .tools_files import export_markdown, fetch_url_with_images, load_text_from_file
 from .workflow_utils import extract_markdown_headings, insert_images_into_markdown, normalize_outline
 
@@ -49,7 +49,7 @@ def collector_agent(
     *,
     max_text_chars: int = 60000,
     max_overview_chars: int = 4000,
-    max_images_per_source: int = 10,
+    max_images_per_source: int = 30,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Collector：拉取来源文本与图片，并生成轻量概览供 Planner 使用。"""
 
@@ -385,6 +385,103 @@ def researcher_agent(
 
     for sec_id in required_ids:
         cleaned_images.setdefault(sec_id, [])
+
+    # 若 sources 中存在图片但 LLM 没选出任何可用图片，则追加一次“只选图”的 LLM 调用补齐 image_metadata。
+    total_images = sum(len(v) for v in cleaned_images.values() if isinstance(v, list))
+    if total_images == 0 and allowed_image_paths and allowed_section_ids:
+        image_system_prompt = f"""
+你是 Illustrator 子 Agent，负责为文章各个小节挑选合适的“原始图片”并输出 image_metadata。
+
+【输入】
+- outline：文章大纲（包含 sections）。
+- sections_to_research：重点节列表（可用于优先分配图片）。
+- sources：每个来源的候选图片列表（images）。
+
+【任务】
+- 仅从 sources.images 中挑选图片，绝不生成新图片或伪造 URL。
+- 尽量选择与内容相关、可作为说明的图片。
+- 当候选图片数量 >= 2 时，你必须在全篇累计至少选出 2 张图片（分配到一个或多个 section 均可）。
+- 每个 section 最多选择 2 张图片。
+
+【输出】
+你必须输出一个 JSON：
+{{
+  "image_metadata": {{
+    "<section_id>": [
+      {{"source_id": "src_1", "path_or_url": "原图URL", "caption_hint": "简短说明"}}
+    ],
+    ...
+  }}
+}}
+
+【约束】
+- section_id 只能来自 outline.sections[*].id。
+- path_or_url 必须严格等于系统提供的某个 sources.images[*].path_or_url（不要改写、不要补全、不要缩写）。
+
+{COMMON_CONSTRAINTS_ZH}
+""".strip()
+
+        image_prompt_obj = {
+            "outline": outline,
+            "sections_to_research": filtered_sections_to_research,
+            "required_section_ids": required_ids,
+            "sources_images": {
+                src_id: (src.get("images") if isinstance(src, dict) else [])
+                for src_id, src in prompt_sources.items()
+            },
+        }
+        image_prompt = json.dumps(image_prompt_obj, ensure_ascii=False)
+        image_llm = build_structured_chat_llm(ImageSelectionOutput, task_name="researcher_select_images")
+
+        def _call_images():
+            return image_llm.invoke(
+                [
+                    SystemMessage(content=image_system_prompt),
+                    HumanMessage(content=image_prompt),
+                ]
+            )
+
+        try:
+            img_result = invoke_llm_with_timeout(
+                task_name="researcher_select_images",
+                fn=_call_images,
+                timeout_sec=120.0,
+            )
+            img_output = img_result if isinstance(img_result, ImageSelectionOutput) else ImageSelectionOutput.model_validate(img_result)
+            raw_images2 = img_output.image_metadata if isinstance(img_output.image_metadata, dict) else {}
+            cleaned_images2: Dict[str, List[Dict[str, Any]]] = {sec_id: [] for sec_id in required_ids}
+            for key, items in raw_images2.items():
+                sec_id = str(key)
+                if sec_id not in allowed_section_ids:
+                    continue
+                if not isinstance(items, list):
+                    continue
+                kept: List[Dict[str, Any]] = []
+                for item in items[:2]:
+                    if not isinstance(item, dict):
+                        continue
+                    source_id = (str(item.get("source_id") or "")).strip()
+                    path = item.get("path_or_url") or item.get("url") or item.get("path")
+                    path = (str(path) if path is not None else "").strip()
+                    if not source_id or source_id not in allowed_source_ids:
+                        continue
+                    if not path or path not in allowed_image_paths:
+                        continue
+                    kept.append(
+                        {
+                            "source_id": source_id,
+                            "path_or_url": path,
+                            "caption_hint": (str(item.get("caption_hint") or item.get("alt") or "")).strip(),
+                        }
+                    )
+                cleaned_images2[sec_id] = kept
+
+            # 合并：保留空 list 的 key，便于下游统一遍历。
+            for sec_id in required_ids:
+                cleaned_images2.setdefault(sec_id, [])
+            cleaned_images = cleaned_images2
+        except Exception as exc:  # pragma: no cover
+            _LOGGER.warning("researcher_select_images.failed error=%s", exc)
 
     # source_summaries：过滤非法 source_id，并补齐
     raw_summaries = output.source_summaries if isinstance(output.source_summaries, dict) else {}
