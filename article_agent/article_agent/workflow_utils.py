@@ -151,6 +151,17 @@ def insert_images_into_markdown(
         return markdown
 
     lines = (markdown or "").splitlines()
+    figure_index = 0
+
+    def _render_figure(path: str, alt: str, caption: str) -> List[str]:
+        nonlocal figure_index
+        figure_index += 1
+        caption_text = str(caption).strip() or str(alt).strip() or "插图"
+        return [
+            f"| ![{alt}]({path}) |",
+            "|:--:|",
+            f"| 图 {figure_index}：{caption_text} |",
+        ]
 
     # 1) 先定位每个 outline section 的标题行位置（按 outline 顺序向前搜索，避免同名误匹配）。
     positions: List[Dict[str, Any]] = []
@@ -215,8 +226,8 @@ def insert_images_into_markdown(
             alt = str(alt).strip() or "插图"
             caption = (item.get("caption_hint") or item.get("alt") or alt)
             caption = str(caption).strip() or alt
-            image_lines.append(f"![{alt}]({path})")
-            image_lines.append(f"*图：{caption}*")
+            image_lines.extend(_render_figure(path=path, alt=alt, caption=caption))
+            image_lines.append("")
 
         if not image_lines:
             continue
@@ -258,6 +269,20 @@ def replace_image_placeholders(
 
     used_paths_by_section: Dict[str, set[str]] = {}
     used_count_by_section: Dict[str, int] = {}
+    figure_index = 0
+
+    def _render_figure(path: str, alt: str, caption: str) -> str:
+        nonlocal figure_index
+        figure_index += 1
+        caption_text = str(caption).strip() or str(alt).strip() or "插图"
+        # 使用“单列表格”实现居中 + 图注（避免 raw HTML 在部分前端被 sanitize）。
+        return "\n".join(
+            [
+                f"| ![{alt}]({path}) |",
+                "|:--:|",
+                f"| 图 {figure_index}：{caption_text} |",
+            ]
+        )
 
     def _render_image(item: Dict[str, Any], caption_override: str = "") -> str:
         path = item.get("path_or_url") or item.get("url") or item.get("path")
@@ -269,8 +294,7 @@ def replace_image_placeholders(
 
         caption = (caption_override or item.get("caption_hint") or item.get("alt") or alt)
         caption = str(caption).strip() or alt
-        # 用一行“图：xxx”作为图名/图注（Markdown 通用兼容）
-        return "\n".join([f"![{alt}]({path})", f"*图：{caption}*"])
+        return _render_figure(path=path, alt=alt, caption=caption)
 
     def _replacement(match: re.Match[str]) -> str:
         section_id = (match.group(1) or "").strip()
