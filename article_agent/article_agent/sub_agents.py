@@ -15,6 +15,8 @@ from .workflow_utils import extract_markdown_headings, insert_images_into_markdo
 
 _LOGGER = logging.getLogger("article_agent.sub_agents")
 
+MAX_IMAGE_CANDIDATES_PER_SECTION = 8
+
 
 def _strip_markdown_fence(text: str) -> str:
     """去掉围绕全文的 ``` 代码块包裹（如 ```markdown ... ```）。"""
@@ -401,7 +403,7 @@ def researcher_agent(
 - 仅从 sources.images 中挑选图片，绝不生成新图片或伪造 URL。
 - 尽量选择与内容相关、可作为说明的图片。
 - 当候选图片数量 >= 2 时，你必须在全篇累计至少选出 2 张图片（分配到一个或多个 section 均可）。
-- 每个 section 最多选择 2 张图片。
+- 每个 section 最多选择 {MAX_IMAGE_CANDIDATES_PER_SECTION} 张图片作为候选（后续 Writer 会再从候选中挑选 1-2 张插入正文）。
 
 【输出】
 你必须输出一个 JSON：
@@ -457,7 +459,7 @@ def researcher_agent(
                 if not isinstance(items, list):
                     continue
                 kept: List[Dict[str, Any]] = []
-                for item in items[:2]:
+                for item in items[: MAX_IMAGE_CANDIDATES_PER_SECTION]:
                     if not isinstance(item, dict):
                         continue
                     source_id = (str(item.get("source_id") or "")).strip()
@@ -555,12 +557,12 @@ markdown 字段要求：
 - 章节结构建议包含：简短引导 → 主体内容 → 小结（2-3 句）。
 - 你需要在正文合适位置插入“插图占位符”，用于后续由 Illustrator 自动替换为真实图片并自动生成图注（图名）：
   - 占位符必须单独成行，格式之一：
-    - `<!--IMAGE:<section_id>:<n>-->`（插入第 n 张图，n=1/2）
+    - `<!--IMAGE:<section_id>:<n>-->`（插入第 n 张候选图）
     - `<!--IMAGE:<section_id>:<n>|<图名/图注>-->`（同上，但你可提供更贴合上下文的图名/图注）
-  - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 为 1 或 2（最多两处插图）。
+  - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 必须是有效索引（1-based），范围为 `1..len(available_images)`；整节最多两处插图占位符。
   - 你决定图片应该出现的位置：必须紧跟在解释该图的段落之后（概念解释/结构示意/流程描述/关键对比）。
-  - 系统会额外给你本节的 `available_images`（候选图片列表，顺序即索引顺序，最多 2 张，含 caption_hint）：
-    - 当 `available_images` 非空时：你必须至少插入 1 个占位符，并优先选择与你当前段落内容最匹配的那张（用 :1 或 :2 指定）。
+  - 系统会额外给你本节的 `available_images`（候选图片列表，顺序即索引顺序，含 caption_hint）：
+    - 当 `available_images` 非空时：你必须至少插入 1 个占位符，并优先选择与你当前段落内容最匹配的那张（用 :n 指定）。
     - 当 `available_images` 为空时：你不得插入任何占位符。
 
 【篇幅 & 信息量】
@@ -608,13 +610,13 @@ markdown 字段要求：
                 "is_core": bool(sec.get("is_core")),
             },
             "notes": notes,
-            # 只给出必要字段，避免 prompt 膨胀；并保留顺序，让 Writer 可用 :1/:2 指定图片。
+            # 只给出必要字段，避免 prompt 膨胀；并保留顺序，让 Writer 可用 :n 指定图片。
             "available_images": [
                 {
                     "path_or_url": (img.get("path_or_url") or img.get("url") or img.get("src") or ""),
                     "caption_hint": (img.get("caption_hint") or img.get("alt") or ""),
                 }
-                for img in available_images[:2]
+                for img in available_images[:MAX_IMAGE_CANDIDATES_PER_SECTION]
                 if (img.get("path_or_url") or img.get("url") or img.get("src"))
             ],
         }

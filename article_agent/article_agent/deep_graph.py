@@ -290,8 +290,8 @@ def writer_audit_node(state: ContentState) -> ContentState:
             if not placeholders:
                 missing_image_placeholders.append(sec_id)
             else:
-                # 2) 若 Writer 选择了 :n，则 n 必须在有效范围内（1..min(2, len(candidates))）
-                max_allowed = min(2, len(candidates))
+                # 2) 若 Writer 选择了 :n，则 n 必须在有效范围内（1..len(candidates)）
+                max_allowed = len(candidates)
                 has_valid = False
                 for idx_raw in placeholders:
                     if not idx_raw:
