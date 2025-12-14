@@ -16,6 +16,7 @@ from .workflow_utils import extract_markdown_headings, insert_images_into_markdo
 _LOGGER = logging.getLogger("article_agent.sub_agents")
 
 MAX_IMAGE_CANDIDATES_PER_SECTION = 8
+MAX_IMAGES_PER_SECTION = MAX_IMAGE_CANDIDATES_PER_SECTION
 
 
 def _strip_markdown_fence(text: str) -> str:
@@ -559,7 +560,7 @@ markdown 字段要求：
   - 占位符必须单独成行，格式之一：
     - `<!--IMAGE:<section_id>:<n>-->`（插入第 n 张候选图）
     - `<!--IMAGE:<section_id>:<n>|<图名/图注>-->`（同上，但你可提供更贴合上下文的图名/图注）
-  - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 必须是有效索引（1-based），范围为 `1..len(available_images)`；整节最多两处插图占位符。
+  - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 必须是有效索引（1-based），范围为 `1..len(available_images)`；本节最多插入 `len(available_images)` 处插图占位符（不建议全部用满，按内容需要选择）。
   - 你决定图片应该出现的位置：必须紧跟在解释该图的段落之后（概念解释/结构示意/流程描述/关键对比）。
   - 系统会额外给你本节的 `available_images`（候选图片列表，顺序即索引顺序，含 caption_hint）：
     - 当 `available_images` 非空时：你必须至少插入 1 个占位符，并优先选择与你当前段落内容最匹配的那张（用 :n 指定）。
@@ -740,7 +741,7 @@ def illustrator_agent(
     outline: Dict[str, Any],
     image_metadata: Dict[str, List[Dict[str, Any]]],
     *,
-    max_images_per_section: int = 2,
+    max_images_per_section: int = MAX_IMAGES_PER_SECTION,
 ) -> str:
     """Illustrator：仅使用 image_metadata 中的原图，按 Writer 占位符替换插图（纯规则）。
 

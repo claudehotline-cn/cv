@@ -290,9 +290,15 @@ def writer_audit_node(state: ContentState) -> ContentState:
             if not placeholders:
                 missing_image_placeholders.append(sec_id)
             else:
-                # 2) 若 Writer 选择了 :n，则 n 必须在有效范围内（1..len(candidates)）
+                # 2) 占位符数量不应超过候选图片数（避免过多插图导致阅读负担与错配）
+                if len(placeholders) > len(candidates):
+                    invalid_image_placeholders.append(sec_id)
+                    continue
+
+                # 3) 若 Writer 选择了 :n，则 n 必须在有效范围内（1..len(candidates)）
                 max_allowed = len(candidates)
                 has_valid = False
+                used_indices: set[int] = set()
                 for idx_raw in placeholders:
                     if not idx_raw:
                         # `<!--IMAGE:sec_x-->` 不指定索引：视为有效（后续可插入剩余图片）
@@ -303,7 +309,9 @@ def writer_audit_node(state: ContentState) -> ContentState:
                     except ValueError:
                         continue
                     if 1 <= idx <= max_allowed:
-                        has_valid = True
+                        if idx not in used_indices:
+                            used_indices.add(idx)
+                            has_valid = True
                 if not has_valid:
                     invalid_image_placeholders.append(sec_id)
 
