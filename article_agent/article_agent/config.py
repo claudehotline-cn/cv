@@ -65,6 +65,17 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_ENABLE_DOC_REFINER",
     )
 
+    http_user_agent: str = Field(
+        default="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
+        description="抓取网页时使用的 User-Agent（部分站点会拒绝默认 python-requests）。",
+        alias="ARTICLE_AGENT_HTTP_USER_AGENT",
+    )
+    http_timeout_sec: float = Field(
+        default=20.0,
+        description="抓取网页的 HTTP 超时（秒）。",
+        alias="ARTICLE_AGENT_HTTP_TIMEOUT_SEC",
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

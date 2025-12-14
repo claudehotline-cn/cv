@@ -510,6 +510,7 @@ def section_writer_agent(
     instruction: str,
     outline: Dict[str, Any],
     section_notes: Dict[str, str],
+    image_metadata: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     *,
     target_section_ids: Optional[List[str]] = None,
     existing_section_drafts: Optional[Dict[str, str]] = None,
@@ -518,6 +519,7 @@ def section_writer_agent(
     """Section Writer：按小节生成 Markdown（每节独立生成，便于循环扩写）。"""
 
     section_notes = section_notes if isinstance(section_notes, dict) else {}
+    image_metadata = image_metadata if isinstance(image_metadata, dict) else {}
     drafts: Dict[str, str] = dict(existing_section_drafts or {})
 
     sections = outline.get("sections") if isinstance(outline, dict) else None
@@ -555,7 +557,9 @@ markdown 字段要求：
   - 占位符必须单独成行，格式为：`<!--IMAGE:<section_id>:<n>-->`
   - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 为 1 或 2（最多两个占位符）。
   - 你决定图片应该出现的位置：通常放在“概念解释/结构示意/流程描述/关键对比”段落之后。
-  - 若你认为本节不需要图片，也可以不放占位符；若不确定，至少放 1 个（`:1`）。
+  - 系统会额外给你本节的 `available_images`（候选图片列表，顺序即索引顺序）：
+    - 当 `available_images` 非空时：你必须至少插入 1 个占位符，并且至少包含 `<!--IMAGE:<section_id>:1-->`。
+    - 当 `available_images` 为空时：你不得插入任何占位符。
 
 【篇幅 & 信息量】
 - is_core=true：目标 800-1200 字，至少不低于 600 字。
@@ -587,6 +591,10 @@ markdown 字段要求：
             level = 2
 
         notes = section_notes.get(section_id) or "NO_DATA: 本节在当前资料中未找到足够信息。"
+        available_images = image_metadata.get(section_id) or []
+        if not isinstance(available_images, list):
+            available_images = []
+        available_images = [img for img in available_images if isinstance(img, dict)]
 
         prompt_obj = {
             "instruction": instruction,
@@ -598,6 +606,15 @@ markdown 字段要求：
                 "is_core": bool(sec.get("is_core")),
             },
             "notes": notes,
+            # 只给出必要字段，避免 prompt 膨胀；并保留顺序，让 Writer 可用 :1/:2 指定图片。
+            "available_images": [
+                {
+                    "path_or_url": (img.get("path_or_url") or img.get("url") or img.get("src") or ""),
+                    "caption_hint": (img.get("caption_hint") or img.get("alt") or ""),
+                }
+                for img in available_images[:2]
+                if (img.get("path_or_url") or img.get("url") or img.get("src"))
+            ],
         }
         prompt = json.dumps(prompt_obj, ensure_ascii=False)
 
@@ -634,6 +651,23 @@ markdown 字段要求：
                 markdown = expected_heading + "\n" + markdown
 
         drafts[section_id] = markdown.strip()
+
+        # 兜底：当本节有可用图片，但模型未给出任何占位符时，插入一个默认占位符。
+        # 这不会决定“插入哪张图”，只保证后续能按 image_metadata 替换出至少一张图片。
+        if prompt_obj.get("available_images") and f"<!--IMAGE:{section_id}" not in drafts[section_id]:
+            lines2 = drafts[section_id].splitlines()
+            if lines2:
+                insert_at = len(lines2)
+                # 尽量插在标题后的第一个自然段后：找到标题后第一个空行分隔点
+                i = 1
+                while i < len(lines2) and not lines2[i].strip():
+                    i += 1
+                while i < len(lines2) and lines2[i].strip():
+                    i += 1
+                insert_at = i if i > 1 else 1
+                insertion = ["", f"<!--IMAGE:{section_id}:1-->", ""]
+                lines2 = lines2[:insert_at] + insertion + lines2[insert_at:]
+                drafts[section_id] = "\n".join(lines2).strip()
 
         _LOGGER.debug(
             "section_writer.done section_id=%s heading=%s len=%d",

@@ -19,7 +19,13 @@ def fetch_url_with_images(url: str, max_images: int = 5, max_text_chars: int = 6
     - 文本长度截断到 max_text_chars，以控制后续 LLM 负载。
     """
 
-    resp = requests.get(url, timeout=10)
+    settings = get_settings()
+    headers = {
+        "User-Agent": settings.http_user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    }
+    resp = requests.get(url, timeout=float(settings.http_timeout_sec), headers=headers)
     resp.raise_for_status()
     html = resp.text
 

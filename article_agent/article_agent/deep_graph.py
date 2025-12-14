@@ -216,6 +216,7 @@ def section_writer_node(state: ContentState) -> ContentState:
         instruction=state.get("instruction", "") or "",
         outline=state.get("outline") or {},
         section_notes=state.get("section_notes") or {},
+        image_metadata=state.get("image_metadata") or {},
         target_section_ids=target_section_ids,
         existing_section_drafts=existing_section_drafts,
     )
