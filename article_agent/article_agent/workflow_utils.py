@@ -8,6 +8,7 @@ from .schema import OutlineOutput, OutlineSection
 
 
 _SECTION_ID_RE = re.compile(r"[^a-z0-9_]+")
+_IMAGE_PLACEHOLDER_RE = re.compile(r"<!--\s*IMAGE\s*:\s*([a-zA-Z0-9_]+)\s*(?::\s*(\d+)\s*)?-->")
 
 
 def dedupe_preserve_order(items: Iterable[str]) -> List[str]:
@@ -226,6 +227,105 @@ def insert_images_into_markdown(
         lines = lines[:end_idx] + insertion + lines[end_idx:]
 
     return "\n".join(lines).strip()
+
+
+def replace_image_placeholders(
+    markdown: str,
+    image_metadata: Dict[str, List[Dict[str, Any]]],
+    *,
+    max_images_per_section: int = 2,
+) -> str:
+    """用 image_metadata 替换 Writer 输出的插图占位符。
+
+    支持两种格式：
+    - `<!--IMAGE:sec_x-->`：在该位置插入本节最多 max_images_per_section 张图。
+    - `<!--IMAGE:sec_x:1-->` / `<!--IMAGE:sec_x:2-->`：在该位置仅插入第 n 张图（1-based）。
+
+    若找不到对应图片或 section_id 非法，则移除占位符，不保留注释。
+    """
+
+    if not markdown:
+        return markdown
+    if not isinstance(image_metadata, dict) or not image_metadata:
+        # 没有可插入的图片：移除所有占位符，避免用户看到注释。
+        return _IMAGE_PLACEHOLDER_RE.sub("", markdown).strip()
+
+    used_paths_by_section: Dict[str, set[str]] = {}
+    used_count_by_section: Dict[str, int] = {}
+
+    def _render_image(item: Dict[str, Any]) -> str:
+        path = item.get("path_or_url") or item.get("url") or item.get("path")
+        path = (str(path) if path is not None else "").strip()
+        if not path:
+            return ""
+        alt = (item.get("caption_hint") or item.get("alt") or "插图")
+        alt = str(alt).strip() or "插图"
+        return f"![{alt}]({path})"
+
+    def _replacement(match: re.Match[str]) -> str:
+        section_id = (match.group(1) or "").strip()
+        index_raw = (match.group(2) or "").strip()
+        candidates = image_metadata.get(section_id) or []
+        if not isinstance(candidates, list) or not candidates:
+            return ""
+
+        used_paths = used_paths_by_section.setdefault(section_id, set())
+        used_count = used_count_by_section.get(section_id, 0)
+
+        def _insert_one(idx0: int) -> str:
+            if idx0 < 0 or idx0 >= len(candidates):
+                return ""
+            item = candidates[idx0]
+            if not isinstance(item, dict):
+                return ""
+            path = item.get("path_or_url") or item.get("url") or item.get("path")
+            path = (str(path) if path is not None else "").strip()
+            if not path or path in used_paths:
+                return ""
+            rendered = _render_image(item)
+            if not rendered:
+                return ""
+            used_paths.add(path)
+            used_count_by_section[section_id] = used_count_by_section.get(section_id, 0) + 1
+            return rendered
+
+        # 指定索引：只插入一张
+        if index_raw:
+            try:
+                idx = int(index_raw)
+            except ValueError:
+                return ""
+            if idx <= 0:
+                return ""
+            if max_images_per_section and used_count >= max_images_per_section:
+                return ""
+            return _insert_one(idx - 1)
+
+        # 未指定索引：插入本节剩余可用图片（最多 max_images_per_section）
+        if max_images_per_section and used_count >= max_images_per_section:
+            return ""
+        remaining = (max_images_per_section - used_count) if max_images_per_section else len(candidates)
+        if remaining <= 0:
+            return ""
+
+        lines: List[str] = []
+        for i in range(len(candidates)):
+            if remaining <= 0:
+                break
+            rendered = _insert_one(i)
+            if not rendered:
+                continue
+            lines.append(rendered)
+            remaining -= 1
+
+        return "\n".join(lines)
+
+    replaced = _IMAGE_PLACEHOLDER_RE.sub(_replacement, markdown)
+    # 清理遗留占位符（例如无图、非法索引等情况），避免注释残留。
+    replaced = _IMAGE_PLACEHOLDER_RE.sub("", replaced)
+    # 规范化多余空行（保持轻量，不做复杂格式化）
+    replaced = re.sub(r"\n{3,}", "\n\n", replaced)
+    return replaced.strip()
 
 
 def collect_source_images(sources: Dict[str, Any]) -> List[Dict[str, Any]]:

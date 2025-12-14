@@ -11,7 +11,7 @@ from .llm_runtime import build_chat_llm, build_structured_chat_llm, invoke_llm_w
 from .prompts import COMMON_CONSTRAINTS_ZH
 from .schema import ImageSelectionOutput, OutlineOutput, ResearcherOutput, SectionDraftOutput
 from .tools_files import export_markdown, fetch_url_with_images, load_text_from_file
-from .workflow_utils import extract_markdown_headings, insert_images_into_markdown, normalize_outline
+from .workflow_utils import extract_markdown_headings, insert_images_into_markdown, normalize_outline, replace_image_placeholders
 
 _LOGGER = logging.getLogger("article_agent.sub_agents")
 
@@ -551,6 +551,11 @@ markdown 字段要求：
   - level=2 → "## 本节标题"
   - level=3 → "### 本节标题"
 - 章节结构建议包含：简短引导 → 主体内容 → 小结（2-3 句）。
+- 你需要在正文合适位置插入“插图占位符”，用于后续由 Illustrator 自动替换为真实图片：
+  - 占位符必须单独成行，格式为：`<!--IMAGE:<section_id>:<n>-->`
+  - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 为 1 或 2（最多两个占位符）。
+  - 你决定图片应该出现的位置：通常放在“概念解释/结构示意/流程描述/关键对比”段落之后。
+  - 若你认为本节不需要图片，也可以不放占位符；若不确定，至少放 1 个（`:1`）。
 
 【篇幅 & 信息量】
 - is_core=true：目标 800-1200 字，至少不低于 600 字。
@@ -673,6 +678,7 @@ def doc_refiner_agent(
 1. 严禁修改任何 Markdown 标题行：所有以 "#" / "##" / "###" 开头的标题行，文本必须与原稿完全一致。
 2. 严禁增删标题，严禁改变标题级别，严禁调整标题出现顺序。
 3. 严禁新增/删除整节内容；只能在每个现有小节内部调整句子与段落。
+4. 严禁修改/删除/新增任何插图占位符：所有形如 `<!--IMAGE:...-->` 的行必须原封不动保留（内容与位置都不能变化）。
 
 【输出】
 - 只返回润色后的完整 Markdown 文本，不要输出任何额外文字或 JSON。
@@ -715,12 +721,23 @@ def illustrator_agent(
     *,
     max_images_per_section: int = 2,
 ) -> str:
-    """Illustrator：仅使用 image_metadata 中的原图，将图片插入到对应章节末尾（纯规则）。"""
+    """Illustrator：仅使用 image_metadata 中的原图，按 Writer 占位符替换插图（纯规则）。
+
+    若正文中不存在占位符，则回退为“按章节末尾插入”，以保持兼容性。
+    """
 
     if not final_markdown:
         return final_markdown
+    if "<!--IMAGE:" in final_markdown:
+        return replace_image_placeholders(
+            markdown=final_markdown,
+            image_metadata=image_metadata,
+            max_images_per_section=max_images_per_section,
+        )
+
     if not isinstance(image_metadata, dict) or not image_metadata:
         return final_markdown
+
     return insert_images_into_markdown(
         markdown=final_markdown,
         outline=outline,
