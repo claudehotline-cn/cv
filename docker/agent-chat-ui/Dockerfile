@@ -1,6 +1,12 @@
 FROM node:22-slim AS base
 
 ENV NODE_ENV=production
+# Agent Chat UI 默认连接 article-agent（可在构建时通过 --build-arg 覆盖）
+ARG NEXT_PUBLIC_API_URL=http://localhost:18130
+ARG NEXT_PUBLIC_ASSISTANT_ID=content-chat-agent
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_ASSISTANT_ID=${NEXT_PUBLIC_ASSISTANT_ID}
+
 # 通过环境变量控制 Next.js 绑定地址和端口
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
@@ -19,6 +25,10 @@ RUN pnpm install --frozen-lockfile
 
 # 再拷贝完整源码（避免因源码变更重复安装依赖）
 COPY third-party/agent-chat-ui ./
+
+# 注入 /articles 下载路由（避免直接修改 third-party 目录的 gitlink 指针）
+COPY docker/agent-chat-ui/overrides/articles_route.ts /tmp/articles_route.ts
+RUN mkdir -p "src/app/articles/[...slug]" && cp /tmp/articles_route.ts "src/app/articles/[...slug]/route.ts"
 
 # 构建 Next.js 应用
 RUN pnpm build

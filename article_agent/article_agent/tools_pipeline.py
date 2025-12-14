@@ -12,8 +12,7 @@ from .sub_agents import (
     illustrator_agent,
     planner_agent,
     researcher_agent,
-    writer_agent,
-    writer_review_agent,
+    section_writer_agent,
 )
 
 _LOGGER = logging.getLogger("article_agent.tools_pipeline")
@@ -31,15 +30,12 @@ def collect_sources_tool(
     - 不做精细分节，仅用于后续 Planner 理解整体资料分布。
     """
 
-    overview = collector_agent(
-        instruction=instruction,
-        urls=urls or [],
-        file_paths=file_paths or [],
-    )
+    sources, overview = collector_agent(urls=urls or [], file_paths=file_paths or [])
     result: Dict[str, Any] = {
         "instruction": instruction,
         "urls": urls or [],
         "file_paths": file_paths or [],
+        "sources": sources,
         "rough_sources_overview": overview,
     }
     _LOGGER.debug("collect_sources.result_len=%d", len(json.dumps(result, ensure_ascii=False)))
@@ -49,7 +45,7 @@ def collect_sources_tool(
 @tool("plan_outline")
 def plan_outline_tool(
     instruction: str,
-    rough_sources_overview: Optional[List[Dict[str, Any]]] = None,
+    rough_sources_overview: Optional[Dict[str, Any]] = None,
     urls: Optional[List[str]] = None,
     file_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -61,25 +57,16 @@ def plan_outline_tool(
 
     if rough_sources_overview is None:
         _LOGGER.debug("plan_outline_tool: rough_sources_overview is None, fallback to collector_agent")
-        rough_sources_overview = collector_agent(
-            instruction=instruction,
-            urls=urls or [],
-            file_paths=file_paths or [],
-        )
+        _, rough_sources_overview = collector_agent(urls=urls or [], file_paths=file_paths or [])
 
-    planner_output = planner_agent(
-        instruction=instruction,
-        urls=[s.get("url", "") for s in rough_sources_overview if s.get("kind") == "url"],
-        file_paths=[s.get("path", "") for s in rough_sources_overview if s.get("kind") == "file"],
-        rough_sources_overview=rough_sources_overview,
-    )
+    planner_output = planner_agent(instruction=instruction, rough_sources_overview=rough_sources_overview)
     result: Dict[str, Any] = {
         "instruction": instruction,
         "rough_sources_overview": rough_sources_overview,
         "urls": urls or [],
         "file_paths": file_paths or [],
-        "outline": planner_output.outline,
-        "sections_to_research": planner_output.sections_to_research,
+        "outline": planner_output.model_dump(),
+        "sections_to_research": list(planner_output.sections_to_research or []),
     }
     _LOGGER.debug("plan_outline.result_keys=%s", list(result.keys()))
     return result
@@ -89,29 +76,27 @@ def plan_outline_tool(
 def deep_research_tool(
     outline: Any,
     sections_to_research: Any,
-    urls: Optional[List[str]] = None,
-    file_paths: Optional[List[str]] = None,
+    sources: Optional[Dict[str, Any]] = None,
     article_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """步骤 3：深度 Researcher，根据大纲与研究计划整合 section_notes 和 image_metadata。"""
 
-    research_output = researcher_agent(
-        outline=outline,
-        sections_to_research=sections_to_research,
-        urls=urls or [],
-        file_paths=file_paths or [],
+    output, extra_keys = researcher_agent(
+        outline=outline if isinstance(outline, dict) else {},
+        sections_to_research=sections_to_research if isinstance(sections_to_research, list) else [],
+        sources=sources or {},
     )
     result: Dict[str, Any] = {
         "outline": outline,
         "sections_to_research": sections_to_research,
-        "urls": urls or [],
-        "file_paths": file_paths or [],
+        "sources": sources or {},
         "article_id": article_id,
-        "source_summaries": research_output.source_summaries,
-        "section_notes": research_output.section_notes,
-        "image_metadata": research_output.image_metadata,
+        "source_summaries": output.source_summaries,
+        "section_notes": output.section_notes,
+        "image_metadata": output.image_metadata,
+        "research_extra_keys": extra_keys,
     }
-    _LOGGER.debug("deep_research.section_notes_keys=%s", list(research_output.section_notes.keys()))
+    _LOGGER.debug("deep_research.section_notes_keys=%s", list((output.section_notes or {}).keys()))
     return result
 
 
@@ -122,19 +107,37 @@ def write_markdown_tool(
     section_notes: Any,
     image_metadata: Any,
 ) -> Dict[str, Any]:
-    """步骤 4：Writer，根据大纲与 section_notes 写出 Markdown 草稿。"""
+    """步骤 4：Section Writer + Merge，根据大纲与 section_notes 写出 Markdown 草稿。"""
 
-    draft = writer_agent(
+    outline_dict = outline if isinstance(outline, dict) else {}
+    notes_dict = section_notes if isinstance(section_notes, dict) else {}
+    section_drafts = section_writer_agent(
         instruction=instruction,
-        outline=outline,
-        section_notes=section_notes,
-        image_metadata=image_metadata,
+        outline=outline_dict,
+        section_notes=notes_dict,
     )
+
+    # 简单 merge（与 deep_graph.merge_sections_node 逻辑保持一致）
+    title = str(outline_dict.get("title") or "").strip() or "未命名文章"
+    merged_parts: List[str] = [f"# {title}".strip()]
+    sections = outline_dict.get("sections") if isinstance(outline_dict.get("sections"), list) else []
+    for sec in sections:
+        if not isinstance(sec, dict):
+            continue
+        sec_id = str(sec.get("id") or "").strip()
+        if not sec_id:
+            continue
+        text = section_drafts.get(sec_id)
+        if isinstance(text, str) and text.strip():
+            merged_parts.append(text.strip())
+    draft = "\n\n".join(merged_parts).strip()
+
     result: Dict[str, Any] = {
         "instruction": instruction,
         "outline": outline,
         "section_notes": section_notes,
         "image_metadata": image_metadata,
+        "section_drafts": section_drafts,
         "draft_markdown": draft,
     }
     _LOGGER.debug("write_markdown.draft_length=%d", len(draft))
@@ -147,19 +150,16 @@ def review_markdown_tool(
     section_notes: Any,
     draft_markdown: str,
 ) -> Dict[str, Any]:
-    """步骤 4b：Writer 自检，决定是否需要重写。"""
+    """步骤 4b：规则审核（轻量版），给出是否建议重写的信号。"""
 
-    review = writer_review_agent(
-        outline=outline,
-        section_notes=section_notes,
-        draft_markdown=draft_markdown,
-    )
+    total_chars = len((draft_markdown or "").strip())
+    needs_revision = total_chars < 1500
     result: Dict[str, Any] = {
         "outline": outline,
         "section_notes": section_notes,
         "draft_markdown": draft_markdown,
-        "needs_revision": bool(review.needs_revision),
-        "comments": review.comments,
+        "needs_revision": needs_revision,
+        "comments": "draft_markdown 太短，建议扩写" if needs_revision else "",
     }
     _LOGGER.debug("review_markdown.needs_revision=%s", result["needs_revision"])
     return result
@@ -169,12 +169,14 @@ def review_markdown_tool(
 def curate_images_tool(
     draft_markdown: str,
     image_metadata: Any,
+    outline: Any = None,
     article_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """步骤 5：Illustrator，根据 image_metadata 在草稿中插入图片引用，生成 final_markdown。"""
 
     final_markdown = illustrator_agent(
-        draft_markdown=draft_markdown,
+        final_markdown=draft_markdown,
+        outline=outline if isinstance(outline, dict) else {},
         image_metadata=image_metadata,
     )
     result: Dict[str, Any] = {
@@ -195,15 +197,10 @@ def export_markdown_tool(
 ) -> Dict[str, Any]:
     """步骤 6：Assembler，调用 export_markdown 落盘并返回下载链接等信息。"""
 
-    info = assembler_agent(
-        article_id=article_id,
-        title=title,
-        final_markdown=final_markdown,
-    )
-    output = info.get("output", {})
+    output = assembler_agent(article_id=article_id, title=title, final_markdown=final_markdown)
     result: Dict[str, Any] = {
-        "article_id": output.get("article_id", article_id),
-        "title": output.get("title", title),
+        "article_id": output.get("article_id") or article_id,
+        "title": output.get("title") or title,
         "md_path": output.get("md_path"),
         "md_url": output.get("md_url"),
     }

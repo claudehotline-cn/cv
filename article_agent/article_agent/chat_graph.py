@@ -30,8 +30,8 @@ CHAT_AGENT_SYSTEM_PROMPT = """
      - article_id: 文章 ID，如用户未指定，可使用简单 ID（例如 "article-001"）。
      - title: 可选的文章标题，如用户未指定，可留空，由内部流程推断。
    - 作用：
-     - 固定按如下顺序执行内部子流程：入口登记 → 轻量资料预取 → Planner 制定大纲 → 深度 Researcher → Writer → Writer 自检 → Illustrator → Assembler 导出 Markdown；
-     - 返回 JSON，包含 article_id、title、md_url、md_path、step_history 和 error 等字段。
+     - 固定按如下顺序执行内部子流程：init → collector → planner → researcher → research_audit → section_writer → writer_audit → merge_sections → doc_refiner(可选) → illustrator → assembler → summary_for_user；
+     - 返回 JSON，包含 article_id、title、md_url、md_path、step_history、summary_for_user 和 error 等字段。
 
 【调用策略】
 - 当用户提出“基于若干链接/文件生成文章/博客/技术文档”之类需求时：
@@ -89,20 +89,15 @@ def generate_article_tool(
         }
     )
 
-    download_info: Dict[str, Any] = state.get("download_info") or {}
-    final_title = (
-        state.get("title")
-        or download_info.get("title")
-        or title
-        or "未命名文章"
-    )
+    final_title = (state.get("title") or title or "未命名文章").strip() or "未命名文章"
     result: Dict[str, Any] = {
         "article_id": state.get("article_id") or article_id,
         "title": final_title,
-        "md_url": download_info.get("md_url"),
-        "md_path": download_info.get("md_path"),
+        "md_url": state.get("md_url"),
+        "md_path": state.get("md_path"),
         "step_history": state.get("step_history", []),
         "error": state.get("error"),
+        "summary_for_user": state.get("summary_for_user"),
     }
 
     _LOGGER.info(

@@ -1,25 +1,33 @@
 from __future__ import annotations
 
 import logging
+import re
+from typing import Any, Dict, List, Optional
 
 from langgraph.graph import END, StateGraph
 
+from .config import get_settings
 from .content_state import ContentState
 from .sub_agents import (
     assembler_agent,
     collector_agent,
+    doc_refiner_agent,
     illustrator_agent,
     planner_agent,
     researcher_agent,
     section_writer_agent,
-    doc_refiner_agent,
-    writer_review_agent,
 )
+from .workflow_utils import dedupe_preserve_order, ensure_article_id
 
 _LOGGER = logging.getLogger("article_agent.deep_graph")
 
-MAX_RESEARCHER_RETRIES = 1
-MAX_REFINER_RETRIES = 2
+MAX_RESEARCH_ROUNDS = 2
+MAX_REWRITE_ROUNDS = 2
+
+MIN_IMPORTANT_NOTE_CHARS = 300
+MIN_TOTAL_DRAFT_CHARS = 3000
+MIN_CORE_SECTION_CHARS = 800
+MIN_NORMAL_SECTION_CHARS = 400
 
 
 def _append_step(state: ContentState, step: str) -> ContentState:
@@ -29,195 +37,345 @@ def _append_step(state: ContentState, step: str) -> ContentState:
     return state
 
 
-def entry_node(state: ContentState) -> ContentState:
-    """入口节点：登记 instruction / urls / file_paths / article_id 到 State。"""
+def init_node(state: ContentState) -> ContentState:
+    """init：清洗输入、初始化计数器。"""
 
-    _LOGGER.debug(
-        "entry_node.instruction=%s urls=%s file_paths=%s article_id=%s",
-        state.get("instruction", "")[:80],
-        state.get("urls", []),
-        state.get("file_paths", []),
-        state.get("article_id", ""),
-    )
-    return _append_step(state, "entry")
+    urls = dedupe_preserve_order(state.get("urls", []) or [])
+    file_paths = dedupe_preserve_order(state.get("file_paths", []) or [])
+
+    new_state: ContentState = {
+        **state,
+        "urls": urls,
+        "file_paths": file_paths,
+        "article_id": ensure_article_id(state.get("article_id")),
+        "rewrite_round": int(state.get("rewrite_round", 0) or 0),
+        "research_round": int(state.get("research_round", 0) or 0),
+        "sections_to_rewrite": list(state.get("sections_to_rewrite", []) or []),
+    }
+    return _append_step(new_state, "init")
 
 
 def collector_node(state: ContentState) -> ContentState:
-    """轻量资料预取节点：为 Planner 提供 rough_sources_overview。"""
-
     if state.get("error"):
         return _append_step(state, "collector_skipped")
 
-    try:
-        overview = collector_agent(
-            instruction=state.get("instruction", ""),
-            urls=state.get("urls", []),
-            file_paths=state.get("file_paths", []),
-        )
-        new_state: ContentState = {
-            **state,
-            "rough_sources_overview": overview,
-        }
-        return _append_step(new_state, "collector")
-    except Exception as exc:  # pragma: no cover - 防御性
-        _LOGGER.error("collector_node.failed error=%s", exc)
-        new_state = dict(state)
-        new_state["error"] = f"collector_failed: {exc}"
-        return _append_step(new_state, "collector_error")
+    sources, overview = collector_agent(
+        urls=state.get("urls", []) or [],
+        file_paths=state.get("file_paths", []) or [],
+    )
+    new_state: ContentState = {
+        **state,
+        "sources": sources,
+        "rough_sources_overview": overview,
+    }
+    return _append_step(new_state, "collector")
 
 
 def planner_node(state: ContentState) -> ContentState:
     if state.get("error"):
         return _append_step(state, "planner_skipped")
 
-    try:
-        result = planner_agent(
-            instruction=state.get("instruction", ""),
-            urls=state.get("urls", []),
-            file_paths=state.get("file_paths", []),
-            rough_sources_overview=state.get("rough_sources_overview"),
-        )
-        new_state: ContentState = {
-            **state,
-            "outline": result.outline,
-            "sections_to_research": result.sections_to_research,
-        }
-        return _append_step(new_state, "planner")
-    except Exception as exc:  # pragma: no cover - 防御性
-        _LOGGER.error("planner_node.failed error=%s", exc)
-        new_state = dict(state)
-        new_state["error"] = f"planner_failed: {exc}"
-        return _append_step(new_state, "planner_error")
+    outline_model = planner_agent(
+        instruction=state.get("instruction", "") or "",
+        rough_sources_overview=state.get("rough_sources_overview") or {},
+    )
+    outline_dict = outline_model.model_dump()
+    title = (state.get("title") or "").strip() or outline_model.title
+
+    new_state: ContentState = {
+        **state,
+        "title": title,
+        "outline": outline_dict,
+        "sections_to_research": list(outline_model.sections_to_research or []),
+    }
+    return _append_step(new_state, "planner")
 
 
 def researcher_node(state: ContentState) -> ContentState:
     if state.get("error"):
         return _append_step(state, "researcher_skipped")
 
-    try:
-        result = researcher_agent(
-            outline=state.get("outline"),
-            sections_to_research=state.get("sections_to_research"),
-            urls=state.get("urls", []),
-            file_paths=state.get("file_paths", []),
+    research_round = int(state.get("research_round", 0) or 0)
+    target_section_ids: Optional[List[str]] = None
+    if research_round > 0:
+        target_section_ids = dedupe_preserve_order(
+            (state.get("research_missing_important", []) or [])
+            + (state.get("research_weak_important", []) or [])
         )
-        attempts = int(state.get("researcher_attempts", 0) or 0) + 1
-        new_state: ContentState = {
-            **state,
-            "source_summaries": result.source_summaries,
-            "section_notes": result.section_notes,
-            "image_metadata": result.image_metadata,
-            "researcher_attempts": attempts,
-        }
-        return _append_step(new_state, "researcher")
-    except Exception as exc:  # pragma: no cover - 防御性
-        _LOGGER.error("researcher_node.failed error=%s", exc)
-        new_state = dict(state)
-        new_state["error"] = f"researcher_failed: {exc}"
-        return _append_step(new_state, "researcher_error")
+
+    output, extra_keys = researcher_agent(
+        outline=state.get("outline") or {},
+        sections_to_research=state.get("sections_to_research", []) or [],
+        sources=state.get("sources", {}) or {},
+        target_section_ids=target_section_ids,
+    )
+
+    # 合并策略：首次全量写入；补全时仅覆盖目标节，保留既有内容。
+    if target_section_ids:
+        merged_notes = dict(state.get("section_notes") or {})
+        merged_images = dict(state.get("image_metadata") or {})
+        merged_notes.update(output.section_notes or {})
+        merged_images.update(output.image_metadata or {})
+        section_notes = merged_notes
+        image_metadata = merged_images
+    else:
+        section_notes = output.section_notes or {}
+        image_metadata = output.image_metadata or {}
+
+    new_state: ContentState = {
+        **state,
+        "section_notes": section_notes,
+        "image_metadata": image_metadata,
+        "source_summaries": output.source_summaries or {},
+        "research_extra_keys": extra_keys,
+        "research_round": research_round + 1,
+        "research_error": None,
+    }
+    return _append_step(new_state, "researcher")
+
+
+def _is_no_data(text: str) -> bool:
+    value = (text or "").strip()
+    return (not value) or value.upper().startswith("NO_DATA")
+
+
+def research_audit_node(state: ContentState) -> ContentState:
+    """research_audit：规则质检，不用 LLM。"""
+
+    outline = state.get("outline") or {}
+    sections = outline.get("sections") if isinstance(outline, dict) else None
+    section_ids: List[str] = []
+    if isinstance(sections, list):
+        for sec in sections:
+            if isinstance(sec, dict) and sec.get("id"):
+                section_ids.append(str(sec["id"]))
+
+    section_notes = state.get("section_notes") or {}
+    if not isinstance(section_notes, dict):
+        section_notes = {}
+
+    missing_all: List[str] = []
+    for sec_id in section_ids:
+        note = section_notes.get(sec_id)
+        if not isinstance(note, str) or _is_no_data(note):
+            missing_all.append(sec_id)
+
+    important_ids = set(state.get("sections_to_research", []) or [])
+    missing_important = [sec_id for sec_id in missing_all if sec_id in important_ids]
+
+    weak_important: List[str] = []
+    for sec_id in important_ids:
+        note = section_notes.get(sec_id)
+        if not isinstance(note, str) or _is_no_data(note):
+            continue
+        if len(note.strip()) < MIN_IMPORTANT_NOTE_CHARS:
+            weak_important.append(sec_id)
+
+    research_ok = (not missing_important) and (not weak_important)
+    research_error: Optional[str] = None
+    if not research_ok:
+        research_error = (
+            f"missing_important={missing_important} weak_important={weak_important}"
+        )
+
+    new_state: ContentState = {
+        **state,
+        "research_missing_all": missing_all,
+        "research_missing_important": missing_important,
+        "research_weak_important": weak_important,
+        "research_ok": research_ok,
+        "research_error": research_error,
+    }
+    return _append_step(new_state, "research_audit")
+
+
+def research_router(state: ContentState) -> str:
+    if state.get("error"):
+        return "next"
+
+    ok = bool(state.get("research_ok"))
+    research_round = int(state.get("research_round", 0) or 0)
+    if ok or research_round >= MAX_RESEARCH_ROUNDS:
+        return "next"
+    return "retry"
 
 
 def section_writer_node(state: ContentState) -> ContentState:
-    """Section Writer 节点：按小节逐段生成 Markdown 片段。"""
-
     if state.get("error"):
         return _append_step(state, "section_writer_skipped")
 
-    try:
-        section_notes = state.get("section_notes") or {}
-        section_drafts = section_writer_agent(
-            instruction=state.get("instruction", ""),
-            outline=state.get("outline"),
-            section_notes=section_notes if isinstance(section_notes, dict) else {},
-        )
-        new_state: ContentState = {
-            **state,
-            "section_drafts": section_drafts,
-        }
-        return _append_step(new_state, "section_writer")
-    except Exception as exc:  # pragma: no cover
-        _LOGGER.error("section_writer_node.failed error=%s", exc)
-        new_state = dict(state)
-        new_state["error"] = f"section_writer_failed: {exc}"
-        return _append_step(new_state, "section_writer_error")
+    rewrite_round = int(state.get("rewrite_round", 0) or 0)
+    target_section_ids: Optional[List[str]] = None
+    existing_section_drafts: Optional[Dict[str, str]] = None
+
+    if rewrite_round > 0:
+        target_section_ids = state.get("sections_to_rewrite") or []
+        existing_section_drafts = state.get("section_drafts") or {}
+
+    drafts = section_writer_agent(
+        instruction=state.get("instruction", "") or "",
+        outline=state.get("outline") or {},
+        section_notes=state.get("section_notes") or {},
+        target_section_ids=target_section_ids,
+        existing_section_drafts=existing_section_drafts,
+    )
+
+    new_state: ContentState = {**state, "section_drafts": drafts}
+    return _append_step(new_state, "section_writer")
+
+
+def _section_body_chars(markdown: str) -> int:
+    if not isinstance(markdown, str) or not markdown.strip():
+        return 0
+    lines = markdown.splitlines()
+    if lines and re.match(r"^[ \t]*#{1,6}[ \t]+", lines[0]):
+        body = "\n".join(lines[1:])
+    else:
+        body = markdown
+    return len(body.strip())
+
+
+def writer_audit_node(state: ContentState) -> ContentState:
+    """writer_audit：规则质检，不用 LLM。"""
+
+    outline = state.get("outline") or {}
+    sections = outline.get("sections") if isinstance(outline, dict) else None
+    if not isinstance(sections, list):
+        sections = []
+
+    drafts = state.get("section_drafts") or {}
+    if not isinstance(drafts, dict):
+        drafts = {}
+
+    missing_sections: List[str] = []
+    short_sections: List[str] = []
+    per_section_chars: Dict[str, int] = {}
+
+    total_chars = 0
+    for sec in sections:
+        if not isinstance(sec, dict):
+            continue
+        sec_id = str(sec.get("id") or "").strip()
+        if not sec_id:
+            continue
+        is_core = bool(sec.get("is_core"))
+        min_chars = MIN_CORE_SECTION_CHARS if is_core else MIN_NORMAL_SECTION_CHARS
+
+        body_chars = _section_body_chars(str(drafts.get(sec_id) or ""))
+        per_section_chars[sec_id] = body_chars
+        total_chars += body_chars
+
+        if body_chars <= 0:
+            missing_sections.append(sec_id)
+        elif body_chars < min_chars:
+            short_sections.append(sec_id)
+
+    draft_quality_ok = (total_chars >= MIN_TOTAL_DRAFT_CHARS) and (not missing_sections) and (not short_sections)
+    sections_to_rewrite = dedupe_preserve_order(missing_sections + short_sections)
+
+    writer_audit = {
+        "total_chars": total_chars,
+        "missing_sections": missing_sections,
+        "short_sections": short_sections,
+        "sections_to_rewrite": sections_to_rewrite,
+        "per_section_chars": per_section_chars,
+        "thresholds": {
+            "min_total_chars": MIN_TOTAL_DRAFT_CHARS,
+            "min_core_section_chars": MIN_CORE_SECTION_CHARS,
+            "min_normal_section_chars": MIN_NORMAL_SECTION_CHARS,
+        },
+    }
+
+    rewrite_round = int(state.get("rewrite_round", 0) or 0)
+    if not draft_quality_ok:
+        rewrite_round += 1
+
+    new_state: ContentState = {
+        **state,
+        "writer_audit": writer_audit,
+        "draft_quality_ok": draft_quality_ok,
+        "rewrite_round": rewrite_round,
+        "sections_to_rewrite": sections_to_rewrite,
+    }
+    return _append_step(new_state, "writer_audit")
+
+
+def writer_router(state: ContentState) -> str:
+    if state.get("error"):
+        return "next"
+
+    ok = bool(state.get("draft_quality_ok"))
+    rewrite_round = int(state.get("rewrite_round", 0) or 0)
+    if ok or rewrite_round >= MAX_REWRITE_ROUNDS:
+        return "next"
+    return "retry"
 
 
 def merge_sections_node(state: ContentState) -> ContentState:
-    """Merge 节点：按 section_drafts 顺序合并为完整草稿 draft_markdown。"""
-
     if state.get("error"):
         return _append_step(state, "merge_sections_skipped")
 
-    section_drafts = state.get("section_drafts") or {}
-    outline = state.get("outline")
-    merged_parts: list[str] = []
+    outline = state.get("outline") or {}
+    sections = outline.get("sections") if isinstance(outline, dict) else None
+    if not isinstance(sections, list):
+        sections = []
 
-    # 优先按 outline 中出现的 section_id 顺序合并；若无法解析 outline，则退回到插入顺序。
-    used_ids: set[str] = set()
+    title = (state.get("title") or "").strip() or str(outline.get("title") or "").strip() or "未命名文章"
+    drafts = state.get("section_drafts") or {}
+    if not isinstance(drafts, dict):
+        drafts = {}
 
-    if isinstance(outline, list) and isinstance(section_drafts, dict):
-        for item in outline:
-            section_id: str | None = None
-            if isinstance(item, dict):
-                # 兼容不同字段命名：id / section_id / key
-                for key in ("id", "section_id", "key"):
-                    if key in item and item[key] is not None:
-                        section_id = str(item[key])
-                        break
-            elif isinstance(item, str):
-                section_id = item
+    merged_parts: List[str] = [f"# {title}".strip()]
 
-            if not section_id:
-                continue
+    for sec in sections:
+        if not isinstance(sec, dict):
+            continue
+        sec_id = str(sec.get("id") or "").strip()
+        sec_title = str(sec.get("title") or "").strip() or sec_id
+        level = int(sec.get("level") or 2)
+        level = level if level in (2, 3) else 2
 
-            text = section_drafts.get(section_id)
-            if isinstance(text, str) and text.strip():
-                merged_parts.append(text.strip())
-                used_ids.add(section_id)
+        text = drafts.get(sec_id)
+        if isinstance(text, str) and text.strip():
+            merged_parts.append(text.strip())
+            continue
 
-        # 将 outline 中未提及的剩余 section_drafts 追加在末尾，避免内容丢失。
-        for sec_id, text in section_drafts.items():
-            if sec_id in used_ids:
-                continue
-            if isinstance(text, str) and text.strip():
-                merged_parts.append(text.strip())
-    elif isinstance(section_drafts, dict):
-        for text in section_drafts.values():
-            if isinstance(text, str) and text.strip():
-                merged_parts.append(text.strip())
+        heading = f"{'##' if level == 2 else '###'} {sec_title}".strip()
+        merged_parts.append(heading + "\n\nNO_DATA: 本节内容暂略/资料不足。")
 
-    draft = "\n\n".join(merged_parts).strip()
+    draft_markdown = "\n\n".join(merged_parts).strip()
+
     new_state: ContentState = {
         **state,
-        "draft_markdown": draft,
-        "refined_markdown": draft,
-        # 每次从 merge 开始视为新的 refine 流程
-        "refine_round": 0,
+        "draft_markdown": draft_markdown,
+        "refined_markdown": draft_markdown,
+        "final_markdown": draft_markdown,
     }
     return _append_step(new_state, "merge_sections")
 
 
 def doc_refiner_node(state: ContentState) -> ContentState:
-    """Doc Refiner 节点：对当前 draft_markdown 做一次通篇重写。"""
-
     if state.get("error"):
         return _append_step(state, "doc_refiner_skipped")
 
-    draft = state.get("draft_markdown") or ""
-    refine_round = int(state.get("refine_round", 0) or 0)
+    settings = get_settings()
+    if not bool(getattr(settings, "enable_doc_refiner", True)):
+        draft = state.get("draft_markdown") or ""
+        new_state: ContentState = {
+            **state,
+            "refined_markdown": draft,
+            "final_markdown": draft,
+        }
+        return _append_step(new_state, "doc_refiner_disabled")
 
+    draft = state.get("draft_markdown") or ""
     try:
-        refined = doc_refiner_agent(
-            instruction=state.get("instruction", ""),
-            draft_markdown=draft,
-        )
-        new_round = refine_round + 1
+        refined = doc_refiner_agent(outline=state.get("outline") or {}, draft_markdown=draft)
         final_text = refined or draft
         new_state: ContentState = {
             **state,
-            "draft_markdown": final_text,
             "refined_markdown": final_text,
-            "refine_round": new_round,
+            "final_markdown": final_text,
         }
         return _append_step(new_state, "doc_refiner")
     except Exception as exc:  # pragma: no cover
@@ -231,48 +389,28 @@ def illustrator_node(state: ContentState) -> ContentState:
     if state.get("error"):
         return _append_step(state, "illustrator_skipped")
 
-    # 若无可用图片，则走无图降级路径：直接复用草稿并记录原因
-    images = state.get("image_metadata") or {}
-    has_images = False
-    if isinstance(images, dict):
-        for items in images.values():
-            if items:
-                has_images = True
-                break
-
-    if not has_images:
-        new_state: ContentState = {
-            **state,
-            "final_markdown": state.get("draft_markdown"),
-            "illustrator_skip_reason": "no_images",
-        }
-        return _append_step(new_state, "illustrator_skipped_no_images")
-
-    try:
-        updated = illustrator_agent(
-            draft_markdown=state.get("draft_markdown") or "",
-            image_metadata=state.get("image_metadata"),
-        )
-        new_state: ContentState = {**state, "final_markdown": updated}
-        return _append_step(new_state, "illustrator")
-    except Exception as exc:  # pragma: no cover
-        _LOGGER.error("illustrator_node.failed error=%s", exc)
-        new_state = dict(state)
-        new_state["error"] = f"illustrator_failed: {exc}"
-        return _append_step(new_state, "illustrator_error")
+    updated = illustrator_agent(
+        final_markdown=state.get("final_markdown") or state.get("refined_markdown") or state.get("draft_markdown") or "",
+        outline=state.get("outline") or {},
+        image_metadata=state.get("image_metadata") or {},
+    )
+    new_state: ContentState = {**state, "final_markdown": updated}
+    return _append_step(new_state, "illustrator")
 
 
 def assembler_node(state: ContentState) -> ContentState:
-    # 即使上游出错也尝试执行，以便在部分场景返回已有 draft/final_markdown。
+    # 即使上游出错也尽量落盘，方便排查与兜底返回。
     try:
+        title = (state.get("title") or "").strip() or "未命名文章"
         info = assembler_agent(
-            article_id=state.get("article_id", ""),
-            title=state.get("title", "未命名文章"),
+            article_id=state.get("article_id") or "",
+            title=title,
             final_markdown=state.get("final_markdown") or state.get("draft_markdown") or "",
         )
         new_state: ContentState = {
             **state,
-            "download_info": info.get("output", {}),
+            "md_path": info.get("md_path"),
+            "md_url": info.get("md_url"),
         }
         return _append_step(new_state, "assembler")
     except Exception as exc:  # pragma: no cover
@@ -282,119 +420,64 @@ def assembler_node(state: ContentState) -> ContentState:
         return _append_step(new_state, "assembler_error")
 
 
-def writer_review_node(state: ContentState) -> ContentState:
-    """Writer 自检节点：决定是否需要重写。"""
+def summary_for_user_node(state: ContentState) -> ContentState:
+    outline = state.get("outline") or {}
+    sections = outline.get("sections") if isinstance(outline, dict) else None
+    titles: List[str] = []
+    if isinstance(sections, list):
+        for sec in sections:
+            if isinstance(sec, dict) and sec.get("title"):
+                titles.append(str(sec["title"]))
+    title = (state.get("title") or "").strip() or str(outline.get("title") or "").strip() or "未命名文章"
+    md_url = state.get("md_url")
 
-    if state.get("error"):
-        return _append_step(state, "writer_review_skipped")
+    summary_lines = [f"标题：{title}"]
+    if titles:
+        summary_lines.append("章节：")
+        summary_lines.extend([f"- {t}" for t in titles[:20]])
+    if md_url:
+        summary_lines.append(f"下载：{md_url}")
 
-    try:
-        review = writer_review_agent(
-            outline=state.get("outline"),
-            section_notes=state.get("section_notes"),
-            draft_markdown=state.get("draft_markdown") or "",
-        )
-        new_state: ContentState = {
-            **state,
-            "writer_review": review.comments,
-            "writer_needs_revision": review.needs_revision,
-        }
-        return _append_step(new_state, "writer_review")
-    except Exception as exc:  # pragma: no cover
-        _LOGGER.error("writer_review_node.failed error=%s", exc)
-        new_state = dict(state)
-        new_state["error"] = f"writer_review_failed: {exc}"
-        return _append_step(new_state, "writer_review_error")
-
-
-def researcher_router(state: ContentState) -> str:
-    """根据 Researcher 结果决定下一步：重试或进入 Writer。"""
-
-    if state.get("error"):
-        return "skip"
-
-    attempts = int(state.get("researcher_attempts", 0) or 0)
-    summaries = state.get("source_summaries") or {}
-    has_sources = isinstance(summaries, dict) and bool(summaries)
-
-    if (not has_sources) and attempts < MAX_RESEARCHER_RETRIES and (state.get("urls") or state.get("file_paths")):
-        return "retry"
-    return "next"
-
-
-def writer_review_router(state: ContentState) -> str:
-    """根据 Writer 自检结果与草稿质量信号决定是否再次 Refiner 或进入 Illustrator。"""
-
-    if state.get("error"):
-        return "skip"
-
-    refine_round = int(state.get("refine_round", 0) or 0)
-    needs_revision = bool(state.get("writer_needs_revision"))
-
-    # 基于草稿长度与“小结”信号的自动质量检测
-    draft = state.get("draft_markdown") or ""
-    draft_len = len(draft)
-    has_multiple_sections = draft.count("\n## ") + draft.count("\n### ") >= 2
-    has_small_summary = "小结" in draft
-
-    auto_needs_revision = False
-    MIN_DRAFT_LENGTH_CHARS = 1500
-
-    # 草稿过短且已有多节内容，倾向于再 refine 一轮。
-    if has_multiple_sections and draft_len > 0 and draft_len < MIN_DRAFT_LENGTH_CHARS:
-        auto_needs_revision = True
-
-    # 多节文章但几乎没有“小结”，提示再 refine 一轮补充节末小结。
-    if has_multiple_sections and not has_small_summary:
-        auto_needs_revision = True
-
-    effective_needs_revision = needs_revision or auto_needs_revision
-
-    if effective_needs_revision and refine_round < MAX_REFINER_RETRIES:
-        return "retry"
-    return "next"
+    new_state: ContentState = {**state, "summary_for_user": "\n".join(summary_lines).strip()}
+    return _append_step(new_state, "summary_for_user")
 
 
 def get_content_graph():
     graph = StateGraph(ContentState)
-    graph.add_node("entry", entry_node)
+    graph.add_node("init", init_node)
     graph.add_node("collector", collector_node)
     graph.add_node("planner", planner_node)
     graph.add_node("researcher", researcher_node)
+    graph.add_node("research_audit", research_audit_node)
     graph.add_node("section_writer", section_writer_node)
+    graph.add_node("writer_audit", writer_audit_node)
     graph.add_node("merge_sections", merge_sections_node)
     graph.add_node("doc_refiner", doc_refiner_node)
-    graph.add_node("writer_review", writer_review_node)
     graph.add_node("illustrator", illustrator_node)
     graph.add_node("assembler", assembler_node)
+    graph.add_node("summary_for_user", summary_for_user_node)
 
-    graph.set_entry_point("entry")
-    graph.add_edge("entry", "collector")
+    graph.set_entry_point("init")
+    graph.add_edge("init", "collector")
     graph.add_edge("collector", "planner")
     graph.add_edge("planner", "researcher")
+    graph.add_edge("researcher", "research_audit")
     graph.add_conditional_edges(
-        "researcher",
-        researcher_router,
-        {
-            "retry": "researcher",
-            "next": "section_writer",
-            "skip": "section_writer",
-        },
+        "research_audit",
+        research_router,
+        {"retry": "researcher", "next": "section_writer"},
     )
-    graph.add_edge("section_writer", "merge_sections")
+    graph.add_edge("section_writer", "writer_audit")
+    graph.add_conditional_edges(
+        "writer_audit",
+        writer_router,
+        {"retry": "section_writer", "next": "merge_sections"},
+    )
     graph.add_edge("merge_sections", "doc_refiner")
-    graph.add_edge("doc_refiner", "writer_review")
-    graph.add_conditional_edges(
-        "writer_review",
-        writer_review_router,
-        {
-            "retry": "doc_refiner",
-            "next": "illustrator",
-            "skip": "illustrator",
-        },
-    )
+    graph.add_edge("doc_refiner", "illustrator")
     graph.add_edge("illustrator", "assembler")
-    graph.add_edge("assembler", END)
+    graph.add_edge("assembler", "summary_for_user")
+    graph.add_edge("summary_for_user", END)
 
     return graph.compile()
 

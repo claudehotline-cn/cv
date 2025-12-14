@@ -3,13 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from .sub_agents import writer_review_agent
-
 _LOGGER = logging.getLogger("article_agent.tools_article")
 
 
 def writer_self_review(outline: str, section_notes: Any, draft_markdown: str) -> Dict[str, Any]:
-    """Writer 自检工具：调用 writer_review_agent 并返回结构化结果。
+    """Writer 自检工具（轻量规则版）：返回结构化结果。
 
     参数:
       outline: 文章大纲的文本描述（可以是简要说明或完整大纲）。
@@ -23,14 +21,11 @@ def writer_self_review(outline: str, section_notes: Any, draft_markdown: str) ->
       }
     """
 
-    result = writer_review_agent(
-        outline=outline,
-        section_notes=section_notes,
-        draft_markdown=draft_markdown,
-    )
+    total_chars = len((draft_markdown or "").strip())
+    needs_revision = total_chars < 1500
     data: Dict[str, Any] = {
-        "needs_revision": bool(result.needs_revision),
-        "comments": result.comments,
+        "needs_revision": needs_revision,
+        "comments": "草稿过短，建议按大纲扩写各章节" if needs_revision else "",
     }
     _LOGGER.debug("writer_self_review.result=%s", data)
     return data

@@ -1,50 +1,60 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
 
-class PlannerOutput(BaseModel):
+class OutlineSection(BaseModel):
+    """文章大纲的单个小节定义。"""
+
+    id: str = Field(
+        ...,
+        description='小写字母 + 下划线组成的唯一字符串，例如 "sec_intro"。',
+    )
+    title: str = Field(..., description="该节标题，简洁易懂。")
+    level: int = Field(..., description="Markdown 标题级别：2 表示 ##，3 表示 ###。")
+    parent_id: Optional[str] = Field(
+        default=None,
+        description="可选。若 level=3，则指向所属二级标题的 id。",
+    )
+    is_core: bool = Field(default=False, description="是否为文章核心内容部分。")
+
+
+class OutlineOutput(BaseModel):
     """Planner 子 Agent 的结构化输出。"""
 
-    # 使用 Dict[str, Any] 约束顶层为对象结构，便于 downstream 将各 key 视为稳定的 section_id，
-    # 同时避免 Any 带来的复杂 JSON Schema 导致部分 LLM 提示 “invalid JSON schema”。
-    outline: Dict[str, Any] = Field(
-        ...,
-        description="文章大纲结构，按 section_id 聚合的章节定义（如标题、说明等）。",
-    )
-    sections_to_research: Dict[str, Any] = Field(
-        ...,
-        description="按 section_id 聚合的研究问题/待补充要点列表，用于驱动后续 Researcher 步骤。",
+    title: str = Field(..., description="文章总标题。")
+    sections: List[OutlineSection] = Field(..., description="按文章顺序排列的章节列表。")
+    sections_to_research: List[str] = Field(
+        default_factory=list,
+        description="需要 Researcher 重点研究的 section_id 列表。",
     )
 
 
 class ResearcherOutput(BaseModel):
     """Researcher 子 Agent 的结构化输出。"""
 
-    source_summaries: Dict[str, Any] = Field(
+    section_notes: Dict[str, str] = Field(
         ...,
-        description="按 source_id 聚合的来源摘要与原文信息（包含 raw_text、kind、url/path 等字段）。",
+        description="section_id -> 该节原文素材笔记（允许 NO_DATA 占位）。",
     )
-    section_notes: Dict[str, Any] = Field(
+    image_metadata: Dict[str, List[Dict[str, Any]]] = Field(
         ...,
-        description="按 section_id 聚合的笔记内容，供 Writer 在写作阶段直接引用与重组。",
+        description="section_id -> 可用图片列表（只来自原文）。",
     )
-    image_metadata: Dict[str, Any] = Field(
+    source_summaries: Dict[str, str] = Field(
         ...,
-        description="与图片相关的元数据，例如来源、图片 URL、alt 文本等，用于后续插图步骤。",
+        description="source_id -> 该来源的 1-3 段总结。",
     )
 
 
-class SectionNotesOutput(BaseModel):
-    """用于从 LLM 输出中解析 section_notes 字段。"""
+class SectionDraftOutput(BaseModel):
+    """Section Writer 子 Agent 的结构化输出。"""
 
-    section_notes: Dict[str, Any] = Field(
-        ...,
-        description="按 section_id 聚合的笔记字典，每个键为小节标识，每个值为该节的长文本笔记。",
-    )
+    section_id: str = Field(..., description="与输入完全相同的 section_id。")
+    markdown: str = Field(..., description="从本节标题开始的 Markdown 内容。")
 
 
 def parse_json_output(raw: str, model: type[BaseModel], context: str) -> BaseModel:
@@ -66,23 +76,27 @@ def parse_json_output(raw: str, model: type[BaseModel], context: str) -> BaseMod
         raise ValueError(f"{context} 输出 JSON 结构校验失败：{exc}") from exc
 
 
-class WriterReviewOutput(BaseModel):
-    """Writer 自检结果。"""
+class WriterAuditOutput(BaseModel):
+    """Writer Audit（可选 LLM）结构化输出。"""
 
-    needs_revision: bool = Field(
-        ...,
-        description="是否需要对当前 Markdown 草稿进行重写或大幅修改。",
+    total_chars: int = Field(..., description="整篇文章的字符数（整数）。")
+    short_sections: List[str] = Field(default_factory=list, description="长度偏短的 section_id 列表。")
+    missing_sections: List[str] = Field(default_factory=list, description="缺失章节 section_id 列表。")
+    low_density_sections: List[str] = Field(default_factory=list, description="信息密度偏低的 section_id 列表。")
+    off_topic_sections: List[str] = Field(default_factory=list, description="偏离主题的 section_id 列表。")
+    logic_issues: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description='逻辑问题列表，例如 {"section_id": "...", "issue": "..."}。',
     )
-    comments: str = Field(
-        ...,
-        description="针对草稿结构与内容的具体改进建议或说明。",
-    )
+    style_issues: List[str] = Field(default_factory=list, description="文风/可读性问题列表。")
+    quality_ok: bool = Field(..., description="是否达到可对外发布的初稿水平。")
 
 
 __all__ = [
-    "PlannerOutput",
+    "OutlineSection",
+    "OutlineOutput",
     "ResearcherOutput",
-    "SectionNotesOutput",
-    "WriterReviewOutput",
+    "SectionDraftOutput",
+    "WriterAuditOutput",
     "parse_json_output",
 ]

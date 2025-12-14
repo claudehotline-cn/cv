@@ -59,6 +59,12 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_ARTICLES_BASE_URL",
     )
 
+    enable_doc_refiner: bool = Field(
+        default=True,
+        description="是否启用 Doc Refiner（通篇润色，带标题结构锁）。",
+        alias="ARTICLE_AGENT_ENABLE_DOC_REFINER",
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
