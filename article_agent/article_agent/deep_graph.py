@@ -255,6 +255,7 @@ def writer_audit_node(state: ContentState) -> ContentState:
     missing_sections: List[str] = []
     short_sections: List[str] = []
     missing_image_placeholders: List[str] = []
+    invalid_image_placeholders: List[str] = []
     per_section_chars: Dict[str, int] = {}
 
     total_chars = 0
@@ -280,26 +281,49 @@ def writer_audit_node(state: ContentState) -> ContentState:
         # 若 Researcher 为本节提供了图片，但 Writer 没输出任何本节占位符，则要求重写该节。
         candidates = image_metadata.get(sec_id) or []
         if isinstance(candidates, list) and candidates:
-            if not re.search(
-                rf"<!--\s*IMAGE\s*:\s*{re.escape(sec_id)}\s*(?::|\s*-->)",
+            # 1) 必须至少有一个本节占位符
+            placeholders = re.findall(
+                rf"<!--\s*IMAGE\s*:\s*{re.escape(sec_id)}\s*(?::\s*(\d+)\s*)?(?:\|\s*.*?\s*)?-->",
                 draft_text,
-                flags=re.IGNORECASE,
-            ):
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if not placeholders:
                 missing_image_placeholders.append(sec_id)
+            else:
+                # 2) 若 Writer 选择了 :n，则 n 必须在有效范围内（1..min(2, len(candidates))）
+                max_allowed = min(2, len(candidates))
+                has_valid = False
+                for idx_raw in placeholders:
+                    if not idx_raw:
+                        # `<!--IMAGE:sec_x-->` 不指定索引：视为有效（后续可插入剩余图片）
+                        has_valid = True
+                        continue
+                    try:
+                        idx = int(idx_raw)
+                    except ValueError:
+                        continue
+                    if 1 <= idx <= max_allowed:
+                        has_valid = True
+                if not has_valid:
+                    invalid_image_placeholders.append(sec_id)
 
     draft_quality_ok = (
         (total_chars >= MIN_TOTAL_DRAFT_CHARS)
         and (not missing_sections)
         and (not short_sections)
         and (not missing_image_placeholders)
+        and (not invalid_image_placeholders)
     )
-    sections_to_rewrite = dedupe_preserve_order(missing_sections + short_sections + missing_image_placeholders)
+    sections_to_rewrite = dedupe_preserve_order(
+        missing_sections + short_sections + missing_image_placeholders + invalid_image_placeholders
+    )
 
     writer_audit = {
         "total_chars": total_chars,
         "missing_sections": missing_sections,
         "short_sections": short_sections,
         "missing_image_placeholders": missing_image_placeholders,
+        "invalid_image_placeholders": invalid_image_placeholders,
         "sections_to_rewrite": sections_to_rewrite,
         "per_section_chars": per_section_chars,
         "thresholds": {

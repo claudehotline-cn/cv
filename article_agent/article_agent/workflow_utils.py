@@ -8,7 +8,10 @@ from .schema import OutlineOutput, OutlineSection
 
 
 _SECTION_ID_RE = re.compile(r"[^a-z0-9_]+")
-_IMAGE_PLACEHOLDER_RE = re.compile(r"<!--\s*IMAGE\s*:\s*([a-zA-Z0-9_]+)\s*(?::\s*(\d+)\s*)?-->")
+_IMAGE_PLACEHOLDER_RE = re.compile(
+    r"<!--\s*IMAGE\s*:\s*([a-zA-Z0-9_]+)\s*(?::\s*(\d+)\s*)?(?:\|\s*(.*?)\s*)?-->",
+    re.DOTALL,
+)
 
 
 def dedupe_preserve_order(items: Iterable[str]) -> List[str]:
@@ -208,9 +211,12 @@ def insert_images_into_markdown(
                 continue
             if path in section_slice:
                 continue
-            alt = (item.get("caption_hint") or item.get("alt") or "插图")
+            alt = (item.get("alt") or item.get("caption_hint") or "插图")
             alt = str(alt).strip() or "插图"
+            caption = (item.get("caption_hint") or item.get("alt") or alt)
+            caption = str(caption).strip() or alt
             image_lines.append(f"![{alt}]({path})")
+            image_lines.append(f"*图：{caption}*")
 
         if not image_lines:
             continue
@@ -253,18 +259,23 @@ def replace_image_placeholders(
     used_paths_by_section: Dict[str, set[str]] = {}
     used_count_by_section: Dict[str, int] = {}
 
-    def _render_image(item: Dict[str, Any]) -> str:
+    def _render_image(item: Dict[str, Any], caption_override: str = "") -> str:
         path = item.get("path_or_url") or item.get("url") or item.get("path")
         path = (str(path) if path is not None else "").strip()
         if not path:
             return ""
-        alt = (item.get("caption_hint") or item.get("alt") or "插图")
+        alt = (item.get("alt") or item.get("caption_hint") or "插图")
         alt = str(alt).strip() or "插图"
-        return f"![{alt}]({path})"
+
+        caption = (caption_override or item.get("caption_hint") or item.get("alt") or alt)
+        caption = str(caption).strip() or alt
+        # 用一行“图：xxx”作为图名/图注（Markdown 通用兼容）
+        return "\n".join([f"![{alt}]({path})", f"*图：{caption}*"])
 
     def _replacement(match: re.Match[str]) -> str:
         section_id = (match.group(1) or "").strip()
         index_raw = (match.group(2) or "").strip()
+        caption_override = (match.group(3) or "").strip()
         candidates = image_metadata.get(section_id) or []
         if not isinstance(candidates, list) or not candidates:
             return ""
@@ -282,7 +293,7 @@ def replace_image_placeholders(
             path = (str(path) if path is not None else "").strip()
             if not path or path in used_paths:
                 return ""
-            rendered = _render_image(item)
+            rendered = _render_image(item, caption_override=caption_override if index_raw else "")
             if not rendered:
                 return ""
             used_paths.add(path)
