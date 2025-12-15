@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from langgraph.graph import END, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
 
 from .config import get_settings
 from .content_state import ContentState
@@ -14,10 +15,11 @@ from .sub_agents import (
     doc_refiner_agent,
     illustrator_agent,
     planner_agent,
+    reader_review_agent,
     researcher_agent,
     section_writer_agent,
 )
-from .workflow_utils import dedupe_preserve_order, ensure_article_id
+from .workflow_utils import dedupe_preserve_order, ensure_article_id, add_heading_numbers
 
 _LOGGER = logging.getLogger("article_agent.deep_graph")
 
@@ -409,6 +411,31 @@ def merge_sections_node(state: ContentState) -> ContentState:
     return _append_step(new_state, "merge_sections")
 
 
+def reader_review_node(state: ContentState) -> ContentState:
+    if state.get("error"):
+        return _append_step(state, "reader_review_skipped")
+
+    draft = state.get("draft_markdown") or ""
+    try:
+        review_comment = reader_review_agent(
+            instruction=state.get("instruction", "") or "",
+            draft_markdown=draft,
+        )
+        # 将审阅意见追加到 draft 末尾，作为“审阅附注”供用户参考（或后续流程使用）
+        # 也可以仅存入 state 不修改正文。这里选择仅存入 state 并在日志打印，不污染正文。
+        new_state: ContentState = {
+            **state,
+            "reader_review_comment": review_comment,
+        }
+        if review_comment:
+            _LOGGER.info("reader_review_done: %s", review_comment[:200])
+
+        return _append_step(new_state, "reader_review")
+    except Exception as exc:  # pragma: no cover
+        _LOGGER.error("reader_review_node.failed error=%s", exc)
+        return _append_step(state, "reader_review_error")
+
+
 def doc_refiner_node(state: ContentState) -> ContentState:
     if state.get("error"):
         return _append_step(state, "doc_refiner_skipped")
@@ -427,6 +454,8 @@ def doc_refiner_node(state: ContentState) -> ContentState:
     try:
         refined = doc_refiner_agent(outline=state.get("outline") or {}, draft_markdown=draft)
         final_text = refined or draft
+        # 添加标题自动编号
+        final_text = add_heading_numbers(final_text)
         new_state: ContentState = {
             **state,
             "refined_markdown": final_text,
@@ -507,6 +536,7 @@ def get_content_graph():
     graph.add_node("section_writer", section_writer_node)
     graph.add_node("writer_audit", writer_audit_node)
     graph.add_node("merge_sections", merge_sections_node)
+    graph.add_node("reader_review", reader_review_node)
     graph.add_node("doc_refiner", doc_refiner_node)
     graph.add_node("illustrator", illustrator_node)
     graph.add_node("assembler", assembler_node)
@@ -528,13 +558,15 @@ def get_content_graph():
         writer_router,
         {"retry": "section_writer", "next": "merge_sections"},
     )
-    graph.add_edge("merge_sections", "doc_refiner")
+    graph.add_edge("merge_sections", "reader_review")
+    graph.add_edge("reader_review", "doc_refiner")
     graph.add_edge("doc_refiner", "illustrator")
     graph.add_edge("illustrator", "assembler")
     graph.add_edge("assembler", "summary_for_user")
     graph.add_edge("summary_for_user", END)
 
-    return graph.compile()
+    # 启用 Checkpointer（默认使用内存，生产环境通过 .compile(checkpointer=...) 覆盖）
+    return graph.compile(checkpointer=MemorySaver())
 
 
 __all__ = ["get_content_graph"]

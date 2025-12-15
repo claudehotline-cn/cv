@@ -138,6 +138,28 @@ def extract_markdown_headings(markdown: str) -> List[str]:
     return headings
 
 
+def _upgrade_wikipedia_image_url(url: str) -> str:
+    """将Wikipedia的缩略图URL转换为原图URL。
+    
+    示例：
+    输入：.../250px-Transformer_architecture.png
+    输出：.../Transformer_architecture.png
+    """
+    if "wikipedia.org" not in url.lower():
+        return url
+    
+    # 匹配 /数字px-文件名 模式
+    import re
+    pattern = r'/(\d+)px-([^/]+)$'
+    match = re.search(pattern, url)
+    if match:
+        # 移除尺寸前缀，保留原文件名
+        filename = match.group(2)
+        return re.sub(pattern, f'/{filename}', url)
+    
+    return url
+
+
 def insert_images_into_markdown(
     markdown: str,
     outline: Dict[str, Any],
@@ -157,10 +179,13 @@ def insert_images_into_markdown(
         nonlocal figure_index
         figure_index += 1
         caption_text = str(caption).strip() or str(alt).strip() or "插图"
+        # 将 Wikipedia 缩略图转换为原图
+        path = _upgrade_wikipedia_image_url(path)
         return [
-            f"| ![{alt}]({path}) |",
-            "|:--:|",
-            f"| 图 {figure_index}：{caption_text} |",
+            '<div align="center">',
+            f'  <img src="{path}" alt="{alt}"/>',
+            f'  <p><em>图 {figure_index}：{caption_text}</em></p>',
+            '</div>',
         ]
 
     # 1) 先定位每个 outline section 的标题行位置（按 outline 顺序向前搜索，避免同名误匹配）。
@@ -275,12 +300,14 @@ def replace_image_placeholders(
         nonlocal figure_index
         figure_index += 1
         caption_text = str(caption).strip() or str(alt).strip() or "插图"
-        # 使用“单列表格”实现居中 + 图注（避免 raw HTML 在部分前端被 sanitize）。
+        # 将 Wikipedia 缩略图转换为原图，保留原始尺寸
+        path = _upgrade_wikipedia_image_url(path)
         return "\n".join(
             [
-                f"| ![{alt}]({path}) |",
-                "|:--:|",
-                f"| 图 {figure_index}：{caption_text} |",
+                '<div align="center">',
+                f'  <img src="{path}" alt="{alt}"/>',
+                f'  <p><em>图 {figure_index}：{caption_text}</em></p>',
+                '</div>',
             ]
         )
 
@@ -470,12 +497,62 @@ def build_fallback_image_metadata(
     return image_metadata
 
 
+def add_heading_numbers(markdown: str) -> str:
+    """为 Markdown 标题自动添加层级编号。
+
+    示例：
+    ## Introduction → ## 1. Introduction
+    ### Background → ### 1.1 Background
+    ### Motivation → ### 1.2 Motivation
+    ## Methods → ## 2. Methods
+    """
+    if not markdown:
+        return markdown
+
+    lines = markdown.splitlines()
+    h2_counter = 0
+    h3_counter = 0
+    result_lines: List[str] = []
+
+    for line in lines:
+        stripped = line.lstrip()
+        
+        # 检测二级标题 ##
+        if stripped.startswith("## ") and not stripped.startswith("### "):
+            h2_counter += 1
+            h3_counter = 0  # 重置三级计数
+            title = stripped[3:].strip()
+            # 跳过已有编号的标题
+            if re.match(r"^\d+\.?\s", title):
+                result_lines.append(line)
+            else:
+                indent = line[:len(line) - len(stripped)]
+                result_lines.append(f"{indent}## {h2_counter}. {title}")
+        
+        # 检测三级标题 ###
+        elif stripped.startswith("### "):
+            h3_counter += 1
+            title = stripped[4:].strip()
+            # 跳过已有编号的标题
+            if re.match(r"^\d+\.\d+\.?\s", title):
+                result_lines.append(line)
+            else:
+                indent = line[:len(line) - len(stripped)]
+                result_lines.append(f"{indent}### {h2_counter}.{h3_counter} {title}")
+        
+        else:
+            result_lines.append(line)
+
+    return "\n".join(result_lines)
+
+
 __all__ = [
     "dedupe_preserve_order",
     "ensure_article_id",
     "normalize_outline",
     "extract_markdown_headings",
     "insert_images_into_markdown",
+    "add_heading_numbers",
     "collect_source_images",
     "build_fallback_image_metadata",
 ]

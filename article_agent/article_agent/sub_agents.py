@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from .config import get_settings
 from .llm_runtime import build_chat_llm, build_structured_chat_llm, invoke_llm_with_timeout
 from .prompts import COMMON_CONSTRAINTS_ZH
 from .schema import ImageSelectionOutput, OutlineOutput, ResearcherOutput, SectionDraftOutput
@@ -156,6 +159,7 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
    - parent_id：可选。若为三级标题，指向所属二级标题的 id。
    - is_core：布尔值，是否为核心内容部分。
 4. 输出 sections_to_research：需要 Researcher 重点研究的 section_id 列表（只列 id）。
+5. 输出 writing_style：根据 instruction 和概览，为 Writer 总结的写作风格指导（语气、受众、用词规范等），字数控制在 100 字以内。
 
 【输出格式】
 你必须输出一个 JSON：
@@ -164,13 +168,16 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
   "sections": [
     {{"id": "sec_intro", "title": "背景与目标", "level": 2, "parent_id": null, "is_core": false}}
   ],
-  "sections_to_research": ["sec_intro"]
+  "sections_to_research": ["sec_intro"],
+  "writing_style": "语气专业客观，面向中高级开发者，多用技术术语，避免营销辞藻。"
 }}
 
 【约束】
 - 所有 section.id 必须全局唯一。
 - sections_to_research 中的所有 id 必须来自 sections 列表中的 id。
 - 大纲应兼顾“背景/问题 → 架构/流程 → 关键实现 → 实践建议/案例 → 总结展望”的结构。
+- 禁止生成"附录"、"参考文献"、"扩展阅读"等辅助性章节，文章应直接结束于核心内容或总结。
+- "总结"、"结论"、"展望"类section（level=2）不得有子章节（level=3），应该是扁平的概括性内容，不再深入技术细节。
 
 {COMMON_CONSTRAINTS_ZH}
 """.strip()
@@ -537,6 +544,7 @@ def section_writer_agent(
 
 【输入】
 - instruction：整篇文章的写作目标、读者画像和语气要求（中文）。
+- writing_style：Planner 统一制定的写作风格指导（语气、受众、用词规范等）。
 - section_info：本节在大纲中的元信息：section_id、title、level、parent_id、is_core。
 - notes：Researcher 为本节输出的“素材笔记”（可能是 NO_DATA 占位）。
 
@@ -555,13 +563,42 @@ markdown 字段要求：
 - 第一行必须是正确级别的标题：
   - level=2 → "## 本节标题"
   - level=3 → "### 本节标题"
-- 章节结构建议包含：简短引导 → 主体内容 → 小结（2-3 句）。
+- 章节结构：简短引导 → 主体内容（充实展开）→ 自然结束（不要添加小结、总结、综上所述等总结性段落）。
+- **数学公式使用 LaTeX 语法（JSON 中反斜杠必须双写）**：
+  - **重要**：因为你输出的是 JSON 格式，所有反斜杠必须写成双反斜杠 `\\\\` 才能在最终 Markdown 中保留为单反斜杠 `\\`。
+  - 行内公式：用单个美元符号，例如 `$Q = XW_Q$` 或 `$d_k$`
+  - 块级公式：用双美元符号，**前后各空一行，公式另起一行**：
+    ```
+    前一段。
+    
+    $$
+    Q = XW_Q
+    $$
+    
+    后一段。
+    ```
+  - 常用 LaTeX 命令（JSON中必须双反斜杠）：
+    - 希腊字母：`\\\\alpha`、`\\\\beta`、`\\\\gamma`
+    - 求和/积分：`\\\\sum_{{i=1}}^{{n}}`、`\\\\int_{{a}}^{{b}}`
+    - 分数：`\\\\frac{{分子}}{{分母}}`，示例：`\\\\frac{{QK^T}}{{\\\\sqrt{{d_k}}}}`
+    - 文本：`\\\\text{{注意力}}`
+  - 多公式对齐（aligned环境）：
+    ```
+    $$
+    \\\\begin{{aligned}}
+    Q &= XW_Q \\\\\\\\
+    K &= XW_K \\\\\\\\
+    V &= XW_V
+    \\\\end{{aligned}}
+    $$
+    ```
+
 - 你需要在正文合适位置插入“插图占位符”，用于后续由 Illustrator 自动替换为真实图片并自动生成图注（图名）：
   - 占位符必须单独成行，格式之一：
     - `<!--IMAGE:<section_id>:<n>-->`（插入第 n 张候选图）
     - `<!--IMAGE:<section_id>:<n>|<图名/图注>-->`（同上，但你可提供更贴合上下文的图名/图注）
   - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 必须是有效索引（1-based），范围为 `1..len(available_images)`；本节最多插入 `len(available_images)` 处插图占位符（不建议全部用满，按内容需要选择）。
-  - 你决定图片应该出现的位置：必须紧跟在解释该图的段落之后（概念解释/结构示意/流程描述/关键对比）。
+  - 你决定图片应该出现的位置：必须紧跟在解释该图的段落之后（概念解释/结构示意/流程描述/关键对比），确保图片与周围内容语义一致。
   - 系统会额外给你本节的 `available_images`（候选图片列表，顺序即索引顺序，含 caption_hint）：
     - 当 `available_images` 非空时：你必须至少插入 1 个占位符，并优先选择与你当前段落内容最匹配的那张（用 :n 指定）。
     - 当 `available_images` 为空时：你不得插入任何占位符。
@@ -575,20 +612,25 @@ markdown 字段要求：
 - 不得修改 section_id。
 - 不得跨节写内容（只写当前 section）。
 - 不得凭空杜撰具体的公司名称、真实项目、机密信息。
+- **禁止在section末尾添加"### 小结"、"### 本节总结"这种二级标题形式的小结**。
+- 可以适当使用"综上所述"、"因此"等连接词进行段落过渡或逻辑归纳（这是自然的写作手法）。
 
 {COMMON_CONSTRAINTS_ZH}
 """.strip()
 
+    settings = get_settings()
+    max_workers = getattr(settings, "max_worker_threads", 5)
+
     structured_llm = build_structured_chat_llm(SectionDraftOutput, task_name="section_writer")
 
-    for sec in sections:
+    def _process_section(sec: Dict[str, Any]) -> Optional[Tuple[str, str]]:
         if not isinstance(sec, dict):
-            continue
+            return None
         section_id = str(sec.get("id") or "").strip()
         if not section_id:
-            continue
+            return None
         if must_filter and section_id not in target_set:
-            continue
+            return None
 
         title = str(sec.get("title") or "").strip() or section_id
         level = int(sec.get("level") or 2)
@@ -603,6 +645,7 @@ markdown 字段要求：
 
         prompt_obj = {
             "instruction": instruction,
+            "writing_style": str(outline.get("writing_style") or ""),
             "section_info": {
                 "section_id": section_id,
                 "title": title,
@@ -631,14 +674,18 @@ markdown 字段要求：
                 ]
             )
 
-        result = invoke_llm_with_timeout(
-            task_name=f"section_writer_{section_id}",
-            fn=_call,
-            timeout_sec=timeout_sec,
-        )
-        output = result if isinstance(result, SectionDraftOutput) else SectionDraftOutput.model_validate(result)
+        try:
+            result = invoke_llm_with_timeout(
+                task_name=f"section_writer_{section_id}",
+                fn=_call,
+                timeout_sec=timeout_sec,
+            )
+            output = result if isinstance(result, SectionDraftOutput) else SectionDraftOutput.model_validate(result)
+            markdown = output.markdown or ""
+        except Exception as exc:
+            _LOGGER.warning("section_writer_task_failed section_id=%s error=%s", section_id, exc)
+            markdown = ""
 
-        markdown = output.markdown or ""
         markdown = _strip_markdown_fence(markdown)
         markdown = _strip_reasoning_block(markdown)
 
@@ -655,20 +702,115 @@ markdown 字段要求：
             else:
                 markdown = expected_heading + "\n" + markdown
 
-        drafts[section_id] = markdown.strip()
+        final_draft = markdown.strip()
+
+        # 兜底：当本节有可用图片，但模型未给出任何占位符时，插入一个默认占位符。
+        if prompt_obj.get("available_images") and f"<!--IMAGE:{section_id}" not in final_draft:
+            lines2 = final_draft.splitlines()
+            if lines2:
+                insert_at = len(lines2)
+                # 尽量插在标题后的第一个自然段后
+                i = 1
+                while i < len(lines2) and not lines2[i].strip():
+                    i += 1
+                while i < len(lines2) and lines2[i].strip():
+                    i += 1
+                insert_at = i if i > 1 else 1
+                insertion = ["", f"<!--IMAGE:{section_id}:1-->", ""]
+                lines2 = lines2[:insert_at] + insertion + lines2[insert_at:]
+                final_draft = "\n".join(lines2).strip()
 
         _LOGGER.debug(
             "section_writer.done section_id=%s heading=%s len=%d",
             section_id,
             expected_heading,
-            len(drafts[section_id]),
+            len(final_draft),
         )
         print(
-            f"[section_writer] section_id={section_id} heading={expected_heading} len={len(drafts[section_id])}",
+            f"[section_writer] section_id={section_id} heading={expected_heading} len={len(final_draft)}",
             flush=True,
         )
+        return section_id, final_draft
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_process_section, sec) for sec in sections]
+        for future in as_completed(futures):
+            try:
+                res = future.result()
+                if res:
+                    sec_id, txt = res
+                    drafts[sec_id] = txt
+            except Exception as exc:
+                _LOGGER.error("section_writer.future_failed error=%s", exc)
 
     return drafts
+
+
+def reader_review_agent(
+    instruction: str,
+    draft_markdown: str,
+    *,
+    timeout_sec: float = 240.0,
+) -> str:
+    """Reader Review：从读者视角审阅草稿，提出改进建议（仅返回建议，不自动修改）。"""
+
+    if not draft_markdown:
+        return ""
+
+    system_prompt = f"""
+你是 Reader Review 子 Agent，代表目标读者对文章草稿进行审阅。
+
+【输入】
+- instruction：文章的原始写作目标、受众和预期语气。
+- draft_markdown：当前生成的文章草稿。
+
+【任务】
+1. 扮演 instruction 中描述的最典型的目标读者。
+2. 通读 draft_markdown，从“可读性”、“有用性”、“是否解决问题”三个维度进行评价。
+3. 敏锐地指出以下问题（如果有）：
+   - 逻辑断层或跳跃；
+   - 晦涩难懂或缺乏解释的术语；
+   - 语气不当（如过于枯燥或过于营销）；
+   - 结构混乱。
+4. 给出 3-5 条具体的改进建议（Actionable Feedback）。
+
+【输出】
+- 请输出一段简明扼要的审阅意见（Markdown 格式），字数控制在 300 字以内。
+- 语气要客观、建设性。
+- 如果文章质量很高，可以直接输出“文章质量良好，符合预期。”
+
+{COMMON_CONSTRAINTS_ZH}
+""".strip()
+
+    prompt = json.dumps(
+        {
+            "instruction": instruction,
+            "draft_preview": draft_markdown[:15000],  # 截断以防过长
+        },
+        ensure_ascii=False,
+    )
+
+    llm = build_chat_llm(task_name="reader_review")
+
+    def _call():
+        return llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=prompt),
+            ]
+        )
+
+    try:
+        result = invoke_llm_with_timeout(
+            task_name="reader_review",
+            fn=_call,
+            timeout_sec=timeout_sec,
+        )
+        content = getattr(result, "content", str(result))
+        return _strip_reasoning_block(str(content)).strip()
+    except Exception as exc:
+        _LOGGER.warning("reader_review.failed error=%s", exc)
+        return ""
 
 
 def doc_refiner_agent(
@@ -779,6 +921,8 @@ __all__ = [
     "planner_agent",
     "researcher_agent",
     "section_writer_agent",
+    "writer_audit_agent",
+    "reader_review_agent",
     "doc_refiner_agent",
     "illustrator_agent",
     "assembler_agent",

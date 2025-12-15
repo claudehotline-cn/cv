@@ -86,6 +86,64 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_HTTP_RETRY_BACKOFF_SEC",
     )
 
+    # 性能与并发配置
+    max_worker_threads: int = Field(
+        default=5,
+        description="并行执行的最大线程数（用于 Section Writer 等）。",
+        alias="ARTICLE_AGENT_MAX_WORKER_THREADS",
+    )
+
+    # 流程控制阈值
+    max_research_rounds: int = Field(
+        default=2,
+        description="最大研究（补充资料）轮数。",
+        alias="ARTICLE_AGENT_MAX_RESEARCH_ROUNDS",
+    )
+    max_rewrite_rounds: int = Field(
+        default=2,
+        description="最大重写（Writer Audit）轮数。",
+        alias="ARTICLE_AGENT_MAX_REWRITE_ROUNDS",
+    )
+
+    # 质量检查阈值 (字符数)
+    min_important_note_chars: int = Field(
+        default=300,
+        description="重要章节笔记的最小字符数（Research Audit）。",
+        alias="ARTICLE_AGENT_MIN_IMPORTANT_NOTE_CHARS",
+    )
+    min_total_draft_chars: int = Field(
+        default=3000,
+        description="初稿总最小字符数（Writer Audit）。",
+        alias="ARTICLE_AGENT_MIN_TOTAL_DRAFT_CHARS",
+    )
+    min_core_section_chars: int = Field(
+        default=800,
+        description="核心章节最小字符数。",
+        alias="ARTICLE_AGENT_MIN_CORE_SECTION_CHARS",
+    )
+    min_normal_section_chars: int = Field(
+        default=400,
+        description="普通章节最小字符数。",
+        alias="ARTICLE_AGENT_MIN_NORMAL_SECTION_CHARS",
+    )
+
+    # URL 抓取增强配置
+    enable_playwright_fetch: bool = Field(
+        default=False,
+        description="是否启用 Playwright 抓取（用于 JS 渲染页面）。",
+        alias="ARTICLE_AGENT_ENABLE_PLAYWRIGHT",
+    )
+    playwright_timeout_sec: int = Field(
+        default=30,
+        description="Playwright 页面加载超时（秒）。",
+        alias="ARTICLE_AGENT_PLAYWRIGHT_TIMEOUT",
+    )
+    use_trafilatura: bool = Field(
+        default=True,
+        description="是否使用 trafilatura 提取正文（提升静态页面抓取质量）。",
+        alias="ARTICLE_AGENT_USE_TRAFILATURA",
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

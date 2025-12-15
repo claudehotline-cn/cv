@@ -27,6 +27,10 @@ class OutlineOutput(BaseModel):
 
     title: str = Field(..., description="文章总标题。")
     sections: List[OutlineSection] = Field(..., description="按文章顺序排列的章节列表。")
+    writing_style: str = Field(
+        default="",
+        description="针对本文的写作风格指导（语气、受众、用词规范等），供 Writer 参考。",
+    )
     sections_to_research: List[str] = Field(
         default_factory=list,
         description="需要 Researcher 重点研究的 section_id 列表。",

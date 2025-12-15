@@ -21,6 +21,10 @@ COPY article_agent/requirements.txt /app/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /app/requirements.txt
 
+# 安装 Playwright 及其 Chromium 浏览器依赖（用于 JS 渲染页面抓取）
+# 注意：此步骤会增加约 400-500MB 镜像体积
+RUN pip install playwright && playwright install chromium --with-deps
+
 COPY article_agent /app/article_agent
 
 EXPOSE 8130
