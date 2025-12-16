@@ -1,28 +1,55 @@
-/docker/compose/google-chrome-stable_current_amd64.deb
-controlplane-spring/target/
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
 
-# IDE / editor
+# Production
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDEs
 .idea/
 .vscode/
+*.swp
+*.swo
 
-# Python cache
-__pycache__/
-*.pyc
+# OS
+.DS_Store
+Thumbs.db
 
-# Build / cache artifacts
+# Large Files / Caches
 .ort_trt_cache/
-.trt_native_cache/
-video-analyzer/build/
 video-analyzer/build-ninja/
-
-# Logs
-logs/
-
-# Local Maven repository for cp-spring
-.repository/
-
-# Local env files
-docker/compose/.env
-
-# Local clones of external repos
-third-party/langgraph/
+**/*.engine

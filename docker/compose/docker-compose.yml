@@ -427,6 +427,40 @@ services:
       retries: 3
       start_period: 40s
 
+  rag-service:
+    build:
+      context: ../..
+      dockerfile: docker/rag-service/Dockerfile
+    image: cv/rag-service:latest
+    container_name: rag-service
+    environment:
+      - RAG_MYSQL_HOST=mysql
+      - RAG_PGVECTOR_HOST=pgvector
+      - RAG_MINIO_ENDPOINT=minio:9000
+      - RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434
+    depends_on:
+      mysql:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "18200:8200"
+    volumes:
+      - ../../logs:/logs:rw
+
+  rag-ui:
+    build:
+      context: ../..
+      dockerfile: docker/rag-ui/Dockerfile
+    image: cv/rag-ui:latest
+    container_name: rag-ui
+    depends_on:
+      - rag-service
+    ports:
+      - "18210:80"
+
 networks:
   default:
     name: cv-net

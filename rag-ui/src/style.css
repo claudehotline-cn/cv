@@ -1,0 +1,315 @@
+/* Global Styles for RAG UI - Premium Design System */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Typography */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+  font-size: 14px;
+
+  /* Color Palette - Premium Dark (Zinc/Slate based) */
+  --bg-primary: #09090b;
+  /* Zinc 950 */
+  --bg-secondary: #18181b;
+  /* Zinc 900 */
+  --bg-tertiary: #27272a;
+  /* Zinc 800 */
+
+  --surface-1: rgba(39, 39, 42, 0.4);
+  --surface-2: rgba(63, 63, 70, 0.4);
+
+  --text-primary: #f4f4f5;
+  /* Zinc 100 */
+  --text-secondary: #a1a1aa;
+  /* Zinc 400 */
+  --text-tertiary: #71717a;
+  /* Zinc 500 */
+
+  --accent-primary: #3b82f6;
+  /* Blue 500 */
+  --accent-hover: #2563eb;
+  /* Blue 600 */
+  --accent-soft: rgba(59, 130, 246, 0.15);
+
+  --border-color: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.15);
+
+  color-scheme: dark;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+a {
+  font-weight: 500;
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* Element Plus Overrides for Premium Feel */
+.el-button--primary {
+  --el-button-bg-color: var(--accent-primary) !important;
+  --el-button-border-color: var(--accent-primary) !important;
+  --el-button-hover-bg-color: var(--accent-hover) !important;
+  --el-button-hover-border-color: var(--accent-hover) !important;
+  font-weight: 500 !important;
+  border-radius: 8px !important;
+}
+
+.el-dialog {
+  background-color: var(--bg-secondary) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+}
+
+.el-dialog__headerbtn .el-dialog__close {
+  color: var(--text-secondary) !important;
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  background-color: var(--bg-tertiary) !important;
+  box-shadow: 0 0 0 1px var(--border-color) inset !important;
+  border-radius: 8px !important;
+}
+
+.el-input__wrapper:hover,
+.el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px var(--border-hover) inset !important;
+}
+
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--accent-primary) inset !important;
+}
+
+.el-input__inner {
+  color: var(--text-primary) !important;
+  height: 36px !important;
+}
+
+/* Document Chunks Drawer Styles */
+.chunks-drawer.el-drawer {
+  background: rgba(9, 9, 11, 0.85) !important;
+  backdrop-filter: blur(20px) !important;
+  border-left: 1px solid var(--border-color) !important;
+  box-shadow: -20px 0 50px rgba(0, 0, 0, 0.5) !important;
+  --el-drawer-bg-color: transparent !important;
+}
+
+.el-drawer__header {
+  margin-bottom: 0 !important;
+  padding: 24px 32px !important;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.el-drawer__title {
+  color: var(--text-primary) !important;
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.025em;
+}
+
+.el-drawer__body {
+  padding: 32px !important;
+  background-color: transparent !important;
+}
+
+.el-drawer__close-btn .el-icon {
+  font-size: 20px;
+  color: var(--text-secondary) !important;
+  transition: color 0.2s;
+}
+
+.el-drawer__close-btn:hover .el-icon {
+  color: var(--text-primary) !important;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+:root {
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: #cdd6f4;
+  background-color: #11111b;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+a {
+  font-weight: 500;
+  color: #89b4fa;
+  text-decoration: none;
+}
+
+a:hover {
+  color: #b4befe;
+}
+
+/* Element Plus Dark Theme Overrides */
+.el-button--primary {
+  --el-button-bg-color: #89b4fa;
+  --el-button-border-color: #89b4fa;
+  --el-button-hover-bg-color: #b4befe;
+  --el-button-hover-border-color: #b4befe;
+  --el-button-active-bg-color: #74c7ec;
+  --el-button-active-border-color: #74c7ec;
+}
+
+.el-dialog {
+  --el-dialog-bg-color: #1e1e2e;
+  --el-dialog-border-radius: 16px;
+}
+
+.el-input__wrapper {
+  background-color: #313244 !important;
+  box-shadow: none !important;
+}
+
+.el-input__inner {
+  color: #cdd6f4 !important;
+}
+
+.el-textarea__inner {
+  background-color: #313244 !important;
+  color: #cdd6f4 !important;
+}
+
+.el-select__wrapper {
+  background-color: #313244 !important;
+}
+
+.el-empty__description {
+  color: #6c7086;
+}
+
+/* Scrollbar Styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #45475a;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #585b70;
+}
+
+/* Global Drawer Styles Overrides */
+.el-drawer__header {
+  margin-bottom: 0 !important;
+  padding: 24px !important;
+  color: #cdd6f4 !important;
+  background-color: transparent !important;
+  border-bottom: 1px solid rgba(137, 180, 250, 0.1);
+}
+
+.el-drawer__title {
+  color: #cdd6f4 !important;
+  font-weight: 700 !important;
+  font-size: 18px !important;
+}
+
+.el-drawer__body {
+  padding: 24px !important;
+  background-color: transparent !important;
+  overflow-y: auto;
+}
+
+/* Specific Drawer Class */
+.chunks-drawer.el-drawer {
+  background: rgba(24, 24, 37, 0.95) !important;
+  backdrop-filter: blur(24px);
+  border-left: 1px solid rgba(137, 180, 250, 0.15) !important;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5) !important;
+  --el-drawer-bg-color: transparent !important;
+}
+
+.el-drawer__close-btn .el-icon {
+  color: #cdd6f4 !important;
+  font-size: 20px;
+}
+
+.el-drawer__close-btn:hover .el-icon {
+  color: #89b4fa !important;
+}

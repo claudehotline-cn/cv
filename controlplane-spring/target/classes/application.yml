@@ -1,0 +1,68 @@
+server:
+  # 在容器内需监听 0.0.0.0 才能通过端口映射被宿主访问
+  port: 18080
+
+spring:
+  application:
+    name: controlplane-spring
+  datasource:
+    url: jdbc:mysql://127.0.0.1:13306/cv_cp?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      enabled: false
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+cp:
+  va:
+    grpc-addr: 127.0.0.1:50051
+    timeout-ms: 30000
+    retries: 0
+    tls:
+      enabled: true
+      root-cert-file: config/certs/ca.pem
+      client-cert-file: config/certs/cp_client.crt
+      client-key-file: config/certs/cp_client.key
+  vsm:
+    grpc-addr: 127.0.0.1:7070
+    timeout-ms: 8000
+    retries: 1
+    tls:
+      enabled: true
+      root-cert-file: config/certs/ca.pem
+      client-cert-file: config/certs/cp_client.crt
+      client-key-file: config/certs/cp_client.key
+  restream:
+    rtsp-base: rtsp://127.0.0.1:8554/
+  sfu:
+    whep-base: http://127.0.0.1:18080
+    default-variant: overlay
+    pause-policy: stop
+  security:
+    cors:
+      allowed-origins: ["*"]
+    auth:
+      bearer-token: ""
+    rate-limit:
+      rps: 0
+  db:
+    driver: mysql
+    host: 127.0.0.1
+    port: 13306
+    user: root
+    password: 123456
+    schema: cv_cp
+    timeout-ms: 1000

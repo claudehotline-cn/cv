@@ -1,0 +1,124 @@
+"""RAG检索服务"""
+
+import logging
+from typing import List, Optional
+from dataclasses import dataclass
+
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+from ..config import settings
+from .embedder import embedding_service
+from .vector_store import vector_store, SearchResult
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RAGResponse:
+    """RAG问答响应"""
+    answer: str
+    sources: List[dict]
+
+
+class RAGRetriever:
+    """RAG检索器"""
+    
+    def __init__(self):
+        # 初始化LLM
+        self.llm = ChatOllama(
+            model=settings.llm_model,
+            base_url=settings.ollama_base_url,
+            temperature=0.7,
+        )
+        
+        # RAG提示模板
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", """你是一个专业的智能知识库助手。请**结合**你的专业知识和提供的上下文信息，全面、准确地回答用户的问题。
+
+要求:
+1. **深度结合**：以提供的上下文信息为事实基础，利用你的专业知识（如数学公式、代码实现、原理解释）对内容进行补充和完善，使答案更加完整和易懂。
+2. **准确性**：确保引用的上下文内容准确无误，补充的专业知识必须也是客观正确的。
+3. **诚实**：如果问题与上下文完全无关，且无法仅凭专业知识给出有上下文关联的回答，请说明"根据现有资料无法回答该问题"。
+4. **格式规范**：请使用 **Markdown** 格式优化排版，数学公式**必须**使用 LaTeX 格式（如 $E=mc^2$）。
+5. **来源标注**：回答中请在相关陈述后标注引用来源，例如 [1], [2]。
+
+上下文信息:
+{context}"""),
+            ("human", "{question}"),
+        ])
+        
+        # 输出解析器
+        self.output_parser = StrOutputParser()
+        
+        # 构建链
+        self.chain = self.prompt | self.llm | self.output_parser
+    
+    def retrieve(
+        self,
+        query: str,
+        knowledge_base_id: Optional[int] = None,
+        top_k: int = 5,
+    ) -> List[SearchResult]:
+        """检索相关文档"""
+        # 生成查询向量
+        query_embedding = embedding_service.embed_text(query)
+        
+        # 向量搜索
+        results = vector_store.search(
+            query_embedding=query_embedding,
+            knowledge_base_id=knowledge_base_id,
+            top_k=top_k,
+        )
+        
+        return results
+    
+    async def answer(
+        self,
+        query: str,
+        knowledge_base_id: Optional[int] = None,
+        top_k: int = 5,
+    ) -> RAGResponse:
+        """RAG问答"""
+        # 检索相关内容
+        results = self.retrieve(
+            query=query,
+            knowledge_base_id=knowledge_base_id,
+            top_k=top_k,
+        )
+        
+        if not results:
+            return RAGResponse(
+                answer="未找到相关信息，无法回答该问题。",
+                sources=[],
+            )
+        
+        # 构建上下文
+        context_parts = []
+        sources = []
+        for i, r in enumerate(results):
+            context_parts.append(f"[{i+1}] {r.content}")
+            sources.append({
+                "document_id": r.document_id,
+                "chunk_index": r.chunk_index,
+                "score": r.score,
+                "content_preview": r.content[:200] + "..." if len(r.content) > 200 else r.content,
+            })
+        
+        context = "\n\n".join(context_parts)
+        
+        # 生成回答
+        answer = await self.chain.ainvoke({
+            "context": context,
+            "question": query,
+        })
+        
+        return RAGResponse(
+            answer=answer,
+            sources=sources,
+        )
+
+
+# 单例
+rag_retriever = RAGRetriever()
