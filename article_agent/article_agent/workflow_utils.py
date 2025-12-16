@@ -138,6 +138,47 @@ def extract_markdown_headings(markdown: str) -> List[str]:
     return headings
 
 
+def normalize_heading_text(heading: str) -> str:
+    """标准化标题：去掉 # 前缀和编号，只保留纯文字。
+    
+    例如：
+    "## 1. 引言与背景" -> "引言与背景"
+    "### 2.1 基本概念" -> "基本概念"
+    """
+    h = heading.strip()
+    # 去掉开头的 # 符号和空格
+    h = re.sub(r'^#{1,6}\s*', '', h)
+    # 去掉开头的编号（如 "1." "2.1" "1.2.3" 等）
+    h = re.sub(r'^\d+(\.\d+)*\.?\s*', '', h)
+    return h.strip()
+
+
+def compare_headings_lenient(draft_headings: List[str], refined_headings: List[str]) -> bool:
+    """宽松的标题比较：只比较标题数量和纯文字内容，忽略编号差异。
+    
+    这允许 doc_refiner 在不改变标题结构的前提下微调文字。
+    """
+    if len(draft_headings) != len(refined_headings):
+        return False
+    
+    for draft_h, refined_h in zip(draft_headings, refined_headings):
+        # 提取标题级别（# 的数量）
+        draft_level = len(re.match(r'^#+', draft_h).group()) if draft_h.startswith('#') else 0
+        refined_level = len(re.match(r'^#+', refined_h).group()) if refined_h.startswith('#') else 0
+        
+        if draft_level != refined_level:
+            return False
+        
+        # 比较纯文字内容
+        draft_text = normalize_heading_text(draft_h)
+        refined_text = normalize_heading_text(refined_h)
+        
+        if draft_text != refined_text:
+            return False
+    
+    return True
+
+
 def _upgrade_wikipedia_image_url(url: str) -> str:
     """将Wikipedia的缩略图URL转换为原图URL。
     
@@ -489,12 +530,124 @@ def build_fallback_image_metadata(
                 }
             )
             assigned = True
-            break
-
-        if not assigned:
-            break
-
     return image_metadata
+
+
+def filter_unwanted_sections(markdown: str) -> str:
+    """移除技术标记类section和遗留的占位符。
+    
+    功能：
+    1. 移除包含不良关键词的section（如"插图占位符"）
+    2. 移除所有 <!--IMAGE:...--> 占位符行
+    """
+    import re
+    
+    # 1. 先移除所有IMAGE占位符行
+    markdown = re.sub(r'\n*<!--IMAGE:[^>]*-->\n*', '\n\n', markdown)
+    
+    # 需要移除的section标题关键词
+    unwanted_keywords = [
+        "插图占位符", "图片占位符", "占位符",
+        "代码示例", "示例代码",
+        "格式说明", "使用说明",
+        "技术说明", "实现细节",
+    ]
+    
+    lines = markdown.split('\n')
+    filtered_lines = []
+    skip_until_next_section = False
+    
+    for line in lines:
+        # 检查是否是标题行
+        heading_match = re.match(r'^(#{2,3})\s+(.+)$', line)
+        
+        if heading_match:
+            heading_text = heading_match.group(2).strip()
+            # 移除可能的编号（如"2.10 "）
+            heading_text_clean = re.sub(r'^\d+(\.\d+)*\s+', '', heading_text)
+            
+            # 检查是否包含不良关键词
+            is_unwanted = any(kw in heading_text_clean for kw in unwanted_keywords)
+            
+            if is_unwanted:
+                # 跳过这个section，直到遇到下一个同级或更高级标题
+                skip_until_next_section = True
+                continue
+            else:
+                # 这是正常的标题，停止跳过
+                skip_until_next_section = False
+                filtered_lines.append(line)
+        elif skip_until_next_section:
+            # 跳过这个section的内容
+            continue
+        else:
+            # 正常内容，保留
+            filtered_lines.append(line)
+    
+    return '\n'.join(filtered_lines)
+
+
+def fix_latex_commands(markdown: str) -> str:
+    """修复常见的LaTeX命令损坏问题。
+    
+    问题原因：JSON序列化或LLM输出时反斜杠可能丢失。
+    例如：\\frac 变成 rac, \\sqrt 变成 qrt
+    """
+    if not markdown:
+        return markdown
+    
+    import re
+    
+    # 常见的LaTeX命令前缀修复映射
+    latex_fixes = [
+        # 分数和根号
+        (r'(?<![\\a-zA-Z])frac\{', r'\\frac{'),
+        (r'(?<![\\a-zA-Z])sqrt\{', r'\\sqrt{'),
+        (r'(?<![\\a-zA-Z])sqrt\[', r'\\sqrt['),
+        # 希腊字母
+        (r'(?<![\\a-zA-Z])alpha(?![a-zA-Z])', r'\\alpha'),
+        (r'(?<![\\a-zA-Z])beta(?![a-zA-Z])', r'\\beta'),
+        (r'(?<![\\a-zA-Z])gamma(?![a-zA-Z])', r'\\gamma'),
+        (r'(?<![\\a-zA-Z])delta(?![a-zA-Z])', r'\\delta'),
+        (r'(?<![\\a-zA-Z])epsilon(?![a-zA-Z])', r'\\epsilon'),
+        (r'(?<![\\a-zA-Z])theta(?![a-zA-Z])', r'\\theta'),
+        (r'(?<![\\a-zA-Z])lambda(?![a-zA-Z])', r'\\lambda'),
+        (r'(?<![\\a-zA-Z])sigma(?![a-zA-Z])', r'\\sigma'),
+        (r'(?<![\\a-zA-Z])omega(?![a-zA-Z])', r'\\omega'),
+        # 数学函数
+        (r'(?<![\\a-zA-Z])sum(?![a-zA-Z])', r'\\sum'),
+        (r'(?<![\\a-zA-Z])prod(?![a-zA-Z])', r'\\prod'),
+        (r'(?<![\\a-zA-Z])int(?![a-zA-Z])', r'\\int'),
+        (r'(?<![\\a-zA-Z])exp(?![a-zA-Z\(])', r'\\exp'),
+        (r'(?<![\\a-zA-Z])log(?![a-zA-Z\(])', r'\\log'),
+        (r'(?<![\\a-zA-Z])sin(?![a-zA-Z\(])', r'\\sin'),
+        (r'(?<![\\a-zA-Z])cos(?![a-zA-Z\(])', r'\\cos'),
+        (r'(?<![\\a-zA-Z])tan(?![a-zA-Z\(])', r'\\tan'),
+        # 文本格式
+        (r'(?<![\\a-zA-Z])text\{', r'\\text{'),
+        (r'(?<![\\a-zA-Z])textbf\{', r'\\textbf{'),
+        (r'(?<![\\a-zA-Z])mathbf\{', r'\\mathbf{'),
+        (r'(?<![\\a-zA-Z])mathrm\{', r'\\mathrm{'),
+        # 其他常用
+        (r'(?<![\\a-zA-Z])cdot(?![a-zA-Z])', r'\\cdot'),
+        (r'(?<![\\a-zA-Z])times(?![a-zA-Z])', r'\\times'),
+        (r'(?<![\\a-zA-Z])left(?![a-zA-Z])', r'\\left'),
+        (r'(?<![\\a-zA-Z])right(?![a-zA-Z])', r'\\right'),
+        (r'(?<![\\a-zA-Z])begin\{', r'\\begin{'),
+        (r'(?<![\\a-zA-Z])end\{', r'\\end{'),
+        # rac -> \frac (特殊情况：反斜杠完全丢失)
+        (r'\brac\{', r'\\frac{'),
+        (r'\bqrt\{', r'\\sqrt{'),
+        # \text{sqrt} -> \sqrt (LLM错误)
+        (r'\\text\{sqrt\}', r'\\sqrt'),
+        (r'\\text\{frac\}', r'\\frac'),
+    ]
+    
+    result = markdown
+    for pattern, replacement in latex_fixes:
+        result = re.sub(pattern, replacement, result)
+    
+    return result
 
 
 def add_heading_numbers(markdown: str) -> str:
@@ -551,7 +704,11 @@ __all__ = [
     "ensure_article_id",
     "normalize_outline",
     "extract_markdown_headings",
+    "normalize_heading_text",
+    "compare_headings_lenient",
     "insert_images_into_markdown",
+    "filter_unwanted_sections",
+    "fix_latex_commands",
     "add_heading_numbers",
     "collect_source_images",
     "build_fallback_image_metadata",

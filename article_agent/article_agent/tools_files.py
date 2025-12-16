@@ -102,6 +102,26 @@ def _extract_content(html: str, url: str, max_images: int, max_text_chars: int, 
     return {"url": url, "title": title, "text": text, "images": images}
 
 
+def _extract_surrounding_text(full_text: str, img_position: int, context_chars: int = 200) -> str:
+    """提取图片周围的文本作为上下文。
+    
+    Args:
+        full_text: 完整的Markdown文本
+        img_position: 图片在文本中的位置（match.start()）
+        context_chars: 前后各提取多少字符
+        
+    Returns:
+        周围文本上下文
+    """
+    start = max(0, img_position - context_chars)
+    end = min(len(full_text), img_position + context_chars)
+    context = full_text[start:end].strip()
+    # 清理Markdown图片语法本身
+    import re
+    context = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', '', context)
+    return context.strip()
+
+
 def _extract_with_trafilatura(html: str, url: str, max_images: int) -> Tuple[str, List[Dict[str, Any]]]:
     """使用 trafilatura 统一提取正文和图片（高质量）。
 
@@ -127,7 +147,7 @@ def _extract_with_trafilatura(html: str, url: str, max_images: int) -> Tuple[str
 
         text = result.strip()
 
-        # 解析 Markdown 图片语法 ![alt](url)
+        # 解析 Markdown 图片语法 ![alt](url) 并收集周围文本
         images: List[Dict[str, Any]] = []
         img_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
         for match in img_pattern.finditer(text):
@@ -140,7 +160,16 @@ def _extract_with_trafilatura(html: str, url: str, max_images: int) -> Tuple[str
                 continue
             # 转换为绝对 URL
             full_url = urljoin(url, img_url)
-            images.append({"src": full_url, "url": full_url, "alt": alt})
+            
+            # 提取图片周围文本作为上下文
+            surrounding_context = _extract_surrounding_text(text, match.start(), context_chars=200)
+            
+            images.append({
+                "src": full_url,
+                "url": full_url,
+                "alt": alt,
+                "context": surrounding_context,  # 新增：周围文本上下文
+            })
             if len(images) >= max_images:
                 break
 
@@ -178,7 +207,14 @@ def _extract_with_beautifulsoup(soup: BeautifulSoup, url: str) -> str:
 
 
 def _extract_images_from_soup(soup: BeautifulSoup, url: str, max_images: int) -> List[Dict[str, Any]]:
-    """从 HTML 中提取图片 URL（BeautifulSoup 兜底方案）。"""
+    """从 HTML 中提取图片 URL 和丰富的上下文信息。
+    
+    上下文优先级：
+    1. figcaption - 最准确的图片说明
+    2. 所在章节的标题 - 判断图片的主题领域
+    3. alt 文本 - 通常是手动编写的描述
+    4. 周围文本 - fallback
+    """
     main = soup.find("main") or soup.find("article") or soup.body or soup
     images: List[Dict[str, Any]] = []
 
@@ -190,8 +226,63 @@ def _extract_images_from_soup(soup: BeautifulSoup, url: str, max_images: int) ->
         if src.startswith("data:") or "icon" in src.lower() or "logo" in src.lower():
             continue
         full_url = urljoin(url, src)
-        alt = img.get("alt") or ""
-        images.append({"src": full_url, "url": full_url, "alt": alt})
+        alt = (img.get("alt") or "").strip()
+        
+        # 1. 尝试获取 figcaption（最准确）
+        figcaption_text = ""
+        figure = img.find_parent("figure")
+        if figure:
+            figcaption = figure.find("figcaption")
+            if figcaption:
+                figcaption_text = figcaption.get_text(strip=True)
+        
+        # 2. 尝试获取所在章节的标题
+        section_heading = ""
+        parent = img.parent
+        for _ in range(10):  # 最多向上查找10层
+            if parent is None:
+                break
+            prev_heading = parent.find_previous(["h1", "h2", "h3", "h4"])
+            if prev_heading:
+                section_heading = prev_heading.get_text(strip=True)
+                break
+            parent = parent.parent
+        
+        # 3. 获取周围文本作为 fallback
+        surrounding_text = ""
+        if img.parent:
+            # 获取图片前后的文本节点
+            prev_text = ""
+            next_text = ""
+            prev_sibling = img.find_previous_sibling(string=True)
+            next_sibling = img.find_next_sibling(string=True)
+            if prev_sibling:
+                prev_text = str(prev_sibling).strip()[:100]
+            if next_sibling:
+                next_text = str(next_sibling).strip()[:100]
+            surrounding_text = f"{prev_text} {next_text}".strip()
+        
+        # 构建综合上下文
+        context_parts = []
+        if figcaption_text:
+            context_parts.append(f"图注: {figcaption_text}")
+        if section_heading:
+            context_parts.append(f"章节: {section_heading}")
+        if alt and len(alt) > 5:
+            context_parts.append(f"描述: {alt}")
+        if surrounding_text and not context_parts:
+            context_parts.append(f"周围文本: {surrounding_text[:100]}")
+        
+        context = "; ".join(context_parts) if context_parts else alt or "无上下文"
+        
+        images.append({
+            "src": full_url,
+            "url": full_url,
+            "alt": alt,
+            "figcaption": figcaption_text,
+            "section_heading": section_heading,
+            "context": context,  # 综合上下文
+        })
         if len(images) >= max_images:
             break
 

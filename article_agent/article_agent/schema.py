@@ -20,6 +20,10 @@ class OutlineSection(BaseModel):
         description="可选。若 level=3，则指向所属二级标题的 id。",
     )
     is_core: bool = Field(default=False, description="是否为文章核心内容部分。")
+    target_word_count: int = Field(
+        default=500,
+        description="该小节的目标字数。由 Planner 根据用户总字数要求计算分配。",
+    )
 
 
 class OutlineOutput(BaseModel):
@@ -60,6 +64,27 @@ class ImageSelectionOutput(BaseModel):
     image_metadata: Dict[str, List[Dict[str, Any]]] = Field(
         ...,
         description="section_id -> 可用图片列表（只来自 sources.images）。",
+    )
+
+
+class ImageInsertion(BaseModel):
+    """单个图片插入指令。"""
+    
+    image_index: int = Field(..., description="图片在候选列表中的索引（1-based）。")
+    target_heading: str = Field(..., description="目标章节的完整标题（如 '## 2. 自注意力机制'）。")
+    insert_after_text: str = Field(
+        default="",
+        description="图片应该插入在哪段文字之后。提供该段落的前20-30个字作为定位依据。空字符串表示插入在该章节开头。",
+    )
+    reason: str = Field(default="", description="匹配原因说明。")
+
+
+class ImageInsertionPlan(BaseModel):
+    """Illustrator Agent 的输出：图片插入计划。"""
+    
+    insertions: List[ImageInsertion] = Field(
+        default_factory=list,
+        description="图片插入列表，每个元素指定一张图片应该插入到哪个章节。",
     )
 
 
@@ -110,6 +135,8 @@ __all__ = [
     "OutlineOutput",
     "ResearcherOutput",
     "ImageSelectionOutput",
+    "ImageInsertion",
+    "ImageInsertionPlan",
     "SectionDraftOutput",
     "WriterAuditOutput",
     "parse_json_output",

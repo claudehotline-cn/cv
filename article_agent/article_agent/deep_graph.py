@@ -19,7 +19,7 @@ from .sub_agents import (
     researcher_agent,
     section_writer_agent,
 )
-from .workflow_utils import dedupe_preserve_order, ensure_article_id, add_heading_numbers
+from .workflow_utils import dedupe_preserve_order, ensure_article_id, add_heading_numbers, filter_unwanted_sections, fix_latex_commands
 
 _LOGGER = logging.getLogger("article_agent.deep_graph")
 
@@ -83,6 +83,17 @@ def planner_node(state: ContentState) -> ContentState:
     )
     outline_dict = outline_model.model_dump()
     title = (state.get("title") or "").strip() or outline_model.title
+
+    # 日志记录 outline 结构
+    _LOGGER.info("planner_node.outline_generated title=%s sections_count=%d", 
+                 title, len(outline_model.sections))
+    for sec in outline_model.sections:
+        _LOGGER.info("  outline_section: id=%s level=%d title=%s parent_id=%s",
+                     sec.id, sec.level, sec.title, sec.parent_id)
+    print(f"[planner] outline: {title}, {len(outline_model.sections)} sections", flush=True)
+    for sec in outline_model.sections:
+        prefix = "  " if sec.level == 2 else "    "
+        print(f"{prefix}[{sec.id}] level={sec.level} title={sec.title}", flush=True)
 
     new_state: ContentState = {
         **state,
@@ -384,6 +395,8 @@ def merge_sections_node(state: ContentState) -> ContentState:
 
     merged_parts: List[str] = [f"# {title}".strip()]
 
+    print(f"[merge_sections] starting merge, outline has {len(sections)} sections", flush=True)
+    
     for sec in sections:
         if not isinstance(sec, dict):
             continue
@@ -394,13 +407,19 @@ def merge_sections_node(state: ContentState) -> ContentState:
 
         text = drafts.get(sec_id)
         if isinstance(text, str) and text.strip():
+            # 检查 Writer 输出是否以正确的标题开头
+            first_line = text.strip().split('\n')[0] if text.strip() else ""
+            expected_prefix = "##" if level == 2 else "###"
+            print(f"  [merge] sec_id={sec_id} level={level} first_line={first_line[:50]!r}", flush=True)
             merged_parts.append(text.strip())
             continue
 
         heading = f"{'##' if level == 2 else '###'} {sec_title}".strip()
+        print(f"  [merge] sec_id={sec_id} NO_DRAFT, adding placeholder", flush=True)
         merged_parts.append(heading + "\n\nNO_DATA: 本节内容暂略/资料不足。")
 
     draft_markdown = "\n\n".join(merged_parts).strip()
+    print(f"[merge_sections] completed, total sections merged: {len(merged_parts)-1}", flush=True)
 
     new_state: ContentState = {
         **state,
@@ -454,7 +473,11 @@ def doc_refiner_node(state: ContentState) -> ContentState:
     try:
         refined = doc_refiner_agent(outline=state.get("outline") or {}, draft_markdown=draft)
         final_text = refined or draft
-        # 添加标题自动编号
+        # 先过滤掉不良section（如"插图占位符"）
+        final_text = filter_unwanted_sections(final_text)
+        # 修复LaTeX命令损坏
+        final_text = fix_latex_commands(final_text)
+        # 再添加标题自动编号
         final_text = add_heading_numbers(final_text)
         new_state: ContentState = {
             **state,
@@ -473,11 +496,41 @@ def illustrator_node(state: ContentState) -> ContentState:
     if state.get("error"):
         return _append_step(state, "illustrator_skipped")
 
+    # 收集所有来源中的图片到一个列表
+    all_images: List[Dict[str, Any]] = []
+    sources = state.get("sources") or []
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        images = src.get("images") or []
+        if isinstance(images, list):
+            for img in images:
+                if isinstance(img, dict) and (img.get("url") or img.get("src") or img.get("path_or_url")):
+                    all_images.append(img)
+    
+    # 也从 image_metadata 中收集（向后兼容）
+    image_metadata = state.get("image_metadata") or {}
+    if isinstance(image_metadata, dict):
+        for sec_id, imgs in image_metadata.items():
+            if isinstance(imgs, list):
+                for img in imgs:
+                    if isinstance(img, dict) and (img.get("url") or img.get("src") or img.get("path_or_url")):
+                        # 去重检查
+                        url = img.get("url") or img.get("src") or img.get("path_or_url")
+                        if not any(existing.get("url") == url or existing.get("src") == url for existing in all_images):
+                            all_images.append(img)
+
     updated = illustrator_agent(
         final_markdown=state.get("final_markdown") or state.get("refined_markdown") or state.get("draft_markdown") or "",
         outline=state.get("outline") or {},
-        image_metadata=state.get("image_metadata") or {},
+        all_images=all_images,
     )
+    
+    # 由于 doc_refiner 已禁用，在此处应用内容清理和标题编号
+    updated = filter_unwanted_sections(updated)
+    updated = fix_latex_commands(updated)
+    updated = add_heading_numbers(updated)
+    
     new_state: ContentState = {**state, "final_markdown": updated}
     return _append_step(new_state, "illustrator")
 
@@ -537,7 +590,8 @@ def get_content_graph():
     graph.add_node("writer_audit", writer_audit_node)
     graph.add_node("merge_sections", merge_sections_node)
     graph.add_node("reader_review", reader_review_node)
-    graph.add_node("doc_refiner", doc_refiner_node)
+    # doc_refiner 节点已禁用（LLM 经常破坏标题结构）
+    # graph.add_node("doc_refiner", doc_refiner_node)
     graph.add_node("illustrator", illustrator_node)
     graph.add_node("assembler", assembler_node)
     graph.add_node("summary_for_user", summary_for_user_node)
@@ -559,8 +613,8 @@ def get_content_graph():
         {"retry": "section_writer", "next": "merge_sections"},
     )
     graph.add_edge("merge_sections", "reader_review")
-    graph.add_edge("reader_review", "doc_refiner")
-    graph.add_edge("doc_refiner", "illustrator")
+    # doc_refiner 已禁用，直接跳到 illustrator
+    graph.add_edge("reader_review", "illustrator")
     graph.add_edge("illustrator", "assembler")
     graph.add_edge("assembler", "summary_for_user")
     graph.add_edge("summary_for_user", END)

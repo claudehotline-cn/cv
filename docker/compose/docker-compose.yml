@@ -407,7 +407,7 @@ services:
     environment:
       # 默认使用本地 Ollama 的 qwen3:30b 模型进行推理
       - ARTICLE_AGENT_LLM_PROVIDER=ollama
-      - ARTICLE_AGENT_LLM_MODEL=qwen3:14b
+      - ARTICLE_AGENT_LLM_MODEL=qwen3:30b
       - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/articles
       - ARTICLE_AGENT_ARTICLES_BASE_URL=/articles
@@ -420,6 +420,12 @@ services:
       - ../../logs:/logs:rw
       - ../../docs:/docs:ro
       - ../../logs/articles:/data/articles:rw
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8130/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 networks:
   default:

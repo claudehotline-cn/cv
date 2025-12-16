@@ -12,14 +12,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .config import get_settings
 from .llm_runtime import build_chat_llm, build_structured_chat_llm, invoke_llm_with_timeout
 from .prompts import COMMON_CONSTRAINTS_ZH
-from .schema import ImageSelectionOutput, OutlineOutput, ResearcherOutput, SectionDraftOutput
+from .schema import ImageInsertionPlan, ImageSelectionOutput, OutlineOutput, ResearcherOutput, SectionDraftOutput
 from .tools_files import export_markdown, fetch_url_with_images, load_text_from_file
-from .workflow_utils import extract_markdown_headings, insert_images_into_markdown, normalize_outline, replace_image_placeholders
+from .workflow_utils import extract_markdown_headings, insert_images_into_markdown, normalize_outline, replace_image_placeholders, compare_headings_lenient
 
 _LOGGER = logging.getLogger("article_agent.sub_agents")
 
 MAX_IMAGE_CANDIDATES_PER_SECTION = 8
 MAX_IMAGES_PER_SECTION = MAX_IMAGE_CANDIDATES_PER_SECTION
+
+# Qwen3 /nothink 指令前缀 - 设为空字符串以允许思维输出给前端显示
+# 后端通过 _strip_reasoning_block 过滤思维内容
+_NOTHINK_PREFIX = ""
+
+
+def _with_nothink(prompt: str) -> str:
+    """为 Qwen3 模型添加 /nothink 前缀，禁用思考模式。"""
+    return _NOTHINK_PREFIX + prompt
 
 
 def _strip_markdown_fence(text: str) -> str:
@@ -40,12 +49,40 @@ def _strip_markdown_fence(text: str) -> str:
 
 
 def _strip_reasoning_block(text: str) -> str:
-    """去掉模型输出中的显式推理块（如 <think>...</think>）。"""
+    """去掉模型输出中的显式推理块（如 <think>...</think>）和泄露的思维过程。"""
 
     if not isinstance(text, str):
         return text
 
+    # 1. 去掉 <think>...</think> 标签块
     cleaned = re.sub(r"<think[^>]*>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 2. 去掉孤立的 </think> 标签（langchain 可能只去掉了开始标签）
+    cleaned = re.sub(r"</think>", "", cleaned, flags=re.IGNORECASE)
+    
+    # 3. 去掉 qwen3 风格的思维过程泄露（中文）
+    # 匹配以 "先看..." "首先..." "检查..." "接下来..." "现在开始..." 等开头的推理段落
+    reasoning_patterns = [
+        r"^先看用户.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "先看用户给的原文内容..."
+        r"^首先，通读.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "首先，通读一遍原文..."
+        r"^检查术语.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "检查术语是否统一..."
+        r"^接下来，.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "接下来，看段落..."
+        r"^现在逐段分析.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "现在逐段分析..."
+        r"^这里.*?需要调整.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "这里...需要调整"
+        r"^原[第一二三四五六七八九十]*段.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "原第一段..."
+        r"^修改[后为].*?(?=\n\n|\n#{1,3}\s|\Z)",  # "修改后..."
+        r"^删除重复.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "删除重复..."
+        r"^现在开始.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "现在开始修改..."
+        r"^现在，.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "现在，整合..."
+        r"^最终检查.*?(?=\n\n|\n#{1,3}\s|\Z)",  # "最终检查..."
+    ]
+    
+    for pattern in reasoning_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE | re.DOTALL)
+    
+    # 4. 去掉多余的连续空行
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    
     return cleaned.strip()
 
 
@@ -152,32 +189,78 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
 【任务目标】
 1. 基于 instruction 和 rough_sources_overview，为文章设计结构清晰、层级明确的大纲。
 2. 输出文章总标题 title。
-3. 输出 sections 列表，每个 section 至少包含：
+3. 输出 sections 列表，每个 section 包含：
    - id：小写字母 + 下划线组成的唯一字符串，如 "sec_intro"。
    - title：该节标题。
    - level：数字 2 或 3，表示 Markdown 的 ## 或 ### 级别。
    - parent_id：可选。若为三级标题，指向所属二级标题的 id。
    - is_core：布尔值，是否为核心内容部分。
+   - target_word_count：该小节的目标字数（整数，根据用户总字数要求计算）。
 4. 输出 sections_to_research：需要 Researcher 重点研究的 section_id 列表（只列 id）。
-5. 输出 writing_style：根据 instruction 和概览，为 Writer 总结的写作风格指导（语气、受众、用词规范等），字数控制在 100 字以内。
+5. 输出 writing_style：根据 instruction 和概览，为 Writer 总结的写作风格指导（语气、受众、用词规范等）。
+
+【字数分配规则 - 非常重要】
+1. 首先从 instruction 中解析用户要求的总字数（如"5000字"、"5000-6000字"等）。
+2. 如果没有明确字数要求，默认总字数为 3000 字。
+3. 根据总字数和 section 数量，合理分配每个 section 的 target_word_count：
+   - 核心 section (is_core=true)：分配 1.5 倍权重
+   - 引言/总结：分配 0.7 倍权重
+   - 普通 section：分配 1.0 倍权重
+4. 确保所有 section 的 target_word_count 之和约等于用户要求的总字数。
+5. 每个 section 的 target_word_count 最低不少于 200 字，最高不超过 800 字。
 
 【输出格式】
 你必须输出一个 JSON：
 {{
   "title": "文章标题",
   "sections": [
-    {{"id": "sec_intro", "title": "背景与目标", "level": 2, "parent_id": null, "is_core": false}}
+    {{"id": "sec_intro", "title": "背景与目标", "level": 2, "parent_id": null, "is_core": false, "target_word_count": 350}}
   ],
   "sections_to_research": ["sec_intro"],
-  "writing_style": "语气专业客观，面向中高级开发者，多用技术术语，避免营销辞藻。"
+  "writing_style": "语气专业客观，面向中高级开发者，多用技术术语。"
+}}
+
+【Few-shot 示例】
+
+✅ 好的大纲结构（用户要求5000字）：
+{{
+  "title": "Python 异步编程完全指南",
+  "sections": [
+    {{"id": "sec_intro", "title": "异步编程概述", "level": 2, "parent_id": null, "is_core": false, "target_word_count": 400}},
+    {{"id": "sec_asyncio_basics", "title": "asyncio 核心概念", "level": 2, "parent_id": null, "is_core": true, "target_word_count": 700}},
+    {{"id": "sec_event_loop", "title": "事件循环机制", "level": 3, "parent_id": "sec_asyncio_basics", "is_core": false, "target_word_count": 600}},
+    {{"id": "sec_coroutines", "title": "协程与任务", "level": 3, "parent_id": "sec_asyncio_basics", "is_core": false, "target_word_count": 600}},
+    {{"id": "sec_patterns", "title": "常见异步模式", "level": 2, "parent_id": null, "is_core": true, "target_word_count": 700}},
+    {{"id": "sec_concurrency", "title": "并发任务管理", "level": 3, "parent_id": "sec_patterns", "is_core": false, "target_word_count": 550}},
+    {{"id": "sec_errors", "title": "异常处理", "level": 3, "parent_id": "sec_patterns", "is_core": false, "target_word_count": 500}},
+    {{"id": "sec_summary", "title": "总结与最佳实践", "level": 2, "parent_id": null, "is_core": false, "target_word_count": 350}}
+  ],
+  "sections_to_research": ["sec_asyncio_basics", "sec_patterns"],
+  "writing_style": "面向有Python基础的开发者，用词简洁，结合代码示例。"
+}}
+// 上述8个section的target_word_count之和 = 4400字，接近用户要求的5000字
+
+❌ 不好的大纲结构（问题示例）：
+{{
+  "title": "异步编程",  // 标题过于简略
+  "sections": [
+    {{"id": "intro", "title": "引言", "level": 2, "parent_id": null, "is_core": true}},  // id缺少sec_前缀
+    {{"id": "sec_detail", "title": "详细解析", "level": 2, "parent_id": null, "is_core": true}},  // 太泛，无具体内容指向
+    {{"id": "sec_code", "title": "代码示例", "level": 3, "parent_id": "wrong_parent", "is_core": false}},  // parent_id错误
+    {{"id": "sec_summary", "title": "总结", "level": 2, "parent_id": null, "is_core": false}},
+    {{"id": "sec_detail_1", "title": "深入理解", "level": 3, "parent_id": "sec_summary", "is_core": false}}  // 总结section不应有子章节
+  ],
+  "sections_to_research": ["sec_unknown"],  // 引用不存在的section
+  "writing_style": "专业"  // 过于简略，缺少具体指导
 }}
 
 【约束】
 - 所有 section.id 必须全局唯一。
 - sections_to_research 中的所有 id 必须来自 sections 列表中的 id。
 - 大纲应兼顾“背景/问题 → 架构/流程 → 关键实现 → 实践建议/案例 → 总结展望”的结构。
-- 禁止生成"附录"、"参考文献"、"扩展阅读"等辅助性章节，文章应直接结束于核心内容或总结。
-- "总结"、"结论"、"展望"类section（level=2）不得有子章节（level=3），应该是扁平的概括性内容，不再深入技术细节。
+- 禁止生成“附录”、“参考文献”、“扩展阅读”等辅助性章节，文章应直接结束于核心内容或总结。
+- 禁止生成技术标记类section：不得出现“插图占位符”、“图片”、“示例代码”、“格式说明”等作为section标题（这些是技术实现细节，不是文章内容）。
+- “总结”、“结论”、“展望”类section（level=2）不得有子章节（level=3），应该是扁平的概括性内容，不再深入技术细节。
 
 {COMMON_CONSTRAINTS_ZH}
 """.strip()
@@ -190,7 +273,7 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
     def _call():
         return structured_llm.invoke(
             [
-                SystemMessage(content=system_prompt),
+                SystemMessage(content=_with_nothink(system_prompt)),
                 HumanMessage(content=prompt),
             ]
         )
@@ -339,7 +422,7 @@ def researcher_agent(
     def _call():
         return structured_llm.invoke(
             [
-                SystemMessage(content=system_prompt),
+                SystemMessage(content=_with_nothink(system_prompt)),
                 HumanMessage(content=prompt),
             ]
         )
@@ -446,7 +529,7 @@ def researcher_agent(
         def _call_images():
             return image_llm.invoke(
                 [
-                    SystemMessage(content=image_system_prompt),
+                    SystemMessage(content=_with_nothink(image_system_prompt)),
                     HumanMessage(content=image_prompt),
                 ]
             )
@@ -593,26 +676,32 @@ markdown 字段要求：
     $$
     ```
 
-- 你需要在正文合适位置插入“插图占位符”，用于后续由 Illustrator 自动替换为真实图片并自动生成图注（图名）：
-  - 占位符必须单独成行，格式之一：
-    - `<!--IMAGE:<section_id>:<n>-->`（插入第 n 张候选图）
-    - `<!--IMAGE:<section_id>:<n>|<图名/图注>-->`（同上，但你可提供更贴合上下文的图名/图注）
-  - 其中 `<section_id>` 必须与本节 section_id 完全一致；`<n>` 必须是有效索引（1-based），范围为 `1..len(available_images)`；本节最多插入 `len(available_images)` 处插图占位符（不建议全部用满，按内容需要选择）。
-  - 你决定图片应该出现的位置：必须紧跟在解释该图的段落之后（概念解释/结构示意/流程描述/关键对比），确保图片与周围内容语义一致。
-  - 系统会额外给你本节的 `available_images`（候选图片列表，顺序即索引顺序，含 caption_hint）：
-    - 当 `available_images` 非空时：你必须至少插入 1 个占位符，并优先选择与你当前段落内容最匹配的那张（用 :n 指定）。
-    - 当 `available_images` 为空时：你不得插入任何占位符。
+【图片说明】
+- **你不需要处理图片**。专注于文字内容的撰写。
+- 图片将由 Illustrator Agent 在后续步骤中根据你的内容自动匹配并插入。
+- 不要插入任何图片占位符（如 `<!--IMAGE:...-->`）。
 
 【篇幅 & 信息量】
-- is_core=true：目标 800-1200 字，至少不低于 600 字。
-- 普通小节：不应少于 400 字，尽量写到 600 字左右。
-- 若 notes 为 NO_DATA：可以写一般性经验/注意点，但必须明确说明“下述内容基于通用经验，并非来自用户提供的资料”。
+- **目标字数**：请参考 section_info 中的 target_word_count 字段，这是 Planner 根据用户总字数要求分配的。
+- 如果 target_word_count 未提供，默认按以下规则：
+  - is_core=true：目标 600-800 字
+  - 普通小节：目标 400-600 字
+- **严格遵守目标字数**：不要显著超过或低于目标字数（允许±20%浮动）。
+- 若 notes 为 NO_DATA：可以写一般性经验/注意点，但必须明确说明"下述内容基于通用经验，并非来自用户提供的资料"。
 
 【禁止事项】
 - 不得修改 section_id。
 - 不得跨节写内容（只写当前 section）。
 - 不得凭空杜撰具体的公司名称、真实项目、机密信息。
-- **禁止在section末尾添加"### 小结"、"### 本节总结"这种二级标题形式的小结**。
+- **禁止添加任何形式的小结或技术标记类标题**：
+  - ❌ 不得添加"### 小结"、"### 本节总结"、"### 要点回顾"等总结性标题
+  - ❌ 不得添加"### 插图占位符"、"### 代码示例"、"### 格式说明"等技术实现类标题
+  - ❌ 不得添加除大纲规定之外的任何二级或三级标题
+  - ✅ 你只能写大纲中给定section的标题和正文内容
+- **禁止手动编号**：
+  - ❌ 不得在标题中添加"1. 2. 3."等编号（如"### 1. 基本概念"是错误的）
+  - ❌ 不得在段落开头添加"第一、第二、（1）（2）"等编号形式
+  - ✅ 标题编号由系统自动添加，你只需写标题文字本身
 - 可以适当使用"综上所述"、"因此"等连接词进行段落过渡或逻辑归纳（这是自然的写作手法）。
 
 {COMMON_CONSTRAINTS_ZH}
@@ -652,13 +741,15 @@ markdown 字段要求：
                 "level": level,
                 "parent_id": sec.get("parent_id"),
                 "is_core": bool(sec.get("is_core")),
+                "target_word_count": int(sec.get("target_word_count") or 500),
             },
             "notes": notes,
-            # 只给出必要字段，避免 prompt 膨胀；并保留顺序，让 Writer 可用 :n 指定图片。
+            # 传递图片信息给Writer，包含上下文帮助其做出更好的选择
             "available_images": [
                 {
                     "path_or_url": (img.get("path_or_url") or img.get("url") or img.get("src") or ""),
                     "caption_hint": (img.get("caption_hint") or img.get("alt") or ""),
+                    "context": (img.get("context") or ""),  # 新增：图片周围的文本上下文
                 }
                 for img in available_images[:MAX_IMAGE_CANDIDATES_PER_SECTION]
                 if (img.get("path_or_url") or img.get("url") or img.get("src"))
@@ -669,7 +760,7 @@ markdown 字段要求：
         def _call():
             return structured_llm.invoke(
                 [
-                    SystemMessage(content=system_prompt),
+                    SystemMessage(content=_with_nothink(system_prompt)),
                     HumanMessage(content=prompt),
                 ]
             )
@@ -687,7 +778,8 @@ markdown 字段要求：
             markdown = ""
 
         markdown = _strip_markdown_fence(markdown)
-        markdown = _strip_reasoning_block(markdown)
+        # 保留思维内容用于流式展示，最终在 assembler 清理
+        # markdown = _strip_reasoning_block(markdown)
 
         expected_heading = f"{'##' if level == 2 else '###'} {title}".strip()
 
@@ -795,7 +887,7 @@ def reader_review_agent(
     def _call():
         return llm.invoke(
             [
-                SystemMessage(content=system_prompt),
+                SystemMessage(content=_with_nothink(system_prompt)),
                 HumanMessage(content=prompt),
             ]
         )
@@ -807,7 +899,8 @@ def reader_review_agent(
             timeout_sec=timeout_sec,
         )
         content = getattr(result, "content", str(result))
-        return _strip_reasoning_block(str(content)).strip()
+        # 保留思维内容用于流式展示，最终在 assembler 清理
+        return str(content).strip()
     except Exception as exc:
         _LOGGER.warning("reader_review.failed error=%s", exc)
         return ""
@@ -824,96 +917,428 @@ def doc_refiner_agent(
     if not draft_markdown:
         return draft_markdown
 
-    system_prompt = f"""
-你是 Doc Refiner 子 Agent，负责在不改变大纲结构的前提下，对整篇文章进行润色与微调。
-
-【输入】
-- outline：文章大纲（title + sections 列表），这是结构的权威来源。
-- draft_markdown：当前完整草稿 Markdown。
+    # 按章节拆分文章
+    lines = draft_markdown.split("\n")
+    sections: List[Dict[str, Any]] = []  # [{start, end, heading, content}]
+    current_section_start = 0
+    current_heading = ""
+    
+    for i, line in enumerate(lines):
+        if re.match(r"^#{1,3}\s+", line.strip()):
+            if current_heading:
+                sections.append({
+                    "start": current_section_start,
+                    "end": i,
+                    "heading": current_heading,
+                    "content": "\n".join(lines[current_section_start:i]),
+                })
+            current_section_start = i
+            current_heading = line.strip()
+    
+    # 最后一个章节
+    if current_heading:
+        sections.append({
+            "start": current_section_start,
+            "end": len(lines),
+            "heading": current_heading,
+            "content": "\n".join(lines[current_section_start:]),
+        })
+    
+    if not sections:
+        return draft_markdown
+    
+    # 按章节润色
+    system_prompt = f"""你是 Doc Refiner，负责润色一个章节的正文。
 
 【任务】
-- 在完全保留现有标题和章节顺序的前提下：
-  - 改善段落衔接和过渡句；
-  - 删除明显重复的句子；
-  - 统一术语和人称；
-  - 轻微增强可读性（拆长句、合短句）。
+只润色正文段落，**绝对禁止修改标题行**：
+- 改善段落衔接和过渡
+- 删除重复句子
+- 统一术语
+- 提高可读性
 
-【硬性结构约束（必须严格遵守）】
-1. 严禁修改任何 Markdown 标题行：所有以 "#" / "##" / "###" 开头的标题行，文本必须与原稿完全一致。
-2. 严禁增删标题，严禁改变标题级别，严禁调整标题出现顺序。
-3. 严禁新增/删除整节内容；只能在每个现有小节内部调整句子与段落。
-4. 严禁修改/删除/新增任何插图占位符：所有形如 `<!--IMAGE:...-->` 的行必须原封不动保留（内容与位置都不能变化）。
-
-【输出】
-- 只返回润色后的完整 Markdown 文本，不要输出任何额外文字或 JSON。
+【⚠️ 硬性约束】
+1. 第一行的标题（以 # 开头）必须**原封不动**保留
+2. 不得新增或删除任何标题
+3. 只输出润色后的章节内容，不要解释
 
 {COMMON_CONSTRAINTS_ZH}
 """.strip()
 
     llm = build_chat_llm(task_name="doc_refiner")
-    prompt_obj = {"outline": outline, "draft_markdown": draft_markdown}
-    prompt = json.dumps(prompt_obj, ensure_ascii=False)
-
-    def _call():
-        return llm.invoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=prompt),
-            ]
-        )
-
-    result = invoke_llm_with_timeout(task_name="doc_refiner", fn=_call, timeout_sec=timeout_sec)
-    raw = getattr(result, "content", str(result))
-    cleaned = _strip_markdown_fence(raw)
-    cleaned = _strip_reasoning_block(cleaned)
-
-    if not isinstance(cleaned, str) or not cleaned.strip():
-        return draft_markdown
-
-    if extract_markdown_headings(cleaned) != extract_markdown_headings(draft_markdown):
-        _LOGGER.warning("doc_refiner.heading_mismatch fallback_to_draft")
-        print("[doc_refiner] heading_mismatch fallback_to_draft", flush=True)
-        return draft_markdown
-
-    return cleaned.strip()
+    refined_sections: List[str] = []
+    success_count = 0
+    
+    for sec in sections:
+        heading = sec["heading"]
+        content = sec["content"]
+        
+        # 跳过太短的章节（只有标题）
+        if content.strip() == heading.strip():
+            refined_sections.append(content)
+            continue
+        
+        try:
+            def _call():
+                return llm.invoke([
+                    SystemMessage(content=_with_nothink(system_prompt)),
+                    HumanMessage(content=f"请润色以下章节内容：\n\n{content}"),
+                ])
+            
+            result = invoke_llm_with_timeout(task_name="doc_refiner", fn=_call, timeout_sec=60.0)
+            raw = getattr(result, "content", str(result))
+            cleaned = _strip_markdown_fence(raw)
+            cleaned = _strip_reasoning_block(cleaned)
+            
+            if not cleaned or not cleaned.strip():
+                refined_sections.append(content)
+                continue
+            
+            # 强制保留原始第一行标题（防止LLM修改标题级别）
+            original_lines = content.strip().split('\n')
+            refined_lines = cleaned.strip().split('\n')
+            
+            if original_lines and refined_lines:
+                # 检查原始第一行是否为标题
+                if original_lines[0].strip().startswith('#'):
+                    # 强制用原始标题替换refined的第一行
+                    refined_lines[0] = original_lines[0]
+                    cleaned = '\n'.join(refined_lines)
+            
+            # 验证所有标题未被新增或删除
+            original_headings = extract_markdown_headings(content)
+            refined_headings = extract_markdown_headings(cleaned)
+            
+            if original_headings and refined_headings:
+                # 检查标题数量是否一致
+                if len(original_headings) == len(refined_headings):
+                    refined_sections.append(cleaned.strip())
+                    success_count += 1
+                else:
+                    _LOGGER.warning("doc_refiner.section_heading_count_changed section=%r orig=%d refined=%d", 
+                                   heading[:30], len(original_headings), len(refined_headings))
+                    refined_sections.append(content)
+            else:
+                refined_sections.append(cleaned.strip() if cleaned else content)
+                if cleaned:
+                    success_count += 1
+                
+        except Exception as exc:
+            _LOGGER.warning("doc_refiner.section_error section=%r error=%s", heading[:30], exc)
+            refined_sections.append(content)
+    
+    print(f"[doc_refiner] per-section: {success_count}/{len(sections)} sections refined", flush=True)
+    return "\n\n".join(refined_sections)
 
 
 def illustrator_agent(
     final_markdown: str,
     outline: Dict[str, Any],
-    image_metadata: Dict[str, List[Dict[str, Any]]],
+    all_images: List[Dict[str, Any]],
     *,
-    max_images_per_section: int = MAX_IMAGES_PER_SECTION,
+    max_images_total: int = 5,
+    timeout_sec: float = 120.0,
 ) -> str:
-    """Illustrator：仅使用 image_metadata 中的原图，按 Writer 占位符替换插图（纯规则）。
-
-    若正文中不存在占位符，则回退为“按章节末尾插入”，以保持兼容性。
+    """Illustrator：使用 LLM 智能匹配图片与文章内容，并在最佳位置插入图片。
+    
+    Args:
+        final_markdown: 完整的文章 Markdown（无占位符）
+        outline: 文章大纲
+        all_images: 所有候选图片列表，每个包含 {url, alt, context, figcaption}
+        max_images_total: 全文最多插入的图片数量
+        timeout_sec: LLM 调用超时
+        
+    Returns:
+        插入了图片的最终 Markdown
     """
-
     if not final_markdown:
         return final_markdown
-    if "<!--IMAGE:" in final_markdown:
-        return replace_image_placeholders(
-            markdown=final_markdown,
-            image_metadata=image_metadata,
-            max_images_per_section=max_images_per_section,
-        )
+    
+    if not all_images:
+        return final_markdown
+    
+    # 过滤有效图片
+    valid_images = [
+        img for img in all_images
+        if img.get("url") or img.get("src") or img.get("path_or_url")
+    ][:max_images_total * 2]  # 预留更多供选择
+    
+    if not valid_images:
+        return final_markdown
+    
+    # 构建图片信息摘要
+    images_info = []
+    for i, img in enumerate(valid_images):
+        url = img.get("url") or img.get("src") or img.get("path_or_url") or ""
+        caption = img.get("figcaption") or img.get("caption_hint") or img.get("alt") or ""
+        context = img.get("context") or ""
+        images_info.append({
+            "index": i + 1,
+            "url": url,
+            "caption": caption,
+            "context": context[:200],  # 限制长度
+        })
+    
+    # 提取文章各section的内容摘要
+    sections_info = []
+    lines = final_markdown.split("\n")
+    current_section = None
+    current_content = []
+    
+    for line in lines:
+        if re.match(r"^#{2,3}\s+", line):
+            if current_section:
+                sections_info.append({
+                    "heading": current_section,
+                    "content_preview": " ".join(current_content)[:300],
+                })
+            current_section = line.strip()
+            current_content = []
+        elif current_section and line.strip():
+            current_content.append(line.strip())
+    
+    if current_section:
+        sections_info.append({
+            "heading": current_section,
+            "content_preview": " ".join(current_content)[:300],
+        })
+    
+    if not sections_info:
+        return final_markdown
+    
+    # LLM Prompt
+    system_prompt = f"""你是 Illustrator Agent，负责为技术文章智能配图。
 
-    if not isinstance(image_metadata, dict) or not image_metadata:
+【任务】
+分析文章各章节内容和候选图片的描述，找出最佳的图文匹配关系，并决定图片应该插入到哪个段落之后。
+
+【输入】
+1. sections：文章各章节的标题和内容摘要
+2. images：候选图片列表（含 index, caption, context）
+
+【输出要求】
+输出一个 JSON，指定哪些图片应该插入到哪里：
+{{
+  "insertions": [
+    {{
+      "image_index": 1,
+      "target_heading": "## 2. 自注意力机制",
+      "insert_after_text": "通过计算查询向量与键向量的点积",
+      "reason": "该图展示了注意力权重计算，紧跟在描述点积计算的段落后最合适"
+    }}
+  ]
+}}
+
+【字段说明】
+- image_index: 图片在候选列表中的索引（1-based）
+- target_heading: 目标章节的标题
+- insert_after_text: **关键字段** - 图片应插入在哪段文字之后。提供该段落的前20-30个字作为定位依据。如果放在章节开头，留空。
+- reason: 为什么选择这个位置
+
+【匹配规则】
+1. 只有当图片内容与**某段文字高度相关**时才插入
+2. 根据图片的 context 和 caption 判断其真实内容
+3. 图片应该紧跟在**解释该图的段落之后**（概念解释/结构示意/流程描述）
+4. 每个章节最多插入 1 张图片
+5. 全文最多插入 {max_images_total} 张图片
+
+【禁止】
+- 不要编造图片信息
+- 不要强行匹配不相关的图片
+- 不要把图片放在章节开头（除非整个章节都在描述这张图）
+
+{COMMON_CONSTRAINTS_ZH}
+"""
+
+    prompt_obj = {
+        "sections": sections_info,
+        "images": images_info,
+    }
+    prompt = json.dumps(prompt_obj, ensure_ascii=False)
+    
+    try:
+        structured_llm = build_structured_chat_llm(ImageInsertionPlan, task_name="illustrator")
+        
+        def _call():
+            return structured_llm.invoke([
+                SystemMessage(content=_with_nothink(system_prompt)),
+                HumanMessage(content=prompt),
+            ])
+        
+        result = invoke_llm_with_timeout(task_name="illustrator", fn=_call, timeout_sec=timeout_sec)
+        plan = result if isinstance(result, ImageInsertionPlan) else ImageInsertionPlan.model_validate(result)
+        
+        if not plan.insertions:
+            return final_markdown
+        
+        # 执行插入
+        used_images: set = set()
+        result_lines = final_markdown.split("\n")
+        
+        # 收集插入计划
+        insertion_plans: List[Dict] = []
+        for ins in plan.insertions:
+            idx = ins.image_index
+            heading = ins.target_heading
+            insert_after = getattr(ins, "insert_after_text", "") or ""
+            if idx in used_images:
+                continue
+            if idx < 1 or idx > len(valid_images):
+                continue
+            used_images.add(idx)
+            insertion_plans.append({
+                "image": valid_images[idx - 1],
+                "heading": heading,
+                "insert_after": insert_after.strip(),
+            })
+            if len(used_images) >= max_images_total:
+                break
+        
+        # 基于内容匹配查找插入位置
+        insert_positions: List[Tuple[int, str]] = []  # (line_index, img_html)
+        img_counter = 0
+        
+        for plan_item in insertion_plans:
+            target_heading = plan_item["heading"]
+            insert_after = plan_item["insert_after"]
+            img = plan_item["image"]
+            
+            # 找到目标section的起止范围
+            section_start = -1
+            section_end = len(result_lines)
+            
+            # 提取标题文字（去掉 ## 和编号）用于模糊匹配
+            def extract_heading_text(h: str) -> str:
+                """从标题中提取纯文字部分，去掉 ## 和编号"""
+                h = h.strip()
+                if h.startswith("### "):
+                    h = h[4:]
+                elif h.startswith("## "):
+                    h = h[3:]
+                elif h.startswith("# "):
+                    h = h[2:]
+                # 去掉开头的编号（如 "1." "2.1" 等）
+                h = re.sub(r'^\d+(\.\d+)*\.?\s*', '', h)
+                return h.strip()
+            
+            target_text = extract_heading_text(target_heading)
+            
+            for i, line in enumerate(result_lines):
+                line_stripped = line.strip()
+                
+                # 只匹配标题行
+                if not (line_stripped.startswith("## ") or line_stripped.startswith("### ") or line_stripped.startswith("# ")):
+                    continue
+                
+                # 完全匹配
+                if line_stripped == target_heading:
+                    section_start = i
+                    break
+                
+                # 文字内容匹配（忽略编号）
+                line_text = extract_heading_text(line_stripped)
+                if line_text == target_text:
+                    section_start = i
+                    break
+                
+                # 文字部分包含匹配（target在line中）
+                if target_text and target_text in line_text:
+                    section_start = i
+                    break
+            
+            if section_start == -1:
+                _LOGGER.warning("illustrator: heading not found: %s", target_heading)
+                continue  # 未找到目标section
+            
+            # 找到下一个同级或更高级标题作为section结束
+            for j in range(section_start + 1, len(result_lines)):
+                if result_lines[j].startswith("## ") or result_lines[j].startswith("# "):
+                    section_end = j
+                    break
+            
+            # 在section范围内查找 insert_after 文本
+            insert_line = section_start + 1  # 默认: section标题后
+            
+            if insert_after:
+                # 模糊匹配：查找包含 insert_after 前30个字的段落
+                search_text = insert_after[:30].strip()
+                found = False
+                for i in range(section_start + 1, section_end):
+                    if search_text in result_lines[i]:
+                        # 找到这个段落的末尾
+                        j = i + 1
+                        while j < section_end and result_lines[j].strip() and not result_lines[j].startswith("#"):
+                            j += 1
+                        insert_line = j
+                        found = True
+                        break
+                if not found:
+                    # 未找到匹配文本，插入在第一段之后
+                    j = section_start + 1
+                    while j < section_end and not result_lines[j].strip():
+                        j += 1
+                    while j < section_end and result_lines[j].strip() and not result_lines[j].startswith("#"):
+                        j += 1
+                    insert_line = j
+            else:
+                # 没有 insert_after，插入在第一段之后
+                j = section_start + 1
+                while j < section_end and not result_lines[j].strip():
+                    j += 1
+                while j < section_end and result_lines[j].strip() and not result_lines[j].startswith("#"):
+                    j += 1
+                insert_line = j
+            
+            # 构建图片 HTML
+            img_url = img.get("url") or img.get("src") or img.get("path_or_url") or ""
+            img_url = _upgrade_wikipedia_image_url(img_url)
+            caption = img.get("figcaption") or img.get("caption_hint") or img.get("alt") or "插图"
+            img_counter += 1
+            
+            img_html = f'''
+<div align="center">
+  <img src="{img_url}" alt="{caption}"/>
+  <p><em>图 {img_counter}: {caption}</em></p>
+</div>
+'''
+            insert_positions.append((insert_line, img_html.strip()))
+        
+        # 从后往前插入，避免索引偏移
+        insert_positions.sort(key=lambda x: x[0], reverse=True)
+        for pos, img_html in insert_positions:
+            result_lines.insert(pos, "")
+            result_lines.insert(pos + 1, img_html)
+            result_lines.insert(pos + 2, "")
+        
+        return "\n".join(result_lines)
+        
+    except Exception as exc:
+        _LOGGER.warning("illustrator_agent.llm_failed error=%s, fallback to no images", exc)
         return final_markdown
 
-    return insert_images_into_markdown(
-        markdown=final_markdown,
-        outline=outline,
-        image_metadata=image_metadata,
-        max_images_per_section=max_images_per_section,
-    )
+
+def _upgrade_wikipedia_image_url(url: str) -> str:
+    """将 Wikipedia 缩略图 URL 升级为原图 URL。"""
+    if not url:
+        return url
+    # 匹配 /thumb/.../<size>px-... 格式
+    thumb_pattern = re.compile(r'/thumb/(.+?)/\d+px-[^/]+$')
+    match = thumb_pattern.search(url)
+    if match:
+        # 移除 /thumb/ 和尺寸部分
+        return re.sub(r'/thumb/(.+?)/\d+px-[^/]+$', r'/\1', url)
+    return url
 
 
 def assembler_agent(article_id: str, title: str, final_markdown: str) -> Dict[str, Any]:
-    """Assembler：将 Markdown 落盘并返回 md_path/md_url 等信息。"""
-
-    return export_markdown(article_markdown=final_markdown, title=title, article_id=article_id)
+    """Assembler：将 Markdown 落盘并返回 md_path/md_url 等信息。
+    
+    在此处最终清理思维内容，确保输出文件干净。
+    """
+    # 最终清理思维内容（之前流式传输时保留用于展示）
+    cleaned_markdown = _strip_reasoning_block(final_markdown)
+    
+    return export_markdown(article_markdown=cleaned_markdown, title=title, article_id=article_id)
 
 
 __all__ = [

@@ -5,6 +5,14 @@ from __future__ import annotations
 import logging
 import os
 
+# Initialize structlog for structured logging
+try:
+    from .logging_config import configure_structlog
+    configure_structlog()
+except ImportError:
+    # Fallback if structlog is not available
+    pass
+
 
 def _configure_logging() -> None:
     """根据环境变量配置 article_agent 日志级别。
