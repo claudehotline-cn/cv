@@ -16,6 +16,7 @@ export const knowledgeBaseApi = {
     update: (id: number, data: any) => api.put(`/knowledge-bases/${id}`, data),
     delete: (id: number) => api.delete(`/knowledge-bases/${id}`),
     getDocuments: (id: number) => api.get(`/knowledge-bases/${id}/documents`),
+    buildGraph: (id: number) => api.post(`/knowledge-bases/${id}/build-graph`),
 }
 
 // 文档API
@@ -37,6 +38,8 @@ export const documentApi = {
 export const chatApi = {
     send: (query: string, kbId?: number, topK: number = 5) =>
         api.post('/chat', { query, knowledge_base_id: kbId, top_k: topK }),
+    graphRetrieve: (query: string, kbId?: number, depth: number = 2) =>
+        api.post('/graph/retrieve', { query, knowledge_base_id: kbId, depth }),
 }
 
 export default api

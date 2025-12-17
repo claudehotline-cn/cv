@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     minio_secret_key: str = Field(default="minioadmin123", description="MinIO密钥")
     minio_bucket: str = Field(default="rag-documents", description="文档存储桶")
     minio_secure: bool = Field(default=False, description="是否使用HTTPS")
+
+    # Neo4j配置（图数据库）
+    neo4j_uri: str = Field(default="bolt://neo4j:7687", description="Neo4j BOLT地址")
+    neo4j_user: str = Field(default="neo4j", description="Neo4j用户名")
+    neo4j_password: str = Field(default="password", description="Neo4j密码")
     
     # Ollama配置（LLM/Embedding）
     ollama_base_url: str = Field(
@@ -49,8 +54,12 @@ class Settings(BaseSettings):
         description="Ollama服务地址"
     )
     embedding_model: str = Field(
-        default="bge-m3:567m",
-        description="Embedding模型"
+        default="nomic-embed-text:latest",
+        description="Embedding模型名称"
+    )
+    vector_dimension: int = Field(
+        default=768,
+        description="向量维度"
     )
     llm_model: str = Field(
         default="qwen3:30b",

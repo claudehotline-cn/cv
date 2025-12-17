@@ -15,8 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 复制依赖文件
 COPY rag_service/requirements.txt .
 
-# 安装Python依赖
-RUN pip install --no-cache-dir -r requirements.txt
+# 安装Python依赖 (使用 BuildKit 缓存加速)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # 复制应用代码
 COPY rag_service/rag_service ./rag_service

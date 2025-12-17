@@ -427,6 +427,22 @@ services:
       retries: 3
       start_period: 40s
 
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: neo4j
+    environment:
+      NEO4J_AUTH: neo4j/password
+    ports:
+      - "7474:7474" # HTTP Console
+      - "7687:7687" # Bolt Protocol
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   rag-service:
     build:
       context: ../..
@@ -471,3 +487,4 @@ volumes:
   mlflow-artifacts:
   pgvector-data:
   agent-checkpoints:
+  neo4j-data:

@@ -25,6 +25,7 @@ openpyxl>=3.1.0
 xlrd>=2.0.1
 pandas>=2.0.0
 markdown>=3.5.0
+neo4j>=5.15.0
 
 # Web Crawling
 trafilatura>=1.6.0

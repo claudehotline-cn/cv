@@ -79,36 +79,69 @@ class RAGRetriever:
         query: str,
         knowledge_base_id: Optional[int] = None,
         top_k: int = 5,
+        use_graph: bool = True,  # 默认启用图谱融合
     ) -> RAGResponse:
-        """RAG问答"""
-        # 检索相关内容
-        results = self.retrieve(
+        """Hybrid RAG问答 - 融合向量检索和图谱检索"""
+        import asyncio
+        
+        # 1. 并行执行向量检索和图谱检索
+        vector_results = self.retrieve(
             query=query,
             knowledge_base_id=knowledge_base_id,
             top_k=top_k,
         )
         
-        if not results:
+        graph_results = []
+        if use_graph:
+            try:
+                from .graph_retriever import graph_retriever
+                graph_results = await graph_retriever.retrieve(
+                    query=query,
+                    knowledge_base_id=knowledge_base_id,
+                    depth=2
+                )
+            except Exception as e:
+                logger.warning(f"Graph retrieval failed, falling back to vector only: {e}")
+        
+        # 2. 融合结果构建上下文
+        context_parts = []
+        sources = []
+        
+        # 向量检索结果
+        if vector_results:
+            context_parts.append("### 文档片段:")
+            for i, r in enumerate(vector_results):
+                context_parts.append(f"[V{i+1}] {r.content}")
+                sources.append({
+                    "type": "vector",
+                    "document_id": r.document_id,
+                    "chunk_index": r.chunk_index,
+                    "score": r.score,
+                    "content_preview": r.content[:200] + "..." if len(r.content) > 200 else r.content,
+                })
+        
+        # 图谱检索结果
+        if graph_results:
+            context_parts.append("\n### 知识图谱关联:")
+            for i, r in enumerate(graph_results):
+                context_parts.append(f"[G{i+1}] {r['content']}")
+                sources.append({
+                    "type": "graph",
+                    "document_id": 0,
+                    "chunk_index": 0,
+                    "score": r.get("score", 1.0),
+                    "content_preview": r["content"],
+                })
+        
+        if not context_parts:
             return RAGResponse(
                 answer="未找到相关信息，无法回答该问题。",
                 sources=[],
             )
         
-        # 构建上下文
-        context_parts = []
-        sources = []
-        for i, r in enumerate(results):
-            context_parts.append(f"[{i+1}] {r.content}")
-            sources.append({
-                "document_id": r.document_id,
-                "chunk_index": r.chunk_index,
-                "score": r.score,
-                "content_preview": r.content[:200] + "..." if len(r.content) > 200 else r.content,
-            })
-        
         context = "\n\n".join(context_parts)
         
-        # 生成回答
+        # 3. 生成回答
         answer = await self.chain.ainvoke({
             "context": context,
             "question": query,

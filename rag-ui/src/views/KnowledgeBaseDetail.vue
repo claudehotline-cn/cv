@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { knowledgeBaseApi, documentApi } from '../api'
+import { Link, Upload, Document, Grid, UploadFilled, Connection } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const kbId = computed(() => Number(route.params.id))
@@ -59,6 +60,15 @@ const handleUpload = async (options: any) => {
     setTimeout(loadData, 1000)
   } catch (err: any) {
     ElMessage.error(err.response?.data?.detail || '上传失败')
+  }
+}
+
+const handleBuildGraph = async () => {
+  try {
+    await knowledgeBaseApi.buildGraph(kbId.value)
+    ElMessage.success('已触发知识图谱构建任务')
+  } catch (err: any) {
+    ElMessage.error(err.response?.data?.detail || '触发构建失败')
   }
 }
 
@@ -163,6 +173,10 @@ onMounted(loadData)
         <p class="page-desc">{{ kb?.description || '暂无描述' }}</p>
       </div>
       <div class="header-actions">
+        <el-button type="success" @click="handleBuildGraph">
+          <el-icon><Connection /></el-icon>
+          构建图谱
+        </el-button>
         <el-button @click="urlDialogVisible = true">
           <el-icon><Link /></el-icon>
           导入网页

@@ -116,6 +116,7 @@ const handleSend = async () => {
   loading.value = true
 
   try {
+    // 使用融合RAG（后端自动融合向量+图谱检索）
     const res = await chatApi.send(userQuery, selectedKb.value)
     
     // 更新AI消息
