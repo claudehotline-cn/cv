@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     curl \
+    antiword \
+    catdoc \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件

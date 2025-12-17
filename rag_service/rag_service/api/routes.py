@@ -377,3 +377,56 @@ async def chat(data: ChatRequest):
         answer=response.answer,
         sources=response.sources,
     )
+
+
+# ==================== Retrieve API (for external agents) ====================
+
+class RetrieveRequest(BaseModel):
+    query: str
+    knowledge_base_id: Optional[int] = None
+    top_k: Optional[int] = 5
+
+
+class RetrieveResult(BaseModel):
+    content: str
+    score: float
+    document_id: int
+    chunk_index: int
+    metadata: dict
+
+
+class RetrieveResponse(BaseModel):
+    query: str
+    results: List[RetrieveResult]
+    total: int
+
+
+@router.post("/retrieve", response_model=RetrieveResponse)
+async def retrieve(data: RetrieveRequest):
+    """
+    纯检索API - 仅返回相关文档片段，不调用LLM
+    
+    适用于外部Agent集成，Agent可以使用自己的LLM处理检索结果
+    """
+    # 获取检索结果（同步调用）
+    results = rag_retriever.retrieve(
+        query=data.query,
+        knowledge_base_id=data.knowledge_base_id,
+        top_k=data.top_k,
+    )
+    
+    return RetrieveResponse(
+        query=data.query,
+        results=[
+            RetrieveResult(
+                content=r.content,
+                score=r.score,
+                document_id=r.document_id,
+                chunk_index=r.chunk_index,
+                metadata=r.metadata,
+            )
+            for r in results
+        ],
+        total=len(results),
+    )
+

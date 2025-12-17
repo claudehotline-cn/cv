@@ -94,6 +94,13 @@ class DocumentLoader:
         """加载Word文档"""
         logger.info(f"Loading Word: {filename}")
         
+        suffix = Path(filename).suffix.lower()
+        
+        # 处理旧版 .doc 格式
+        if suffix == ".doc":
+            return self._load_legacy_doc(file_path, filename)
+        
+        # 处理 .docx 格式
         try:
             doc = DocxDocument(file_path)
             paragraphs = []
@@ -103,7 +110,10 @@ class DocumentLoader:
                     # 处理标题样式
                     if para.style.name.startswith('Heading'):
                         level = para.style.name.replace('Heading ', '')
-                        paragraphs.append(f"{'#' * int(level)} {para.text}")
+                        try:
+                            paragraphs.append(f"{'#' * int(level)} {para.text}")
+                        except ValueError:
+                            paragraphs.append(para.text)
                     else:
                         paragraphs.append(para.text)
             
@@ -126,6 +136,53 @@ class DocumentLoader:
             metadata={"source": filename, "type": "word"}
         )
     
+    def _load_legacy_doc(self, file_path: str, filename: str) -> LoadedDocument:
+        """加载旧版 .doc 格式文档（使用 antiword）"""
+        import subprocess
+        
+        try:
+            # 尝试使用 antiword 提取文本
+            result = subprocess.run(
+                ['antiword', file_path],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                content = result.stdout
+                if content.strip():
+                    return LoadedDocument(
+                        content=content,
+                        metadata={"source": filename, "type": "doc"}
+                    )
+            
+            # antiword 失败，尝试使用 catdoc
+            result = subprocess.run(
+                ['catdoc', file_path],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                return LoadedDocument(
+                    content=result.stdout,
+                    metadata={"source": filename, "type": "doc"}
+                )
+            
+            # 两种方法都失败
+            raise ValueError(
+                f"无法解析 .doc 文件 '{filename}'。请尝试将文件另存为 .docx 格式后重新上传。"
+            )
+            
+        except FileNotFoundError:
+            raise ValueError(
+                f"不支持旧版 .doc 格式文件 '{filename}'。请将文件另存为 .docx 格式后重新上传。"
+            )
+        except subprocess.TimeoutExpired:
+            raise ValueError(f"处理 .doc 文件 '{filename}' 超时")
+    
     def _load_excel(self, file_path: str, filename: str) -> LoadedDocument:
         """加载Excel文档"""
         logger.info(f"Loading Excel: {filename}")
@@ -139,7 +196,10 @@ class DocumentLoader:
                 df = pd.read_excel(xlsx, sheet_name=sheet_name)
                 if not df.empty:
                     all_content.append(f"[Sheet: {sheet_name}]")
-                    # 转换为文本格式
+                    # 填充空值
+                    df = df.fillna('')  # 将NaN替换为空字符串
+                    # 将Unnamed列名替换为空字符串
+                    df.columns = ['' if str(col).startswith('Unnamed:') else col for col in df.columns]
                     all_content.append(df.to_string(index=False))
                     
         except Exception as e:

@@ -52,8 +52,9 @@ class VectorStore:
                 
                 # 使用原生SQL避免参数绑定问题
                 # 注意：content需要转义单引号
-                content_escaped = content.replace("'", "''")
-                meta_escaped = meta_json.replace("'", "''")
+                # 同时需要将冒号转义为双冒号，防止SQLAlchemy将 :word 解析为绑定参数
+                content_escaped = content.replace("'", "''").replace(":", r"\:")
+                meta_escaped = meta_json.replace("'", "''").replace(":", r"\:")
                 
                 sql = f"""
                     INSERT INTO rag_vectors (document_id, chunk_index, content, embedding, metadata)
