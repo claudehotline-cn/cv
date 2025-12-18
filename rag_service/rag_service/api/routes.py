@@ -131,6 +131,94 @@ def delete_knowledge_base(kb_id: int, db: Session = Depends(get_mysql_db)):
     return {"message": "Knowledge base deleted"}
 
 
+@router.get("/knowledge-bases/{kb_id}/stats")
+def get_knowledge_base_stats(kb_id: int, db: Session = Depends(get_mysql_db)):
+    """获取知识库统计信息"""
+    from sqlalchemy import text
+    from ..database import get_pgvector_session
+    
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    
+    # 获取文档列表
+    docs = db.query(Document).filter(
+        Document.knowledge_base_id == kb_id
+    ).all()
+    
+    doc_ids = [d.id for d in docs]
+    
+    # 统计向量信息
+    parent_count = 0
+    child_count = 0
+    total_vectors = 0
+    avg_chunk_size = 0
+    
+    if doc_ids:
+        with get_pgvector_session() as pg_session:
+            # 使用SQLAlchemy text查询
+            result = pg_session.execute(text("""
+                SELECT 
+                    COUNT(*) FILTER (WHERE is_parent = TRUE) as parent_count,
+                    COUNT(*) FILTER (WHERE is_parent = FALSE OR is_parent IS NULL) as child_count,
+                    COUNT(*) as total,
+                    AVG(LENGTH(content)) as avg_size
+                FROM rag_vectors 
+                WHERE document_id = ANY(:doc_ids)
+            """), {"doc_ids": doc_ids})
+            row = result.fetchone()
+            if row:
+                parent_count = row[0] or 0
+                child_count = row[1] or 0
+                total_vectors = row[2] or 0
+                avg_chunk_size = int(row[3]) if row[3] else 0
+    
+    # 计算文档统计
+    total_docs = len(docs)
+    completed_docs = sum(1 for d in docs if d.status == "completed")
+    failed_docs = sum(1 for d in docs if d.status == "failed")
+    processing_docs = sum(1 for d in docs if d.status == "processing")
+    
+    # 计算分块分布
+    chunk_distribution = {}
+    for d in docs:
+        count = d.chunk_count or 0
+        if count == 0:
+            bucket = "0"
+        elif count <= 10:
+            bucket = "1-10"
+        elif count <= 50:
+            bucket = "11-50"
+        elif count <= 100:
+            bucket = "51-100"
+        else:
+            bucket = "100+"
+        chunk_distribution[bucket] = chunk_distribution.get(bucket, 0) + 1
+    
+    return {
+        "knowledge_base": {
+            "id": kb.id,
+            "name": kb.name,
+            "chunk_size": kb.chunk_size,
+            "chunk_overlap": kb.chunk_overlap,
+        },
+        "documents": {
+            "total": total_docs,
+            "completed": completed_docs,
+            "processing": processing_docs,
+            "failed": failed_docs,
+        },
+        "vectors": {
+            "total": total_vectors,
+            "parents": parent_count,
+            "children": child_count,
+            "parent_child_ratio": f"1:{child_count // parent_count if parent_count > 0 else 0}",
+            "avg_chunk_size": avg_chunk_size,
+        },
+        "chunk_distribution": chunk_distribution,
+    }
+
+
 # ==================== Helpers ====================
 
 def update_kb_document_count(db: Session, kb_id: int):
@@ -153,7 +241,7 @@ def list_documents(kb_id: int, db: Session = Depends(get_mysql_db)):
 
 
 def process_document_async(document_id: int, file_path: str, filename: str):
-    """异步处理文档"""
+    """异步处理文档 (使用父子索引策略)"""
     db = MySQLSessionLocal()
     try:
         doc = db.query(Document).filter(Document.id == document_id).first()
@@ -169,34 +257,54 @@ def process_document_async(document_id: int, file_path: str, filename: str):
         # 获取知识库配置
         kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.knowledge_base_id).first()
         
-        # 分块
+        # 语义父子分块 (Semantic Hierarchical Chunking)
         from ..services.chunker import DocumentChunker
-        chunker = DocumentChunker(
-            chunk_size=kb.chunk_size if kb else 500,
-            chunk_overlap=kb.chunk_overlap if kb else 50,
-        )
-        chunks = chunker.chunk(loaded.content, loaded.metadata)
+        chunker = DocumentChunker()
         
-        # 向量化并存储
-        if chunks:
-            texts = [c.content for c in chunks]
-            embeddings = embedding_service.embed_texts(texts)
+        parent_chunks, child_chunks = chunker.semantic_hierarchical_chunk(
+            content=loaded.content,
+            metadata=loaded.metadata,
+            similarity_threshold=0.5,  # 相似度低于0.5时分割
+            parent_max_size=kb.chunk_size * 4 if kb else 2000,
+            child_max_size=kb.chunk_size if kb else 500,
+        )
+        
+        # 向量化
+        if parent_chunks or child_chunks:
+            # Embed 父块
+            parent_texts = [p.content for p in parent_chunks]
+            parent_embeddings = embedding_service.embed_texts(parent_texts) if parent_texts else []
             
-            vector_data = [
-                (c.index, c.content, emb, c.metadata)
-                for c, emb in zip(chunks, embeddings)
+            # Embed 子块
+            child_texts = [c.content for c in child_chunks]
+            child_embeddings = embedding_service.embed_texts(child_texts) if child_texts else []
+            
+            # 构建存储数据
+            parent_data = [
+                (p.index, p.content, emb, p.metadata)
+                for p, emb in zip(parent_chunks, parent_embeddings)
             ]
-            vector_store.store_vectors(document_id, vector_data)
+            
+            child_data = [
+                (c.index, c.content, emb, c.metadata, c.parent_index)
+                for c, emb in zip(child_chunks, child_embeddings)
+            ]
+            
+            # 存储
+            vector_store.store_hierarchical_vectors(document_id, parent_data, child_data)
         
         # 更新文档状态
-        doc.chunk_count = len(chunks)
+        total_chunks = len(parent_chunks) + len(child_chunks)
+        doc.chunk_count = total_chunks
         doc.status = "completed"
         db.commit()
         
-        logger.info(f"Document {document_id} processed: {len(chunks)} chunks")
+        logger.info(f"Document {document_id} processed: {len(parent_chunks)} parents + {len(child_chunks)} children = {total_chunks} chunks")
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         doc = db.query(Document).filter(Document.id == document_id).first()
         if doc:
             doc.status = "failed"
@@ -398,8 +506,14 @@ def get_document_chunks(doc_id: int, db: Session = Depends(get_mysql_db)):
         "chunks": chunks,
     }
 
-
 # ==================== Chat API ====================
+
+class StreamChatRequest(BaseModel):
+    query: str
+    knowledge_base_id: Optional[int] = None
+    top_k: Optional[int] = 5
+    session_id: Optional[str] = None  # 用于对话历史
+
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(data: ChatRequest):
@@ -413,6 +527,132 @@ async def chat(data: ChatRequest):
         answer=response.answer,
         sources=response.sources,
     )
+
+
+@router.post("/chat/stream")
+async def chat_stream(data: StreamChatRequest):
+    """
+    流式RAG问答 (Server-Sent Events)
+    
+    返回格式:
+    - data: {"type": "source", "sources": [...]}  # 首先返回检索源
+    - data: {"type": "token", "content": "..."}   # 逐token返回
+    - data: {"type": "done"}                      # 完成标记
+    """
+    from fastapi.responses import StreamingResponse
+    from langchain_ollama import ChatOllama
+    from langchain_core.prompts import ChatPromptTemplate
+    import json
+    
+    async def generate():
+        try:
+            # 1. 检索相关文档
+            results = await rag_retriever.retrieve(
+                query=data.query,
+                knowledge_base_id=data.knowledge_base_id,
+                top_k=data.top_k,
+            )
+            
+            # 2. 发送检索源信息
+            sources = []
+            for i, r in enumerate(results):
+                # 获取文档名
+                doc_name = "Unknown"
+                try:
+                    from ..database import MySQLSessionLocal
+                    from ..models import Document
+                    db = MySQLSessionLocal()
+                    doc = db.query(Document).filter(Document.id == r.document_id).first()
+                    if doc:
+                        doc_name = doc.filename
+                    db.close()
+                except:
+                    pass
+                
+                sources.append({
+                    "index": i + 1,
+                    "document_name": doc_name,
+                    "document_id": r.document_id,
+                    "chunk_index": r.chunk_index,
+                    "content_preview": r.content[:200] + "..." if len(r.content) > 200 else r.content,
+                    "score": r.score,
+                })
+            
+            yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
+            
+            # 3. 获取对话历史
+            from ..services.conversation_memory import conversation_memory
+            history_text = ""
+            if data.session_id:
+                history_text = conversation_memory.get_history_text(data.session_id)
+            
+            # 4. 构建上下文
+            context = "\n\n".join([
+                f"[{i+1}] {r.content}" 
+                for i, r in enumerate(results)
+            ])
+            
+            # 5. 流式生成回答
+            llm = ChatOllama(
+                model=settings.llm_model,
+                base_url=settings.ollama_base_url,
+                temperature=0.7,
+            )
+            
+            # 构建包含历史的提示
+            system_prompt = """你是一个专业的知识库问答助手。请根据提供的参考资料回答用户问题。
+
+规则：
+1. 仅基于参考资料回答，如果资料不足以回答，请说明
+2. 引用时使用 [1], [2] 等标记指向对应的参考资料
+3. 回答要准确、专业、有条理
+4. 如果有对话历史，请注意保持上下文连贯性
+
+参考资料：
+{context}"""
+
+            if history_text:
+                system_prompt += f"\n\n对话历史：\n{history_text}"
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "{query}")
+            ])
+            
+            chain = prompt | llm
+            
+            # 收集完整回答用于保存历史
+            full_answer = ""
+            
+            async for chunk in chain.astream({"context": context, "query": data.query, "history": history_text}):
+                content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                if content:
+                    full_answer += content
+                    yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
+            
+            # 6. 保存对话历史
+            if data.session_id:
+                conversation_memory.add_message(data.session_id, "user", data.query)
+                conversation_memory.add_message(data.session_id, "assistant", full_answer)
+            
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
 
 
 # ==================== Retrieve API (for external agents) ====================
@@ -444,8 +684,8 @@ async def retrieve(data: RetrieveRequest):
     
     适用于外部Agent集成，Agent可以使用自己的LLM处理检索结果
     """
-    # 获取检索结果（同步调用）
-    results = rag_retriever.retrieve(
+    # 获取检索结果（同步调用 -> 异步调用）
+    results = await rag_retriever.retrieve(
         query=data.query,
         knowledge_base_id=data.knowledge_base_id,
         top_k=data.top_k,
@@ -499,79 +739,246 @@ async def _run_graph_build_task(kb_id: int):
         
         logger.info(f"Starting graph build for KB {kb_id} (from MinIO)")
         
-        lc_docs = []
-        temp_files = []  # 记录需要清理的临时文件
-        
+        # 获取需要处理的文档列表
+        doc_infos = []
         with get_mysql_session() as mysql_db:
-            docs = mysql_db.query(Document).filter(Document.knowledge_base_id == kb_id).all()
+            docs = mysql_db.query(Document).filter(
+                Document.knowledge_base_id == kb_id,
+                Document.graph_built == False
+            ).all()
             
             if not docs:
-                logger.warning(f"No documents found for KB {kb_id}")
+                logger.info(f"No new documents to build graph for KB {kb_id}")
                 return
             
+            # 将文档信息复制出来，避免Session关闭后无法访问
             for doc in docs:
-                try:
-                    if not doc.file_path:
-                        logger.warning(f"No file_path for doc {doc.id}")
-                        continue
-                    
-                    # 从 MinIO 下载文件
-                    tmp_path = minio_service.download_file(doc.file_path)
-                    if not tmp_path:
-                        logger.warning(f"Failed to download from MinIO: {doc.file_path}")
-                        continue
-                    
-                    temp_files.append(tmp_path)
-                    
-                    # 如果文件名没有扩展名（如网页导入），尝试添加扩展名
-                    filename_for_loader = doc.filename
-                    if not os.path.splitext(doc.filename)[1] and doc.file_path:
-                        ext = os.path.splitext(doc.file_path)[1]
-                        if ext:
-                            filename_for_loader += ext
-                    
-                    # 加载文档内容
-                    loaded = document_loader.load(tmp_path, filename_for_loader)
-                    
-                    # 将完整文档拆分为较大的块
-                    content = loaded.content
-                    chunk_size = 3000
-                    
-                    for i in range(0, len(content), chunk_size):
-                        chunk = content[i:i+chunk_size]
-                        if len(chunk.strip()) > 100:
-                            lc_docs.append(
-                                LangChainDocument(
-                                    page_content=chunk,
-                                    metadata={"source": doc.filename, "doc_id": doc.id, "chunk": i // chunk_size}
-                                )
-                            )
-                    
-                    logger.info(f"Loaded {doc.filename}: {len(content)} chars -> {(len(content) // chunk_size) + 1} large chunks")
-                        
-                except Exception as e:
-                    logger.error(f"Error loading doc {doc.id} ({doc.filename}): {e}")
+                doc_infos.append({
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "file_path": doc.file_path
+                })
+
+        logger.info(f"Found {len(doc_infos)} new documents to build graph for KB {kb_id}")
         
-        if lc_docs:
-            logger.info(f"Building graph from {len(lc_docs)} document chunks (large chunks for better context)")
-            await graph_builder.build_from_documents(lc_docs)
-            logger.info(f"Graph build finished for KB {kb_id}")
-        else:
-            logger.warning(f"No valid documents loaded for KB {kb_id}")
-        
-        # 清理临时文件
-        for tmp_path in temp_files:
+        # 逐个处理文档
+        for doc_info in doc_infos:
+            doc_id = doc_info["id"]
+            filename = doc_info["filename"]
+            file_path = doc_info["file_path"]
+            temp_file = None
+            
             try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except:
-                pass
+                if not file_path:
+                    logger.warning(f"No file_path for doc {doc_id}")
+                    continue
+                
+                # 1. 下载和加载
+                temp_file = minio_service.download_file(file_path)
+                if not temp_file:
+                    logger.warning(f"Failed to download from MinIO: {file_path}")
+                    continue
+                
+                # 处理文件名
+                filename_for_loader = filename
+                if not os.path.splitext(filename)[1]:
+                    ext = os.path.splitext(file_path)[1]
+                    if ext: filename_for_loader += ext
+                
+                loaded = document_loader.load(temp_file, filename_for_loader)
+                content = loaded.content
+                
+                # 2. 分块
+                doc_chunks = []
+                chunk_size = 3000
+                for i in range(0, len(content), chunk_size):
+                    chunk = content[i:i+chunk_size]
+                    if len(chunk.strip()) > 100:
+                        doc_chunks.append(
+                            LangChainDocument(
+                                page_content=chunk,
+                                metadata={"source": filename, "doc_id": doc_id, "chunk": i // chunk_size}
+                            )
+                        )
+                
+                # 3. 构建图谱
+                if doc_chunks:
+                    logger.info(f"Building graph for {filename} ({len(doc_chunks)} chunks)")
+                    await graph_builder.build_from_documents(doc_chunks)
+                    
+                    # 4. 立即更新状态
+                    with get_mysql_session() as update_db:
+                        d = update_db.query(Document).filter(Document.id == doc_id).first()
+                        if d:
+                            d.graph_built = True
+                            update_db.commit()
+                            logger.info(f"Successfully built graph for doc {doc_id} ({filename})")
+                else:
+                    logger.warning(f"No valid chunks for doc {doc_id}")
+                    
+            except Exception as e:
+                logger.error(f"Error processing doc {doc_id} ({filename}): {e}")
+            finally:
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
                 
     except Exception as e:
         logger.error(f"Error in graph build task: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
+
+# ==================== Rebuild Vectors API ====================
+
+@router.post("/knowledge-bases/{kb_id}/rebuild-vectors")
+async def rebuild_vectors(
+    kb_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_mysql_db),
+):
+    """
+    批量重建知识库向量 (使用新的父子索引策略)
+    
+    删除现有向量并重新处理所有文档
+    """
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    
+    doc_count = db.query(Document).filter(Document.knowledge_base_id == kb_id).count()
+    
+    background_tasks.add_task(_run_rebuild_vectors_task, kb_id)
+    
+    return {
+        "message": "Rebuild vectors task started",
+        "kb_id": kb_id,
+        "document_count": doc_count
+    }
+
+async def _run_rebuild_vectors_task(kb_id: int):
+    """后台运行向量重建任务"""
+    try:
+        from ..database import get_mysql_session
+        from ..services.document_loader import document_loader
+        from ..services.minio_service import minio_service
+        from ..services.chunker import DocumentChunker
+        
+        logger.info(f"Starting rebuild vectors for KB {kb_id}")
+        
+        # 获取所有文档
+        doc_infos = []
+        with get_mysql_session() as mysql_db:
+            kb = mysql_db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+            kb_chunk_size = kb.chunk_size if kb else 500
+            kb_chunk_overlap = kb.chunk_overlap if kb else 50
+            
+            docs = mysql_db.query(Document).filter(
+                Document.knowledge_base_id == kb_id
+            ).all()
+            
+            for doc in docs:
+                doc_infos.append({
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "file_path": doc.file_path
+                })
+        
+        logger.info(f"Found {len(doc_infos)} documents to rebuild in KB {kb_id}")
+        
+        chunker = DocumentChunker()
+        
+        for doc_info in doc_infos:
+            doc_id = doc_info["id"]
+            filename = doc_info["filename"]
+            file_path = doc_info["file_path"]
+            temp_file = None
+            
+            try:
+                logger.info(f"Rebuilding vectors for doc {doc_id} ({filename})")
+                
+                # 1. 删除旧向量
+                deleted = vector_store.delete_document_vectors(doc_id)
+                logger.info(f"Deleted {deleted} old vectors for doc {doc_id}")
+                
+                # 2. 下载原始文件
+                if not file_path:
+                    logger.warning(f"No file_path for doc {doc_id}, skipping")
+                    continue
+                    
+                temp_file = minio_service.download_file(file_path)
+                if not temp_file:
+                    logger.warning(f"Failed to download from MinIO: {file_path}")
+                    continue
+                
+                # 3. 重新加载文档
+                filename_for_loader = filename
+                if not os.path.splitext(filename)[1]:
+                    ext = os.path.splitext(file_path)[1]
+                    if ext: filename_for_loader += ext
+                    
+                loaded = document_loader.load(temp_file, filename_for_loader)
+                
+                # 4. 语义父子分块
+                parent_chunks, child_chunks = chunker.semantic_hierarchical_chunk(
+                    content=loaded.content,
+                    metadata=loaded.metadata,
+                    similarity_threshold=0.5,
+                    parent_max_size=kb_chunk_size * 4,
+                    child_max_size=kb_chunk_size,
+                )
+                
+                # 5. 向量化
+                if parent_chunks or child_chunks:
+                    parent_texts = [p.content for p in parent_chunks]
+                    parent_embeddings = embedding_service.embed_texts(parent_texts) if parent_texts else []
+                    
+                    child_texts = [c.content for c in child_chunks]
+                    child_embeddings = embedding_service.embed_texts(child_texts) if child_texts else []
+                    
+                    parent_data = [
+                        (p.index, p.content, emb, p.metadata)
+                        for p, emb in zip(parent_chunks, parent_embeddings)
+                    ]
+                    
+                    child_data = [
+                        (c.index, c.content, emb, c.metadata, c.parent_index)
+                        for c, emb in zip(child_chunks, child_embeddings)
+                    ]
+                    
+                    # 6. 存储新向量
+                    vector_store.store_hierarchical_vectors(doc_id, parent_data, child_data)
+                    
+                    # 7. 更新文档状态
+                    total_chunks = len(parent_chunks) + len(child_chunks)
+                    with get_mysql_session() as update_db:
+                        d = update_db.query(Document).filter(Document.id == doc_id).first()
+                        if d:
+                            d.chunk_count = total_chunks
+                            d.status = "completed"
+                            update_db.commit()
+                    
+                    logger.info(f"Rebuilt doc {doc_id}: {len(parent_chunks)} parents + {len(child_chunks)} children")
+                    
+            except Exception as e:
+                logger.error(f"Error rebuilding doc {doc_id} ({filename}): {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+            finally:
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
+        
+        logger.info(f"Rebuild vectors completed for KB {kb_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in rebuild vectors task: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 @router.post("/graph/retrieve", response_model=RetrieveResponse)
 async def graph_retrieve(data: RetrieveRequest):
@@ -601,3 +1008,49 @@ async def graph_retrieve(data: RetrieveRequest):
         total=len(formatted_results)
     )
 
+
+# ==================== Evaluation API ====================
+
+class EvaluationRequest(BaseModel):
+    question: str
+    answer: str
+    contexts: Optional[List[str]] = []
+
+class EvaluationResponse(BaseModel):
+    faithfulness: Optional[float] = None
+    reasoning_faithfulness: Optional[str] = None
+    answer_relevance: Optional[float] = None
+    reasoning_relevance: Optional[str] = None
+
+@router.post("/evaluate", response_model=EvaluationResponse)
+async def evaluate_rag(data: EvaluationRequest):
+    """
+    RAG 效果评估 (LLM-as-a-Judge)
+    
+    同时评估:
+    1. Faithfulness (需要 contexts)
+    2. Answer Relevance
+    """
+    from ..services.evaluator import rag_evaluator
+    
+    response = EvaluationResponse()
+    
+    # 1. 评估信实度 (如果提供了上下文)
+    if data.contexts:
+        faith_result = await rag_evaluator.evaluate_faithfulness(
+            question=data.question,
+            answer=data.answer,
+            contexts=data.contexts
+        )
+        response.faithfulness = faith_result.score
+        response.reasoning_faithfulness = faith_result.reasoning
+        
+    # 2. 评估相关性
+    rel_result = await rag_evaluator.evaluate_answer_relevance(
+        question=data.question,
+        answer=data.answer
+    )
+    response.answer_relevance = rel_result.score
+    response.reasoning_relevance = rel_result.reasoning
+    
+    return response

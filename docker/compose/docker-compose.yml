@@ -315,6 +315,7 @@ services:
       - AGENT_OPENAI_MODEL=qwen3:8b
       - AGENT_LLM_PROVIDER=ollama
       - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - HF_ENDPOINT=https://hf-mirror.com
       - AGENT_LOG_LEVEL=INFO
       # SQL Agent：允许更长时间生成复杂多表查询 SQL，单位秒
       - AGENT_DB_SQL_TIMEOUT_SEC=120
@@ -454,6 +455,7 @@ services:
       - RAG_PGVECTOR_HOST=pgvector
       - RAG_MINIO_ENDPOINT=minio:9000
       - RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - HF_ENDPOINT=https://hf-mirror.com
     depends_on:
       mysql:
         condition: service_healthy
@@ -465,6 +467,7 @@ services:
       - "18200:8200"
     volumes:
       - ../../logs:/logs:rw
+      - rag-model-cache:/root/.cache/huggingface
 
   rag-ui:
     build:
@@ -472,6 +475,8 @@ services:
       dockerfile: docker/rag-ui/Dockerfile
     image: cv/rag-ui:latest
     container_name: rag-ui
+    environment:
+      - VITE_API_URL=/api
     depends_on:
       - rag-service
     ports:
@@ -488,3 +493,4 @@ volumes:
   pgvector-data:
   agent-checkpoints:
   neo4j-data:
+  rag-model-cache:

@@ -8,7 +8,7 @@ import mdTexmath from 'markdown-it-texmath'
 import Katex from 'katex'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
-import { chatApi, knowledgeBaseApi } from '../api'
+import { knowledgeBaseApi } from '../api'
 
 const md = new MarkdownIt({
   html: false,
@@ -67,6 +67,15 @@ const selectedKb = ref<number | undefined>(undefined)
 const knowledgeBases = ref<KnowledgeBase[]>([])
 const chatContainer = ref<HTMLElement | null>(null)
 
+// 会话ID - 用于对话历史
+const sessionId = ref<string>(localStorage.getItem('chat_session_id') || generateSessionId())
+
+function generateSessionId(): string {
+  const id = `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+  localStorage.setItem('chat_session_id', id)
+  return id
+}
+
 // 加载知识库列表
 onMounted(async () => {
   try {
@@ -110,27 +119,85 @@ const handleSend = async () => {
     id: aiMsgId,
     role: 'assistant',
     content: '',
+    sources: [],
     loading: true
   })
 
   loading.value = true
 
   try {
-    // 使用融合RAG（后端自动融合向量+图谱检索）
-    const res = await chatApi.send(userQuery, selectedKb.value)
-    
-    // 更新AI消息
-    const aiMsgIndex = messages.value.findIndex(m => m.id === aiMsgId)
-    if (aiMsgIndex !== -1) {
-      messages.value[aiMsgIndex] = {
-        id: aiMsgId,
-        role: 'assistant',
-        content: res.data.answer,
-        sources: res.data.sources,
-        loading: false
+    // 使用流式API
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:18200/api'
+    const response = await fetch(`${apiUrl}/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: userQuery,
+        knowledge_base_id: selectedKb.value,
+        top_k: 5,
+        session_id: sessionId.value,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('No reader available')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let firstToken = true  // 标记是否是第一个token
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      
+      // 处理SSE格式的数据
+      const lines = buffer.split('\n\n')
+      buffer = lines.pop() || '' // 保留不完整的部分
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6))
+            
+            if (data.type === 'sources') {
+              // 更新来源信息
+              const idx = messages.value.findIndex(m => m.id === aiMsgId)
+              if (idx !== -1) {
+                messages.value[idx]!.sources = data.sources
+              }
+            } else if (data.type === 'token') {
+              // 追加token到内容
+              const idx = messages.value.findIndex(m => m.id === aiMsgId)
+              if (idx !== -1) {
+                // 第一个token到达时取消loading动画
+                if (firstToken) {
+                  messages.value[idx]!.loading = false
+                  firstToken = false
+                }
+                messages.value[idx]!.content += data.content
+              }
+              scrollToBottom()
+            } else if (data.type === 'error') {
+              ElMessage.error(data.message)
+            }
+          } catch (e) {
+            console.error('Failed to parse SSE data:', e)
+          }
+        }
       }
     }
   } catch (err: any) {
+    console.error('Streaming error:', err)
     const aiMsgIndex = messages.value.findIndex(m => m.id === aiMsgId)
     if (aiMsgIndex !== -1) {
       messages.value[aiMsgIndex] = {

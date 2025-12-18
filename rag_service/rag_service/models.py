@@ -55,6 +55,7 @@ class Document(Base):
     chunk_count = Column(Integer, default=0, comment="分块数量")
     status = Column(String(50), default="pending", comment="处理状态: pending/processing/completed/failed")
     error_message = Column(Text, nullable=True, comment="错误信息")
+    graph_built = Column(Boolean, default=False, comment="是否已构建图谱")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
     
@@ -73,6 +74,7 @@ class Document(Base):
             "chunk_count": self.chunk_count,
             "status": self.status,
             "error_message": self.error_message,
+            "graph_built": self.graph_built,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

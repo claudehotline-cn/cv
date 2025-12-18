@@ -35,6 +35,16 @@ const urlDialogVisible = ref(false)
 const urlInput = ref('')
 const fileList = ref<any[]>([])
 
+// 统计信息
+interface KbStats {
+  knowledge_base: any
+  documents: { total: number; completed: number; processing: number; failed: number }
+  vectors: { total: number; parents: number; children: number; parent_child_ratio: string; avg_chunk_size: number }
+  chunk_distribution: Record<string, number>
+}
+const stats = ref<KbStats | null>(null)
+const showStats = ref(false)
+
 const loadData = async () => {
   loading.value = true
   try {
@@ -48,6 +58,16 @@ const loadData = async () => {
     ElMessage.error('加载数据失败')
   } finally {
     loading.value = false
+  }
+}
+
+const loadStats = async () => {
+  try {
+    const res = await knowledgeBaseApi.getStats(kbId.value)
+    stats.value = res.data
+    showStats.value = true
+  } catch (err) {
+    ElMessage.error('加载统计信息失败')
   }
 }
 
@@ -173,6 +193,10 @@ onMounted(loadData)
         <p class="page-desc">{{ kb?.description || '暂无描述' }}</p>
       </div>
       <div class="header-actions">
+        <el-button @click="loadStats">
+          <el-icon><Grid /></el-icon>
+          统计信息
+        </el-button>
         <el-button type="success" @click="handleBuildGraph">
           <el-icon><Connection /></el-icon>
           构建图谱
@@ -187,6 +211,50 @@ onMounted(loadData)
         </el-button>
       </div>
     </div>
+
+    <!-- 统计信息面板 -->
+    <el-dialog v-model="showStats" title="知识库统计" width="600px">
+      <div v-if="stats" class="stats-panel">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">文档总数</div>
+            <div class="stat-value">{{ stats.documents.total }}</div>
+            <div class="stat-detail">
+              <span class="stat-success">完成: {{ stats.documents.completed }}</span>
+              <span class="stat-warning">处理中: {{ stats.documents.processing }}</span>
+              <span class="stat-danger">失败: {{ stats.documents.failed }}</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">向量总数</div>
+            <div class="stat-value">{{ stats.vectors.total }}</div>
+            <div class="stat-detail">
+              父块: {{ stats.vectors.parents }} | 子块: {{ stats.vectors.children }}
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">父子比例</div>
+            <div class="stat-value">{{ stats.vectors.parent_child_ratio }}</div>
+            <div class="stat-detail">每个父块平均包含的子块数</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">平均块大小</div>
+            <div class="stat-value">{{ stats.vectors.avg_chunk_size }}</div>
+            <div class="stat-detail">字符</div>
+          </div>
+        </div>
+        <div class="chunk-distribution">
+          <h4>分块数量分布</h4>
+          <div class="distribution-bars">
+            <div v-for="(count, bucket) in stats.chunk_distribution" :key="bucket" class="dist-item">
+              <span class="dist-label">{{ bucket }}</span>
+              <div class="dist-bar" :style="{ width: (count / stats.documents.total * 100) + '%' }"></div>
+              <span class="dist-count">{{ count }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
 
     <!-- 文档列表 -->
     <div class="doc-section">
@@ -514,6 +582,84 @@ onMounted(loadData)
 .chunk-content::-webkit-scrollbar-thumb:hover,
 :deep(.el-drawer__body)::-webkit-scrollbar-thumb:hover {
   background: #585b70;
+}
+
+/* Stats Panel Styles */
+.stats-panel {
+  padding: 16px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #313244;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+
+.stat-label {
+  color: #a6adc8;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  color: #89b4fa;
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.stat-detail {
+  color: #6c7086;
+  font-size: 12px;
+}
+
+.stat-success { color: #a6e3a1; margin-right: 8px; }
+.stat-warning { color: #f9e2af; margin-right: 8px; }
+.stat-danger { color: #f38ba8; }
+
+.chunk-distribution h4 {
+  color: #cdd6f4;
+  margin-bottom: 12px;
+}
+
+.distribution-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dist-label {
+  width: 60px;
+  color: #a6adc8;
+  font-size: 12px;
+}
+
+.dist-bar {
+  height: 20px;
+  background: linear-gradient(90deg, #89b4fa, #cba6f7);
+  border-radius: 4px;
+  min-width: 4px;
+  max-width: calc(100% - 100px);
+}
+
+.dist-count {
+  color: #cdd6f4;
+  font-size: 12px;
+  min-width: 30px;
 }
 
 </style>

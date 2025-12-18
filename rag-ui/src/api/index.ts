@@ -17,6 +17,8 @@ export const knowledgeBaseApi = {
     delete: (id: number) => api.delete(`/knowledge-bases/${id}`),
     getDocuments: (id: number) => api.get(`/knowledge-bases/${id}/documents`),
     buildGraph: (id: number) => api.post(`/knowledge-bases/${id}/build-graph`),
+    rebuildVectors: (id: number) => api.post(`/knowledge-bases/${id}/rebuild-vectors`),
+    getStats: (id: number) => api.get(`/knowledge-bases/${id}/stats`),
 }
 
 // 文档API

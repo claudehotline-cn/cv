@@ -3,8 +3,39 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { knowledgeBaseApi } from '../api'
+import { FolderOpened, Plus, Collection, MoreFilled, Delete, Document, Edit, Refresh } from '@element-plus/icons-vue'
+
+const handleRebuild = async (kb: KnowledgeBase) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要重建知识库 "${kb.name}" 的向量索引吗？\n这将删除现有向量并使用最新的【父子索引】策略重新生成。`,
+      '确认重建',
+      {
+        confirmButtonText: '开始重建',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    await knowledgeBaseApi.rebuildVectors(kb.id)
+    ElMessage.success('重建任务已在后台启动')
+  } catch (err) {
+    if (err !== 'cancel') {
+      ElMessage.error('启动重建任务失败')
+    }
+  }
+}
 
 const router = useRouter()
+
+interface KnowledgeBase {
+  id: number
+  name: string
+  description: string
+  document_count: number
+  created_at: string
+  is_active: boolean
+}
 
 interface KnowledgeBase {
   id: number
@@ -22,6 +53,40 @@ const form = ref({
   name: '',
   description: ''
 })
+
+// Edit State
+const editDialogVisible = ref(false)
+const currentKbId = ref<number | null>(null)
+const editForm = ref({
+  name: '',
+  description: ''
+})
+
+const handleOpenEdit = (kb: KnowledgeBase) => {
+  currentKbId.value = kb.id
+  editForm.value = {
+    name: kb.name,
+    description: kb.description
+  }
+  editDialogVisible.value = true
+}
+
+const handleUpdate = async () => {
+  if (!editForm.value.name.trim()) {
+    ElMessage.warning('请输入知识库名称')
+    return
+  }
+  if (!currentKbId.value) return
+  
+  try {
+    await knowledgeBaseApi.update(currentKbId.value, editForm.value)
+    ElMessage.success('更新成功')
+    editDialogVisible.value = false
+    loadData()
+  } catch (err: any) {
+    ElMessage.error(err.response?.data?.detail || '更新失败')
+  }
+}
 
 const loadData = async () => {
   loading.value = true
@@ -95,19 +160,29 @@ onMounted(loadData)
           <div class="kb-card-icon">
             <el-icon size="32"><Collection /></el-icon>
           </div>
-          <el-dropdown @click.stop trigger="click">
-            <el-button text circle>
-              <el-icon><MoreFilled /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="handleDelete(kb)">
-                  <el-icon><Delete /></el-icon>
-                  删除
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          <div @click.stop>
+            <el-dropdown trigger="click">
+              <el-button text circle>
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="handleOpenEdit(kb)">
+                    <el-icon><Edit /></el-icon>
+                    编辑
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="handleRebuild(kb)">
+                    <el-icon><Refresh /></el-icon>
+                    重建索引
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="handleDelete(kb)">
+                    <el-icon><Delete /></el-icon>
+                    删除
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
         </div>
         <h3 class="kb-card-title">{{ kb.name }}</h3>
         <p class="kb-card-desc">{{ kb.description || '暂无描述' }}</p>
@@ -124,6 +199,22 @@ onMounted(loadData)
         <el-button type="primary" @click="dialogVisible = true">立即创建</el-button>
       </el-empty>
     </div>
+
+    <!-- 编辑对话框 -->
+    <el-dialog v-model="editDialogVisible" title="编辑知识库" width="480px">
+      <el-form :model="editForm" label-width="80px">
+        <el-form-item label="名称" required>
+          <el-input v-model="editForm.name" placeholder="请输入知识库名称" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="请输入描述（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleUpdate">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 创建对话框 -->
     <el-dialog v-model="dialogVisible" title="创建知识库" width="480px">

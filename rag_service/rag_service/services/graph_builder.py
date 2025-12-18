@@ -126,12 +126,21 @@ JSON:"""
         if not graph_data:
             return
 
-        # 使用 Cypher 批量插入
-        # 1. Merge Nodes
-        # 2. Merge Relationships
-        
+        # 必需字段
+        required_fields = ["head", "head_type", "tail", "tail_type", "relation"]
+
         for item in graph_data:
             try:
+                # 验证必需字段
+                if not isinstance(item, dict):
+                    logger.warning(f"Skipping non-dict item: {item}")
+                    continue
+                
+                missing_fields = [f for f in required_fields if f not in item or not item[f]]
+                if missing_fields:
+                    logger.warning(f"Skipping triple with missing fields {missing_fields}: {item}")
+                    continue
+                
                 cypher = """
                 MERGE (h:Entity {id: $head})
                 ON CREATE SET h.type = $head_type
@@ -144,11 +153,11 @@ JSON:"""
                 """
                 
                 params = {
-                    "head": item["head"],
-                    "head_type": item["head_type"],
-                    "tail": item["tail"],
-                    "tail_type": item["tail_type"],
-                    "relation": item["relation"].upper().replace(" ", "_"),
+                    "head": str(item["head"]).strip(),
+                    "head_type": str(item.get("head_type", "Unknown")).strip(),
+                    "tail": str(item["tail"]).strip(),
+                    "tail_type": str(item.get("tail_type", "Unknown")).strip(),
+                    "relation": str(item["relation"]).upper().replace(" ", "_").strip(),
                     "source": metadata.get("source", "unknown")
                 }
                 
@@ -156,6 +165,6 @@ JSON:"""
                     session.run(cypher, params)
                 
             except Exception as e:
-                logger.error(f"Error saving triple to Neo4j: {e}")
+                logger.error(f"Error saving triple to Neo4j: {e}, item: {item}")
 
 graph_builder = GraphBuilder()

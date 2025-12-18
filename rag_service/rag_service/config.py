@@ -57,6 +57,10 @@ class Settings(BaseSettings):
         default="nomic-embed-text:latest",
         description="Embedding模型名称"
     )
+    reranker_model: str = Field(
+        default="BAAI/bge-reranker-base",
+        description="重排序模型名称 (推荐使用支持多语言的模型)"
+    )
     vector_dimension: int = Field(
         default=768,
         description="向量维度"

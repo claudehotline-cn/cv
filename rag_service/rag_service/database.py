@@ -57,6 +57,8 @@ def init_pgvector_db():
         conn.commit()
         
         # 创建向量存储表
+        # 注意: content_ts 用于全文检索 (由应用层分词后写入)
+        # parent_id 和 is_parent 用于父子索引策略
         conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS rag_vectors (
                 id SERIAL PRIMARY KEY,
@@ -65,11 +67,30 @@ def init_pgvector_db():
                 content TEXT NOT NULL,
                 embedding vector({settings.vector_dimension}) NOT NULL,
                 metadata JSONB DEFAULT '{{}}',
+                content_ts TSVECTOR,
+                parent_id INTEGER,
+                is_parent BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
         conn.commit()
         
+        # 添加缺失的列 (用于现有表的迁移)
+        migration_cols = [
+            ("content_ts", "TSVECTOR"),
+            ("parent_id", "INTEGER"),
+            ("is_parent", "BOOLEAN DEFAULT FALSE"),
+        ]
+        for col_name, col_type in migration_cols:
+            try:
+                conn.execute(text(f"""
+                    ALTER TABLE rag_vectors 
+                    ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                """))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Could not add column {col_name}: {e}")
+
         # 创建索引
         conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_rag_vectors_document_id 
@@ -80,7 +101,24 @@ def init_pgvector_db():
             ON rag_vectors USING ivfflat (embedding vector_cosine_ops)
             WITH (lists = 100)
         """))
-        conn.commit()
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_rag_vectors_content_ts 
+                ON rag_vectors USING GIN (content_ts)
+            """))
+            conn.commit()
+        except:
+            pass # 索引可能已存在
+        
+        # 父子索引: 为 parent_id 创建索引
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_rag_vectors_parent_id 
+                ON rag_vectors(parent_id)
+            """))
+            conn.commit()
+        except:
+            pass
         
     logger.info("pgvector tables initialized")
 
