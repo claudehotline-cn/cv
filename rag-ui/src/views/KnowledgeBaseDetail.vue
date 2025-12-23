@@ -169,10 +169,58 @@ const handleViewChunks = async (doc: Document) => {
     currentDocChunks.value = res.data.chunks
   } catch (err: any) {
     ElMessage.error(err.response?.data?.detail || '获取分块失败')
-  } finally {
     chunksLoading.value = false
   }
 }
+
+// ----------------- 查看图片逻辑 -----------------
+interface DocImage {
+  id: number
+  image_index: number
+  image_path: string
+  description?: string
+  width?: number
+  height?: number
+  page_number?: number
+}
+
+const imagesDrawerVisible = ref(false)
+const currentDocImages = ref<DocImage[]>([])
+const imagesLoading = ref(false)
+const previewImageIndex = ref(0)
+const previewVisible = ref(false)
+
+const handleViewImages = async (doc: Document) => {
+  if (doc.file_type !== 'pdf' && doc.file_type !== 'word') {
+    ElMessage.warning('目前仅支持 PDF 和 Word 文档的图片查看')
+    return
+  }
+
+  currentDocName.value = doc.filename
+  imagesDrawerVisible.value = true
+  imagesLoading.value = true
+  currentDocImages.value = []
+  
+  try {
+    const res = await documentApi.getImages(doc.id)
+    currentDocImages.value = res.data.items.map((img: any) => ({
+      ...img,
+      image_path: img.image_path ? `${import.meta.env.VITE_API_URL || 'http://localhost:18200/api'}/minio/${img.image_path}` : ''
+    }))
+  } catch (err: any) {
+    ElMessage.error(err.response?.data?.detail || '获取图片失败')
+  } finally {
+    imagesLoading.value = false
+  }
+}
+
+const handlePreviewImage = (index: number) => {
+  previewImageIndex.value = index
+  previewVisible.value = true
+}
+
+const previewList = computed(() => currentDocImages.value.map(img => img.image_path))
+
 
 onMounted(loadData)
 </script>
@@ -293,6 +341,15 @@ onMounted(loadData)
             <el-button text type="primary" size="small" @click="handleViewChunks(row)">
               查看
             </el-button>
+            <el-button 
+              v-if="row.file_type === 'pdf' || row.file_type === 'word'"
+              text 
+              type="warning" 
+              size="small" 
+              @click="handleViewImages(row)"
+            >
+              图片
+            </el-button>
             <el-button text type="danger" size="small" @click="handleDeleteDoc(row)">
               删除
             </el-button>
@@ -368,6 +425,52 @@ onMounted(loadData)
         <el-empty v-else-if="!chunksLoading" description="该文档没有分块数据" />
       </div>
     </el-drawer>
+
+    <!-- 图片查看抽屉 -->
+    <el-drawer
+      v-model="imagesDrawerVisible"
+      :title="`图片列表 - ${currentDocName}`"
+      size="60%"
+      direction="rtl"
+      class="images-drawer"
+    >
+      <div v-loading="imagesLoading" class="images-container">
+        <div v-if="currentDocImages.length > 0" class="image-grid">
+          <div 
+            v-for="(img, index) in currentDocImages" 
+            :key="img.id" 
+            class="image-item"
+            @click="handlePreviewImage(index)"
+          >
+            <el-image 
+              :src="img.image_path" 
+              fit="cover" 
+              loading="lazy"
+              class="doc-image"
+            >
+              <template #placeholder>
+                <div class="image-placeholder">
+                  <el-icon class="is-loading"><Loading /></el-icon>
+                </div>
+              </template>
+            </el-image>
+            <div class="image-info">
+              <span class="image-index">#{{ img.image_index + 1 }}</span>
+              <span v-if="img.page_number" class="image-page">P{{ img.page_number + 1 }}</span>
+            </div>
+          </div>
+        </div>
+        <el-empty v-else-if="!imagesLoading" description="该文档没有提取到图片" />
+      </div>
+    </el-drawer>
+
+    <!-- 图片大图预览 -->
+    <el-image-viewer
+      v-if="previewVisible"
+      :url-list="previewList"
+      :initial-index="previewImageIndex"
+      @close="previewVisible = false"
+    />
 
   </div>
 </template>
@@ -660,6 +763,74 @@ onMounted(loadData)
   color: #cdd6f4;
   font-size: 12px;
   min-width: 30px;
+}
+
+
+
+/* Image Grid Styles */
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  padding: 16px;
+}
+
+.image-item {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #313244;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.image-item:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+  border-color: #89b4fa;
+}
+
+.doc-image {
+  width: 100%;
+  height: 200px;
+  display: block;
+}
+
+.image-info {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  backdrop-filter: blur(4px);
+}
+
+.image-index {
+  color: #fff;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.image-page {
+  color: #bac2de;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.image-placeholder {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  background: #1e1e2e;
+  color: #6c7086;
 }
 
 </style>

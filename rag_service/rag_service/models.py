@@ -78,3 +78,88 @@ class Document(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+# ========== 多媒体模型 ==========
+
+class DocumentImage(Base):
+    """文档图片模型"""
+    __tablename__ = "rag_document_images"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("rag_documents.id"), nullable=False, index=True)
+    image_index = Column(Integer, default=0, comment="图片在文档中的索引")
+    image_path = Column(String(1000), nullable=True, comment="MinIO存储路径")
+    description = Column(Text, nullable=True, comment="VLM生成的图片描述")
+    width = Column(Integer, default=0, comment="图片宽度")
+    height = Column(Integer, default=0, comment="图片高度")
+    page_number = Column(Integer, nullable=True, comment="所在页码(PDF)")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "document_id": self.document_id,
+            "image_index": self.image_index,
+            "image_path": self.image_path,
+            "description": self.description,
+            "width": self.width,
+            "height": self.height,
+            "page_number": self.page_number,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class DocumentAudio(Base):
+    """文档音频模型"""
+    __tablename__ = "rag_document_audios"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("rag_documents.id"), nullable=False, index=True)
+    audio_path = Column(String(1000), nullable=True, comment="MinIO存储路径")
+    transcript = Column(Text, nullable=True, comment="音频转写文本")
+    language = Column(String(20), nullable=True, comment="检测到的语言")
+    duration = Column(Integer, default=0, comment="音频时长(秒)")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "document_id": self.document_id,
+            "audio_path": self.audio_path,
+            "transcript": self.transcript,
+            "language": self.language,
+            "duration": self.duration,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class DocumentVideo(Base):
+    """文档视频模型"""
+    __tablename__ = "rag_document_videos"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("rag_documents.id"), nullable=False, index=True)
+    video_path = Column(String(1000), nullable=True, comment="MinIO存储路径")
+    summary = Column(Text, nullable=True, comment="视频内容摘要")
+    transcript = Column(Text, nullable=True, comment="视频音频转写")
+    duration = Column(Integer, default=0, comment="视频时长(秒)")
+    width = Column(Integer, default=0, comment="视频宽度")
+    height = Column(Integer, default=0, comment="视频高度")
+    frame_count = Column(Integer, default=0, comment="分析的帧数")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "document_id": self.document_id,
+            "video_path": self.video_path,
+            "summary": self.summary,
+            "transcript": self.transcript,
+            "duration": self.duration,
+            "width": self.width,
+            "height": self.height,
+            "frame_count": self.frame_count,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+

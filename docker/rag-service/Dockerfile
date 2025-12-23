@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     antiword \
     catdoc \
+    # 多模态处理依赖
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件

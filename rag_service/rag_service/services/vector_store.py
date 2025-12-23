@@ -314,7 +314,95 @@ class VectorStore:
         logger.info(f"Deleted {deleted} vectors for document {document_id}")
         return deleted
 
+    def store_image_vectors(
+        self, 
+        document_id: int, 
+        images: List[Tuple[int, str, List[float], str, dict]]
+    ) -> int:
+        """
+        存储图像向量
+        
+        Args:
+            document_id: 文档ID
+            images: [(image_index, image_path, embedding, description, metadata), ...]
+        """
+        if not images:
+            return 0
+            
+        with get_pgvector_session() as session:
+            for image_index, image_path, embedding, description, metadata in images:
+                emb_literal = "[" + ",".join(f"{x:.6f}" for x in embedding) + "]"
+                meta_json = json.dumps(metadata, ensure_ascii=False)
+                
+                # 转义
+                desc_escaped = description.replace("'", "''").replace(":", r"\:")
+                meta_escaped = meta_json.replace("'", "''").replace(":", r"\:")
+                
+                sql = f"""
+                    INSERT INTO rag_document_images (document_id, image_index, image_path, description, embedding, metadata)
+                    VALUES (
+                        {document_id}, 
+                        {image_index}, 
+                        '{image_path}', 
+                        '{desc_escaped}', 
+                        '{emb_literal}'::vector,
+                        '{meta_escaped}'::jsonb
+                    )
+                """
+                session.execute(text(sql))
+            
+            session.commit()
+        
+        logger.info(f"Stored {len(images)} image vectors for document {document_id}")
+        return len(images)
 
+    def search_images(
+        self,
+        query_embedding: List[float],
+        knowledge_base_id: Optional[int] = None,
+        top_k: int = 5,
+    ) -> List[dict]:
+        """图像向量检索"""
+        emb_literal = "[" + ",".join(f"{x:.6f}" for x in query_embedding) + "]"
+        
+        doc_filter_sql = ""
+        if knowledge_base_id is not None:
+            doc_ids = self._get_kb_doc_ids(knowledge_base_id)
+            if not doc_ids:
+                return []
+            doc_ids_str = ",".join(str(d) for d in doc_ids)
+            doc_filter_sql = f"AND document_id IN ({doc_ids_str})"
+            
+        with get_pgvector_session() as session:
+            sql = f"""
+                SELECT 
+                    id,
+                    document_id,
+                    image_index,
+                    image_path,
+                    description,
+                    metadata,
+                    1 - (embedding <=> '{emb_literal}'::vector) as score
+                FROM rag_document_images
+                WHERE 1=1
+                {doc_filter_sql}
+                ORDER BY embedding <=> '{emb_literal}'::vector
+                LIMIT {top_k}
+            """
+            
+            result = session.execute(text(sql))
+            return [
+                {
+                    "id": row.id,
+                    "document_id": row.document_id,
+                    "image_index": row.image_index,
+                    "image_path": row.image_path,
+                    "description": row.description,
+                    "metadata": row.metadata if isinstance(row.metadata, dict) else json.loads(row.metadata or "{}"),
+                    "score": float(row.score),
+                }
+                for row in result
+            ]
 # 单例
 vector_store = VectorStore()
 

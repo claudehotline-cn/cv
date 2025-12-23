@@ -44,3 +44,12 @@ minio>=7.2.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
+
+# Multimodal Processing
+Pillow>=10.0.0              # 图像处理
+aiofiles>=23.0.0            # 异步文件操作
+faster-whisper>=1.0.0       # 语音转写 (Whisper)
+ffmpeg-python>=0.2.0        # 音视频处理
+opencv-python>=4.8.0        # 视频帧提取
+pymupdf>=1.23.0             # PDF图片提取
+

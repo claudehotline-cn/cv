@@ -130,6 +130,47 @@ class MinIOService:
         except Exception as e:
             logger.error(f"Delete error: {e}")
             return False
+    
+    def get_presigned_url(self, object_name: str, expires_hours: int = 24) -> Optional[str]:
+        """
+        生成预签名 URL (用于临时访问)
+        
+        Args:
+            object_name: 对象名称
+            expires_hours: 过期时间（小时）
+            
+        Returns:
+            预签名 URL
+        """
+        if not self.client:
+            self._init_client()
+            if not self.client:
+                return None
+        
+        try:
+            from datetime import timedelta
+            url = self.client.presigned_get_object(
+                self.bucket,
+                object_name,
+                expires=timedelta(hours=expires_hours)
+            )
+            return url
+        except Exception as e:
+            logger.error(f"Failed to generate presigned URL: {e}")
+            return None
+    
+    def get_public_url(self, object_name: str) -> str:
+        """
+        生成公开访问 URL (需要 bucket 配置为 public)
+        
+        Args:
+            object_name: 对象名称
+            
+        Returns:
+            公开 URL
+        """
+        protocol = "https" if settings.minio_secure else "http"
+        return f"{protocol}://{settings.minio_endpoint}/{self.bucket}/{object_name}"
 
 
 # 单例

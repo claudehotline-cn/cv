@@ -11,6 +11,8 @@ from docx import Document as DocxDocument
 import pandas as pd
 import markdown
 
+from .image_encoder import image_encoder
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,6 +21,7 @@ class LoadedDocument:
     """加载后的文档"""
     content: str
     metadata: dict
+    images: List[dict] = None  # [{"data": bytes, "page": int, "name": str}, ...]
     
 
 class DocumentLoader:
@@ -85,9 +88,14 @@ class DocumentLoader:
             raise
         
         content = "\n\n".join(text_parts)
+        
+        # 提取图片
+        images = image_encoder.extract_from_pdf(file_path) if settings.vlm_model else []
+        
         return LoadedDocument(
             content=content,
-            metadata={"source": filename, "type": "pdf", "pages": len(text_parts)}
+            metadata={"source": filename, "type": "pdf", "pages": len(text_parts)},
+            images=[{"data": img[0], "page": img[1], "name": f"page_{img[1]}_img"} for img in images]
         )
     
     def _load_word(self, file_path: str, filename: str) -> LoadedDocument:
@@ -130,10 +138,13 @@ class DocumentLoader:
             logger.error(f"Error loading Word {filename}: {e}")
             raise
         
-        content = "\n\n".join(paragraphs)
+        # 提取图片
+        images = image_encoder.extract_from_docx(file_path) if settings.vlm_model else []
+        
         return LoadedDocument(
             content=content,
-            metadata={"source": filename, "type": "word"}
+            metadata={"source": filename, "type": "word"},
+            images=[{"data": img[0], "page": img[1], "name": f"word_img_{i}"} for i, img in enumerate(images)]
         )
     
     def _load_legacy_doc(self, file_path: str, filename: str) -> LoadedDocument:

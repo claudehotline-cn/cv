@@ -69,6 +69,58 @@ class Settings(BaseSettings):
         default="qwen3:30b",
         description="LLM模型用于问答"
     )
+    enable_context_compression: bool = Field(
+        default=False,
+        description="是否启用上下文压缩 (消耗额外LLM调用)"
+    )
+    
+    # ========== 多模态配置 ==========
+    
+    # VLM 视觉语言模型配置
+    vlm_model: str = Field(
+        default="qwen3-vl:30b",
+        description="视觉语言模型 (支持图像/视频理解)"
+    )
+    image_vector_dimension: int = Field(
+        default=4096,
+        description="图像向量维度"
+    )
+    max_image_size: int = Field(
+        default=20 * 1024 * 1024,
+        description="最大图片大小(20MB)"
+    )
+    supported_image_types: str = Field(
+        default=".jpg,.jpeg,.png,.webp,.gif,.bmp",
+        description="支持的图片格式"
+    )
+    
+    # 语音配置 (Whisper)
+    whisper_model: str = Field(
+        default="large-v3",
+        description="Whisper 模型 (tiny/base/small/medium/large-v3)"
+    )
+    whisper_device: str = Field(
+        default="cuda",
+        description="Whisper 运行设备 (cuda/cpu)"
+    )
+    supported_audio_types: str = Field(
+        default=".mp3,.wav,.m4a,.flac,.ogg,.webm",
+        description="支持的音频格式"
+    )
+    
+    # 视频配置
+    video_sample_interval: float = Field(
+        default=1.0,
+        description="视频抽帧间隔(秒) - 仅在VLM不支持原生视频时使用"
+    )
+    video_max_frames: int = Field(
+        default=300,
+        description="最大分析帧数"
+    )
+    supported_video_types: str = Field(
+        default=".mp4,.webm,.avi,.mov,.mkv",
+        description="支持的视频格式"
+    )
     
     # 文档处理配置
     chunk_size: int = Field(default=500, description="分块大小(字符)")

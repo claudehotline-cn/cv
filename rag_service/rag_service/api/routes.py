@@ -499,12 +499,78 @@ def get_document_chunks(doc_id: int, db: Session = Depends(get_mysql_db)):
                 "char_count": len(row.content),
             })
     
+
     return {
         "document_id": doc_id,
         "filename": doc.filename,
         "total_chunks": len(chunks),
         "chunks": chunks,
     }
+
+
+@router.get("/documents/{doc_id}/images")
+def get_document_images(doc_id: int, db: Session = Depends(get_mysql_db)):
+    """获取文档关联的图片列表"""
+    from ..models import DocumentImage
+    
+    # 检查文档是否存在
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    images = db.query(DocumentImage).filter(
+        DocumentImage.document_id == doc_id
+    ).order_by(DocumentImage.image_index).all()
+    
+    return {
+        "items": [img.to_dict() for img in images]
+    }
+
+
+@router.post("/analyze-chart")
+async def analyze_chart_endpoint(
+    file: UploadFile = File(...)
+):
+    """
+    独立图表分析接口 (Chart QA)
+    直接上传图片，返回 JSON 数据和分析结论
+    """
+    from ..services.vlm_service import vlm_service
+    
+    # 验证图片格式
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    content = await file.read()
+    
+    try:
+        # 调用 VLM 进行图表分析
+        response = await vlm_service.analyze_chart(content)
+        
+        # 尝试解析 JSON 部分 (如果 VLM 返回了 Markdown 代码块)
+        import re
+        import json
+        
+        raw_content = response.content
+        json_data = None
+        
+        # 提取 ```json ... ``` 内容
+        json_match = re.search(r"```json\s*(\{.*?\})\s*```", raw_content, re.DOTALL)
+        if json_match:
+            try:
+                json_str = json_match.group(1)
+                json_data = json.loads(json_str)
+            except:
+                pass
+        
+        return {
+            "raw_response": raw_content,
+            "json_data": json_data
+        }
+    except Exception as e:
+        logger.error(f"Chart analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==================== Chat API ====================
 
@@ -1054,3 +1120,510 @@ async def evaluate_rag(data: EvaluationRequest):
     response.reasoning_relevance = rel_result.reasoning
     
     return response
+
+
+# ==================== Multimodal APIs ====================
+
+class MultiModalQueryRequest(BaseModel):
+    query: str
+    knowledge_base_id: Optional[int] = None
+    top_k: Optional[int] = 5
+
+
+class MultiModalQueryResponse(BaseModel):
+    answer: str
+    sources: List[dict]
+    images: List[dict]
+    has_multimodal_context: bool
+
+
+class ReportRequest(BaseModel):
+    topic: str
+    format: Optional[str] = "markdown"  # markdown | html
+    include_charts: Optional[bool] = True
+    max_sections: Optional[int] = 5
+
+
+class ReportResponse(BaseModel):
+    title: str
+    content: str
+    format: str
+    word_count: int
+    generated_at: str
+
+
+
+@router.post("/upload-image")
+async def upload_image_generic(
+    file: UploadFile = File(...)
+):
+    """
+    通用图片上传接口 (用于对话会话)
+    
+    1. 上传到 MinIO
+    2. VLM 生成描述
+    3. 返回 URL 和描述
+    """
+    from ..services.minio_service import minio_service
+    from ..services.vlm_service import vlm_service
+    import uuid
+    
+    # 验证图片格式
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    content = await file.read()
+    
+    try:
+        # 上传到 MinIO
+        object_name = f"chat/images/{uuid.uuid4().hex}_{file.filename}"
+        minio_path = minio_service.upload_file(content, object_name, file.content_type or "image/jpeg")
+        
+        # 获取访问 URL
+        url = minio_service.get_presigned_url(object_name)
+        
+        # VLM 生成描述
+        response = await vlm_service.analyze_image(content, "简单的描述这张图片")
+        description = response.content
+        
+        return {
+            "filename": file.filename,
+            "url": url,
+            "minio_path": object_name,
+            "description": description
+        }
+    except Exception as e:
+        logger.error(f"Image upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def upload_image(
+    kb_id: int,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_mysql_db),
+):
+    """
+    上传图片到知识库
+    
+    处理流程:
+    1. VLM 生成图片描述
+    2. 向量化描述文本
+    3. 存入向量库
+    """
+    from ..services.image_encoder import image_encoder
+    from ..services.vlm_service import vlm_service
+    from ..services.minio_service import minio_service
+    from ..models import DocumentImage
+    import uuid
+    
+    # 检查知识库
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    
+    # 检查文件类型
+    if not image_encoder.is_supported(file.filename):
+        raise HTTPException(status_code=400, detail=f"Unsupported image type: {file.filename}")
+    
+    # 读取文件内容
+    content = await file.read()
+    if len(content) > settings.max_image_size:
+        raise HTTPException(status_code=400, detail="Image too large")
+    
+    # 上传到 MinIO
+    object_name = f"kb_{kb_id}/images/{uuid.uuid4().hex}_{file.filename}"
+    minio_path = minio_service.upload_file(content, object_name, file.content_type or "image/jpeg")
+    
+    # 创建文档记录（用于关联）
+    doc = Document(
+        knowledge_base_id=kb_id,
+        filename=file.filename,
+        file_type="image",
+        file_size=len(content),
+        file_path=object_name,
+        status="processing",
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    
+    # 后台处理图片
+    async def process_image():
+        try:
+            # 预处理并编码
+            embedding, description = await image_encoder.encode(content)
+            
+            # 存储向量
+            if embedding:
+                vector_store.store_vectors(
+                    document_id=doc.id,
+                    chunks=[(0, description, embedding, {"type": "image", "filename": file.filename})]
+                )
+            
+            # 更新状态
+            with MySQLSessionLocal() as update_db:
+                d = update_db.query(Document).filter(Document.id == doc.id).first()
+                if d:
+                    d.status = "completed"
+                    d.chunk_count = 1
+                    update_db.commit()
+        except Exception as e:
+            logger.error(f"Error processing image: {e}")
+            with MySQLSessionLocal() as update_db:
+                d = update_db.query(Document).filter(Document.id == doc.id).first()
+                if d:
+                    d.status = "failed"
+                    d.error_message = str(e)
+                    update_db.commit()
+    
+    background_tasks.add_task(process_image)
+    
+    return {
+        "document_id": doc.id,
+        "filename": file.filename,
+        "status": "processing",
+        "message": "Image upload started, processing in background"
+    }
+
+
+@router.post("/knowledge-bases/{kb_id}/upload-audio")
+async def upload_audio(
+    kb_id: int,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_mysql_db),
+):
+    """
+    上传音频到知识库
+    
+    处理流程:
+    1. Whisper 语音转写
+    2. 分块并向量化
+    3. 存入向量库
+    """
+    from ..services.speech_service import speech_service
+    from ..services.minio_service import minio_service
+    import uuid
+    
+    # 检查知识库
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    
+    # 检查文件类型
+    if not speech_service.is_supported(file.filename):
+        raise HTTPException(status_code=400, detail=f"Unsupported audio type: {file.filename}")
+    
+    # 读取文件内容
+    content = await file.read()
+    
+    # 上传到 MinIO
+    object_name = f"kb_{kb_id}/audio/{uuid.uuid4().hex}_{file.filename}"
+    minio_path = minio_service.upload_file(content, object_name, file.content_type or "audio/mpeg")
+    
+    # 创建文档记录
+    doc = Document(
+        knowledge_base_id=kb_id,
+        filename=file.filename,
+        file_type="audio",
+        file_size=len(content),
+        file_path=object_name,
+        status="processing",
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    
+    # 后台处理
+    async def process_audio():
+        try:
+            # 转写
+            result = await speech_service.transcribe(content)
+            
+            # 分块并向量化
+            from ..services.chunker import document_chunker
+            chunks = document_chunker.chunk(result.text, {"type": "audio", "language": result.language})
+            
+            if chunks:
+                texts = [c.content for c in chunks]
+                embeddings = embedding_service.embed_texts(texts)
+                
+                chunk_data = [
+                    (i, c.content, emb, {"type": "audio", "language": result.language})
+                    for i, (c, emb) in enumerate(zip(chunks, embeddings))
+                ]
+                vector_store.store_vectors(doc.id, chunk_data)
+            
+            # 更新状态
+            with MySQLSessionLocal() as update_db:
+                d = update_db.query(Document).filter(Document.id == doc.id).first()
+                if d:
+                    d.status = "completed"
+                    d.chunk_count = len(chunks)
+                    update_db.commit()
+        except Exception as e:
+            logger.error(f"Error processing audio: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            with MySQLSessionLocal() as update_db:
+                d = update_db.query(Document).filter(Document.id == doc.id).first()
+                if d:
+                    d.status = "failed"
+                    d.error_message = str(e)
+                    update_db.commit()
+    
+    background_tasks.add_task(process_audio)
+    
+    return {
+        "document_id": doc.id,
+        "filename": file.filename,
+        "status": "processing",
+        "message": "Audio upload started, transcription in progress"
+    }
+
+
+@router.post("/knowledge-bases/{kb_id}/upload-video")
+async def upload_video(
+    kb_id: int,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_mysql_db),
+):
+    """
+    上传视频到知识库
+    
+    处理流程:
+    1. 抽取关键帧 + VLM 分析
+    2. 提取音轨 + Whisper 转写
+    3. 合并分析结果并向量化
+    """
+    from ..services.video_service import video_service
+    from ..services.minio_service import minio_service
+    import uuid
+    
+    # 检查知识库
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    
+    # 检查文件类型
+    if not video_service.is_supported(file.filename):
+        raise HTTPException(status_code=400, detail=f"Unsupported video type: {file.filename}")
+    
+    # 读取文件内容
+    content = await file.read()
+    
+    # 上传到 MinIO
+    object_name = f"kb_{kb_id}/video/{uuid.uuid4().hex}_{file.filename}"
+    minio_path = minio_service.upload_file(content, object_name, file.content_type or "video/mp4")
+    
+    # 创建文档记录
+    doc = Document(
+        knowledge_base_id=kb_id,
+        filename=file.filename,
+        file_type="video",
+        file_size=len(content),
+        file_path=object_name,
+        status="processing",
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    
+    # 后台处理
+    async def process_video():
+        try:
+            # 分析视频
+            result = await video_service.analyze(content, include_transcript=True)
+            
+            # 组合内容
+            full_content = result.summary
+            if result.transcript:
+                full_content += f"\n\n音频内容：\n{result.transcript}"
+            
+            # 分块并向量化
+            from ..services.chunker import document_chunker
+            chunks = document_chunker.chunk(full_content, {"type": "video"})
+            
+            if chunks:
+                texts = [c.content for c in chunks]
+                embeddings = embedding_service.embed_texts(texts)
+                
+                chunk_data = [
+                    (i, c.content, emb, {"type": "video"})
+                    for i, (c, emb) in enumerate(zip(chunks, embeddings))
+                ]
+                vector_store.store_vectors(doc.id, chunk_data)
+            
+            # 更新状态
+            with MySQLSessionLocal() as update_db:
+                d = update_db.query(Document).filter(Document.id == doc.id).first()
+                if d:
+                    d.status = "completed"
+                    d.chunk_count = len(chunks)
+                    update_db.commit()
+        except Exception as e:
+            logger.error(f"Error processing video: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            with MySQLSessionLocal() as update_db:
+                d = update_db.query(Document).filter(Document.id == doc.id).first()
+                if d:
+                    d.status = "failed"
+                    d.error_message = str(e)
+                    update_db.commit()
+    
+    background_tasks.add_task(process_video)
+    
+    return {
+        "document_id": doc.id,
+        "filename": file.filename,
+        "status": "processing",
+        "message": "Video upload started, analysis in progress"
+    }
+
+
+@router.post("/multimodal-query", response_model=MultiModalQueryResponse)
+async def multimodal_query_generic(
+    request: dict
+):
+    """
+    通用多模态问答 (对话模式)
+    
+    接收前端传来的 text_query 和 image_description
+    直接调用 VLM 进行问答
+    """
+    from ..services.vlm_service import vlm_service
+    
+    text_query = request.get("text_query", "")
+    image_desc = request.get("image_description", "")
+    
+    # 构造组合 prompt
+    prompt = f"用户问题: {text_query}\n\n图片内容描述:\n{image_desc}\n\n请结合图片内容回答用户问题。"
+    
+    # 这里简化处理：直接调用 VLM 的文本问答能力 (或 LLM)
+    # 因为图片内容已经转化为文本描述了，所以可以视为纯文本上下文处理
+    # 为了保持一致性，我们这里调用 LLM
+    from langchain_ollama import ChatOllama
+    from langchain_core.messages import HumanMessage, SystemMessage
+    
+    llm = ChatOllama(
+        model=settings.llm_model,
+        base_url=settings.ollama_base_url,
+    )
+    
+    messages = [
+        SystemMessage(content="你是一个多模态助手。请根据提供的图片描述和用户问题进行回答。"),
+        HumanMessage(content=prompt)
+    ]
+    
+    response = llm.invoke(messages)
+    
+    return MultiModalQueryResponse(
+        answer=response.content if hasattr(response, 'content') else str(response),
+        sources=[],
+        images=[],
+        has_multimodal_context=True
+    )
+
+
+@router.post("/knowledge-bases/{kb_id}/multimodal-query", response_model=MultiModalQueryResponse)
+async def multimodal_query(
+    kb_id: int,
+    query: str = Form(...),
+    images: List[UploadFile] = File(default=None),
+):
+    """
+    多模态问答
+    
+    支持:
+    - 纯文本问题
+    - 图文混合问题 (上传参考图片)
+    """
+    from ..services.multimodal_retriever import multimodal_retriever
+    
+    # 读取上传的图片
+    image_data = []
+    if images:
+        for img_file in images:
+            content = await img_file.read()
+            image_data.append(content)
+    
+    # 执行多模态问答
+    response = await multimodal_retriever.answer(
+        query=query,
+        images=image_data if image_data else None,
+        knowledge_base_id=kb_id,
+    )
+    
+    return MultiModalQueryResponse(
+        answer=response.answer,
+        sources=response.sources,
+        images=response.images,
+        has_multimodal_context=response.has_multimodal_context
+    )
+
+
+@router.post("/knowledge-bases/{kb_id}/generate-report", response_model=ReportResponse)
+async def generate_report(
+    kb_id: int,
+    data: ReportRequest,
+):
+    """
+    基于知识库生成报告
+    
+    自动:
+    1. 拆分主题为多个子查询
+    2. 多轮检索收集素材
+    3. 生成结构化报告
+    """
+    from ..services.report_generator import report_generator
+    
+    report = await report_generator.generate(
+        topic=data.topic,
+        knowledge_base_id=kb_id,
+        format=data.format,
+        include_charts=data.include_charts,
+        max_sections=data.max_sections,
+    )
+    
+    return ReportResponse(
+        title=report.title,
+        content=report.content,
+        format=report.format,
+        word_count=report.word_count,
+        generated_at=report.generated_at
+    )
+
+
+@router.post("/knowledge-bases/{kb_id}/voice-query")
+async def voice_query(
+    kb_id: int,
+    audio: UploadFile = File(...),
+):
+    """
+    语音问答
+    
+    1. Whisper 转写语音为文本
+    2. 执行 RAG 问答
+    3. 返回文字回答
+    """
+    from ..services.speech_service import speech_service
+    
+    # 转写语音
+    content = await audio.read()
+    transcription = await speech_service.transcribe(content)
+    
+    # 执行问答
+    response = await rag_retriever.answer(
+        query=transcription.text,
+        knowledge_base_id=kb_id,
+    )
+    
+    return {
+        "transcribed_query": transcription.text,
+        "language": transcription.language,
+        "answer": response.answer,
+        "sources": response.sources
+    }
+

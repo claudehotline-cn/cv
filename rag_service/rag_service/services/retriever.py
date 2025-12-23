@@ -64,11 +64,16 @@ class RAGRetriever:
         top_k: int = 5,
         enable_query_expansion: bool = True,
         expand_to_parent: bool = True,  # 是否扩展到父块内容
-        compress_context: bool = True,  # 是否压缩上下文
+        compress_context: bool = None,  # 是否压缩上下文，默认读取配置
     ) -> List[SearchResult]:
         """
         混合检索 (Vector + Keyword) + Multi-Query Expansion + Reranking + Parent Expansion + Context Compression
         """
+        from ..config import settings
+        
+        # 如果未指定，使用配置文件默认值
+        if compress_context is None:
+            compress_context = settings.enable_context_compression
         
         # 1. 查询重写/扩展
         queries = [query]
