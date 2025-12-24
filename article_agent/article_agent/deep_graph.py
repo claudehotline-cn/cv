@@ -24,7 +24,7 @@ from .workflow_utils import dedupe_preserve_order, ensure_article_id, add_headin
 _LOGGER = logging.getLogger("article_agent.deep_graph")
 
 MAX_RESEARCH_ROUNDS = 2
-MAX_REWRITE_ROUNDS = 2
+MAX_REWRITE_ROUNDS = 5  # 增加重写次数确保内容质量
 
 MIN_IMPORTANT_NOTE_CHARS = 300
 MIN_TOTAL_DRAFT_CHARS = 3000
@@ -322,16 +322,24 @@ def section_writer_node(state: ContentState) -> ContentState:
     sections = outline.get("sections", []) if isinstance(outline, dict) else []
     sections_to_write = target_section_ids if target_section_ids else [s.get("id") for s in sections if isinstance(s, dict)]
     
-    # 发送工具调用事件
-    state = _emit_tool_call(state, "write_sections", f"并行编写 {len(sections_to_write)} 个章节内容")
+    # 发送工具调用事件 - 开始编写
+    state = _emit_tool_call(state, "write_sections", f"开始编写 {len(sections_to_write)} 个章节...")
     
-    # 发送每个章节的思维提示
-    for sec in sections:
-        if isinstance(sec, dict):
-            sec_id = sec.get("id", "")
-            sec_title = sec.get("title", "")
-            if not target_section_ids or sec_id in target_section_ids:
-                state = _emit_thinking(state, f"编写章节: {sec_title}", f"section_{sec_id}")
+    # 收集每个章节完成的事件
+    section_events = []
+    completed_count = [0]  # 使用列表以便在闭包中修改
+    total_sections = len(sections_to_write)
+    
+    def on_section_complete(sec_id: str, title: str, char_count: int):
+        completed_count[0] += 1
+        event_msg = f"[{completed_count[0]}/{total_sections}] 已完成: {title} ({char_count}字)"
+        section_events.append({
+            "type": "step",
+            "step": "章节编写",
+            "details": event_msg,
+        })
+        # 也打印到日志
+        print(f"[section_writer] {event_msg}", flush=True)
 
     drafts = section_writer_agent(
         instruction=state.get("instruction", "") or "",
@@ -340,14 +348,20 @@ def section_writer_node(state: ContentState) -> ContentState:
         image_metadata=state.get("image_metadata") or {},
         target_section_ids=target_section_ids,
         existing_section_drafts=existing_section_drafts,
+        on_section_complete=on_section_complete,
     )
 
+    # 将章节完成事件添加到 state
+    step_events = list(state.get("step_events", []))
+    step_events.extend(section_events)
+    state["step_events"] = step_events
+    
     # 发送工具结果事件
     total_chars = sum(len(v) for v in drafts.values() if isinstance(v, str))
     state = _emit_tool_result(state, "write_sections", f"完成 {len(drafts)} 个章节，共 {total_chars} 字符")
 
     new_state: ContentState = {**state, "section_drafts": drafts}
-    return _append_step(new_state, "内容编写", f"正在编写 {len(drafts)} 个章节的内容...")
+    return _append_step(new_state, "内容编写", f"已完成 {len(drafts)} 个章节，共 {total_chars} 字")
 
 
 def _section_body_chars(markdown: str) -> int:

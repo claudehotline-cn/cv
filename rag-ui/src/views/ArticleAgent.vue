@@ -263,6 +263,31 @@ const formatTime = (timestamp: number) => {
   const date = new Date(timestamp)
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
+
+// 下载 Markdown 文件
+const downloadMarkdown = () => {
+  if (!resultMarkdown.value) return
+  
+  // 生成文件名（使用标题或时间戳）
+  const fileName = title.value?.trim() 
+    ? `${title.value.trim().replace(/[\\/:*?"<>|]/g, '_')}.md`
+    : `article_${Date.now()}.md`
+  
+  // 创建 Blob 对象
+  const blob = new Blob([resultMarkdown.value], { type: 'text/markdown;charset=utf-8' })
+  
+  // 创建下载链接
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+  
+  ElMessage.success(`已下载: ${fileName}`)
+}
 </script>
 
 <template>
@@ -371,7 +396,17 @@ const formatTime = (timestamp: number) => {
 
       <!-- 中间预览区 -->
       <div class="preview-panel">
-        <div class="section-title">预览结果</div>
+        <div class="section-title-row">
+          <span class="section-title">预览结果</span>
+          <el-button
+            v-if="resultMarkdown"
+            type="success"
+            size="small"
+            @click="downloadMarkdown"
+          >
+            下载 MD
+          </el-button>
+        </div>
         <div v-if="resultMarkdown" class="markdown-preview" v-html="renderedHtml()" />
         <div v-else class="empty-preview">
           文章生成后将在此显示预览
@@ -601,11 +636,17 @@ const formatTime = (timestamp: number) => {
   text-align: center;
 }
 
+.section-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
 .section-title {
   font-size: 14px;
   font-weight: 600;
   color: #cdd6f4;
-  margin-bottom: 12px;
 }
 
 .url-list, .file-list {

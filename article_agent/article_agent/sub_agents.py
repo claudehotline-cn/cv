@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -140,7 +140,19 @@ def analyze_images_with_vlm(
                             content_type = content_type.split(";")[0]
                         b64_data = base64.b64encode(resp.content).decode("utf-8")
                         image_data_url = f"data:{content_type};base64,{b64_data}"
-                        _LOGGER.debug("vlm_analyze.downloaded image=%s size=%d", path_or_url[:50], len(resp.content))
+                        
+                        # 使用 PIL 获取图片尺寸
+                        try:
+                            from PIL import Image
+                            import io
+                            pil_image = Image.open(io.BytesIO(resp.content))
+                            img_width, img_height = pil_image.size
+                            img["width"] = img_width
+                            img["height"] = img_height
+                            _LOGGER.debug("vlm_analyze.downloaded image=%s size=%d dimensions=%dx%d", path_or_url[:50], len(resp.content), img_width, img_height)
+                        except Exception as pil_exc:
+                            _LOGGER.debug("vlm_analyze.pil_failed image=%s error=%s", path_or_url[:50], pil_exc)
+                            _LOGGER.debug("vlm_analyze.downloaded image=%s size=%d", path_or_url[:50], len(resp.content))
                     else:
                         _LOGGER.warning("vlm_analyze.download_failed image=%s status=%d", path_or_url[:50], resp.status_code)
                         analyzed_images.append(img)
@@ -777,8 +789,13 @@ def section_writer_agent(
     target_section_ids: Optional[List[str]] = None,
     existing_section_drafts: Optional[Dict[str, str]] = None,
     timeout_sec: float = 180.0,
+    on_section_complete: Optional[Callable[[str, str, int], None]] = None,  # (section_id, title, char_count)
 ) -> Dict[str, str]:
-    """Section Writer：按小节生成 Markdown（每节独立生成，便于循环扩写）。"""
+    """Section Writer：按小节生成 Markdown（每节独立生成，便于循环扩写）。
+    
+    Args:
+        on_section_complete: 可选回调，每完成一个章节后调用，参数为 (section_id, title, char_count)
+    """
 
     section_notes = section_notes if isinstance(section_notes, dict) else {}
     image_metadata = image_metadata if isinstance(image_metadata, dict) else {}
@@ -996,6 +1013,15 @@ markdown 字段要求：
         )
         return section_id, final_draft
 
+    # 构建 section_id -> title 映射，用于回调
+    section_titles = {}
+    for sec in sections:
+        if isinstance(sec, dict):
+            sec_id = str(sec.get("id") or "").strip()
+            sec_title = str(sec.get("title") or "").strip() or sec_id
+            if sec_id:
+                section_titles[sec_id] = sec_title
+    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_process_section, sec) for sec in sections]
         for future in as_completed(futures):
@@ -1004,6 +1030,10 @@ markdown 字段要求：
                 if res:
                     sec_id, txt = res
                     drafts[sec_id] = txt
+                    # 调用回调通知完成
+                    if on_section_complete:
+                        title = section_titles.get(sec_id, sec_id)
+                        on_section_complete(sec_id, title, len(txt))
             except Exception as exc:
                 _LOGGER.error("section_writer.future_failed error=%s", exc)
 
@@ -1319,7 +1349,7 @@ def illustrator_agent(
     all_images: List[Dict[str, Any]],
     *,
     max_images_total: int = 5,
-    timeout_sec: float = 120.0,
+    timeout_sec: float = 180.0,  # 增加超时时间
 ) -> str:
     """Illustrator：使用 LLM 智能匹配图片与文章内容，并在最佳位置插入图片。
     
@@ -1439,15 +1469,18 @@ def illustrator_agent(
     prompt = json.dumps(prompt_obj, ensure_ascii=False)
     
     try:
-        structured_llm = build_structured_chat_llm(ImageInsertionPlan, task_name="illustrator")
+        # 使用 invoke_with_structured_thinking 确保可靠的 JSON 解析
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=prompt),
+        ]
         
-        def _call():
-            return structured_llm.invoke([
-                SystemMessage(content=_with_nothink(system_prompt)),
-                HumanMessage(content=prompt),
-            ])
-        
-        result = invoke_llm_with_timeout(task_name="illustrator", fn=_call, timeout_sec=timeout_sec)
+        _thinking, result = invoke_with_structured_thinking(
+            messages=messages,
+            output_model=ImageInsertionPlan,
+            task_name="illustrator",
+            timeout_sec=timeout_sec,
+        )
         plan = result if isinstance(result, ImageInsertionPlan) else ImageInsertionPlan.model_validate(result)
         
         if not plan.insertions:
@@ -1577,9 +1610,27 @@ def illustrator_agent(
             caption = img.get("figcaption") or img.get("caption_hint") or img.get("alt") or "插图"
             img_counter += 1
             
+            # 根据图片实际尺寸动态设置显示大小
+            img_width = img.get("width", 0)
+            img_height = img.get("height", 0)
+            
+            if img_width > 0:
+                # 基于实际宽度设置 max-width
+                if img_width >= 1200:
+                    max_width = "60%"  # 大图缩小到60%
+                elif img_width >= 800:
+                    max_width = "55%"  # 中大图55%
+                elif img_width >= 500:
+                    max_width = "50%"  # 中图50%
+                else:
+                    max_width = "45%"  # 小图适当缩放
+                _LOGGER.debug("illustrator.sizing image=%s original=%dx%d max_width=%s", img_url[:50], img_width, img_height, max_width)
+            else:
+                max_width = "55%"  # 没有尺寸信息时使用默认值
+            
             img_html = f'''
 <div align="center">
-  <img src="{img_url}" alt="{caption}"/>
+  <img src="{img_url}" alt="{caption}" style="max-width: {max_width}; height: auto;"/>
   <p><em>图 {img_counter}: {caption}</em></p>
 </div>
 '''
