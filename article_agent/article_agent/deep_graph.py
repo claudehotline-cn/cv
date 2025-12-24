@@ -32,10 +32,61 @@ MIN_CORE_SECTION_CHARS = 800
 MIN_NORMAL_SECTION_CHARS = 400
 
 
-def _append_step(state: ContentState, step: str) -> ContentState:
+def _append_step(state: ContentState, step: str, details: str = "") -> ContentState:
+    """记录步骤历史，同时添加步骤事件供前端流式展示。"""
     history = list(state.get("step_history", []))
     history.append(step)
     state["step_history"] = history
+    
+    # 添加步骤事件到 step_events 列表（前端可通过流式响应获取）
+    step_events = list(state.get("step_events", []))
+    step_events.append({
+        "type": "step",
+        "step": step,
+        "details": details,
+    })
+    state["step_events"] = step_events
+    
+    return state
+
+
+def _emit_thinking(state: ContentState, thinking: str, task: str = "") -> ContentState:
+    """发送思维链事件供前端展示。"""
+    step_events = list(state.get("step_events", []))
+    step_events.append({
+        "type": "thinking",
+        "thinking": thinking,
+        "task": task,
+    })
+    state["step_events"] = step_events
+    return state
+
+
+def _emit_tool_call(state: ContentState, tool_name: str, description: str = "") -> ContentState:
+    """发送工具调用事件供前端展示。"""
+    step_events = list(state.get("step_events", []))
+    step_events.append({
+        "type": "tool_call",
+        "tool_call": {
+            "name": tool_name,
+            "description": description,
+        },
+    })
+    state["step_events"] = step_events
+    return state
+
+
+def _emit_tool_result(state: ContentState, tool_name: str, summary: str = "") -> ContentState:
+    """发送工具结果事件供前端展示。"""
+    step_events = list(state.get("step_events", []))
+    step_events.append({
+        "type": "tool_result",
+        "tool_result": {
+            "name": tool_name,
+            "summary": summary,
+        },
+    })
+    state["step_events"] = step_events
     return state
 
 
@@ -54,35 +105,56 @@ def init_node(state: ContentState) -> ContentState:
         "research_round": int(state.get("research_round", 0) or 0),
         "sections_to_rewrite": list(state.get("sections_to_rewrite", []) or []),
     }
-    return _append_step(new_state, "init")
+    return _append_step(new_state, "初始化", "准备开始生成文章...")
 
 
 def collector_node(state: ContentState) -> ContentState:
     if state.get("error"):
         return _append_step(state, "collector_skipped")
 
+    # 发送工具调用事件
+    state = _emit_tool_call(state, "fetch_urls", f"抓取 {len(state.get('urls', []))} 个 URL 的内容")
+    
     sources, overview = collector_agent(
         urls=state.get("urls", []) or [],
         file_paths=state.get("file_paths", []) or [],
     )
+    
+    # 发送工具结果事件
+    total_images = sum(len(src.get("images", [])) for src in sources.values() if isinstance(src, dict))
+    state = _emit_tool_result(state, "fetch_urls", f"获取 {len(sources)} 个来源，共 {total_images} 张图片")
+    
     new_state: ContentState = {
         **state,
         "sources": sources,
         "rough_sources_overview": overview,
     }
-    return _append_step(new_state, "collector")
+    return _append_step(new_state, "资料收集", f"已收集 {len(sources)} 个来源，正在分析内容...")
 
 
 def planner_node(state: ContentState) -> ContentState:
     if state.get("error"):
         return _append_step(state, "planner_skipped")
 
+    # 发送工具调用事件
+    state = _emit_tool_call(state, "design_outline", "设计文章大纲结构")
+    
     outline_model = planner_agent(
         instruction=state.get("instruction", "") or "",
         rough_sources_overview=state.get("rough_sources_overview") or {},
     )
     outline_dict = outline_model.model_dump()
     title = (state.get("title") or "").strip() or outline_model.title
+
+    # 发送工具结果事件
+    state = _emit_tool_result(state, "design_outline", f"生成大纲: {title} ({len(outline_model.sections)} 章节)")
+    
+    # 发送思维链事件：大纲结构
+    outline_summary = f"标题: {title}\n章节:\n"
+    for sec in outline_model.sections:
+        prefix = "  " if sec.level == 2 else "    "
+        outline_summary += f"{prefix}- {sec.title}\n"
+    state = _emit_thinking(state, outline_summary, "planner")
 
     # 日志记录 outline 结构
     _LOGGER.info("planner_node.outline_generated title=%s sections_count=%d", 
@@ -101,7 +173,7 @@ def planner_node(state: ContentState) -> ContentState:
         "outline": outline_dict,
         "sections_to_research": list(outline_model.sections_to_research or []),
     }
-    return _append_step(new_state, "planner")
+    return _append_step(new_state, "大纲规划", f"已生成 {len(outline_model.sections)} 个章节的文章大纲")
 
 
 def researcher_node(state: ContentState) -> ContentState:
@@ -116,12 +188,21 @@ def researcher_node(state: ContentState) -> ContentState:
             + (state.get("research_weak_important", []) or [])
         )
 
+    # 发送工具调用事件
+    sections_count = len(state.get("sections_to_research", []) or [])
+    state = _emit_tool_call(state, "research_content", f"研究整理 {sections_count} 个重点章节的内容")
+
     output, extra_keys = researcher_agent(
         outline=state.get("outline") or {},
         sections_to_research=state.get("sections_to_research", []) or [],
         sources=state.get("sources", {}) or {},
         target_section_ids=target_section_ids,
     )
+
+    # 发送工具结果事件
+    notes_count = len([v for v in (output.section_notes or {}).values() if v and not v.startswith("NO_DATA")])
+    images_count = sum(len(v) for v in (output.image_metadata or {}).values() if isinstance(v, list))
+    state = _emit_tool_result(state, "research_content", f"整理 {notes_count} 个章节笔记，{images_count} 张候选图片")
 
     # 合并策略：首次全量写入；补全时仅覆盖目标节，保留既有内容。
     if target_section_ids:
@@ -144,7 +225,7 @@ def researcher_node(state: ContentState) -> ContentState:
         "research_round": research_round + 1,
         "research_error": None,
     }
-    return _append_step(new_state, "researcher")
+    return _append_step(new_state, "资料研究", f"正在进行第 {research_round + 1} 轮资料整理和分析...")
 
 
 def _is_no_data(text: str) -> bool:
@@ -191,6 +272,17 @@ def research_audit_node(state: ContentState) -> ContentState:
             f"missing_important={missing_important} weak_important={weak_important}"
         )
 
+    # 生成审核结果描述
+    if research_ok:
+        audit_detail = "资料完整，质量合格"
+    else:
+        issues = []
+        if missing_important:
+            issues.append(f"缺少 {len(missing_important)} 个重要章节资料")
+        if weak_important:
+            issues.append(f"{len(weak_important)} 个章节资料不足")
+        audit_detail = "，".join(issues) + "，需要补充"
+    
     new_state: ContentState = {
         **state,
         "research_missing_all": missing_all,
@@ -199,7 +291,7 @@ def research_audit_node(state: ContentState) -> ContentState:
         "research_ok": research_ok,
         "research_error": research_error,
     }
-    return _append_step(new_state, "research_audit")
+    return _append_step(new_state, "资料审核", audit_detail)
 
 
 def research_router(state: ContentState) -> str:
@@ -225,6 +317,22 @@ def section_writer_node(state: ContentState) -> ContentState:
         target_section_ids = state.get("sections_to_rewrite") or []
         existing_section_drafts = state.get("section_drafts") or {}
 
+    # 计算需要写作的章节数
+    outline = state.get("outline") or {}
+    sections = outline.get("sections", []) if isinstance(outline, dict) else []
+    sections_to_write = target_section_ids if target_section_ids else [s.get("id") for s in sections if isinstance(s, dict)]
+    
+    # 发送工具调用事件
+    state = _emit_tool_call(state, "write_sections", f"并行编写 {len(sections_to_write)} 个章节内容")
+    
+    # 发送每个章节的思维提示
+    for sec in sections:
+        if isinstance(sec, dict):
+            sec_id = sec.get("id", "")
+            sec_title = sec.get("title", "")
+            if not target_section_ids or sec_id in target_section_ids:
+                state = _emit_thinking(state, f"编写章节: {sec_title}", f"section_{sec_id}")
+
     drafts = section_writer_agent(
         instruction=state.get("instruction", "") or "",
         outline=state.get("outline") or {},
@@ -234,8 +342,12 @@ def section_writer_node(state: ContentState) -> ContentState:
         existing_section_drafts=existing_section_drafts,
     )
 
+    # 发送工具结果事件
+    total_chars = sum(len(v) for v in drafts.values() if isinstance(v, str))
+    state = _emit_tool_result(state, "write_sections", f"完成 {len(drafts)} 个章节，共 {total_chars} 字符")
+
     new_state: ContentState = {**state, "section_drafts": drafts}
-    return _append_step(new_state, "section_writer")
+    return _append_step(new_state, "内容编写", f"正在编写 {len(drafts)} 个章节的内容...")
 
 
 def _section_body_chars(markdown: str) -> int:
@@ -357,6 +469,17 @@ def writer_audit_node(state: ContentState) -> ContentState:
     rewrite_round = int(state.get("rewrite_round", 0) or 0)
     if not draft_quality_ok:
         rewrite_round += 1
+    
+    # 生成审核结果描述
+    if draft_quality_ok:
+        audit_detail = f"内容质量合格，共 {total_chars} 字"
+    else:
+        issues = []
+        if missing_sections:
+            issues.append(f"{len(missing_sections)} 个章节缺失")
+        if short_sections:
+            issues.append(f"{len(short_sections)} 个章节字数不足")
+        audit_detail = "，".join(issues) + "，需要重写"
 
     new_state: ContentState = {
         **state,
@@ -365,7 +488,7 @@ def writer_audit_node(state: ContentState) -> ContentState:
         "rewrite_round": rewrite_round,
         "sections_to_rewrite": sections_to_rewrite,
     }
-    return _append_step(new_state, "writer_audit")
+    return _append_step(new_state, "内容审核", audit_detail)
 
 
 def writer_router(state: ContentState) -> str:
@@ -427,12 +550,12 @@ def merge_sections_node(state: ContentState) -> ContentState:
         "refined_markdown": draft_markdown,
         "final_markdown": draft_markdown,
     }
-    return _append_step(new_state, "merge_sections")
+    return _append_step(new_state, "文章整合", "正在合并各章节内容并编排...")
 
 
 def reader_review_node(state: ContentState) -> ContentState:
     if state.get("error"):
-        return _append_step(state, "reader_review_skipped")
+        return _append_step(state, "读者审阅", "跳过（前序步骤出错）")
 
     draft = state.get("draft_markdown") or ""
     try:
@@ -449,15 +572,20 @@ def reader_review_node(state: ContentState) -> ContentState:
         if review_comment:
             _LOGGER.info("reader_review_done: %s", review_comment[:200])
 
-        return _append_step(new_state, "reader_review")
+        # 显示审阅意见摘要
+        if review_comment:
+            comment_preview = review_comment[:60] + "..." if len(review_comment) > 60 else review_comment
+            return _append_step(new_state, "读者审阅", f"审阅完成：{comment_preview}")
+        else:
+            return _append_step(new_state, "读者审阅", "审阅完成，无修改建议")
     except Exception as exc:  # pragma: no cover
         _LOGGER.error("reader_review_node.failed error=%s", exc)
-        return _append_step(state, "reader_review_error")
+        return _append_step(state, "读者审阅", f"审阅出错：{str(exc)[:30]}")
 
 
 def doc_refiner_node(state: ContentState) -> ContentState:
     if state.get("error"):
-        return _append_step(state, "doc_refiner_skipped")
+        return _append_step(state, "文章精修", "跳过（前序步骤出错）")
 
     settings = get_settings()
     if not bool(getattr(settings, "enable_doc_refiner", True)):
@@ -467,7 +595,7 @@ def doc_refiner_node(state: ContentState) -> ContentState:
             "refined_markdown": draft,
             "final_markdown": draft,
         }
-        return _append_step(new_state, "doc_refiner_disabled")
+        return _append_step(new_state, "文章精修", "已禁用，跳过")
 
     draft = state.get("draft_markdown") or ""
     try:
@@ -484,12 +612,12 @@ def doc_refiner_node(state: ContentState) -> ContentState:
             "refined_markdown": final_text,
             "final_markdown": final_text,
         }
-        return _append_step(new_state, "doc_refiner")
+        return _append_step(new_state, "文章精修", "精修完成")
     except Exception as exc:  # pragma: no cover
         _LOGGER.error("doc_refiner_node.failed error=%s", exc)
         new_state = dict(state)
         new_state["error"] = f"doc_refiner_failed: {exc}"
-        return _append_step(new_state, "doc_refiner_error")
+        return _append_step(new_state, "文章精修", f"精修出错：{str(exc)[:30]}")
 
 
 def illustrator_node(state: ContentState) -> ContentState:
@@ -532,7 +660,7 @@ def illustrator_node(state: ContentState) -> ContentState:
     updated = add_heading_numbers(updated)
     
     new_state: ContentState = {**state, "final_markdown": updated}
-    return _append_step(new_state, "illustrator")
+    return _append_step(new_state, "图片插入", "正在为文章添加配图...")
 
 
 def assembler_node(state: ContentState) -> ContentState:
@@ -549,7 +677,7 @@ def assembler_node(state: ContentState) -> ContentState:
             "md_path": info.get("md_path"),
             "md_url": info.get("md_url"),
         }
-        return _append_step(new_state, "assembler")
+        return _append_step(new_state, "文章完成", "文章生成完成！")
     except Exception as exc:  # pragma: no cover
         _LOGGER.error("assembler_node.failed error=%s", exc)
         new_state = dict(state)
@@ -567,6 +695,10 @@ def summary_for_user_node(state: ContentState) -> ContentState:
                 titles.append(str(sec["title"]))
     title = (state.get("title") or "").strip() or str(outline.get("title") or "").strip() or "未命名文章"
     md_url = state.get("md_url")
+    
+    # 计算字数
+    final_md = state.get("final_markdown") or ""
+    word_count = len(final_md)
 
     summary_lines = [f"标题：{title}"]
     if titles:
@@ -576,7 +708,7 @@ def summary_for_user_node(state: ContentState) -> ContentState:
         summary_lines.append(f"下载：{md_url}")
 
     new_state: ContentState = {**state, "summary_for_user": "\n".join(summary_lines).strip()}
-    return _append_step(new_state, "summary_for_user")
+    return _append_step(new_state, "文章完成", f"文章已生成，共 {word_count} 字")
 
 
 def get_content_graph():

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ChatLineRound, User, Service, Position, Picture, Loading, Close, DataAnalysis } from '@element-plus/icons-vue'
+import { ChatLineRound, User, Service, Position, Picture, Loading, Close, DataAnalysis, Plus, Delete } from '@element-plus/icons-vue'
 
 import MarkdownIt from 'markdown-it'
 // @ts-ignore
@@ -9,12 +9,13 @@ import mdTexmath from 'markdown-it-texmath'
 import Katex from 'katex'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
-import { knowledgeBaseApi, chatApi, multimodalApi } from '../api'
+import { knowledgeBaseApi, chatApi, multimodalApi, chatSessionApi } from '../api'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedImages = ref<{ file: File, url: string, description?: string }[]>([])
 const isUploading = ref(false)
 const isChartMode = ref(false)
+const useKnowledgeBase = ref(false)  // 知识库功能开关
 const chartAnalysisResult = ref<{ json: any, analysis: string, conclusion: string } | null>(null)
 const MAX_IMAGES = 5  // 最多支持5张图片
 
@@ -34,37 +35,18 @@ const handleFileSelect = async (event: Event) => {
     return
   }
 
-  isUploading.value = true
-  
-  try {
-    for (const file of Array.from(files)) {
-      // 类型检查
-      if (!file.type.startsWith('image/')) {
-        ElMessage.warning(`${file.name} 不是图片文件，已跳过`)
-        continue
-      }
-
-      const imageUrl = URL.createObjectURL(file)
-      const newImage = { file, url: imageUrl }
-      selectedImages.value.push(newImage)
-      
-      // 上传并获取描述
-      try {
-        const res = await multimodalApi.uploadImage(file)
-        const idx = selectedImages.value.findIndex(img => img.url === imageUrl)
-        if (idx !== -1) {
-          selectedImages.value[idx]!.description = res.data.description
-        }
-      } catch (err) {
-        console.error(`Upload ${file.name} failed`, err)
-        // 单张失败不影响其他图片
-      }
+  for (const file of Array.from(files)) {
+    // 类型检查
+    if (!file.type.startsWith('image/')) {
+      ElMessage.warning(`${file.name} 不是图片文件，已跳过`)
+      continue
     }
-    ElMessage.success('图片解析完成')
-  } finally {
-    isUploading.value = false
-    if (target) target.value = ''
+
+    const imageUrl = URL.createObjectURL(file)
+    selectedImages.value.push({ file, url: imageUrl })
   }
+  
+  if (target) target.value = ''
 }
 
 const handleChartAnalysis = async () => {
@@ -216,12 +198,104 @@ const knowledgeBases = ref<KnowledgeBase[]>([])
 const chatContainer = ref<HTMLElement | null>(null)
 
 // 会话ID - 用于对话历史
-const sessionId = ref<string>(localStorage.getItem('chat_session_id') || generateSessionId())
+const sessionId = ref<string>(localStorage.getItem('chat_session_id') || '')
+const chatSessions = ref<any[]>([])
 
-function generateSessionId(): string {
-  const id = `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
-  localStorage.setItem('chat_session_id', id)
-  return id
+async function ensureSession() {
+  if (!sessionId.value) {
+    try {
+      const res = await chatSessionApi.create(selectedKb.value)
+      sessionId.value = res.data.id
+      localStorage.setItem('chat_session_id', sessionId.value)
+    } catch (err) {
+      console.error('Failed to create session', err)
+    }
+  }
+  return sessionId.value
+}
+
+// 格式化时间显示
+function formatTime(dateStr: string): string {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  
+  if (diff < 60000) return '刚刚'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
+  if (diff < 604800000) return `${Math.floor(diff / 86400000)}天前`
+  
+  return date.toLocaleDateString()
+}
+
+// 新建会话
+async function createNewSession() {
+  try {
+    const res = await chatSessionApi.create(selectedKb.value)
+    const newSession = res.data
+    sessionId.value = newSession.id
+    localStorage.setItem('chat_session_id', newSession.id)
+    chatSessions.value.unshift(newSession)  // 添加到列表开头
+    messages.value = [{
+      id: 1,
+      role: 'assistant',
+      content: '你好！我是你的智能知识库助手。请选择一个知识库，然后问我任何关于文档的问题。'
+    }]
+  } catch (err) {
+    console.error('Failed to create session', err)
+  }
+}
+
+// 删除会话
+async function deleteSession(sid: string) {
+  try {
+    await chatSessionApi.delete(sid)
+    chatSessions.value = chatSessions.value.filter(s => s.id !== sid)
+    // 如果删除的是当前会话，切换到新会话
+    if (sid === sessionId.value) {
+      if (chatSessions.value.length > 0) {
+        await switchSession(chatSessions.value[0].id)
+      } else {
+        await createNewSession()
+      }
+    }
+  } catch (err) {
+    console.error('Failed to delete session', err)
+  }
+}
+
+// 切换会话
+async function switchSession(sid: string) {
+  if (sid === sessionId.value) return
+  
+  sessionId.value = sid
+  localStorage.setItem('chat_session_id', sid)
+  
+  try {
+    const msgRes = await chatSessionApi.getMessages(sid)
+    if (msgRes.data.items && msgRes.data.items.length > 0) {
+      messages.value = msgRes.data.items.map((m: any, i: number) => ({
+        id: i + 1,
+        role: m.role,
+        content: m.content || '',
+        sources: []
+      }))
+    } else {
+      messages.value = [{
+        id: 1,
+        role: 'assistant',
+        content: '你好！我是你的智能知识库助手。请选择一个知识库，然后问我任何关于文档的问题。'
+      }]
+    }
+  } catch (err) {
+    console.error('Failed to load session messages', err)
+    messages.value = [{
+      id: 1,
+      role: 'assistant',
+      content: '会话加载失败，请重试。'
+    }]
+  }
 }
 
 // 加载知识库列表
@@ -229,8 +303,29 @@ onMounted(async () => {
   try {
     const res = await knowledgeBaseApi.list()
     knowledgeBases.value = res.data.items
-    if (knowledgeBases.value && knowledgeBases.value.length > 0) {
-      selectedKb.value = knowledgeBases.value[0]?.id
+    // 不自动选择知识库，让用户自己选择
+    
+    // 加载会话历史
+    const sessRes = await chatSessionApi.list()
+    chatSessions.value = sessRes.data.items || []
+    
+    // 如果有当前会话，加载消息
+    if (sessionId.value) {
+      try {
+        const msgRes = await chatSessionApi.getMessages(sessionId.value)
+        if (msgRes.data.items && msgRes.data.items.length > 0) {
+          messages.value = msgRes.data.items.map((m: any, i: number) => ({
+            id: i + 1,
+            role: m.role,
+            content: m.content || '',
+            sources: []
+          }))
+        }
+      } catch (err) {
+        // 会话不存在，清除
+        sessionId.value = ''
+        localStorage.removeItem('chat_session_id')
+      }
     }
   } catch (err) {
     console.error('Failed to load knowledge bases', err)
@@ -258,11 +353,19 @@ const handleSend = async () => {
   query.value = ''
   clearSelectedImage()  // 清除所有图片
 
+  // 确保会话存在
+  await ensureSession()
+
   // 构建用户消息内容
   let displayContent = userQuery
+  const imagePaths: string[] = []
   if (currentImages.length > 0) {
     const imageMarkdown = currentImages.map(img => `![Uploaded Image](${img.url})`).join('\n')
     displayContent = `${imageMarkdown}\n\n${userQuery}`
+    // 保存图片路径 (如果有)
+    currentImages.forEach(img => {
+      if (img.url) imagePaths.push(img.url)
+    })
   }
   
   // 添加用户消息
@@ -271,6 +374,12 @@ const handleSend = async () => {
     role: 'user',
     content: displayContent
   })
+
+  // 保存用户消息到后端
+  if (sessionId.value) {
+    chatSessionApi.addMessage(sessionId.value, 'user', userQuery || displayContent, imagePaths.length > 0 ? imagePaths : undefined)
+      .catch(err => console.error('Failed to save user message', err))
+  }
 
   // 添加AI加载消息
   const aiMsgId = Date.now() + 1
@@ -286,22 +395,72 @@ const handleSend = async () => {
 
   try {
     // 判断是普通对话还是多模态对话
-    if (currentImages.length > 0 && currentImages[0]!.description) {
-      // 多模态查询 (非流式) - 使用第一张图片的描述
-      const descriptions = currentImages.map(img => img.description || '').join('\n')
-      const res = await multimodalApi.multimodalQuery(userQuery || '描述这些图片', descriptions)
+    if (currentImages.length > 0) {
+      // 多模态查询 (流式)
+      const files = currentImages.map(img => img.file)
       
-      const idx = messages.value.findIndex(m => m.id === aiMsgId)
-      if (idx !== -1) {
-        messages.value[idx]!.loading = false
-        messages.value[idx]!.content = res.data.answer
-        if (res.data.sources) {
-           messages.value[idx]!.sources = res.data.sources
+      // 构建历史对话（排除当前用户消息和 loading 消息）
+      const chatHistory = messages.value
+        .slice(0, -2)  // 排除刚添加的用户消息和 AI loading 消息
+        .filter(m => m.content && !m.loading)
+        .map(m => ({ role: m.role, content: m.content }))
+      
+      // 根据知识库开关决定调用哪个端点
+      let response: Response
+      if (useKnowledgeBase.value && selectedKb.value) {
+        // 开启知识库且选择了知识库 -> VLM + RAG
+        response = await multimodalApi.vlmRagStream(files, userQuery || '描述这些图片', selectedKb.value, chatHistory)
+      } else {
+        // 未开启知识库或未选择 -> 纯 VLM
+        response = await multimodalApi.vlmStream(files, userQuery || '描述这些图片', chatHistory)
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No reader available')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6)
+            if (data === '[DONE]') break
+            if (data.startsWith('[ERROR]')) {
+              throw new Error(data.slice(8))
+            }
+            
+            const idx = messages.value.findIndex(m => m.id === aiMsgId)
+            if (idx !== -1) {
+              messages.value[idx]!.loading = false
+              messages.value[idx]!.content += data
+            }
+          }
         }
       }
     } else {
       // 原有的流式文本对话
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:18200/api'
+      
+      // 构建历史对话（排除当前用户消息和 loading 消息）
+      const chatHistory = messages.value
+        .slice(0, -2)  // 排除刚添加的用户消息和 AI loading 消息
+        .filter(m => m.content && !m.loading)
+        .map(m => ({ role: m.role, content: m.content }))
+      
       const response = await fetch(`${apiUrl}/chat/stream`, {
         method: 'POST',
         headers: {
@@ -309,9 +468,11 @@ const handleSend = async () => {
         },
         body: JSON.stringify({
           query: userQuery,
-          knowledge_base_id: selectedKb.value,
+          // 只有开启知识库开关且选择了知识库时才传递 knowledge_base_id
+          knowledge_base_id: (useKnowledgeBase.value && selectedKb.value) ? selectedKb.value : null,
           top_k: 5,
           session_id: sessionId.value,
+          history: chatHistory,
         }),
       })
 
@@ -385,6 +546,15 @@ const handleSend = async () => {
     ElMessage.error('发送失败')
   } finally {
     loading.value = false
+    
+    // 保存助手消息到后端
+    if (sessionId.value) {
+      const aiMsg = messages.value.find(m => m.id === aiMsgId)
+      if (aiMsg && aiMsg.content) {
+        chatSessionApi.addMessage(sessionId.value, 'assistant', aiMsg.content)
+          .catch(err => console.error('Failed to save assistant message', err))
+      }
+    }
   }
 }
 
@@ -436,14 +606,24 @@ const handleEvaluate = async (msg: Message, index: number) => {
           style="margin-right: 16px"
           v-if="selectedImages.length === 0"
         />
-        <el-select 
+        
+        <!-- 知识库开关 -->
+        <el-switch
           v-if="!isChartMode"
+          v-model="useKnowledgeBase"
+          active-text="知识库"
+          inactive-text=""
+          style="margin-right: 12px"
+        />
+        
+        <!-- 知识库选择器 (仅在开启知识库时显示) -->
+        <el-select 
+          v-if="!isChartMode && useKnowledgeBase"
           v-model="selectedKb" 
           placeholder="选择知识库" 
           class="kb-select"
           effect="dark"
         >
-
           <el-option
             v-for="kb in knowledgeBases"
             :key="kb.id"
@@ -454,8 +634,48 @@ const handleEvaluate = async (msg: Message, index: number) => {
       </div>
     </div>
 
-    <!-- 聊天区域 -->
-    <div class="chat-container" ref="chatContainer">
+    <!-- 主体区域：侧边栏 + 聊天 -->
+    <div class="chat-body">
+      <!-- 会话列表侧边栏 -->
+      <div class="session-sidebar">
+        <div class="sidebar-header">
+          <span>对话列表</span>
+          <el-button size="small" type="primary" @click="createNewSession" :icon="Plus">
+            新建
+          </el-button>
+        </div>
+        
+        <div class="session-list">
+          <div 
+            v-for="sess in chatSessions" 
+            :key="sess.id" 
+            class="session-item"
+            :class="{ active: sess.id === sessionId }"
+            @click="switchSession(sess.id)"
+          >
+            <div class="session-info">
+              <div class="session-title">{{ sess.title || '新对话' }}</div>
+              <div class="session-time">{{ formatTime(sess.updated_at) }}</div>
+            </div>
+            <el-button 
+              class="delete-btn" 
+              size="small" 
+              type="danger" 
+              :icon="Delete"
+              circle 
+              @click.stop="deleteSession(sess.id)"
+            />
+          </div>
+          
+          <div v-if="chatSessions.length === 0" class="no-sessions">
+            暂无对话，点击"新建"开始
+          </div>
+        </div>
+      </div>
+
+      <!-- 聊天区域 -->
+      <div class="chat-main">
+        <div class="chat-container" ref="chatContainer">
       <div class="messages-list">
         <div 
           v-for="msg in messages" 
@@ -590,9 +810,11 @@ const handleEvaluate = async (msg: Message, index: number) => {
           <el-icon v-else-if="!loading && isChartMode"><DataAnalysis /></el-icon>
         </el-button>
 
-      </div>
-    </div>
-  </div>
+      </div>  <!-- .input-box -->
+    </div>  <!-- .chat-container -->
+      </div>  <!-- .chat-main -->
+    </div>  <!-- .chat-body -->
+  </div>  <!-- .chat-page -->
 </template>
 
 <style scoped>
@@ -605,6 +827,97 @@ const handleEvaluate = async (msg: Message, index: number) => {
   overflow: hidden;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   border: 1px solid #313244;
+}
+
+.chat-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.session-sidebar {
+  width: 260px;
+  background: #1e1e2e;
+  border-right: 1px solid #313244;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header {
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #313244;
+  color: #cdd6f4;
+  font-weight: 600;
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+  color: #a6adc8;
+}
+
+.session-item:hover {
+  background: rgba(137, 180, 250, 0.1);
+}
+
+.session-item.active {
+  background: rgba(137, 180, 250, 0.2);
+  color: #89b4fa;
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-title {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.session-time {
+  font-size: 12px;
+  color: #6c7086;
+}
+
+.session-item .delete-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.session-item:hover .delete-btn {
+  opacity: 1;
+}
+
+.no-sessions {
+  text-align: center;
+  padding: 24px;
+  color: #6c7086;
+  font-size: 14px;
+}
+
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .chat-header {

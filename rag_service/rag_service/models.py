@@ -163,3 +163,51 @@ class DocumentVideo(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
+
+# ========== 会话历史模型 ==========
+
+class ChatSession(Base):
+    """对话会话"""
+    __tablename__ = "rag_chat_sessions"
+    
+    id = Column(String(36), primary_key=True, comment="UUID")
+    knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=True, index=True)
+    title = Column(String(255), nullable=True, comment="会话标题")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    
+    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
+    
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "knowledge_base_id": self.knowledge_base_id,
+            "title": self.title,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class ChatMessage(Base):
+    """对话消息（支持多模态）"""
+    __tablename__ = "rag_chat_messages"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), ForeignKey("rag_chat_sessions.id"), nullable=False, index=True)
+    role = Column(String(20), nullable=False, comment="角色: user/assistant")
+    content = Column(Text, nullable=True, comment="文本内容")
+    image_paths = Column(Text, nullable=True, comment="JSON数组: MinIO图片路径")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    
+    session = relationship("ChatSession", back_populates="messages")
+    
+    def to_dict(self) -> dict:
+        import json as _json
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "role": self.role,
+            "content": self.content,
+            "image_paths": _json.loads(self.image_paths) if self.image_paths else [],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

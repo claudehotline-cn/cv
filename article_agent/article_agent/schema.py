@@ -95,6 +95,26 @@ class SectionDraftOutput(BaseModel):
     markdown: str = Field(..., description="从本节标题开始的 Markdown 内容。")
 
 
+class SectionReflectionOutput(BaseModel):
+    """Section Reflection Agent 的结构化输出。"""
+
+    section_id: str = Field(..., description="被评估章节的 section_id。")
+    quality_score: int = Field(..., description="质量评分（1-10）。7分以上为合格。")
+    issues: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="发现的问题列表，每个包含 issue（问题描述）和 suggestion（修改建议）。",
+    )
+    strengths: List[str] = Field(
+        default_factory=list,
+        description="章节的优点和亮点。",
+    )
+    needs_revision: bool = Field(..., description="是否需要修改。True 表示应该重写。")
+    revision_focus: str = Field(
+        default="",
+        description="如果需要修改，重点修改什么（供 Writer 参考）。",
+    )
+
+
 def parse_json_output(raw: str, model: type[BaseModel], context: str) -> BaseModel:
     """将 LLM 的字符串输出解析为指定 Pydantic 模型。
 
@@ -138,6 +158,7 @@ __all__ = [
     "ImageInsertion",
     "ImageInsertionPlan",
     "SectionDraftOutput",
+    "SectionReflectionOutput",
     "WriterAuditOutput",
     "parse_json_output",
 ]

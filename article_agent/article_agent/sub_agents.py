@@ -10,9 +10,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .config import get_settings
-from .llm_runtime import build_chat_llm, build_structured_chat_llm, invoke_llm_with_timeout
+from .llm_runtime import build_chat_llm, build_vlm_client, build_structured_chat_llm, invoke_llm_with_timeout, invoke_with_structured_thinking
 from .prompts import COMMON_CONSTRAINTS_ZH
-from .schema import ImageInsertionPlan, ImageSelectionOutput, OutlineOutput, ResearcherOutput, SectionDraftOutput
+from .schema import ImageInsertionPlan, ImageSelectionOutput, OutlineOutput, ResearcherOutput, SectionDraftOutput, SectionReflectionOutput
 from .tools_files import export_markdown, fetch_url_with_images, load_text_from_file
 from .workflow_utils import extract_markdown_headings, insert_images_into_markdown, normalize_outline, replace_image_placeholders, compare_headings_lenient
 
@@ -84,6 +84,132 @@ def _strip_reasoning_block(text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     
     return cleaned.strip()
+
+
+def analyze_images_with_vlm(
+    images: List[Dict[str, Any]],
+    section_title: str = "",
+    section_notes: str = "",
+    max_images: int = 5,
+) -> List[Dict[str, Any]]:
+    """使用 VLM 分析图片内容，返回增强后的图片元数据。
+    
+    Args:
+        images: 原始图片列表，每个包含 path_or_url, alt 等
+        section_title: 当前章节标题（用于相关性判断）
+        section_notes: 当前章节笔记（用于相关性判断）
+        max_images: 最多分析的图片数量（避免 VLM 调用过多）
+    
+    Returns:
+        增强后的图片列表，每个增加 vlm_description, relevance_score 字段
+    """
+    settings = get_settings()
+    
+    if not getattr(settings, "vlm_enabled", True):
+        _LOGGER.info("vlm_analyze.disabled")
+        return images
+    
+    vlm = build_vlm_client(task_name="image_analyze")
+    if vlm is None:
+        _LOGGER.warning("vlm_analyze.client_not_available")
+        return images
+    
+    # 只分析前 N 张图片
+    images_to_analyze = images[:max_images]
+    analyzed_images: List[Dict[str, Any]] = []
+    
+    for img in images_to_analyze:
+        path_or_url = img.get("path_or_url") or img.get("url") or img.get("src") or ""
+        if not path_or_url:
+            analyzed_images.append(img)
+            continue
+        
+        try:
+            # 处理远程 URL：下载并转为 base64 data URL
+            image_data_url = path_or_url
+            if path_or_url.startswith(("http://", "https://")):
+                try:
+                    import base64
+                    import requests
+                    resp = requests.get(path_or_url, timeout=10, headers={
+                        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                    })
+                    if resp.status_code == 200:
+                        content_type = resp.headers.get("Content-Type", "image/jpeg")
+                        if ";" in content_type:
+                            content_type = content_type.split(";")[0]
+                        b64_data = base64.b64encode(resp.content).decode("utf-8")
+                        image_data_url = f"data:{content_type};base64,{b64_data}"
+                        _LOGGER.debug("vlm_analyze.downloaded image=%s size=%d", path_or_url[:50], len(resp.content))
+                    else:
+                        _LOGGER.warning("vlm_analyze.download_failed image=%s status=%d", path_or_url[:50], resp.status_code)
+                        analyzed_images.append(img)
+                        continue
+                except Exception as dl_exc:
+                    _LOGGER.warning("vlm_analyze.download_error image=%s error=%s", path_or_url[:50], dl_exc)
+                    analyzed_images.append(img)
+                    continue
+            
+            prompt = f"""请分析这张图片，输出 JSON 格式：
+{{
+  "description": "图片的详细描述（中文，50-100字）",
+  "type": "diagram|chart|screenshot|photo|illustration|other",
+  "key_elements": ["关键元素1", "关键元素2"],
+  "suitable_topics": ["适合的文章主题"],
+  "caption_suggestion": "建议的图片标题（中文）"
+}}
+
+章节标题：{section_title}
+章节内容摘要：{section_notes[:500] if section_notes else '无'}
+
+请根据图片内容和章节上下文，评估这张图片与该章节的相关性。"""
+
+            messages = [
+                HumanMessage(content=[
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                    {"type": "text", "text": prompt},
+                ])
+            ]
+            
+            response = vlm.invoke(messages)
+            vlm_content = response.content if hasattr(response, "content") else str(response)
+            
+            # 尝试解析 JSON
+            try:
+                # 提取 JSON 部分
+                json_match = re.search(r"\{[\s\S]*\}", vlm_content)
+                if json_match:
+                    vlm_data = json.loads(json_match.group())
+                else:
+                    vlm_data = {"description": vlm_content}
+            except json.JSONDecodeError:
+                vlm_data = {"description": vlm_content}
+            
+            enhanced_img = {
+                **img,
+                "vlm_description": vlm_data.get("description", ""),
+                "vlm_type": vlm_data.get("type", "other"),
+                "vlm_key_elements": vlm_data.get("key_elements", []),
+                "vlm_suitable_topics": vlm_data.get("suitable_topics", []),
+                "vlm_caption": vlm_data.get("caption_suggestion", img.get("alt", "")),
+            }
+            analyzed_images.append(enhanced_img)
+            
+            _LOGGER.info(
+                "vlm_analyze.success image=%s type=%s",
+                path_or_url[:50],
+                enhanced_img.get("vlm_type"),
+            )
+            
+        except Exception as exc:
+            _LOGGER.warning("vlm_analyze.failed image=%s error=%s", path_or_url[:50], exc)
+            analyzed_images.append(img)
+    
+    # 保留未分析的图片（原样返回）
+    for img in images[max_images:]:
+        analyzed_images.append(img)
+    
+    return analyzed_images
 
 
 def collector_agent(
@@ -268,17 +394,23 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
     prompt_obj = {"instruction": instruction, "rough_sources_overview": rough_sources_overview}
     prompt = json.dumps(prompt_obj, ensure_ascii=False)
 
-    structured_llm = build_structured_chat_llm(OutlineOutput, task_name="planner")
-
-    def _call():
-        return structured_llm.invoke(
-            [
-                SystemMessage(content=_with_nothink(system_prompt)),
-                HumanMessage(content=prompt),
-            ]
-        )
-
-    result = invoke_llm_with_timeout(task_name="planner", fn=_call, timeout_sec=90.0)
+    # 使用支持思维模式的结构化输出
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=prompt),
+    ]
+    
+    thinking, result = invoke_with_structured_thinking(
+        messages=messages,
+        output_model=OutlineOutput,
+        task_name="planner",
+        timeout_sec=180.0,  # 增加超时时间以适应 structured_output + reasoning 模式
+    )
+    
+    # 记录思维过程到日志（后续可以通过 adispatch_custom_event 发送给前端）
+    if thinking:
+        _LOGGER.info("planner_agent.thinking len=%d preview=%s", len(thinking), thinking[:200])
+    
     outline = result if isinstance(result, OutlineOutput) else OutlineOutput.model_validate(result)
     normalized, _id_mapping = normalize_outline(outline)
     return normalized
@@ -417,17 +549,23 @@ def researcher_agent(
     }
     prompt = json.dumps(prompt_obj, ensure_ascii=False)
 
-    structured_llm = build_structured_chat_llm(ResearcherOutput, task_name="researcher")
-
-    def _call():
-        return structured_llm.invoke(
-            [
-                SystemMessage(content=_with_nothink(system_prompt)),
-                HumanMessage(content=prompt),
-            ]
-        )
-
-    result = invoke_llm_with_timeout(task_name="researcher", fn=_call, timeout_sec=timeout_sec)
+    # 使用支持思维模式的结构化输出
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=prompt),
+    ]
+    
+    thinking, result = invoke_with_structured_thinking(
+        messages=messages,
+        output_model=ResearcherOutput,
+        task_name="researcher",
+        timeout_sec=timeout_sec,
+    )
+    
+    # 记录思维过程
+    if thinking:
+        _LOGGER.info("researcher_agent.thinking len=%d preview=%s", len(thinking), thinking[:200])
+    
     output = result if isinstance(result, ResearcherOutput) else ResearcherOutput.model_validate(result)
 
     extra_keys: List[str] = []
@@ -589,6 +727,37 @@ def researcher_agent(
     for src_id in allowed_source_ids:
         cleaned_summaries.setdefault(src_id, "")
 
+    # VLM 图片分析：对每个 section 的候选图片进行语义分析
+    settings = get_settings()
+    if getattr(settings, "vlm_enabled", False):
+        _LOGGER.info("researcher_agent.vlm_analysis_start sections=%d", len(cleaned_images))
+        
+        for sec_id, images in cleaned_images.items():
+            if not images:
+                continue
+            
+            # 获取 section 信息用于相关性判断
+            sec_title = ""
+            for sec in (outline.get("sections") or []):
+                if isinstance(sec, dict) and sec.get("id") == sec_id:
+                    sec_title = sec.get("title", "")
+                    break
+            
+            sec_notes = cleaned_notes.get(sec_id, "")
+            
+            # 调用 VLM 分析
+            try:
+                analyzed = analyze_images_with_vlm(
+                    images=images,
+                    section_title=sec_title,
+                    section_notes=sec_notes,
+                    max_images=3,  # 每个 section 最多分析 3 张
+                )
+                cleaned_images[sec_id] = analyzed
+                _LOGGER.info("researcher_agent.vlm_analysis_done section=%s images=%d", sec_id, len(analyzed))
+            except Exception as vlm_exc:
+                _LOGGER.warning("researcher_agent.vlm_analysis_failed section=%s error=%s", sec_id, vlm_exc)
+
     return (
         ResearcherOutput(
             section_notes=cleaned_notes,
@@ -710,7 +879,7 @@ markdown 字段要求：
     settings = get_settings()
     max_workers = getattr(settings, "max_worker_threads", 5)
 
-    structured_llm = build_structured_chat_llm(SectionDraftOutput, task_name="section_writer")
+    # 不再使用 build_structured_chat_llm，改用 invoke_with_structured_thinking 支持思维模式
 
     def _process_section(sec: Dict[str, Any]) -> Optional[Tuple[str, str]]:
         if not isinstance(sec, dict):
@@ -757,21 +926,24 @@ markdown 字段要求：
         }
         prompt = json.dumps(prompt_obj, ensure_ascii=False)
 
-        def _call():
-            return structured_llm.invoke(
-                [
-                    SystemMessage(content=_with_nothink(system_prompt)),
-                    HumanMessage(content=prompt),
-                ]
-            )
+        # 使用支持思维模式的结构化输出
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=prompt),
+        ]
 
         try:
-            result = invoke_llm_with_timeout(
+            thinking, output = invoke_with_structured_thinking(
+                messages=messages,
+                output_model=SectionDraftOutput,
                 task_name=f"section_writer_{section_id}",
-                fn=_call,
                 timeout_sec=timeout_sec,
             )
-            output = result if isinstance(result, SectionDraftOutput) else SectionDraftOutput.model_validate(result)
+            
+            # 记录思维过程
+            if thinking:
+                _LOGGER.info("section_writer.thinking section=%s len=%d", section_id, len(thinking))
+            
             markdown = output.markdown or ""
         except Exception as exc:
             _LOGGER.warning("section_writer_task_failed section_id=%s error=%s", section_id, exc)
@@ -836,6 +1008,116 @@ markdown 字段要求：
                 _LOGGER.error("section_writer.future_failed error=%s", exc)
 
     return drafts
+
+
+def reflect_section_agent(
+    section_id: str,
+    section_title: str,
+    section_draft: str,
+    instruction: str,
+    notes: str = "",
+    *,
+    timeout_sec: float = 90.0,
+) -> SectionReflectionOutput:
+    """反思一个章节的质量，输出评分和改进建议。
+    
+    Args:
+        section_id: 章节 ID
+        section_title: 章节标题
+        section_draft: 章节草稿内容
+        instruction: 用户的写作指令
+        notes: Researcher 提供的原始笔记
+        timeout_sec: 超时时间
+    
+    Returns:
+        SectionReflectionOutput 包含质量评分和修改建议
+    """
+    
+    system_prompt = f"""你是 Reflection Agent，负责评估文章章节的质量并提供改进建议。
+
+【任务】
+评估给定章节是否达到发布标准，并输出结构化的反思结果。
+
+【评估维度】
+1. 信息完整性：是否充分利用了笔记中的关键信息
+2. 逻辑连贯性：段落之间是否有清晰的逻辑关系
+3. 语言表达：是否通顺、专业、无语病
+4. 符合指令：是否符合用户的写作要求
+5. 字数要求：是否达到目标字数
+
+【评分标准】
+- 9-10分：优秀，可直接发布
+- 7-8分：良好，小瑕疵可接受
+- 5-6分：一般，需要修改
+- 1-4分：差，需要重写
+
+【输出格式】
+你必须输出 JSON：
+{{
+  "section_id": "章节ID",
+  "quality_score": 1-10的整数,
+  "issues": [
+    {{"issue": "问题描述", "suggestion": "修改建议"}}
+  ],
+  "strengths": ["优点1", "优点2"],
+  "needs_revision": true/false,
+  "revision_focus": "如需修改，重点关注什么"
+}}
+
+【约束】
+- 7分以上设 needs_revision=false
+- 6分及以下设 needs_revision=true
+- issues 至少列出发现的问题（即使分数高也要指出可改进之处）
+
+{COMMON_CONSTRAINTS_ZH}
+""".strip()
+
+    prompt_obj = {
+        "instruction": instruction,
+        "section_id": section_id,
+        "section_title": section_title,
+        "section_draft": section_draft,
+        "original_notes": notes[:2000] if notes else "",
+    }
+    prompt = json.dumps(prompt_obj, ensure_ascii=False)
+
+    structured_llm = build_structured_chat_llm(SectionReflectionOutput, task_name="reflect_section")
+
+    def _call():
+        return structured_llm.invoke(
+            [
+                SystemMessage(content=_with_nothink(system_prompt)),
+                HumanMessage(content=prompt),
+            ]
+        )
+
+    try:
+        result = invoke_llm_with_timeout(
+            task_name=f"reflect_section_{section_id}",
+            fn=_call,
+            timeout_sec=timeout_sec,
+        )
+        output = result if isinstance(result, SectionReflectionOutput) else SectionReflectionOutput.model_validate(result)
+        
+        _LOGGER.info(
+            "reflect_section.done section_id=%s score=%d needs_revision=%s",
+            section_id,
+            output.quality_score,
+            output.needs_revision,
+        )
+        return output
+        
+    except Exception as exc:
+        _LOGGER.warning("reflect_section.failed section_id=%s error=%s", section_id, exc)
+        # 返回默认通过结果，避免阻塞流程
+        return SectionReflectionOutput(
+            section_id=section_id,
+            quality_score=7,
+            issues=[],
+            strengths=[],
+            needs_revision=False,
+            revision_focus="",
+        )
 
 
 def reader_review_agent(

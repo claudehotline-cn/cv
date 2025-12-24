@@ -66,7 +66,7 @@ class Settings(BaseSettings):
         description="向量维度"
     )
     llm_model: str = Field(
-        default="qwen3:30b",
+        default="qwen3-vl:30b",
         description="LLM模型用于问答"
     )
     enable_context_compression: bool = Field(

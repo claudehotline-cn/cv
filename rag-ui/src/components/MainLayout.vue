@@ -7,6 +7,8 @@ const route = useRoute()
 const activeMenu = computed(() => {
   if (route.path.startsWith('/knowledge-bases')) return '/knowledge-bases'
   if (route.path.startsWith('/chat')) return '/chat'
+  if (route.path.startsWith('/article-agent')) return '/article-agent'
+  if (route.path.startsWith('/data-agent')) return '/data-agent'
   return route.path
 })
 </script>
@@ -34,6 +36,14 @@ const activeMenu = computed(() => {
         <el-menu-item index="/chat">
           <el-icon><ChatDotRound /></el-icon>
           <span>智能问答</span>
+        </el-menu-item>
+        <el-menu-item index="/article-agent">
+          <el-icon><Document /></el-icon>
+          <span>文档整理</span>
+        </el-menu-item>
+        <el-menu-item index="/data-agent">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>数据分析</span>
         </el-menu-item>
       </el-menu>
     </el-aside>

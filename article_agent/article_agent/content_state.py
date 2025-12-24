@@ -50,6 +50,8 @@ class ContentState(TypedDict, total=False):
     # 控制流 / 日志
     error: Optional[str]
     step_history: List[str]
+    step_events: List[Dict[str, Any]]  # 前端流式展示的事件列表
+    reader_review_comment: Optional[str]
 
 
 __all__ = ["ContentState"]

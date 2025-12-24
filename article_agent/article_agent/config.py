@@ -36,6 +36,18 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_OLLAMA_NUM_PREDICT",
     )
 
+    # VLM 配置（用于图片理解）
+    vlm_enabled: bool = Field(
+        default=True,
+        description="是否启用 VLM 图片理解（在 Researcher 阶段分析候选图片）。",
+        alias="ARTICLE_AGENT_VLM_ENABLED",
+    )
+    vlm_model: str = Field(
+        default="qwen3-vl:30b",
+        description="VLM 模型名称（用于图片内容理解）。",
+        alias="ARTICLE_AGENT_VLM_MODEL",
+    )
+
     # SiliconFlow（硅基流动）配置
     siliconflow_api_key: Optional[str] = Field(
         default=None,

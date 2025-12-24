@@ -10,8 +10,9 @@
 
 import logging
 import base64
+import json
 import httpx
-from typing import List, Optional, Union
+from typing import AsyncGenerator, List, Optional, Union
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -114,6 +115,70 @@ class VLMService:
             except httpx.HTTPError as e:
                 logger.error(f"VLM API call failed: {e}")
                 raise
+    
+    async def analyze_images_stream(
+        self,
+        images: List[Union[bytes, str, Path]],
+        prompt: str = "请描述这些图片的内容。",
+        history: List[dict] = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        流式分析多张图片
+        
+        Args:
+            images: 图片列表
+            prompt: 分析提示词
+            history: 历史对话 [{"role": "user|assistant", "content": "..."}]
+            
+        Yields:
+            逐块文本内容
+        """
+        image_b64_list = [self._image_to_base64(img) for img in images]
+        
+        # 构建消息列表（含历史）
+        messages = []
+        if history:
+            for msg in history:
+                messages.append({
+                    "role": msg.get("role", "user"),
+                    "content": msg.get("content", "")
+                })
+        
+        # 添加当前用户消息（带图片）
+        messages.append({
+            "role": "user",
+            "content": prompt,
+            "images": image_b64_list
+        })
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": True
+                }
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if content := data.get("message", {}).get("content"):
+                                yield content
+                        except json.JSONDecodeError:
+                            continue
+    
+    async def analyze_image_stream(
+        self,
+        image: Union[bytes, str, Path],
+        prompt: str = "请描述这张图片的内容。",
+    ) -> AsyncGenerator[str, None]:
+        """流式分析单张图片"""
+        async for chunk in self.analyze_images_stream([image], prompt):
+            yield chunk
     
     async def ocr(self, image: Union[bytes, str, Path]) -> str:
         """

@@ -78,6 +78,43 @@ export const multimodalApi = {
             image_description: imageDesc
         })
     },
+    // 流式多模态查询 (SSE)
+    streamQuery: (query: string, imageDesc: string) => {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:18200/api'
+        return fetch(`${apiUrl}/multimodal-query/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text_query: query,
+                image_description: imageDesc
+            })
+        })
+    },
+    // 直接 VLM 流式分析 (发送图片文件 + 问题 + 历史)
+    vlmStream: (files: File[], query: string, history?: { role: string, content: string }[]) => {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:18200/api'
+        const formData = new FormData()
+        formData.append('query', query)
+        formData.append('history', JSON.stringify(history || []))
+        files.forEach(f => formData.append('files', f))
+        return fetch(`${apiUrl}/vlm-stream`, {
+            method: 'POST',
+            body: formData
+        })
+    },
+    // VLM + RAG 联合查询 (图片 + 知识库)
+    vlmRagStream: (files: File[], query: string, knowledgeBaseId: number, history?: { role: string, content: string }[]) => {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:18200/api'
+        const formData = new FormData()
+        formData.append('query', query)
+        formData.append('knowledge_base_id', String(knowledgeBaseId))
+        formData.append('history', JSON.stringify(history || []))
+        files.forEach(f => formData.append('files', f))
+        return fetch(`${apiUrl}/vlm-rag-stream`, {
+            method: 'POST',
+            body: formData
+        })
+    },
     // 语音查询 (直接上传音频文件提问)
     voiceQuery: (audioFile: File) => {
         const formData = new FormData()
@@ -101,6 +138,17 @@ export const multimodalApi = {
             report_type: reportType
         })
     }
+}
+
+// 会话历史API
+export const chatSessionApi = {
+    list: (kbId?: number) => api.get('/chat-sessions', { params: { knowledge_base_id: kbId } }),
+    create: (kbId?: number, title?: string) => api.post('/chat-sessions', { knowledge_base_id: kbId, title }),
+    get: (sessionId: string) => api.get(`/chat-sessions/${sessionId}`),
+    delete: (sessionId: string) => api.delete(`/chat-sessions/${sessionId}`),
+    getMessages: (sessionId: string) => api.get(`/chat-sessions/${sessionId}/messages`),
+    addMessage: (sessionId: string, role: string, content?: string, imagePaths?: string[]) =>
+        api.post(`/chat-sessions/${sessionId}/messages`, { role, content, image_paths: imagePaths }),
 }
 
 export default api

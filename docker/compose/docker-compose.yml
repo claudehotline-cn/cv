@@ -406,10 +406,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      # 默认使用本地 Ollama 的 qwen3:30b 模型进行推理
+      # 统一使用 qwen3-vl:30b 模型（支持文本和图片）
       - ARTICLE_AGENT_LLM_PROVIDER=ollama
-      - ARTICLE_AGENT_LLM_MODEL=qwen3:30b
+      - ARTICLE_AGENT_LLM_MODEL=qwen3-vl:30b
       - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # VLM 配置（图片理解复用同一模型）
+      - ARTICLE_AGENT_VLM_ENABLED=true
+      - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:30b
       - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/articles
       - ARTICLE_AGENT_ARTICLES_BASE_URL=/articles
     depends_on:
@@ -462,6 +465,8 @@ services:
       pgvector:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
     ports:
       - "18200:8200"

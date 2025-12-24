@@ -579,6 +579,7 @@ class StreamChatRequest(BaseModel):
     knowledge_base_id: Optional[int] = None
     top_k: Optional[int] = 5
     session_id: Optional[str] = None  # 用于对话历史
+    history: Optional[List[dict]] = None  # 前端传递的历史对话 [{"role": "user|assistant", "content": "..."}]
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -612,61 +613,65 @@ async def chat_stream(data: StreamChatRequest):
     
     async def generate():
         try:
-            # 1. 检索相关文档
-            results = await rag_retriever.retrieve(
-                query=data.query,
-                knowledge_base_id=data.knowledge_base_id,
-                top_k=data.top_k,
-            )
-            
-            # 2. 发送检索源信息
-            sources = []
-            for i, r in enumerate(results):
-                # 获取文档名
-                doc_name = "Unknown"
-                try:
-                    from ..database import MySQLSessionLocal
-                    from ..models import Document
-                    db = MySQLSessionLocal()
-                    doc = db.query(Document).filter(Document.id == r.document_id).first()
-                    if doc:
-                        doc_name = doc.filename
-                    db.close()
-                except:
-                    pass
-                
-                sources.append({
-                    "index": i + 1,
-                    "document_name": doc_name,
-                    "document_id": r.document_id,
-                    "chunk_index": r.chunk_index,
-                    "content_preview": r.content[:200] + "..." if len(r.content) > 200 else r.content,
-                    "score": r.score,
-                })
-            
-            yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
-            
-            # 3. 获取对话历史
+            # 获取对话历史（优先使用前端传递的历史）
             from ..services.conversation_memory import conversation_memory
             history_text = ""
-            if data.session_id:
+            if data.history:
+                # 使用前端传递的历史
+                lines = []
+                for msg in data.history:
+                    role_cn = "用户" if msg.get("role") == "user" else "助手"
+                    lines.append(f"{role_cn}: {msg.get('content', '')}")
+                history_text = "\n".join(lines)
+            elif data.session_id:
+                # 回退到内存中的会话历史
                 history_text = conversation_memory.get_history_text(data.session_id)
             
-            # 4. 构建上下文
-            context = "\n\n".join([
-                f"[{i+1}] {r.content}" 
-                for i, r in enumerate(results)
-            ])
-            
-            # 5. 流式生成回答
-            llm = ChatOllama(
-                model=settings.llm_model,
-                base_url=settings.ollama_base_url,
-                temperature=0.7,
-            )
-            
-            # 构建包含历史的提示
-            system_prompt = """你是一个专业的知识库问答助手。请根据提供的参考资料回答用户问题。
+            # 判断是否使用知识库
+            if data.knowledge_base_id:
+                # ===== 有知识库：RAG 模式 =====
+                # 1. 检索相关文档
+                results = await rag_retriever.retrieve(
+                    query=data.query,
+                    knowledge_base_id=data.knowledge_base_id,
+                    top_k=data.top_k,
+                )
+                
+                # 2. 发送检索源信息
+                sources = []
+                for i, r in enumerate(results):
+                    # 获取文档名
+                    doc_name = "Unknown"
+                    try:
+                        from ..database import MySQLSessionLocal
+                        from ..models import Document
+                        db = MySQLSessionLocal()
+                        doc = db.query(Document).filter(Document.id == r.document_id).first()
+                        if doc:
+                            doc_name = doc.filename
+                        db.close()
+                    except:
+                        pass
+                    
+                    sources.append({
+                        "index": i + 1,
+                        "document_name": doc_name,
+                        "document_id": r.document_id,
+                        "chunk_index": r.chunk_index,
+                        "content_preview": r.content[:200] + "..." if len(r.content) > 200 else r.content,
+                        "score": r.score,
+                    })
+                
+                yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
+                
+                # 3. 构建上下文
+                context = "\n\n".join([
+                    f"[{i+1}] {r.content}" 
+                    for i, r in enumerate(results)
+                ])
+                
+                # 4. 构建 RAG 提示
+                system_prompt = """你是一个专业的知识库问答助手。请根据提供的参考资料回答用户问题。
 
 规则：
 1. 仅基于参考资料回答，如果资料不足以回答，请说明
@@ -677,26 +682,60 @@ async def chat_stream(data: StreamChatRequest):
 参考资料：
 {context}"""
 
-            if history_text:
-                system_prompt += f"\n\n对话历史：\n{history_text}"
+                if history_text:
+                    system_prompt += f"\n\n对话历史：\n{history_text}"
+                
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", "{query}")
+                ])
+                
+                llm = ChatOllama(
+                    model=settings.llm_model,
+                    base_url=settings.ollama_base_url,
+                    temperature=0.7,
+                )
+                
+                chain = prompt | llm
+                full_answer = ""
+                
+                async for chunk in chain.astream({"context": context, "query": data.query}):
+                    content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                    if content:
+                        full_answer += content
+                        yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
+            else:
+                # ===== 无知识库：纯 LLM 对话模式 =====
+                yield f"data: {json.dumps({'type': 'sources', 'sources': []}, ensure_ascii=False)}\n\n"
+                
+                system_prompt = """你是一个智能助手，可以回答各种问题。请根据用户的问题提供准确、有帮助的回答。
+
+如果有对话历史，请注意保持上下文连贯性。"""
+
+                if history_text:
+                    system_prompt += f"\n\n对话历史：\n{history_text}"
+                
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", "{query}")
+                ])
+                
+                llm = ChatOllama(
+                    model=settings.llm_model,
+                    base_url=settings.ollama_base_url,
+                    temperature=0.7,
+                )
+                
+                chain = prompt | llm
+                full_answer = ""
+                
+                async for chunk in chain.astream({"query": data.query}):
+                    content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                    if content:
+                        full_answer += content
+                        yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
             
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", "{query}")
-            ])
-            
-            chain = prompt | llm
-            
-            # 收集完整回答用于保存历史
-            full_answer = ""
-            
-            async for chunk in chain.astream({"context": context, "query": data.query, "history": history_text}):
-                content = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                if content:
-                    full_answer += content
-                    yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
-            
-            # 6. 保存对话历史
+            # 保存对话历史
             if data.session_id:
                 conversation_memory.add_message(data.session_id, "user", data.query)
                 conversation_memory.add_message(data.session_id, "assistant", full_answer)
@@ -1527,6 +1566,254 @@ async def multimodal_query_generic(
     )
 
 
+@router.post("/multimodal-query/stream")
+async def multimodal_query_stream(
+    request: dict
+):
+    """
+    流式多模态问答 (SSE)
+    
+    接收前端传来的 text_query 和 image_description
+    以 Server-Sent Events 格式流式返回响应
+    """
+    from fastapi.responses import StreamingResponse
+    from langchain_ollama import ChatOllama
+    
+    text_query = request.get("text_query", "")
+    image_desc = request.get("image_description", "")
+    
+    # 构造组合 prompt
+    prompt = f"用户问题: {text_query}\n\n图片内容描述:\n{image_desc}\n\n请结合图片内容回答用户问题。"
+    
+    async def generate():
+        llm = ChatOllama(
+            model=settings.llm_model,
+            base_url=settings.ollama_base_url,
+        )
+        
+        # 使用流式调用
+        async for chunk in llm.astream(prompt):
+            if hasattr(chunk, 'content') and chunk.content:
+                # SSE 格式
+                yield f"data: {chunk.content}\n\n"
+        
+        yield "data: [DONE]\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+@router.post("/vlm-stream")
+async def vlm_stream(
+    query: str = Form("描述这些图片的内容"),
+    history: str = Form(default="[]"),
+    files: List[UploadFile] = File(...)
+):
+    """
+    直接 VLM 流式分析图片 + 问题
+    
+    接收图片文件、问题和历史对话，使用 VLM 直接分析并流式返回
+    """
+    from fastapi.responses import StreamingResponse
+    from ..services.vlm_service import vlm_service
+    import json as _json
+    
+    # 解析历史对话
+    try:
+        history_list = _json.loads(history) if history else []
+    except _json.JSONDecodeError:
+        history_list = []
+    
+    # 读取所有图片数据
+    image_data_list = []
+    for f in files:
+        data = await f.read()
+        image_data_list.append(data)
+    
+    logger.info(f"VLM stream: received {len(image_data_list)} images, {len(history_list)} history msgs, query: {query[:50]}...")
+    
+    async def generate():
+        try:
+            async for chunk in vlm_service.analyze_images_stream(image_data_list, query, history_list):
+                yield f"data: {chunk}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"VLM stream error: {e}")
+            yield f"data: [ERROR] {str(e)}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+@router.post("/vlm-rag-stream")
+async def vlm_rag_stream(
+    query: str = Form("描述这些图片的内容"),
+    knowledge_base_id: int = Form(...),
+    history: str = Form(default="[]"),
+    files: List[UploadFile] = File(...)
+):
+    """
+    VLM + RAG 联合流式查询
+    
+    流程:
+    1. VLM 分析图片，生成图片描述
+    2. RAG 检索知识库相关内容
+    3. LLM 结合图片描述+知识库+用户问题生成回答
+    """
+    from fastapi.responses import StreamingResponse
+    from ..services.vlm_service import vlm_service
+    from langchain_ollama import ChatOllama
+    from langchain_core.prompts import ChatPromptTemplate
+    import json as _json
+    
+    # 解析历史对话
+    try:
+        history_list = _json.loads(history) if history else []
+    except _json.JSONDecodeError:
+        history_list = []
+    
+    # 读取所有图片数据
+    image_data_list = []
+    for f in files:
+        data = await f.read()
+        image_data_list.append(data)
+    
+    logger.info(f"VLM-RAG stream: received {len(image_data_list)} images, kb_id={knowledge_base_id}, query: {query[:50]}...")
+    
+    async def generate():
+        try:
+            # 1. VLM 分析图片
+            yield f"data: {json.dumps({'type': 'status', 'message': '正在分析图片...'}, ensure_ascii=False)}\n\n"
+            
+            image_description = ""
+            async for chunk in vlm_service.analyze_images_stream(image_data_list, "请详细描述这些图片中的内容，包括文字、图表、数据等关键信息。"):
+                image_description += chunk
+            
+            logger.info(f"VLM analysis complete, description length: {len(image_description)}")
+            
+            # 2. RAG 检索知识库
+            yield f"data: {json.dumps({'type': 'status', 'message': '正在检索知识库...'}, ensure_ascii=False)}\n\n"
+            
+            # 构建增强查询：用户问题 + 图片关键词
+            enhanced_query = f"{query}\n\n图片相关内容：{image_description[:500]}"
+            
+            results = await rag_retriever.retrieve(
+                query=enhanced_query,
+                knowledge_base_id=knowledge_base_id,
+                top_k=5,
+            )
+            
+            # 发送检索源信息
+            sources = []
+            for i, r in enumerate(results):
+                doc_name = "Unknown"
+                try:
+                    from ..database import MySQLSessionLocal
+                    from ..models import Document
+                    db = MySQLSessionLocal()
+                    doc = db.query(Document).filter(Document.id == r.document_id).first()
+                    if doc:
+                        doc_name = doc.filename
+                    db.close()
+                except:
+                    pass
+                
+                sources.append({
+                    "index": i + 1,
+                    "document_name": doc_name,
+                    "document_id": r.document_id,
+                    "chunk_index": r.chunk_index,
+                    "content_preview": r.content[:200] + "..." if len(r.content) > 200 else r.content,
+                    "score": r.score,
+                })
+            
+            yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
+            
+            # 3. 构建上下文
+            context = "\n\n".join([
+                f"[{i+1}] {r.content}" 
+                for i, r in enumerate(results)
+            ])
+            
+            # 4. LLM 生成回答
+            llm = ChatOllama(
+                model=settings.llm_model,
+                base_url=settings.ollama_base_url,
+                temperature=0.7,
+            )
+            
+            # 构建历史对话
+            history_text = ""
+            if history_list:
+                lines = []
+                for msg in history_list:
+                    role_cn = "用户" if msg.get("role") == "user" else "助手"
+                    lines.append(f"{role_cn}: {msg.get('content', '')}")
+                history_text = "\n".join(lines)
+            
+            system_prompt = """你是一个专业的多模态知识库问答助手。请根据提供的图片分析结果和知识库参考资料回答用户问题。
+
+规则：
+1. 结合图片内容和知识库资料进行综合回答
+2. 引用知识库时使用 [1], [2] 等标记
+3. 如果知识库资料不足，可以基于图片内容直接回答
+4. 回答要准确、专业、有条理
+
+图片分析结果：
+{image_description}
+
+知识库参考资料：
+{context}"""
+
+            if history_text:
+                system_prompt += f"\n\n对话历史：\n{history_text}"
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "{query}")
+            ])
+            
+            chain = prompt | llm
+            
+            async for chunk in chain.astream({
+                "image_description": image_description,
+                "context": context,
+                "query": query
+            }):
+                content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                if content:
+                    yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
+            
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"VLM-RAG stream error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
 @router.post("/knowledge-bases/{kb_id}/multimodal-query", response_model=MultiModalQueryResponse)
 async def multimodal_query(
     kb_id: int,
@@ -1627,3 +1914,130 @@ async def voice_query(
         "sources": response.sources
     }
 
+
+# ==================== Chat Session APIs ====================
+
+class ChatSessionCreate(BaseModel):
+    knowledge_base_id: Optional[int] = None
+    title: Optional[str] = None
+
+
+class ChatMessageCreate(BaseModel):
+    role: str  # user / assistant
+    content: Optional[str] = None
+    image_paths: Optional[List[str]] = None
+
+
+@router.get("/chat-sessions")
+def list_chat_sessions(
+    knowledge_base_id: Optional[int] = None,
+    limit: int = 50,
+    db: Session = Depends(get_mysql_db)
+):
+    """获取会话列表"""
+    from ..models import ChatSession
+    
+    query = db.query(ChatSession).order_by(ChatSession.updated_at.desc())
+    if knowledge_base_id:
+        query = query.filter(ChatSession.knowledge_base_id == knowledge_base_id)
+    
+    sessions = query.limit(limit).all()
+    return {"items": [s.to_dict() for s in sessions]}
+
+
+@router.post("/chat-sessions")
+def create_chat_session(
+    data: ChatSessionCreate,
+    db: Session = Depends(get_mysql_db)
+):
+    """创建新会话"""
+    from ..models import ChatSession
+    import uuid
+    
+    session = ChatSession(
+        id=str(uuid.uuid4()),
+        knowledge_base_id=data.knowledge_base_id,
+        title=data.title or "新对话"
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    
+    return session.to_dict()
+
+
+@router.get("/chat-sessions/{session_id}")
+def get_chat_session(session_id: str, db: Session = Depends(get_mysql_db)):
+    """获取会话详情"""
+    from ..models import ChatSession
+    
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session.to_dict()
+
+
+@router.delete("/chat-sessions/{session_id}")
+def delete_chat_session(session_id: str, db: Session = Depends(get_mysql_db)):
+    """删除会话"""
+    from ..models import ChatSession
+    
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    db.delete(session)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@router.get("/chat-sessions/{session_id}/messages")
+def get_chat_messages(session_id: str, db: Session = Depends(get_mysql_db)):
+    """获取会话消息列表"""
+    from ..models import ChatSession, ChatMessage
+    
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.session_id == session_id
+    ).order_by(ChatMessage.created_at).all()
+    
+    return {"items": [m.to_dict() for m in messages]}
+
+
+@router.post("/chat-sessions/{session_id}/messages")
+def add_chat_message(
+    session_id: str,
+    data: ChatMessageCreate,
+    db: Session = Depends(get_mysql_db)
+):
+    """添加消息到会话"""
+    from ..models import ChatSession, ChatMessage
+    import json as _json
+    
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    message = ChatMessage(
+        session_id=session_id,
+        role=data.role,
+        content=data.content,
+        image_paths=_json.dumps(data.image_paths) if data.image_paths else None
+    )
+    db.add(message)
+    
+    # 更新会话时间
+    from datetime import datetime
+    session.updated_at = datetime.utcnow()
+    
+    # 自动更新标题：取第一条用户消息的前 50 字
+    if data.role == "user" and session.title == "新对话" and data.content:
+        session.title = data.content[:50]
+    
+    db.commit()
+    db.refresh(message)
+    
+    return message.to_dict()

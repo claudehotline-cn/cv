@@ -1006,3 +1006,390 @@ For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/erro
 2025-12-16 16:55:57,599 [INFO] article_agent.llm: llm.init provider=ollama task=illustrator model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
 2025-12-16 16:56:05,245 [INFO] article_agent.chat_graph: generate_article_tool.done article_id=article-001 md_url=/articles/article-001/article.md error=None
 2025-12-16 16:56:19,897 [INFO] article_agent.llm: llm.init provider=ollama task=content_chat_agent model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 14:25:53,427 [INFO] article_agent.llm: llm.init provider=ollama task=content_chat_agent model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 14:26:41,800 [INFO] article_agent.chat_graph: generate_article_tool.start instruction=生成一篇图文并茂的技术文章，字数不少于5000字 urls=['https://en.wikipedia.org/wiki/Transformer_(deep_learning)', 'https://en.wikipedia.org/wiki/Deep_learning'] file_paths=[] article_id=article-1766586352246
+2025-12-24 14:26:47,639 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:26:58,143 [INFO] article_agent.deep_graph: planner_node.outline_generated title=Transformer 架构：深度学习革命的核心引擎 sections_count=16
+2025-12-24 14:26:58,143 [INFO] article_agent.deep_graph:   outline_section: id=sec_intro level=2 title=Transformer 架构的崛起与意义 parent_id=None
+2025-12-24 14:26:58,143 [INFO] article_agent.deep_graph:   outline_section: id=sec_architecture_overview level=2 title=Transformer 架构全景解析 parent_id=None
+2025-12-24 14:26:58,143 [INFO] article_agent.deep_graph:   outline_section: id=sec_attention_mechanism level=3 title=注意力机制：Transformer 的核心引擎 parent_id=sec_architecture_overview
+2025-12-24 14:26:58,143 [INFO] article_agent.deep_graph:   outline_section: id=sec_multi_head_attention level=3 title=多头注意力机制的原理与优势 parent_id=sec_architecture_overview
+2025-12-24 14:26:58,143 [INFO] article_agent.deep_graph:   outline_section: id=sec_positional_encoding level=3 title=位置编码：解决序列顺序问题的关键 parent_id=sec_architecture_overview
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_encoder_decoder level=2 title=编码器-解码器架构的演变与应用 parent_id=None
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_encoder level=3 title=编码器的结构与功能 parent_id=sec_encoder_decoder
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_decoder level=3 title=解码器的结构与功能 parent_id=sec_encoder_decoder
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_training_efficiency level=2 title=Transformer 的训练效率与性能优势 parent_id=None
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_parallel_processing level=3 title=并行计算能力：超越 RNN 的关键 parent_id=sec_training_efficiency
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_computational_complexity level=3 title=计算复杂度分析：二次方与线性化改进 parent_id=sec_training_efficiency
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_applications level=2 title=Transformer 的广泛应用场景 parent_id=None
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_nlp level=3 title=自然语言处理：从 BERT 到 GPT parent_id=sec_applications
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_cv level=3 title=计算机视觉：Vision Transformers 的崛起 parent_id=sec_applications
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_other_domains level=3 title=其他领域的突破性应用 parent_id=sec_applications
+2025-12-24 14:26:58,144 [INFO] article_agent.deep_graph:   outline_section: id=sec_evolution level=2 title=Transformer 架构的演进与未来展望 parent_id=None
+2025-12-24 14:26:58,145 [INFO] article_agent.llm: llm.init provider=ollama task=researcher model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:27:12,453 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:27:21,136 [INFO] article_agent.llm: llm.init provider=ollama task=researcher model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:27:36,011 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:33:04,286 [INFO] article_agent.llm: llm.init provider=ollama task=content_chat_agent model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 14:33:48,185 [INFO] article_agent.chat_graph: generate_article_tool.start instruction=生成一篇图文并茂的技术文章，字数不少于5000字 urls=['https://en.wikipedia.org/wiki/Transformer_(deep_learning)', 'https://en.wikipedia.org/wiki/Deep_learning'] file_paths=[] article_id=article-1766586783382
+2025-12-24 14:33:54,216 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:35:03,193 [INFO] article_agent.deep_graph: planner_node.outline_generated title=Transformer：深度学习的革命性架构解析 sections_count=9
+2025-12-24 14:35:03,193 [INFO] article_agent.deep_graph:   outline_section: id=sec_intro level=2 title=引言：Transformer的诞生背景 parent_id=None
+2025-12-24 14:35:03,193 [INFO] article_agent.deep_graph:   outline_section: id=sec_background level=2 title=深度学习演进与传统模型局限 parent_id=None
+2025-12-24 14:35:03,193 [INFO] article_agent.deep_graph:   outline_section: id=sec_architecture level=2 title=Transformer核心架构详解 parent_id=None
+2025-12-24 14:35:03,193 [INFO] article_agent.deep_graph:   outline_section: id=sec_attention level=3 title=自注意力机制深度解析 parent_id=sec_architecture
+2025-12-24 14:35:03,193 [INFO] article_agent.deep_graph:   outline_section: id=sec_position level=3 title=位置编码与序列建模 parent_id=sec_architecture
+2025-12-24 14:35:03,194 [INFO] article_agent.deep_graph:   outline_section: id=sec_comparison level=2 title=Transformer与传统模型对比 parent_id=None
+2025-12-24 14:35:03,194 [INFO] article_agent.deep_graph:   outline_section: id=sec_applications level=2 title=Transformer在实际场景中的应用 parent_id=None
+2025-12-24 14:35:03,194 [INFO] article_agent.deep_graph:   outline_section: id=sec_practical level=2 title=开发实践与优化建议 parent_id=None
+2025-12-24 14:35:03,194 [INFO] article_agent.deep_graph:   outline_section: id=sec_summary level=2 title=总结与未来展望 parent_id=None
+2025-12-24 14:35:03,195 [INFO] article_agent.llm: llm.init provider=ollama task=researcher model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:35:21,431 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:36:03,313 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=9
+2025-12-24 14:36:03,313 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 14:36:03,321 [WARNING] article_agent.sub_agents: vlm_analyze.failed image=http://upload.wikimedia.org/wikipedia/commons/thum error=Error calling function `serialize_model`: ValueError: File http://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Transformer%2C_full_architecture.png/250px-Transformer%2C_full_architecture.png does not exist
+2025-12-24 14:36:03,321 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_architecture images=1
+2025-12-24 14:36:03,322 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 14:36:03,328 [WARNING] article_agent.sub_agents: vlm_analyze.failed image=http://upload.wikimedia.org/wikipedia/commons/thum error=Error calling function `serialize_model`: ValueError: File http://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Transformer%2C_attention_block_diagram.png/250px-Transformer%2C_attention_block_diagram.png does not exist
+2025-12-24 14:36:03,329 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 14:36:03,332 [INFO] article_agent.llm: llm.init provider=ollama task=researcher model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:36:26,408 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:37:08,400 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=9
+2025-12-24 14:37:08,400 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 14:37:08,407 [WARNING] article_agent.sub_agents: vlm_analyze.failed image=http://upload.wikimedia.org/wikipedia/commons/thum error=Error calling function `serialize_model`: ValueError: File http://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Transformer%2C_full_architecture.png/250px-Transformer%2C_full_architecture.png does not exist
+2025-12-24 14:37:08,408 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_architecture images=1
+2025-12-24 14:37:08,409 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 14:37:08,415 [WARNING] article_agent.sub_agents: vlm_analyze.failed image=http://upload.wikimedia.org/wikipedia/commons/thum error=Error calling function `serialize_model`: ValueError: File http://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Transformer%2C_attention_block_diagram.png/250px-Transformer%2C_attention_block_diagram.png does not exist
+2025-12-24 14:37:08,416 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 14:37:08,419 [INFO] article_agent.llm: llm.init provider=ollama task=section_writer model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:39:41,148 [INFO] article_agent.llm: llm.init provider=ollama task=section_writer model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:41:50,719 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:42:28,746 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:43:45,658 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:45:14,666 [ERROR] article_agent.llm: llm.timeout task=planner timeout_sec=90.0
+2025-12-24 14:45:36,846 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:45:59,656 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:47:05,774 [ERROR] article_agent.llm: llm.timeout task=planner timeout_sec=90.0
+2025-12-24 14:48:14,094 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:49:42,982 [ERROR] article_agent.llm: llm.timeout task=planner timeout_sec=90.0
+2025-12-24 14:51:29,568 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 14:53:43,854 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 16:08:19,804 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 16:08:49,307 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=planner response=
+2025-12-24 16:12:41,921 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 16:13:41,571 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=planner response=
+2025-12-24 16:15:05,725 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 16:16:05,499 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=planner content_len=0 thinking_kwargs_len=6205 type=AIMessage
+2025-12-24 16:16:05,500 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=planner response=
+2025-12-24 16:17:39,019 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 16:18:38,434 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=planner content_len=0 thinking_kwargs_len=6205 type=AIMessage
+2025-12-24 16:18:38,435 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=planner response=
+2025-12-24 16:24:54,656 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 16:25:23,934 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=planner content_len=0 thinking_kwargs_len=5894 type=AIMessage
+2025-12-24 16:25:23,934 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=planner response=
+2025-12-24 16:27:30,678 [INFO] article_agent.llm: llm.init provider=ollama task=planner model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 16:28:30,509 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=planner content_len=0 thinking_kwargs_len=6836 type=AIMessage
+2025-12-24 16:28:30,509 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=planner response=
+2025-12-24 16:31:09,853 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True
+2025-12-24 16:32:36,384 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=planner content_len=1104 thinking_kwargs_len=9368 type=AIMessage
+2025-12-24 16:32:36,384 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=planner response=# Transformer：深度学习的革命性架构解析
+
+## sections
+- **sec_intro**: 引言，level: 2, is_core: false, target_word_count: 300
+- **sec_background**: 深度学习技术演进，level: 2, is_core: false, target_word_count: 420
+- **sec_arc
+2025-12-24 16:35:16,481 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True
+2025-12-24 16:36:35,621 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=planner content_len=2327 thinking_kwargs_len=7938 type=AIMessage
+2025-12-24 16:36:35,622 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=planner thinking_len=7938
+2025-12-24 16:36:35,622 [INFO] article_agent.sub_agents: planner_agent.thinking len=7938 preview=好的，我现在需要帮用户设计一篇技术文章的大纲。首先，用户的要求是生成一篇图文并茂的技术文章，字数不少于5000字。输入里有instruction和rough_sources_overview，我得仔细看看。
+
+首先看instruction，用户明确要求5000字以上，所以总字数应该按5000来算。然后rough_sources_overview里有两个URL来源，都是维基百科的页面，一个是关于Tr
+2025-12-24 16:36:35,622 [INFO] article_agent.deep_graph: planner_node.outline_generated title=Transformer架构：深度学习的革命性突破与应用实践 sections_count=11
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_intro level=2 title=Transformer的诞生背景与技术演进 parent_id=None
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_dl_basics level=2 title=深度学习基础与传统模型局限 parent_id=None
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_transformer_arch level=2 title=Transformer架构核心原理 parent_id=None
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_attention level=3 title=自注意力机制详解 parent_id=sec_transformer_arch
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_encoder_decoder level=3 title=编码器-解码器结构解析 parent_id=sec_transformer_arch
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_comparison level=2 title=Transformer与传统模型的性能对比 parent_id=None
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_applications level=2 title=Transformer的多领域应用实践 parent_id=None
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_nlp level=3 title=自然语言处理中的Transformer应用 parent_id=sec_applications
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_cv level=3 title=计算机视觉领域的Transformer拓展 parent_id=sec_applications
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_practical level=2 title=Transformer部署与优化实践 parent_id=None
+2025-12-24 16:36:35,623 [INFO] article_agent.deep_graph:   outline_section: id=sec_summary level=2 title=Transformer技术展望与总结 parent_id=None
+2025-12-24 16:36:35,642 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True
+2025-12-24 16:36:59,528 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=researcher content_len=4605 thinking_kwargs_len=3353 type=AIMessage
+2025-12-24 16:36:59,528 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=researcher response=# Deep Learning and Transformer Architecture Analysis
+
+Based on the provided Wikipedia data, I'll provide a comprehensive analysis of deep learning and transformer architecture.
+
+## Deep Learning Fund
+2025-12-24 16:39:09,269 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True
+2025-12-24 16:40:13,667 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=planner content_len=2283 thinking_kwargs_len=5667 type=AIMessage
+2025-12-24 16:40:13,668 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=planner thinking_len=5667
+2025-12-24 16:40:13,669 [INFO] article_agent.sub_agents: planner_agent.thinking len=5667 preview=好的，我现在需要帮用户设计一篇技术文章的大纲。首先，用户的要求是生成一篇图文并茂的技术文章，字数不少于5000字。输入里有instruction和rough_sources_overview，我得仔细看看。
+
+首先看instruction部分，用户明确要求5000字以上，所以总字数应该至少5000。不过可能需要确认是否有具体范围，比如5000-6000，但这里只说“不少于5000”，所以可能按50
+2025-12-24 16:40:13,669 [INFO] article_agent.deep_graph: planner_node.outline_generated title=Transformer：深度学习的革命性架构解析 sections_count=11
+2025-12-24 16:40:13,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_intro level=2 title=Transformer的诞生背景与技术演进 parent_id=None
+2025-12-24 16:40:13,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_architecture level=2 title=Transformer核心架构详解 parent_id=None
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_attention_mechanism level=3 title=自注意力机制原理与实现 parent_id=sec_architecture
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_encoder_decoder level=3 title=编码器-解码器结构设计 parent_id=sec_architecture
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_applications level=2 title=Transformer的多领域应用实践 parent_id=None
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_nlp level=3 title=自然语言处理中的突破性应用 parent_id=sec_applications
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_cv level=3 title=计算机视觉领域的创新应用 parent_id=sec_applications
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_practice level=2 title=Transformer工程化实践指南 parent_id=None
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_code_implementation level=3 title=核心代码实现与关键参数调优 parent_id=sec_practice
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_optimization level=3 title=性能优化与资源约束解决方案 parent_id=sec_practice
+2025-12-24 16:40:13,670 [INFO] article_agent.deep_graph:   outline_section: id=sec_summary level=2 title=技术演进与未来展望 parent_id=None
+2025-12-24 16:40:13,680 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True
+2025-12-24 16:40:30,619 [INFO] article_agent.llm: invoke_with_structured_thinking.response task=researcher content_len=2886 thinking_kwargs_len=2297 type=AIMessage
+2025-12-24 16:40:30,620 [WARNING] article_agent.llm: invoke_with_structured_thinking.no_json task=researcher response=# Analysis of Deep Learning and Transformer Dataset
+
+This dataset contains two Wikipedia articles that provide comprehensive information about deep learning and transformer architectures:
+
+## Structur
+2025-12-24 16:46:20,482 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:46:45,580 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=planner type=OutlineOutput
+2025-12-24 16:46:45,580 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=planner thinking_len=0
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph: planner_node.outline_generated title=Transformer架构：从理论到实践的深度解析 sections_count=9
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_intro level=2 title=引言：Transformer的诞生与意义 parent_id=None
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_overview level=2 title=Transformer核心概念概述 parent_id=None
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_architecture level=2 title=核心架构详解 parent_id=None
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_attention level=3 title=多头注意力机制 parent_id=sec_architecture
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_encoder_decoder level=3 title=编码器-解码器结构 parent_id=sec_architecture
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_comparison level=2 title=与传统RNN的对比分析 parent_id=None
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_applications level=2 title=应用场景与案例 parent_id=None
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_practical level=2 title=实践建议与优化方向 parent_id=None
+2025-12-24 16:46:45,669 [INFO] article_agent.deep_graph:   outline_section: id=sec_summary level=2 title=总结与未来展望 parent_id=None
+2025-12-24 16:46:45,680 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:46:54,596 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=researcher type=ResearcherOutput
+2025-12-24 16:46:54,596 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=researcher thinking_len=0
+2025-12-24 16:46:54,597 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 16:47:16,779 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=9
+2025-12-24 16:47:16,779 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:47:23,054 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:47:23,055 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_architecture images=1
+2025-12-24 16:47:23,056 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:47:28,647 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:47:28,648 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 16:47:28,648 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:47:34,327 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:47:34,328 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_encoder_decoder images=1
+2025-12-24 16:47:34,328 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:47:40,530 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:47:40,533 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_comparison images=1
+2025-12-24 16:47:40,533 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:47:45,924 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:47:45,926 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_applications images=1
+2025-12-24 16:47:45,926 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:47:58,690 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:47:58,691 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_practical images=1
+2025-12-24 16:47:58,704 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:48:12,779 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=researcher type=ResearcherOutput
+2025-12-24 16:48:12,779 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=researcher thinking_len=0
+2025-12-24 16:48:12,780 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 16:48:34,659 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=9
+2025-12-24 16:48:34,660 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:48:40,156 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:48:40,158 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_architecture images=1
+2025-12-24 16:48:40,158 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:48:44,779 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:48:44,781 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 16:48:44,781 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:49:00,446 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:49:00,447 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_encoder_decoder images=1
+2025-12-24 16:49:00,448 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:49:13,072 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:49:13,074 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_comparison images=1
+2025-12-24 16:49:13,074 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:49:18,246 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:49:18,247 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_applications images=1
+2025-12-24 16:49:18,248 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:49:33,519 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:49:33,521 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_practical images=1
+2025-12-24 16:49:33,535 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_intro model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:49:33,536 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_overview model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:49:33,537 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_architecture model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:49:33,538 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_attention model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:49:33,538 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_encoder_decoder model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:50:06,468 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_architecture type=SectionDraftOutput
+2025-12-24 16:50:06,469 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_architecture thinking_len=0
+2025-12-24 16:50:06,476 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_comparison model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:50:09,834 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_overview type=SectionDraftOutput
+2025-12-24 16:50:09,834 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_overview thinking_len=0
+2025-12-24 16:50:09,842 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_applications model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:50:12,374 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_intro type=SectionDraftOutput
+2025-12-24 16:50:12,374 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_intro thinking_len=0
+2025-12-24 16:50:12,382 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_practical model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:50:15,697 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_attention type=SectionDraftOutput
+2025-12-24 16:50:15,697 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_attention thinking_len=0
+2025-12-24 16:50:15,705 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_summary model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:50:19,448 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_encoder_decoder type=SectionDraftOutput
+2025-12-24 16:50:19,448 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_encoder_decoder thinking_len=0
+2025-12-24 16:50:43,158 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_comparison type=SectionDraftOutput
+2025-12-24 16:50:43,158 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_comparison thinking_len=0
+2025-12-24 16:50:43,635 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_applications type=SectionDraftOutput
+2025-12-24 16:50:43,635 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_applications thinking_len=0
+2025-12-24 16:50:44,197 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_practical type=SectionDraftOutput
+2025-12-24 16:50:44,197 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_practical thinking_len=0
+2025-12-24 16:50:45,651 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_summary type=SectionDraftOutput
+2025-12-24 16:50:45,652 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_summary thinking_len=0
+2025-12-24 16:50:45,668 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_practical model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:50:45,670 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_summary model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:50:45,673 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_applications model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:51:04,753 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_summary type=SectionDraftOutput
+2025-12-24 16:51:04,754 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_summary thinking_len=0
+2025-12-24 16:51:05,309 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_practical type=SectionDraftOutput
+2025-12-24 16:51:05,309 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_practical thinking_len=0
+2025-12-24 16:51:05,787 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_applications type=SectionDraftOutput
+2025-12-24 16:51:05,787 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_applications thinking_len=0
+2025-12-24 16:51:05,795 [INFO] article_agent.llm: llm.init provider=ollama task=reader_review model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 16:51:17,532 [INFO] article_agent.deep_graph: reader_review_done: **审阅意见**  
+文章内容专业详实，结构清晰，但存在可读性与完整性问题。部分公式（如 \( d_k \)）未解释关键符号，导致技术读者理解受阻；应用场景章节仅以“...”省略，缺乏具体案例支撑；整体语气偏学术枯燥，缺少实用提示。建议：1. 为数学符号添加简明注释（如说明 \( d_k \) 为键向量维度）；2. 补充应用场景的实操案例（如机器翻译优化细节）；3. 增加过渡句衔接逻辑断层（如多头
+2025-12-24 16:51:17,535 [INFO] article_agent.llm: llm.init provider=ollama task=illustrator model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 16:51:41,708 [WARNING] article_agent.sub_agents: illustrator_agent.llm_failed error=Invalid json output: 
+For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE , fallback to no images
+2025-12-24 16:52:25,636 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:53:00,402 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=planner type=OutlineOutput
+2025-12-24 16:53:00,402 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=planner thinking_len=0
+2025-12-24 16:53:00,403 [INFO] article_agent.deep_graph: planner_node.outline_generated title=Transformer架构：从理论到应用的深度解析 sections_count=9
+2025-12-24 16:53:00,403 [INFO] article_agent.deep_graph:   outline_section: id=sec_intro level=2 title=引言：深度学习与Transformer的崛起 parent_id=None
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_background level=2 title=深度学习基础与Transformer的背景 parent_id=None
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_arch level=2 title=Transformer架构概述 parent_id=None
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_attention level=3 title=多头注意力机制详解 parent_id=sec_arch
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_position level=3 title=位置编码的设计与实现 parent_id=sec_arch
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_comparison level=2 title=Transformer与RNN的对比分析 parent_id=None
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_applications level=2 title=Transformer在实际场景中的应用案例 parent_id=None
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_practical level=2 title=实践建议：如何高效使用Transformer parent_id=None
+2025-12-24 16:53:00,404 [INFO] article_agent.deep_graph:   outline_section: id=sec_summary level=2 title=总结与未来展望 parent_id=None
+2025-12-24 16:53:00,418 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:53:17,793 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=researcher type=ResearcherOutput
+2025-12-24 16:53:17,793 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=researcher thinking_len=0
+2025-12-24 16:53:17,794 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 16:54:03,977 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=9
+2025-12-24 16:54:03,977 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:54:13,277 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:54:13,278 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_arch images=1
+2025-12-24 16:54:13,278 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:54:26,254 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:54:26,255 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 16:54:26,255 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:54:39,169 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=chart
+2025-12-24 16:54:39,170 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_position images=1
+2025-12-24 16:54:39,171 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:54:54,027 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:54:54,028 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_comparison images=1
+2025-12-24 16:54:54,029 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:55:07,007 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:55:07,009 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_applications images=1
+2025-12-24 16:55:07,024 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:55:29,690 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=researcher type=ResearcherOutput
+2025-12-24 16:55:29,690 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=researcher thinking_len=0
+2025-12-24 16:55:29,691 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 16:55:59,401 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=5
+2025-12-24 16:55:59,401 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:56:09,219 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:56:09,220 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_arch images=1
+2025-12-24 16:56:09,220 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:56:33,796 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 16:56:33,797 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 16:56:33,798 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 16:56:47,326 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=chart
+2025-12-24 16:56:47,328 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_position images=1
+2025-12-24 16:56:47,349 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_intro model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:56:47,350 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_attention model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:56:47,350 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_arch model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:56:47,351 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_background model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:56:47,351 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_position model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:58:06,748 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 16:58:55,609 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:00:25,753 [ERROR] article_agent.llm: llm.timeout task=planner timeout_sec=90.0
+2025-12-24 17:01:44,906 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:02:56,783 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=planner type=OutlineOutput
+2025-12-24 17:02:56,783 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=planner thinking_len=0
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph: planner_node.outline_generated title=Transformer架构：从理论到应用的深度解析 sections_count=9
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_intro level=2 title=引言：深度学习与Transformer的崛起 parent_id=None
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_background level=2 title=深度学习基础与Transformer的背景 parent_id=None
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_arch level=2 title=Transformer架构概述 parent_id=None
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_attention level=3 title=多头注意力机制详解 parent_id=sec_arch
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_position level=3 title=位置编码的设计与实现 parent_id=sec_arch
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_comparison level=2 title=Transformer与RNN的对比分析 parent_id=None
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_applications level=2 title=Transformer在实际场景中的应用案例 parent_id=None
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_practical level=2 title=实践建议：如何高效使用Transformer parent_id=None
+2025-12-24 17:02:56,784 [INFO] article_agent.deep_graph:   outline_section: id=sec_summary level=2 title=总结与未来展望 parent_id=None
+2025-12-24 17:02:56,794 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:03:13,641 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=researcher type=ResearcherOutput
+2025-12-24 17:03:13,641 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=researcher thinking_len=0
+2025-12-24 17:03:13,642 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 17:03:58,040 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=9
+2025-12-24 17:03:58,040 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:04:08,171 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 17:04:08,173 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_arch images=1
+2025-12-24 17:04:08,173 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:04:21,762 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 17:04:21,763 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 17:04:21,763 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:04:34,843 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=chart
+2025-12-24 17:04:34,844 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_position images=1
+2025-12-24 17:04:34,844 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:04:49,064 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 17:04:49,065 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_comparison images=1
+2025-12-24 17:04:49,066 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:05:02,266 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 17:05:02,267 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_applications images=1
+2025-12-24 17:05:02,281 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=researcher model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:05:23,851 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=researcher type=ResearcherOutput
+2025-12-24 17:05:23,852 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=researcher thinking_len=0
+2025-12-24 17:05:23,852 [INFO] article_agent.llm: llm.init provider=ollama task=researcher_select_images model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
+2025-12-24 17:05:52,155 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_start sections=5
+2025-12-24 17:05:52,155 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:06:01,823 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 17:06:01,824 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_arch images=1
+2025-12-24 17:06:01,825 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:06:24,680 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=diagram
+2025-12-24 17:06:24,682 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_attention images=1
+2025-12-24 17:06:24,682 [INFO] article_agent.llm: vlm.init task=image_analyze model=qwen3-vl:30b base_url=http://host.docker.internal:11434
+2025-12-24 17:06:37,173 [INFO] article_agent.sub_agents: vlm_analyze.success image=http://upload.wikimedia.org/wikipedia/commons/thum type=chart
+2025-12-24 17:06:37,175 [INFO] article_agent.sub_agents: researcher_agent.vlm_analysis_done section=sec_position images=1
+2025-12-24 17:06:37,188 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_intro model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:06:37,189 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_background model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:06:37,189 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_arch model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:06:37,190 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_attention model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:06:37,194 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_position model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:08:02,889 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_arch type=SectionDraftOutput
+2025-12-24 17:08:02,889 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_arch thinking_len=0
+2025-12-24 17:08:02,897 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_comparison model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:08:08,761 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_background type=SectionDraftOutput
+2025-12-24 17:08:08,761 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_background thinking_len=0
+2025-12-24 17:08:08,769 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_applications model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:08:16,921 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_position type=SectionDraftOutput
+2025-12-24 17:08:16,921 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_position thinking_len=0
+2025-12-24 17:08:16,930 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_practical model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:08:22,156 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_intro type=SectionDraftOutput
+2025-12-24 17:08:22,156 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_intro thinking_len=0
+2025-12-24 17:08:22,163 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_summary model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:08:30,035 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_attention type=SectionDraftOutput
+2025-12-24 17:08:30,035 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_attention thinking_len=0
+2025-12-24 17:09:28,132 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_comparison type=SectionDraftOutput
+2025-12-24 17:09:28,132 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_comparison thinking_len=0
+2025-12-24 17:09:35,397 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_applications type=SectionDraftOutput
+2025-12-24 17:09:35,397 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_applications thinking_len=0
+2025-12-24 17:09:42,119 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_practical type=SectionDraftOutput
+2025-12-24 17:09:42,119 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_practical thinking_len=0
+2025-12-24 17:09:45,948 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_summary type=SectionDraftOutput
+2025-12-24 17:09:45,948 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_summary thinking_len=0
+2025-12-24 17:09:45,961 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_summary model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:09:45,965 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=section_writer_sec_comparison model=qwen3-vl:30b num_predict=16384 reasoning=True structured_output=True
+2025-12-24 17:10:06,794 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_comparison type=SectionDraftOutput
+2025-12-24 17:10:06,794 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_comparison thinking_len=0
+2025-12-24 17:10:10,589 [INFO] article_agent.llm: invoke_with_structured_thinking.direct_output task=section_writer_sec_summary type=SectionDraftOutput
+2025-12-24 17:10:10,590 [INFO] article_agent.llm: invoke_with_structured_thinking.success task=section_writer_sec_summary thinking_len=0
+2025-12-24 17:10:10,597 [INFO] article_agent.llm: llm.init provider=ollama task=reader_review model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-24 17:10:30,287 [INFO] article_agent.deep_graph: reader_review_done: 文章内容详实，覆盖Transformer架构的理论、实现与应用，技术深度适中，符合目标读者（技术从业者或研究生）需求。但存在以下问题：  
+- **可读性**：部分公式（如自注意力计算）缺乏直观解释，易让初学者困惑；  
+- **有用性**：应用案例（如机器翻译）未提供具体数据支撑，削弱说服力；  
+- **结构**：位置编码章节逻辑跳跃，未明确说明为何RNN无法处理顺序问题。  
+
+建议：  
+
+2025-12-24 17:10:30,290 [INFO] article_agent.llm: llm.init provider=ollama task=illustrator model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=False
