@@ -1,11 +1,36 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis, Connection, Document, VideoPlay } from '@element-plus/icons-vue'
+import { DataAnalysis, Connection, Document, VideoPlay, Loading } from '@element-plus/icons-vue'
 import { knowledgeBaseApi } from '../api'
+
+// Markdown 渲染
+import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/atom-one-dark.css'
 
 // ECharts
 import * as echarts from 'echarts'
+
+// 初始化 Markdown 渲染器
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  typographer: true,
+  highlight: function (str: string, lang: string) {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        return hljs.highlight(str, { language: lang }).value
+      } catch (__) {}
+    }
+    return '' // use external default escaping
+  }
+})
+
+const renderMarkdown = (content: string) => {
+  if (!content) return ''
+  return md.render(content)
+}
 
 // 状态
 const dataSource = ref<'db' | 'excel'>('db')
@@ -28,7 +53,7 @@ const excelFile = ref<File | null>(null)
 const analysisResult = ref('')
 const chartConfig = ref<any>(null)
 
-onMounted(async () => {
+onMounted(async () => { console.log('DataAgent v2.3 SCROLL');
   try {
     const res = await knowledgeBaseApi.list()
     knowledgeBases.value = res.data.items
@@ -52,6 +77,68 @@ const handleFileSelect = (event: Event) => {
   }
 }
 
+// 思维链相关
+interface ThinkingEvent {
+  id: string
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'step'
+  content: string
+  toolName?: string
+  timestamp: number
+}
+const thinkingEvents = ref<ThinkingEvent[]>([])
+// 跟踪已处理的消息 ID，避免重复显示
+let processedMsgIds = new Set<string>()
+
+// 格式化时间
+const formatTime = (timestamp: number) => {
+  const date = new Date(timestamp)
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+const addThinkingEvent = (type: ThinkingEvent['type'], content: string, toolName?: string) => {
+  thinkingEvents.value.push({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    type,
+    content,
+    toolName,
+    timestamp: Date.now()
+  })
+}
+
+// 从内容中提取代码部分
+const extractCode = (content: string): string => {
+  if (!content) return ''
+  // 移除前缀如 "执行 SQL:\n" 或 "执行 Python:\n"
+  const lines = content.split('\n')
+  if (lines.length > 0 && lines[0]?.includes(':')) {
+    return lines.slice(1).join('\n')
+  }
+  return content
+}
+
+// 提取文字标签（冒号前的部分）
+const getCodeLabel = (content: string): string => {
+  if (!content) return ''
+  const lines = content.split('\n')
+  if (lines.length > 0 && lines[0]?.includes(':')) {
+    return lines[0].split(':')[0] || ''
+  }
+  return ''
+}
+
+// 使用 highlight.js 高亮代码
+const highlightCode = (code: string, lang: string): string => {
+  if (!code) return ''
+  try {
+    if (hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value
+    }
+  } catch (e) {
+    console.error('Highlight error:', e)
+  }
+  return code
+}
+
 // 执行分析
 const runAnalysis = async () => {
   if (!query.value.trim()) {
@@ -67,13 +154,15 @@ const runAnalysis = async () => {
   loading.value = true
   analysisResult.value = ''
   chartConfig.value = null
+  thinkingEvents.value = []
+  processedMsgIds.clear()
+  
   if (chartInstance) {
     chartInstance.dispose()
     chartInstance = null
   }
   
   try {
-    const sessionId = `data-analysis-${Date.now()}`
     let graphId = ''
     let input: any = {}
     
@@ -83,22 +172,25 @@ const runAnalysis = async () => {
     }
     
     if (dataSource.value === 'db') {
-      graphId = 'db_chart'
+      graphId = 'data_deep_agent'
       input = {
-        query: query.value,
-        session_id: sessionId,
-        db_name: dbName.value
+        messages: [{
+          role: 'human',
+          content: `请分析数据库 ${dbName.value}：${query.value}`
+        }]
       }
     } else {
       // Excel 模式
-      // 这里简化处理：假设文件已通过其他接口上传，实际应先上传文件获取路径
-      // 为了演示，我们假设 Agent 可以直接访问挂载目录的示例文件
-      graphId = 'excel_chart'
+      graphId = 'data_deep_agent'
       input = {
-        session_id: sessionId,
-        query: query.value
+        messages: [{
+          role: 'human',
+          content: `请分析 Excel 文件：${query.value}`
+        }]
       }
     }
+    
+    addThinkingEvent('step', '开始分析任务...')
     
     // 1. 创建线程
     const threadRes = await fetch('/api/agents/data/threads', {
@@ -110,8 +202,8 @@ const runAnalysis = async () => {
     if (!threadRes.ok) throw new Error('创建线程失败')
     const thread = await threadRes.json()
     
-    // 2. 运行 Agent
-    const runRes = await fetch(`/api/agents/data/threads/${thread.thread_id}/runs`, {
+    // 2. 运行 Agent (使用 stream 端点)
+    const runRes = await fetch(`/api/agents/data/threads/${thread.thread_id}/runs/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -138,24 +230,87 @@ const runAnalysis = async () => {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6))
-            // 检查是否有图表配置
-            // 注意：具体字段需根据 agent-langchain 返回结构调整
-            if (data.values && data.values.chart_spec) {
-              chartConfig.value = JSON.parse(data.values.chart_spec)
-              renderChart()
-            }
-            if (data.values && data.values.summary) {
-              analysisResult.value = data.values.summary
+            // Deep Agent 返回 messages 数组
+            if (data.messages && Array.isArray(data.messages)) {
+              for (const msg of data.messages) {
+                // 跳过已处理的消息
+                if (msg.id && processedMsgIds.has(msg.id)) continue
+                if (msg.id) processedMsgIds.add(msg.id)
+
+                // DEBUG: 打印消息结构
+                console.log('MSG:', msg.type, msg.id?.slice(-8), 'content:', msg.content?.slice(0, 50), 'tool_calls:', !!msg.tool_calls)
+
+                // 1. 处理 AI 消息 (可能是工具调用或最终回复)
+                // LangGraph 可能使用 'ai' 或消息 ID 以 'lc_run' 开头来标识 AI 消息
+                const isAIMessage = msg.type === 'ai' || (msg.id && msg.id.includes('lc_run'))
+                if (isAIMessage) {
+                  // 处理工具调用请求
+                  if (msg.tool_calls && msg.tool_calls.length > 0) {
+                    for (const toolCall of msg.tool_calls) {
+                      let content = ''
+                      const args = toolCall.args
+                      if (toolCall.name === 'data_db_run_sql') {
+                        content = `执行 SQL:\n${args.sql}`
+                      } else if (toolCall.name === 'python_execute') {
+                        content = `执行 Python:\n${args.code}`
+                      } else if (toolCall.name === 'data_generate_chart') {
+                        content = `生成图表配置:\n${JSON.stringify(args, null, 2)}`
+                      } else {
+                        content = `调用工具: ${JSON.stringify(args)}`
+                      }
+                      addThinkingEvent('tool_call', content, toolCall.name)
+                    }
+                  }
+                  // 处理 AI 消息内容（无论是否有 tool_calls，只要有 content 就更新）
+                  if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
+                    console.log('AI message content:', msg.content.slice(0, 100))
+                    analysisResult.value = msg.content
+                  }
+                }
+                
+                // 2. 处理工具执行结果
+                if ((msg.type === 'tool' || msg.name === 'data_generate_chart' || msg.name === 'data_db_run_sql' || msg.name === 'python_execute') && msg.content) {
+                  try {
+                    const toolResult = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content
+                    
+                    let resultDisplay = ''
+                    if (msg.name === 'data_db_run_sql') {
+                       resultDisplay = `SQL 执行结果: ${toolResult.total_rows} 行数据`
+                    } else if (msg.name === 'data_generate_chart') {
+                        // 检查是否是图表生成工具的结果
+                        if (toolResult.option) {
+                          console.log('Found chart option:', toolResult.option)
+                          chartConfig.value = toolResult.option
+                          // renderChart 在 watch 或 nextTick 处理
+                          setTimeout(renderChart, 100) 
+                          resultDisplay = `图表生成成功: ${toolResult.chart_type}`
+                        }
+                    } else if (msg.name === 'python_execute') {
+                        resultDisplay = `Python 执行结果:\n${JSON.stringify(toolResult.result || toolResult, null, 2)}`
+                    } else {
+                        resultDisplay = typeof msg.content === 'string' ? msg.content.slice(0, 200) + '...' : JSON.stringify(msg.content).slice(0, 200)
+                    }
+                    
+                    addThinkingEvent('tool_result', resultDisplay, msg.name)
+                    
+                  } catch (e) {
+                    console.error('Parse tool result error:', e, msg.content)
+                    addThinkingEvent('tool_result', `工具执行完成: ${msg.content.slice(0, 100)}...`, msg.name)
+                  }
+                }
+              }
             }
           } catch {}
         }
       }
     }
     
+    addThinkingEvent('step', '分析任务完成')
     ElMessage.success('分析完成')
     
   } catch (err: any) {
     ElMessage.error(err.message || '分析失败')
+    addThinkingEvent('step', `错误: ${err.message}`)
     console.error(err)
   } finally {
     loading.value = false
@@ -267,7 +422,7 @@ const renderChart = () => {
         </el-button>
       </div>
 
-      <!-- 右侧展示区 -->
+      <!-- 右侧展示区 (中部) -->
       <div class="result-panel">
         <div class="result-container">
           <!-- 图表区域 -->
@@ -277,11 +432,58 @@ const renderChart = () => {
               图表将在此显示
             </div>
           </div>
+          
+          <!-- 分析结果文本 -->
+          <div class="text-result">
+            <div v-if="analysisResult" class="markdown-body" v-html="renderMarkdown(analysisResult)"></div>
+            <div v-else-if="!loading" class="empty-text">
+              分析结果将在此显示
+            </div>
+            <div v-else class="loading-state">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              <span>正在分析数据...</span>
+            </div>
+          </div>
+        </div>
+      </div>
 
-          <!-- 结论区域 -->
-          <div class="analysis-text" v-if="analysisResult">
-            <div class="text-title">分析结论</div>
-            <div class="text-content">{{ analysisResult }}</div>
+      <!-- 最右侧执行过程面板 -->
+      <div class="thinking-panel">
+        <div class="thinking-header">
+          <el-icon v-if="loading" class="thinking-icon rotating"><Loading /></el-icon>
+          <el-icon v-else class="thinking-icon"><VideoPlay /></el-icon>
+          <span class="thinking-title">{{ loading ? '执行中...' : '执行过程' }}</span>
+        </div>
+        
+        <div class="thinking-content">
+          <div
+            v-for="event in thinkingEvents"
+            :key="event.id"
+            :class="['thinking-event', `event-${event.type}`]"
+          >
+            <div class="event-time">{{ formatTime(event.timestamp) }}</div>
+            <div class="event-body">
+              <div v-if="event.toolName" class="event-tool">
+                <span class="tool-badge">{{ event.toolName }}</span>
+              </div>
+              <div class="event-content">
+                <template v-if="event.toolName === 'data_db_run_sql' || event.toolName === 'python_execute'">
+                  <div class="code-label">{{ getCodeLabel(event.content) }}</div>
+                  <pre class="code-block"><code v-html="highlightCode(extractCode(event.content), event.toolName === 'data_db_run_sql' ? 'sql' : 'python')"></code></pre>
+                </template>
+                <template v-else-if="event.toolName === 'data_generate_chart'">
+                  <div class="code-label">{{ getCodeLabel(event.content) }}</div>
+                  <pre class="code-block"><code v-html="highlightCode(extractCode(event.content), 'json')"></code></pre>
+                </template>
+                <template v-else>
+                  <div class="event-text">{{ event.content }}</div>
+                </template>
+              </div>
+            </div>
+          </div>
+          
+          <div v-if="thinkingEvents.length === 0 && !loading" class="empty-thinking">
+            开始分析后，执行过程将在此显示
           </div>
         </div>
       </div>
@@ -296,7 +498,7 @@ const renderChart = () => {
   flex-direction: column;
   background: #181825;
   border-radius: 16px;
-  overflow: hidden;
+  overflow-x: auto; overflow-y: hidden;
   border: 1px solid #313244;
 }
 
@@ -319,7 +521,7 @@ const renderChart = () => {
 
 .header-icon {
   font-size: 24px;
-  color: #a6e3a1;
+  color: #89b4fa;
 }
 
 .header-title {
@@ -327,24 +529,36 @@ const renderChart = () => {
   font-weight: 600;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+}
+
+.kb-select {
+  width: 180px;
+}
+
 .page-body {
   flex: 1;
   display: flex;
-  overflow: hidden;
+  overflow-x: auto; overflow-y: hidden;
 }
 
 .control-panel {
-  width: 360px;
+  width: 320px;
+  min-width: 300px; flex-shrink: 0;
   padding: 24px;
-  background: #1e1e2e;
   border-right: 1px solid #313244;
+  background: #1e1e2e;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
 }
 
 .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: #cdd6f4;
+  color: #a6adc8;
   margin-bottom: 12px;
 }
 
@@ -359,7 +573,10 @@ const renderChart = () => {
 }
 
 .source-switch :deep(.el-radio-button__inner) {
-  width: 100%;
+  width: 50%;
+  background: #313244;
+  border-color: #313244;
+  color: #a6adc8;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -375,8 +592,15 @@ const renderChart = () => {
   border-radius: 0 4px 4px 0;
 }
 
+.source-switch :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: #89b4fa;
+  border-color: #89b4fa;
+  color: #1e1e2e;
+  box-shadow: none;
+}
+
 .config-section {
-  background: rgba(30, 30, 46, 0.5);
+  background: #313244;
   border-radius: 8px;
   padding: 16px;
   border: 1px solid #313244;
@@ -397,10 +621,8 @@ const renderChart = () => {
 .file-upload-area {
   border: 2px dashed #45475a;
   border-radius: 8px;
-  height: 80px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  padding: 20px;
+  text-align: center;
   cursor: pointer;
   transition: all 0.3s;
 }
@@ -410,7 +632,14 @@ const renderChart = () => {
   background: rgba(137, 180, 250, 0.1);
 }
 
-.file-info, .upload-placeholder {
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #89b4fa;
+}
+
+.upload-placeholder {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -423,6 +652,7 @@ const renderChart = () => {
   margin-top: 24px;
   height: 48px;
   font-size: 16px;
+  font-weight: 600;
 }
 
 .result-panel {
@@ -430,6 +660,7 @@ const renderChart = () => {
   padding: 24px;
   background: #11111b;
   overflow-y: auto;
+  min-width: 400px;
 }
 
 .result-container {
@@ -446,7 +677,7 @@ const renderChart = () => {
   min-height: 400px;
   background: #1e1e2e;
   border-radius: 12px;
-  padding: 20px;
+  padding: 16px;
   border: 1px solid #313244;
   position: relative;
 }
@@ -462,24 +693,165 @@ const renderChart = () => {
   left: 50%;
   transform: translate(-50%, -50%);
   color: #6c7086;
+  font-size: 14px;
 }
 
-.analysis-text {
+.text-result {
+  flex: 1;
   background: #1e1e2e;
   border-radius: 12px;
+  padding: 24px;
+  border: 1px solid #313244;
+  color: #cdd6f4;
+  overflow-y: auto;
+}
+
+.empty-text {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6c7086;
+}
+
+.loading-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #89b4fa;
+}
+
+.thinking-panel {
+  width: 380px;
+  min-width: 300px; flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #313244;
+  background: #1e1e2e;
+}
+
+.thinking-header {
+  height: 48px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #313244;
+  background: rgba(137, 180, 250, 0.1);
+}
+
+.thinking-icon {
+  font-size: 18px;
+  color: #89b4fa;
+}
+
+.thinking-icon.rotating {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.thinking-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #89b4fa;
+}
+
+.thinking-content {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.empty-thinking {
   padding: 20px;
+  text-align: center;
+  color: #6c7086;
+  font-size: 13px;
+}
+
+.thinking-event {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(49, 50, 68, 0.5);
   border: 1px solid #313244;
 }
 
-.text-title {
-  font-weight: 600;
-  color: #a6e3a1;
-  margin-bottom: 12px;
+.event-thinking {
+  border-left: 3px solid #cba6f7;
 }
 
-.text-content {
+.event-tool_call {
+  border-left: 3px solid #f9e2af;
+}
+
+.event-tool_result {
+  border-left: 3px solid #a6e3a1;
+}
+
+.event-step {
+  border-left: 3px solid #89b4fa;
+}
+
+.event-time {
+  font-size: 10px;
+  color: #6c7086;
+  margin-bottom: 4px;
+}
+
+.event-tool {
+  margin-bottom: 6px;
+}
+
+.tool-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: #313244;
+  border-radius: 4px;
+  color: #f9e2af;
+}
+
+.event-content {
+  font-size: 13px;
   color: #cdd6f4;
-  line-height: 1.6;
+  line-height: 1.5;
+}
+
+.code-label {
+  font-size: 10px;
+  color: #6c7086;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.code-block {
+  background: #11111b;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.code-block code {
+  color: #cdd6f4;
+  white-space: pre;
+  display: block;
+}
+
+.event-text {
   white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
