@@ -572,30 +572,100 @@ def reader_review_node(state: ContentState) -> ContentState:
         return _append_step(state, "读者审阅", "跳过（前序步骤出错）")
 
     draft = state.get("draft_markdown") or ""
+    outline = state.get("outline") or {}
     try:
-        review_comment = reader_review_agent(
+        review_result = reader_review_agent(
             instruction=state.get("instruction", "") or "",
             draft_markdown=draft,
+            outline=outline,
         )
-        # 将审阅意见追加到 draft 末尾，作为“审阅附注”供用户参考（或后续流程使用）
-        # 也可以仅存入 state 不修改正文。这里选择仅存入 state 并在日志打印，不污染正文。
+        
         new_state: ContentState = {
             **state,
-            "reader_review_comment": review_comment,
+            "reader_review_comment": review_result.feedback,
+            "sections_to_rewrite": review_result.sections_to_rewrite,
+            "review_quality_ok": review_result.quality_ok,
         }
-        if review_comment:
-            _LOGGER.info("reader_review_done: %s", review_comment[:200])
+        
+        if review_result.feedback:
+            _LOGGER.info("reader_review_done: feedback=%s sections_to_rewrite=%s quality_ok=%s",
+                        review_result.feedback[:100], review_result.sections_to_rewrite, review_result.quality_ok)
 
-        # 显示审阅意见摘要
-        if review_comment:
-            comment_preview = review_comment[:60] + "..." if len(review_comment) > 60 else review_comment
-            return _append_step(new_state, "读者审阅", f"审阅完成：{comment_preview}")
+        # 显示审阅结果
+        if review_result.sections_to_rewrite:
+            sections_str = ", ".join(review_result.sections_to_rewrite[:3])
+            return _append_step(new_state, "读者审阅", f"发现 {len(review_result.sections_to_rewrite)} 个需要重写的章节：{sections_str}")
         else:
-            return _append_step(new_state, "读者审阅", "审阅完成，无修改建议")
+            return _append_step(new_state, "读者审阅", "审阅完成，文章质量良好")
     except Exception as exc:  # pragma: no cover
         _LOGGER.error("reader_review_node.failed error=%s", exc)
         return _append_step(state, "读者审阅", f"审阅出错：{str(exc)[:30]}")
 
+
+
+
+def review_rewrite_node(state: ContentState) -> ContentState:
+    """根据读者审阅的结果，重写问题章节。"""
+    if state.get("error"):
+        return _append_step(state, "章节重写", "跳过（前序步骤出错）")
+
+    sections_to_rewrite = state.get("sections_to_rewrite") or []
+    if not sections_to_rewrite:
+        return _append_step(state, "章节重写", "无需重写，跳过")
+
+    # 最多重写 3 个章节，避免过长耗时
+    sections_to_rewrite = sections_to_rewrite[:3]
+    _LOGGER.info("review_rewrite_node.start sections=%s", sections_to_rewrite)
+    
+    # 发送工具调用事件
+    state = _emit_tool_call(state, "rewrite_sections", f"重写 {len(sections_to_rewrite)} 个章节")
+
+    try:
+        # 复用 section_writer_agent 进行重写
+        rewritten_drafts = section_writer_agent(
+            instruction=state.get("instruction", "") or "",
+            outline=state.get("outline") or {},
+            section_notes=state.get("section_notes") or {},
+            image_metadata=state.get("image_metadata"),
+            target_section_ids=sections_to_rewrite,  # 只重写指定章节
+            existing_section_drafts=state.get("section_drafts"),  # 保留其他章节
+            timeout_sec=300.0,
+        )
+        
+        # 合并重写的章节到现有草稿
+        merged_drafts = dict(state.get("section_drafts") or {})
+        merged_drafts.update(rewritten_drafts)
+        
+        # 重新组装 Markdown
+        outline = state.get("outline") or {}
+        sections = outline.get("sections") or []
+        ordered_parts = []
+        for sec in sections:
+            if not isinstance(sec, dict):
+                continue
+            sec_id = str(sec.get("id") or "")
+            if not sec_id:
+                continue
+            draft_md = merged_drafts.get(sec_id, "").strip()
+            if draft_md:
+                ordered_parts.append(draft_md)
+        
+        title = (state.get("title") or "").strip() or "未命名文章"
+        draft_markdown = f"# {title}\n\n" + "\n\n".join(ordered_parts)
+        
+        # 发送工具结果事件
+        state = _emit_tool_result(state, "rewrite_sections", f"已重写 {len(rewritten_drafts)} 个章节")
+        
+        new_state: ContentState = {
+            **state,
+            "section_drafts": merged_drafts,
+            "draft_markdown": draft_markdown,
+        }
+        sections_str = ", ".join(sections_to_rewrite)
+        return _append_step(new_state, "章节重写", f"已重写：{sections_str}")
+    except Exception as exc:
+        _LOGGER.error("review_rewrite_node.failed error=%s", exc)
+        return _append_step(state, "章节重写", f"重写出错：{str(exc)[:30]}")
 
 def doc_refiner_node(state: ContentState) -> ContentState:
     if state.get("error"):
@@ -736,6 +806,7 @@ def get_content_graph():
     graph.add_node("writer_audit", writer_audit_node)
     graph.add_node("merge_sections", merge_sections_node)
     graph.add_node("reader_review", reader_review_node)
+    graph.add_node("review_rewrite", review_rewrite_node)  # 根据审阅结果重写问题章节
     # doc_refiner 节点已禁用（LLM 经常破坏标题结构）
     # graph.add_node("doc_refiner", doc_refiner_node)
     graph.add_node("illustrator", illustrator_node)
@@ -759,8 +830,8 @@ def get_content_graph():
         {"retry": "section_writer", "next": "merge_sections"},
     )
     graph.add_edge("merge_sections", "reader_review")
-    # doc_refiner 已禁用，直接跳到 illustrator
-    graph.add_edge("reader_review", "illustrator")
+    graph.add_edge("reader_review", "review_rewrite")  # 审阅后进行章节重写
+    graph.add_edge("review_rewrite", "illustrator")  # 重写后再插入图片
     graph.add_edge("illustrator", "assembler")
     graph.add_edge("assembler", "summary_for_user")
     graph.add_edge("summary_for_user", END)

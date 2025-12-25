@@ -267,6 +267,10 @@ def collector_agent(
                 "rough_snippet": snippet,
                 "num_images": len(images) if isinstance(images, list) else 0,
             }
+            # 调试日志：显示收集到的内容摘要
+            _LOGGER.info("collector.url_fetched source_id=%s url=%s title=%s snippet_len=%d images=%d",
+                        source_id, url[:50], data.get("title", "")[:50], len(snippet), len(images) if isinstance(images, list) else 0)
+            print(f"[collector] {source_id}: {data.get('title', '')[:60]} | {len(text)} chars | {len(images) if isinstance(images, list) else 0} images", flush=True)
         except Exception as exc:  # pragma: no cover - 防御性
             _LOGGER.warning("collector.fetch_url_failed url=%s error=%s", url, exc)
             overview[source_id] = {
@@ -324,18 +328,27 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
 - instruction：用户对文章的整体要求（主题、读者、语气、篇幅、重点等）。
 - rough_sources_overview：信息来源的概览列表或字典，每个来源包含 source_id、类型（网页/文件）、简要内容概览等。
 
+【核心原则 - 极其重要】
+**文章主题必须完全基于 rough_sources_overview 中的实际内容！**
+- 你必须仔细阅读 rough_sources_overview 中每个来源的 rough_snippet（内容概览）
+- 文章标题和章节必须围绕这些来源的实际内容来设计
+- **严禁**生成与 rough_sources_overview 内容无关的主题
+- 如果来源内容是关于 Transformer 的，文章就必须是关于 Transformer 的
+- 如果来源内容是关于机器学习的，文章就必须是关于机器学习的
+
 【任务目标】
-1. 基于 instruction 和 rough_sources_overview，为文章设计结构清晰、层级明确的大纲。
-2. 输出文章总标题 title。
-3. 输出 sections 列表，每个 section 包含：
+1. **首先分析 rough_sources_overview**，理解用户提供的来源实际讲什么内容。
+2. 基于来源内容和 instruction（用户偏好），为文章设计结构清晰、层级明确的大纲。
+3. 输出文章总标题 title（必须反映来源内容的主题）。
+4. 输出 sections 列表，每个 section 包含：
    - id：小写字母 + 下划线组成的唯一字符串，如 "sec_intro"。
    - title：该节标题。
    - level：数字 2 或 3，表示 Markdown 的 ## 或 ### 级别。
    - parent_id：可选。若为三级标题，指向所属二级标题的 id。
    - is_core：布尔值，是否为核心内容部分。
    - target_word_count：该小节的目标字数（整数，根据用户总字数要求计算）。
-4. 输出 sections_to_research：需要 Researcher 重点研究的 section_id 列表（只列 id）。
-5. 输出 writing_style：根据 instruction 和概览，为 Writer 总结的写作风格指导（语气、受众、用词规范等）。
+5. 输出 sections_to_research：需要 Researcher 重点研究的 section_id 列表（只列 id）。
+6. 输出 writing_style：根据 instruction 和概览，为 Writer 总结的写作风格指导（语气、受众、用词规范等）。
 
 【字数分配规则 - 非常重要】
 1. 首先从 instruction 中解析用户要求的总字数（如"5000字"、"5000-6000字"等）。
@@ -416,7 +429,7 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
         messages=messages,
         output_model=OutlineOutput,
         task_name="planner",
-        timeout_sec=180.0,  # 增加超时时间以适应 structured_output + reasoning 模式
+        timeout_sec=600.0,  # VLM 模型需要更长超时时间
     )
     
     # 记录思维过程到日志（后续可以通过 adispatch_custom_event 发送给前端）
@@ -788,7 +801,7 @@ def section_writer_agent(
     *,
     target_section_ids: Optional[List[str]] = None,
     existing_section_drafts: Optional[Dict[str, str]] = None,
-    timeout_sec: float = 180.0,
+    timeout_sec: float = 300.0,  # VLM 模型需要更长超时时间
     on_section_complete: Optional[Callable[[str, str, int], None]] = None,  # (section_id, title, char_count)
 ) -> Dict[str, str]:
     """Section Writer：按小节生成 Markdown（每节独立生成，便于循环扩写）。
@@ -1153,13 +1166,27 @@ def reflect_section_agent(
 def reader_review_agent(
     instruction: str,
     draft_markdown: str,
+    outline: Dict[str, Any],
     *,
     timeout_sec: float = 240.0,
-) -> str:
-    """Reader Review：从读者视角审阅草稿，提出改进建议（仅返回建议，不自动修改）。"""
+) -> "ReaderReviewOutput":
+    """Reader Review：从读者视角审阅草稿，指出问题章节并提出改进建议。
+    
+    Returns:
+        ReaderReviewOutput: 包含 feedback、sections_to_rewrite 和 quality_ok
+    """
+    from .schema import ReaderReviewOutput
 
     if not draft_markdown:
-        return ""
+        return ReaderReviewOutput(feedback="", sections_to_rewrite=[], quality_ok=True)
+
+    # 提取所有章节 ID 供 LLM 参考
+    sections = outline.get("sections", []) if isinstance(outline, dict) else []
+    section_ids = [str(sec.get("id", "")) for sec in sections if isinstance(sec, dict) and sec.get("id")]
+    sections_info = [
+        {"id": sec.get("id"), "title": sec.get("title"), "level": sec.get("level")}
+        for sec in sections if isinstance(sec, dict)
+    ]
 
     system_prompt = f"""
 你是 Reader Review 子 Agent，代表目标读者对文章草稿进行审阅。
@@ -1167,21 +1194,33 @@ def reader_review_agent(
 【输入】
 - instruction：文章的原始写作目标、受众和预期语气。
 - draft_markdown：当前生成的文章草稿。
+- sections_info：文章的章节结构（包含 id、title、level）。
 
 【任务】
 1. 扮演 instruction 中描述的最典型的目标读者。
-2. 通读 draft_markdown，从“可读性”、“有用性”、“是否解决问题”三个维度进行评价。
-3. 敏锐地指出以下问题（如果有）：
-   - 逻辑断层或跳跃；
-   - 晦涩难懂或缺乏解释的术语；
-   - 语气不当（如过于枯燥或过于营销）；
-   - 结构混乱。
-4. 给出 3-5 条具体的改进建议（Actionable Feedback）。
+2. 通读 draft_markdown，从"可读性"、"有用性"、"是否解决问题"三个维度进行评价。
+3. 识别有明显问题的章节（使用 sections_info 中的 id）：
+   - 内容过短或空洞
+   - 逻辑断层或跳跃
+   - 晦涩难懂或缺乏解释
+   - 与主题不相关
+4. 给出 3-5 条具体的改进建议。
 
-【输出】
-- 请输出一段简明扼要的审阅意见（Markdown 格式），字数控制在 300 字以内。
-- 语气要客观、建设性。
-- 如果文章质量很高，可以直接输出“文章质量良好，符合预期。”
+【输出格式】
+输出 JSON 格式，包含：
+- feedback：审阅意见（300字以内）
+- sections_to_rewrite：需要重写的 section_id 列表
+  - 只列出确实有严重问题需要重写的章节
+  - 如果文章整体质量良好，返回空列表 []
+- quality_ok：布尔值，文章整体是否可接受
+
+【可用的 section_id 列表】
+{json.dumps(section_ids, ensure_ascii=False)}
+
+【重要】
+- 只返回确实需要重写的章节，不要随意列出所有章节
+- 如果文章质量良好，sections_to_rewrite 应为空列表
+- 最多列出 3 个需要重写的章节
 
 {COMMON_CONSTRAINTS_ZH}
 """.strip()
@@ -1189,33 +1228,31 @@ def reader_review_agent(
     prompt = json.dumps(
         {
             "instruction": instruction,
-            "draft_preview": draft_markdown[:15000],  # 截断以防过长
+            "draft_preview": draft_markdown[:15000],
+            "sections_info": sections_info,
         },
         ensure_ascii=False,
     )
 
-    llm = build_chat_llm(task_name="reader_review")
-
-    def _call():
-        return llm.invoke(
-            [
-                SystemMessage(content=_with_nothink(system_prompt)),
-                HumanMessage(content=prompt),
-            ]
-        )
-
     try:
-        result = invoke_llm_with_timeout(
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=prompt),
+        ]
+        
+        _thinking, result = invoke_with_structured_thinking(
+            messages=messages,
+            output_model=ReaderReviewOutput,
             task_name="reader_review",
-            fn=_call,
             timeout_sec=timeout_sec,
         )
-        content = getattr(result, "content", str(result))
-        # 保留思维内容用于流式展示，最终在 assembler 清理
-        return str(content).strip()
+        
+        _LOGGER.info("reader_review.success sections_to_rewrite=%s quality_ok=%s",
+                    result.sections_to_rewrite, result.quality_ok)
+        return result
     except Exception as exc:
         _LOGGER.warning("reader_review.failed error=%s", exc)
-        return ""
+        return ReaderReviewOutput(feedback=f"审阅失败：{exc}", sections_to_rewrite=[], quality_ok=True)
 
 
 def doc_refiner_agent(
@@ -1349,7 +1386,7 @@ def illustrator_agent(
     all_images: List[Dict[str, Any]],
     *,
     max_images_total: int = 5,
-    timeout_sec: float = 180.0,  # 增加超时时间
+    timeout_sec: float = 300.0,  # VLM 模型需要更长超时时间
 ) -> str:
     """Illustrator：使用 LLM 智能匹配图片与文章内容，并在最佳位置插入图片。
     

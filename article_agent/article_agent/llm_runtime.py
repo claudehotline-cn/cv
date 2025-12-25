@@ -145,7 +145,7 @@ def invoke_with_structured_thinking(
     task_name: str = "article",
     timeout_sec: float = 180.0,
 ) -> tuple[str, TModel]:
-    """调用 LLM 并同时获取思维过程和结构化输出。
+    """调用 LLM 并获取结构化输出。
     
     Args:
         messages: LangChain 消息列表
@@ -154,122 +154,47 @@ def invoke_with_structured_thinking(
         timeout_sec: 超时时间
     
     Returns:
-        (thinking, structured_output) - 思维过程字符串和结构化输出对象
+        (thinking, structured_output) - 思维过程字符串（空）和结构化输出对象
     
     工作原理：
-        1. 使用 reasoning=True 的 LLM 进行调用
-        2. 从响应中提取 <think>...</think> 内的思维过程
-        3. 从响应中提取 JSON 部分并解析为 Pydantic 模型
+        使用 Ollama 的 json_schema 方法强制输出 JSON 格式
     """
-    import re
-    import json
-    
-    # 构建启用思维模式的 LLM，并使用原生结构化输出
     settings = get_settings()
     from langchain_ollama import ChatOllama
     
+    # 使用 reasoning=False，依赖 json_schema 保证 JSON 输出
     base_llm = ChatOllama(
         model=settings.llm_model,
         base_url=settings.ollama_base_url,
         temperature=0,
-        reasoning=True,
+        reasoning=False,  # 禁用思维模式，保证 JSON 输出
         num_predict=16384,
     )
     
-    # 使用 Ollama 原生的 json_schema 方法获取结构化输出
-    try:
-        llm = base_llm.with_structured_output(output_model, method="json_schema")
-    except Exception as exc:
-        _LOGGER.warning("invoke_with_structured_thinking.structured_output_failed task=%s error=%s, falling back to manual parsing", task_name, exc)
-        llm = base_llm
+    # 使用 Ollama 原生的 json_schema 方法强制 JSON 输出
+    llm = base_llm.with_structured_output(output_model, method="json_schema")
     
     _LOGGER.info(
-        "invoke_with_structured_thinking.init task=%s model=%s num_predict=16384 reasoning=True structured_output=%s",
-        task_name, settings.llm_model, llm != base_llm
+        "invoke_with_structured_thinking.init task=%s model=%s reasoning=False json_schema=True",
+        task_name, settings.llm_model
     )
-    
-    # 直接使用原始 messages，不添加额外格式指令
-    enhanced_messages = list(messages)
     
     # 调用 LLM
     def _invoke():
-        return llm.invoke(enhanced_messages)
+        return llm.invoke(list(messages))
     
     response = invoke_llm_with_timeout(task_name, _invoke, timeout_sec)
     
-    # with_structured_output 可能直接返回 Pydantic 对象
-    # 如果是的话，思考内容就丢失了
-    # 但如果返回的是 AIMessage，需要解析
-    
-    thinking = ""
-    structured_output = None
-    
-    # 检查是否直接是 Pydantic 对象
-    if isinstance(response, output_model):
-        structured_output = response
-        _LOGGER.info(
-            "invoke_with_structured_thinking.direct_output task=%s type=%s",
-            task_name, type(response).__name__
-        )
-    else:
-        # 是 AIMessage，需要解析
-        response_text = ""
-        thinking_from_kwargs = ""
-        
-        if hasattr(response, "content"):
-            response_text = response.content or ""
-        
-        # 检查 additional_kwargs 中是否有思考内容
-        if hasattr(response, "additional_kwargs"):
-            kwargs = response.additional_kwargs or {}
-            if "reasoning_content" in kwargs:
-                thinking_from_kwargs = kwargs["reasoning_content"] or ""
-            elif "thinking" in kwargs:
-                thinking_from_kwargs = kwargs["thinking"] or ""
-        
-        # 记录响应结构用于调试
-        _LOGGER.info(
-            "invoke_with_structured_thinking.response task=%s content_len=%d thinking_kwargs_len=%d type=%s",
-            task_name, len(response_text), len(thinking_from_kwargs), type(response).__name__
-        )
-        
-        # 思考内容
-        thinking = thinking_from_kwargs
-        if not thinking:
-            think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL | re.IGNORECASE)
-            if think_match:
-                thinking = think_match.group(1).strip()
-                response_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL | re.IGNORECASE)
-        
-        # 提取并解析 JSON
-        json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response_text)
-        if not json_match:
-            json_match = re.search(r'\{[\s\S]*\}', response_text)
-        
-        if json_match:
-            json_str = json_match.group(1) if '```json' in response_text else json_match.group(0)
-            try:
-                json_data = json.loads(json_str)
-                structured_output = output_model.model_validate(json_data)
-            except (json.JSONDecodeError, Exception) as exc:
-                _LOGGER.warning(
-                    "invoke_with_structured_thinking.parse_failed task=%s error=%s json=%s",
-                    task_name, exc, json_str[:200]
-                )
-                raise ValueError(f"无法解析结构化输出: {exc}") from exc
-        else:
-            _LOGGER.warning(
-                "invoke_with_structured_thinking.no_json task=%s response=%s",
-                task_name, response_text[:200]
-            )
-            raise ValueError("响应中未找到 JSON 数据")
+    # with_structured_output + json_schema 直接返回 Pydantic 对象
+    if not isinstance(response, output_model):
+        raise ValueError(f"意外的响应类型: {type(response)}, 期望: {output_model}")
     
     _LOGGER.info(
-        "invoke_with_structured_thinking.success task=%s thinking_len=%d",
-        task_name, len(thinking)
+        "invoke_with_structured_thinking.success task=%s output_type=%s",
+        task_name, type(response).__name__
     )
     
-    return thinking, structured_output
+    return "", response  # thinking 为空，因为 reasoning=False
 
 
 def invoke_llm_with_timeout(

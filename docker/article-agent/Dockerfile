@@ -1,4 +1,5 @@
-﻿# syntax=docker/dockerfile:1.4
+﻿# syntax line temporarily disabled due to registry timeout
+# syntax=docker/dockerfile:1.4
 
 # LangGraph-based content article agent (no hand-written FastAPI)
 

@@ -150,6 +150,23 @@ class WriterAuditOutput(BaseModel):
     quality_ok: bool = Field(..., description="是否达到可对外发布的初稿水平。")
 
 
+class ReaderReviewOutput(BaseModel):
+    """Reader Review 子 Agent 的结构化输出。"""
+
+    feedback: str = Field(
+        ...,
+        description="审阅意见：从读者视角指出的问题和改进建议，300字以内。",
+    )
+    sections_to_rewrite: List[str] = Field(
+        default_factory=list,
+        description="需要重写的 section_id 列表。如果文章质量良好，返回空列表。",
+    )
+    quality_ok: bool = Field(
+        default=True,
+        description="文章整体质量是否可接受。True 表示无需重写。",
+    )
+
+
 __all__ = [
     "OutlineSection",
     "OutlineOutput",
@@ -160,5 +177,6 @@ __all__ = [
     "SectionDraftOutput",
     "SectionReflectionOutput",
     "WriterAuditOutput",
+    "ReaderReviewOutput",
     "parse_json_output",
 ]
