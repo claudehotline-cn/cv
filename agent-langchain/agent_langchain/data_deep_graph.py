@@ -485,10 +485,85 @@ def generate_chart_tool(
     
     try:
         # 解析 LLM 生成的 option JSON
-        if isinstance(option, str):
-            option_dict = json.loads(option)
-        else:
-            option_dict = option
+        # ========================================================================
+        # 1. 预处理：标准化输入
+        # ========================================================================
+        clean_option = str(option).strip()
+        
+        # 移除 Markdown 代码块标记（如果有）
+        if "```" in clean_option:
+            import re
+            # 移除 ```json 或 ```python 等
+            clean_option = re.sub(r"```\w*\n?", "", clean_option)
+            clean_option = clean_option.replace("```", "").strip()
+
+        # 移除常见赋值前缀 (option =, var x =)
+        if "=" in clean_option:
+             # 简单启发式：如果在前 20 个字符内有 =，取 = 之后的内容
+             if clean_option[:20].find("=") != -1:
+                 clean_option = clean_option.split("=", 1)[1].strip()
+
+        # ========================================================================
+        # 2. 核心解析逻辑 (Robust Parse)
+        # ========================================================================
+        def robust_parse(text):
+            # 策略 A: 直接解析 JSON
+            try:
+                return json.loads(text)
+            except:
+                pass
+            
+            # 策略 B: 直接解析 Python Literal
+            import ast
+            try:
+                return ast.literal_eval(text)
+            except:
+                pass
+
+            # 策略 C: 提取最外层 {} 后再尝试解析 (这是最关键的容错)
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1:
+                inner_text = text[start:end+1]
+                # 递归尝试解析提取后的内容
+                try:
+                    return json.loads(inner_text)
+                except:
+                    pass
+                try:
+                    return ast.literal_eval(inner_text)
+                except:
+                    # 策略 D: 混合修正 (处理 true/True, null/None 混用)
+                    # 尝试将 Python 关键字转 JSON
+                    fixed_json = inner_text.replace("True", "true").replace("False", "false").replace("None", "null").replace("'", '"')
+                    try:
+                        return json.loads(fixed_json)
+                    except:
+                        pass
+                    
+                    # 尝试将 JSON 关键字转 Python
+                    fixed_py = inner_text.replace("true", "True").replace("false", "False").replace("null", "None")
+                    try:
+                        return ast.literal_eval(fixed_py)
+                    except:
+                        pass
+            
+            # 策略 E: 使用 json_repair (最终手段)
+            # 专门处理缺失括号、尾部截断等问题
+            try:
+                import json_repair
+                return json_repair.loads(text)
+            except Exception as e:
+                # _LOGGER.warning("json_repair failed: %s", e)
+                pass
+
+            raise ValueError("无法解析 option 字符串，请确保是有效的 JSON 或 Python 字典格式。")
+
+        option_dict = robust_parse(clean_option)
+
+        # ========================================================================
+        # 3. 后处理：补全必要字段
+        # ========================================================================
         
         # 添加标题（如果 LLM 没有提供）
         if "title" not in option_dict:
@@ -661,9 +736,13 @@ def get_data_deep_agent_graph() -> Any:
 - 遇到错误时不要放弃，尝试修复
 - 多次尝试后仍失败，告知用户具体问题
 - 始终使用中文回答
+- **严禁在 python_execute 中构建图表配置（Option）！**
+- **Python 代码只能返回纯数据（如 List, Dict, DataFrame），不能返回包含 'xAxis', 'series' 等图表结构的 JSON。**
+- **正确的流程**：
+  1. Python: `df = ...; result = df.to_dict('records')` (获取数据)
+  2. LLM: 思考数据结构
+  3. LLM: 调用 `data_generate_chart(option={...})` (将数据填入 ECharts 配置)
 - **严禁在 python_execute 中使用 matplotlib, seaborn, plt 等绘图库！**
-- **严禁在 python_execute 中构建图表配置（Option）！Python 只负责数据计算和清洗。**
-- **你（LLM）必须根据 Python 处理后的数据，构造标准 ECharts Option，并调用 data_generate_chart 工具。**
 - **生成图表前，必须先用 data_db_run_sql 或 data_excel_load 获取数据**
 
 【图表生成 - 重要】
