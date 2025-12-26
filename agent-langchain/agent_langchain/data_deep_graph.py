@@ -6,9 +6,10 @@ import io
 import json
 import logging
 import sys
+import ast
 import traceback
 from contextlib import redirect_stdout, redirect_stderr
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.tools import tool
 from langchain.agents import create_agent
@@ -251,7 +252,8 @@ def excel_list_sheets_tool(file_path: str) -> Dict[str, Any]:
 
 # 禁止的导入和内置函数
 _FORBIDDEN_IMPORTS = {"os", "subprocess", "shutil", "sys", "pathlib", "socket", "requests", "urllib"}
-_FORBIDDEN_BUILTINS = {"open", "exec", "eval", "compile", "__import__"}
+# 注意：不禁止 __import__ 因为 pandas 内部操作（如 strftime）需要它
+_FORBIDDEN_BUILTINS = {"open", "exec", "eval", "compile"}
 
 
 def _create_safe_globals() -> Dict[str, Any]:
@@ -316,6 +318,10 @@ def python_execute_tool(code: str) -> Dict[str, Any]:
       - datetime, timedelta, date
       - 之前加载的 DataFrame（如 sql_result, excel_data）
 
+    【严禁事项】
+      - 禁止使用 matplotlib, seaborn, plt 等进行绘图！必须使用 data_generate_chart 工具生成图表。
+      - 禁止使用 import 导入其他模块（pandas 等已预装）。
+
     返回值：
       - 如果代码最后一行是表达式，返回其值
       - 如果有 print 输出，返回输出内容
@@ -346,20 +352,37 @@ def python_execute_tool(code: str) -> Dict[str, Any]:
 
     try:
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            # 尝试作为表达式执行最后一行
-            lines = code.strip().split('\n')
-            if len(lines) > 1:
-                # 执行除最后一行外的所有代码
-                exec('\n'.join(lines[:-1]), safe_globals, safe_locals)
-            
-            last_line = lines[-1].strip()
             try:
-                # 尝试将最后一行作为表达式求值
-                result = eval(last_line, {**safe_globals, **safe_locals}, safe_locals)
-            except SyntaxError:
-                # 如果不是表达式，作为语句执行
-                exec(last_line, {**safe_globals, **safe_locals}, safe_locals)
-                result = safe_locals.get("result", None)
+                # 使用 AST 解析代码
+                tree = ast.parse(code)
+                is_expression = False
+                
+                # 检查最后一个节点是否为表达式
+                if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    is_expression = True
+                    # 分离前面的语句和最后的表达式
+                    body_nodes = tree.body[:-1]
+                    expr_node = tree.body[-1]
+                    
+                    # 执行前面的语句
+                    if body_nodes:
+                        module = ast.Module(body=body_nodes, type_ignores=[])
+                        exec(compile(module, "<string>", "exec"), safe_globals, safe_locals)
+                    
+                    # 评估最后的表达式
+                    expr = ast.Expression(body=expr_node.value)
+                    result = eval(compile(expr, "<string>", "eval"), {**safe_globals, **safe_locals}, safe_locals)
+                else:
+                    # 全部是语句，直接执行
+                    exec(code, safe_globals, safe_locals)
+                    # 尝试获取 result 变量
+                    result = safe_locals.get("result", None)
+
+            except Exception as e:
+                # 发生错误，尝试直接执行（作为兜底，虽然上面其实覆盖了大部分）
+                 _LOGGER.warning("AST execution failed, falling back to direct exec: %s", e)
+                 exec(code, safe_globals, safe_locals)
+                 result = safe_locals.get("result", None)
 
         stdout_output = stdout_capture.getvalue()
         stderr_output = stderr_capture.getvalue()
@@ -440,154 +463,67 @@ def _get_error_suggestion(error: str) -> str:
 
 @tool("data_generate_chart")
 def generate_chart_tool(
-    chart_type: str,
-    title: str,
-    data_source: str = "result",
-    x_column: Optional[str] = None,
-    y_columns: Optional[List[str]] = None,
+    option: Union[str, Dict[str, Any]],
+    title: str = "数据图表",
 ) -> Dict[str, Any]:
-    """根据 DataFrame 生成 ECharts 图表配置（结构化输出）。
+    """生成 ECharts 图表。LLM 需要根据数据直接生成完整的 ECharts option 配置。
 
     参数：
-      - chart_type: 图表类型 (line/bar/pie/scatter)
+      - option: 完整的 ECharts option 配置（JSON 字符串），必须包含 xAxis, yAxis, series 等
       - title: 图表标题
-      - data_source: DataFrame 名称，默认为 "result"
-      - x_column: X 轴列名（折线图/柱状图必需）
-      - y_columns: Y 轴列名列表
 
-    返回 Pydantic 验证过的 ECharts option 配置。
+    折线图示例：
+    {"xAxis": {"type": "category", "data": ["1月", "2月"]}, "yAxis": {"type": "value"}, "series": [{"type": "line", "data": [100, 200]}]}
+
+    柱状图示例：
+    {"xAxis": {"type": "category", "data": ["北京", "上海"]}, "yAxis": {"type": "value"}, "series": [{"type": "bar", "data": [100, 200]}]}
+
+    热力图示例：
+    {"xAxis": {"type": "category", "data": ["周一", "周二"]}, "yAxis": {"type": "category", "data": ["上海", "北京"]}, "visualMap": {"min": 0, "max": 100}, "series": [{"type": "heatmap", "data": [[0,0,50], [1,0,80]]}]}
     """
-    from .utils.schema import (
-        ChartResult,
-        build_line_or_bar_option,
-        build_pie_option,
-        build_scatter_option,
-    )
-
-    df = _get_dataframe(data_source)
-    if df is None:
-        # 检查是否有其他可用的 DataFrame
-        available = list(_CURRENT_DATAFRAMES.keys())
-        if available:
-            # 自动使用第一个可用的 DataFrame
-            data_source = available[0]
-            df = _CURRENT_DATAFRAMES[data_source]
-            _LOGGER.info("data_deep.generate_chart auto_fallback to=%s", data_source)
-        else:
-            raise ValueError(
-                f"未找到任何已加载的数据。请先使用 data_db_run_sql 执行 SQL 查询，或使用 data_excel_load 加载 Excel 文件。"
-            )
-
-    try:
-        import pandas as pd
-        if not isinstance(df, pd.DataFrame):
-            raise ValueError(f"'{data_source}' 不是有效的 DataFrame。")
-
-        _LOGGER.info("data_deep.generate_chart type=%s title=%s source=%s", chart_type, title, data_source)
-
-        chart_type = chart_type.lower()
-        
-        # Helper to convert Decimal/datetime/NaN to JSON-serializable types
-        def _to_json_serializable(val):
-            from decimal import Decimal
-            from datetime import datetime, date
-            import math
-            # Handle NaN and None - convert to 0 for chart compatibility
-            if val is None:
-                return 0
-            if isinstance(val, float) and math.isnan(val):
-                return 0
-            if isinstance(val, Decimal):
-                return float(val)
-            if isinstance(val, (datetime, date)):
-                return str(val)
-            return val
-
-        def _convert_list(lst):
-            return [_to_json_serializable(v) for v in lst]
-        
-        # 验证列名是否存在
-        available_columns = list(df.columns)
-        if x_column and x_column not in df.columns:
-            return json.dumps({
-                "success": False,
-                "error": f"列 '{x_column}' 不存在于数据中",
-                "available_columns": available_columns,
-                "suggestion": f"请使用以下列名之一：{available_columns}"
-            }, default=str, ensure_ascii=False)
-        
-        if y_columns:
-            missing_cols = [col for col in y_columns if col not in df.columns]
-            if missing_cols:
-                return json.dumps({
-                    "success": False,
-                    "error": f"以下列不存在：{missing_cols}",
-                    "available_columns": available_columns,
-                    "suggestion": f"请使用以下列名：{available_columns}"
-                }, default=str, ensure_ascii=False)
-        
-        if chart_type in ("line", "bar"):
-            if not x_column:
-                x_column = df.columns[0]
-            if not y_columns:
-                y_columns = [col for col in df.columns if col != x_column][:5]
-            
-            x_data = df[x_column].astype(str).tolist()
-            series_data = {
-                col: _convert_list(df[col].tolist())
-                for col in y_columns if col in df.columns
-            }
-            option = build_line_or_bar_option(title, chart_type, x_data, series_data)
-
-        elif chart_type == "pie":
-            name_col = x_column or df.columns[0]
-            value_col = y_columns[0] if y_columns else df.columns[1] if len(df.columns) > 1 else df.columns[0]
-            
-            pie_data = [
-                {"name": str(row[name_col]), "value": _to_json_serializable(row[value_col])}
-                for _, row in df.head(20).iterrows()
-            ]
-            option = build_pie_option(title, pie_data)
-
-        elif chart_type == "scatter":
-            x_col = x_column or df.columns[0]
-            y_col = y_columns[0] if y_columns else df.columns[1] if len(df.columns) > 1 else df.columns[0]
-            
-            scatter_data = [[_to_json_serializable(row[x_col]), _to_json_serializable(row[y_col])] for _, row in df.iterrows()]
-            option = build_scatter_option(title, x_col, y_col, scatter_data)
-
-        else:
-            return json.dumps({
-                "success": False,
-                "error": f"不支持的图表类型：{chart_type}",
-                "supported_types": ["line", "bar", "pie", "scatter"],
-                "suggestion": "请使用 line, bar, pie 或 scatter 作为 chart_type"
-            }, default=str, ensure_ascii=False)
-
-        # 使用 Pydantic 模型验证并序列化
-        result = ChartResult(
-            chart_type=chart_type,
-            title=title,
-            option=option,
-            data_shape={"rows": len(df), "columns": len(df.columns)},
-        )
-        
-        return result.model_dump()
+    _LOGGER.info("data_deep.generate_chart title=%s option_len=%d", title, len(option))
     
-    except KeyError as e:
-        available_columns = list(df.columns) if df is not None else []
+    try:
+        # 解析 LLM 生成的 option JSON
+        if isinstance(option, str):
+            option_dict = json.loads(option)
+        else:
+            option_dict = option
+        
+        # 添加标题（如果 LLM 没有提供）
+        if "title" not in option_dict:
+            option_dict["title"] = {"text": title, "left": "center"}
+        
+        # 添加 tooltip（如果 LLM 没有提供）
+        if "tooltip" not in option_dict:
+            option_dict["tooltip"] = {"trigger": "axis"}
+        
+        # 确定图表类型（从 series 中提取）
+        chart_type = "custom"
+        if "series" in option_dict and len(option_dict["series"]) > 0:
+            first_series = option_dict["series"][0]
+            if isinstance(first_series, dict) and "type" in first_series:
+                chart_type = first_series["type"]
+        
+        return json.dumps({
+            "chart_type": chart_type,
+            "title": title,
+            "option": option_dict,
+        }, default=str, ensure_ascii=False)
+    
+    except json.JSONDecodeError as e:
+        _LOGGER.warning("data_deep.generate_chart JSON parse error: %s", e)
         return json.dumps({
             "success": False,
-            "error": f"列名错误：{e}",
-            "available_columns": available_columns,
-            "suggestion": f"数据中可用的列名有：{available_columns}。请检查 x_column 和 y_columns 参数。"
+            "error": f"option JSON 解析失败：{e}",
+            "suggestion": "请确保 option 是有效的 JSON 字符串。"
         }, default=str, ensure_ascii=False)
     except Exception as e:
         _LOGGER.warning("data_deep.generate_chart failed: %s", e)
         return json.dumps({
             "success": False,
             "error": str(e),
-            "suggestion": "请检查参数是否正确，确保数据已正确加载。"
+            "suggestion": "请检查 option 配置是否正确。"
         }, default=str, ensure_ascii=False)
 
 
@@ -725,16 +661,33 @@ def get_data_deep_agent_graph() -> Any:
 - 遇到错误时不要放弃，尝试修复
 - 多次尝试后仍失败，告知用户具体问题
 - 始终使用中文回答
-- **当用户提到"图表"、"柱状图"、"折线图"、"饼图"等可视化需求时，你必须调用 data_generate_chart 工具生成图表！这是强制要求。**
+- **严禁在 python_execute 中使用 matplotlib, seaborn, plt 等绘图库！**
+- **严禁在 python_execute 中构建图表配置（Option）！Python 只负责数据计算和清洗。**
+- **你（LLM）必须根据 Python 处理后的数据，构造标准 ECharts Option，并调用 data_generate_chart 工具。**
 - **生成图表前，必须先用 data_db_run_sql 或 data_excel_load 获取数据**
 
-【多系列图表生成 - 重要】
-当需要按分组（如城市、类别等）生成多系列图表时：
-1. 先执行 SQL 获取包含分组列的原始数据
-2. 使用 python_execute 将数据进行 pivot 转换，使每个分组成为单独的列
-3. 调用 data_generate_chart 时，将所有分组列名作为 y_columns 参数
+【图表生成 - 重要】
+data_generate_chart 工具接受完整的 ECharts option JSON 配置。你需要根据数据构建 option：
 
-这样生成的图表会有多条线/柱（每个分组一条），而不是混合在一起。
+折线图示例：
+data_generate_chart(
+    option='{"xAxis": {"type": "category", "data": ["1月", "2月"]}, "yAxis": {"type": "value"}, "series": [{"type": "line", "name": "销量", "data": [100, 200]}]}',
+    title='月度销量'
+)
+
+柱状图示例：
+data_generate_chart(
+    option='{"xAxis": {"type": "category", "data": ["北京", "上海"]}, "yAxis": {"type": "value"}, "series": [{"type": "bar", "name": "销售额", "data": [300, 500]}]}',
+    title='城市销售额'
+)
+
+热力图示例：
+data_generate_chart(
+    option='{"xAxis": {"type": "category", "data": ["1月", "2月"]}, "yAxis": {"type": "category", "data": ["上海", "北京"]}, "visualMap": {"min": 0, "max": 100}, "series": [{"type": "heatmap", "data": [[0,0,50], [1,0,80], [0,1,30], [1,1,90]]}]}',
+    title='城市月度销售热力图'
+)
+
+注意：option 必须是有效的 JSON 字符串，从 SQL 或 Python 结果中提取实际数据填入。
 """
 
     # 清空之前的 DataFrame

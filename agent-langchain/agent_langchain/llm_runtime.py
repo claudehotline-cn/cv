@@ -29,6 +29,9 @@ def build_chat_llm(task_name: str = "generic") -> Any:
             return ChatOllama(
                 model=settings.llm_model,
                 base_url=getattr(settings, "ollama_base_url", "http://host.docker.internal:11434"),
+                temperature=0,
+                num_predict=24576,  # 用户请求 3 倍 token
+                num_ctx=32768,      # 确保上下文窗口足够大
             )
         except Exception as exc:  # pragma: no cover
             _LOGGER.error("llm.init_failed provider=ollama task=%s error=%s", task_name, exc)

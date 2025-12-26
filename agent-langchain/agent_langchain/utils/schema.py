@@ -147,3 +147,45 @@ def build_scatter_option(
             EChartsSeries(type="scatter", data=data)
         ],
     )
+
+
+def build_heatmap_option(
+    title: str,
+    x_data: List[str],
+    y_data: List[str],
+    data: List[List[Any]],
+) -> Dict[str, Any]:
+    """构建热力图配置。
+    
+    Args:
+        title: 图表标题
+        x_data: X轴分类数据（如月份）
+        y_data: Y轴分类数据（如城市）
+        data: 热力图数据，格式为 [[x_idx, y_idx, value], ...]
+    """
+    # 热力图需要更复杂的配置，直接返回字典
+    return {
+        "title": {"text": title, "left": "center"},
+        "tooltip": {"position": "top"},
+        "grid": {"left": "15%", "right": "10%", "bottom": "15%", "top": "10%"},
+        "xAxis": {"type": "category", "data": x_data, "splitArea": {"show": True}},
+        "yAxis": {"type": "category", "data": y_data, "splitArea": {"show": True}},
+        "visualMap": {
+            "min": 0,
+            "max": 10,
+            "calculable": True,
+            "orient": "horizontal",
+            "left": "center",
+            "bottom": "0%",
+        },
+        "series": [{
+            "name": title,
+            "type": "heatmap",
+            "data": data,
+            "label": {"show": True},
+            "emphasis": {
+                "itemStyle": {"shadowBlur": 10, "shadowColor": "rgba(0, 0, 0, 0.5)"}
+            },
+        }],
+    }
+
