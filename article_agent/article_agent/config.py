@@ -31,7 +31,7 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_OLLAMA_BASE_URL",
     )
     ollama_num_predict: int = Field(
-        default=4096,
+        default=24576,
         description="Ollama 生成最大 token 数（num_predict）。",
         alias="ARTICLE_AGENT_OLLAMA_NUM_PREDICT",
     )

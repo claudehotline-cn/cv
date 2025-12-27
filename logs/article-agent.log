@@ -2029,3 +2029,42 @@ For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/erro
 2025-12-25 13:59:59,087 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=illustrator model=qwen3-vl:30b reasoning=False json_schema=True
 2025-12-25 14:02:46,440 [ERROR] article_agent.llm: llm.timeout task=illustrator timeout_sec=180.0
 2025-12-25 14:04:04,562 [WARNING] article_agent.sub_agents: illustrator_agent.llm_failed error=LLM 调用超时（task=illustrator, >180.0s）, fallback to no images
+2025-12-27 19:52:28,485 [INFO] article_agent.sub_agents: collector.url_fetched source_id=url_0 url=https://en.wikipedia.org/wiki/Transformer_(deep_le title=Transformer (deep learning) - Wikipedia snippet_len=4000 images=19
+2025-12-27 19:52:29,703 [INFO] article_agent.sub_agents: collector.url_fetched source_id=url_1 url=https://en.wikipedia.org/wiki/Deep_learning title=Deep learning - Wikipedia snippet_len=4000 images=3
+2025-12-27 19:52:29,715 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b reasoning=False json_schema=True
+2025-12-27 19:57:15,498 [INFO] article_agent.sub_agents: collector.url_fetched source_id=url_0 url=https://en.wikipedia.org/wiki/Transformer_(deep_le title=Transformer (deep learning) - Wikipedia snippet_len=4000 images=19
+2025-12-27 19:57:16,711 [INFO] article_agent.sub_agents: collector.url_fetched source_id=url_1 url=https://en.wikipedia.org/wiki/Deep_learning title=Deep learning - Wikipedia snippet_len=4000 images=3
+2025-12-27 19:57:16,722 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b reasoning=False json_schema=True
+2025-12-27 19:57:39,404 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b reasoning=False json_schema=True
+2025-12-27 19:57:52,095 [INFO] article_agent.sub_agents: collector.url_fetched source_id=url_0 url=https://en.wikipedia.org/wiki/Transformer_(deep_le title=Transformer (deep learning) - Wikipedia snippet_len=4000 images=19
+2025-12-27 19:57:53,340 [INFO] article_agent.sub_agents: collector.url_fetched source_id=url_1 url=https://en.wikipedia.org/wiki/Deep_learning title=Deep learning - Wikipedia snippet_len=4000 images=3
+2025-12-27 19:57:53,350 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b reasoning=False json_schema=True
+2025-12-27 19:58:51,059 [INFO] article_agent.llm: invoke_with_structured_thinking.init task=planner model=qwen3-vl:30b reasoning=False json_schema=True
+2025-12-27 20:06:12,582 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-27 20:06:12,692 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-27 20:14:17,670 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=4096 reasoning=True
+2025-12-27 20:14:17,772 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-27 20:17:16,903 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-27 20:17:17,009 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-27 20:28:21,195 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-27 20:28:21,299 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-27 20:28:36,965 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files
+2025-12-27 20:28:38,271 [INFO] article_agent.article_deep_tools: Collected URL 0: 131 chars, 0 images
+2025-12-27 20:28:55,427 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 3000
+2025-12-27 20:28:55,428 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-27 20:29:07,726 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-27 20:37:56,652 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-27 20:37:56,760 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-27 20:38:17,161 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-27 20:38:18,411 [INFO] article_agent.article_deep_tools: Collected URL 0: 2000 chars, 19 images
+2025-12-27 20:38:19,677 [INFO] article_agent.article_deep_tools: Collected URL 1: 2000 chars, 3 images
+2025-12-27 20:43:40,301 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-27 20:43:40,505 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-27 20:45:52,271 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-27 20:45:53,475 [INFO] article_agent.article_deep_tools: Collected URL 0: 2000 chars, 19 images
+2025-12-27 20:45:54,752 [INFO] article_agent.article_deep_tools: Collected URL 1: 2000 chars, 3 images
+2025-12-27 20:48:39,321 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-27 20:48:39,431 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-27 20:53:48,104 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-27 20:53:49,314 [INFO] article_agent.article_deep_tools: Collected URL 0: 2000 chars, 19 images
+2025-12-27 20:53:50,583 [INFO] article_agent.article_deep_tools: Collected URL 1: 2000 chars, 3 images

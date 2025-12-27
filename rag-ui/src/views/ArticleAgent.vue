@@ -42,6 +42,8 @@ interface ThinkingEvent {
 }
 const thinkingEvents = ref<ThinkingEvent[]>([])
 const currentStep = ref('')
+// 跟踪已处理的消息 ID，避免重复显示
+let processedMsgIds = new Set<string>()
 
 // 文件上传
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -112,7 +114,6 @@ const generateArticle = async () => {
   
   try {
     // 构建请求参数
-    const articleId = `article-${Date.now()}`
     const validUrlsList = validUrls  // 用于后续引用
     
     // 不显示技术性事件，只显示来自后端的有意义步骤
@@ -146,13 +147,16 @@ const generateArticle = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        assistant_id: 'content-deep-agent',  // 使用 deep graph 直接流式输出
+        assistant_id: 'article-deep-agent',  // 新版 DeepAgent (7 SubAgents)
         input: {
-          instruction: instruction.value,
-          urls: validUrlsList,
-          file_paths: [],
-          article_id: articleId,
-          title: title.value || ''
+          // 使用 messages 格式（deepagents 期望的格式）
+          messages: [{
+            role: 'human',
+            content: `请根据以下素材生成文章：
+URLs: ${validUrlsList.join(', ')}
+标题: ${title.value || '自动生成'}
+写作指令: ${instruction.value}`
+          }]
         },
         stream_mode: ['values']  // 流式输出 state
       })
@@ -191,10 +195,153 @@ const generateArticle = async () => {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6))
-            console.log('[SSE] Received data:', data.step_history, data.step_events?.length)
+            console.log('[SSE] Received data:', data)
             
-            // LangGraph values 模式：data 就是整个 state
-            // 处理 step_events（增量处理避免重复）
+            // === 新版 DeepAgent messages 格式处理 ===
+            // deepagents 返回 messages 数组
+            if (data.messages && Array.isArray(data.messages)) {
+              for (const msg of data.messages) {
+                // 跳过已处理的消息
+                if (msg.id && processedMsgIds.has(msg.id)) continue
+                if (msg.id) processedMsgIds.add(msg.id)
+                
+                console.log('[MSG]', msg.type, msg.id?.slice(-8), 'tool_calls:', !!msg.tool_calls)
+                
+                // 处理 AI 消息中的工具调用
+                const isAIMessage = msg.type === 'ai' || (msg.id && msg.id.includes('lc_run'))
+                if (isAIMessage && msg.tool_calls && msg.tool_calls.length > 0) {
+                  for (const toolCall of msg.tool_calls) {
+                    let content = ''
+                    const toolName = toolCall.name || ''
+                    const args = toolCall.args || {}
+                    
+                    console.log('[TOOL_CALL]', toolName, 'args:', JSON.stringify(args).slice(0, 200))
+                    
+                    // 像 DataAgent 那样显示工具参数
+                    if (toolName === 'task') {
+                      // deepagents 的 task 工具 - 显示 subagent 类型和指令
+                      const subagentType = args.subagent_type || ''
+                      const instruction = args.instruction || args.objective || args.task || ''
+                      
+                      if (subagentType.includes('collect')) {
+                        currentStep.value = '收集素材'
+                        content = `调用 collector_agent:\n${instruction}`
+                      } else if (subagentType.includes('planner')) {
+                        currentStep.value = '生成大纲'
+                        content = `调用 planner_agent:\n${instruction}`
+                      } else if (subagentType.includes('research')) {
+                        currentStep.value = '整理资料'
+                        content = `调用 researcher_agent:\n${instruction}`
+                      } else if (subagentType.includes('writer')) {
+                        currentStep.value = '撰写内容'
+                        content = `调用 writer_agent:\n${instruction}`
+                      } else if (subagentType.includes('review')) {
+                        currentStep.value = '审阅质量'
+                        content = `调用 reviewer_agent:\n${instruction}`
+                      } else if (subagentType.includes('illustrat')) {
+                        currentStep.value = '智能配图'
+                        content = `调用 illustrator_agent:\n${instruction}`
+                      } else if (subagentType.includes('assembl')) {
+                        currentStep.value = '组装输出'
+                        content = `调用 assembler_agent:\n${instruction}`
+                      } else {
+                        content = `调用 ${subagentType || 'subagent'}:\n${instruction || JSON.stringify(args).slice(0, 100)}`
+                      }
+                    } else {
+                      // 其他工具 - 显示工具名和参数
+                      content = `调用 ${toolName}:\n${JSON.stringify(args).slice(0, 150)}`
+                    }
+                    
+                    addThinkingEvent('tool_call', content, toolName)
+                  }
+                }
+                
+                // 处理工具执行结果 - 解析 JSON 提取关键信息
+                if (msg.type === 'tool' && msg.content) {
+                  const toolName = msg.name || ''
+                  let summary = ''
+                  
+                  // 尝试解析 JSON 内容并提取关键信息
+                  if (typeof msg.content === 'string') {
+                    try {
+                      const data = JSON.parse(msg.content)
+                      
+                      // 根据不同数据结构提取关键信息
+                      if (data.sources && Array.isArray(data.sources)) {
+                        // CollectorOutput
+                        summary = `收集了 ${data.sources.length} 个来源`
+                        if (data.overview) summary += `\n${data.overview.slice(0, 100)}...`
+                      } else if (data.title && data.sections) {
+                        // OutlineOutput
+                        summary = `大纲: ${data.title}\n${data.sections.length} 个章节`
+                      } else if (data.section_notes) {
+                        // ResearcherOutput  
+                        summary = `整理了 ${Object.keys(data.section_notes).length} 个章节的资料`
+                      } else if (data.drafts) {
+                        // WriterOutput
+                        const charCount = data.total_char_count || 0
+                        summary = `撰写完成: ${charCount} 字`
+                      } else if (data.approved !== undefined) {
+                        // ReviewerOutput
+                        summary = data.approved ? `审阅通过 (评分: ${data.overall_quality || '-'})` : `需要修改: ${data.sections_to_rewrite?.join(', ') || ''}`
+                      } else if (data.final_markdown) {
+                        // IllustratorOutput
+                        summary = `配图完成: ${data.placements?.length || 0} 张图片`
+                      } else if (data.md_url) {
+                        // AssemblerOutput
+                        summary = `文件已保存: ${data.md_path || data.md_url}`
+                      } else if (data.status) {
+                        // 通用状态
+                        summary = data.status === 'success' ? '执行成功' : `错误: ${data.error_message || '未知'}`
+                      } else {
+                        // 提取任意有意义的字段
+                        const keys = Object.keys(data).slice(0, 3)
+                        summary = keys.map(k => `${k}: ${JSON.stringify(data[k]).slice(0, 50)}`).join('\n')
+                      }
+                    } catch {
+                      // 不是 JSON，尝试提取文本摘要
+                      summary = msg.content.slice(0, 150) + (msg.content.length > 150 ? '...' : '')
+                    }
+                  }
+                  
+                  addThinkingEvent('tool_result', summary || '完成', toolName)
+                }
+                
+                // 处理最终 AI 回复内容
+                if (isAIMessage && msg.content && typeof msg.content === 'string' && !msg.tool_calls) {
+                  // 可能是最终回复，尝试解析 markdown
+                  if (msg.content.includes('#') || msg.content.length > 500) {
+                    resultMarkdown.value = msg.content
+                  }
+                }
+              }
+            }
+            
+            // === 处理 ArticleAgentOutput 格式 ===
+            if (data.status === 'success' && data.md_url) {
+              // 最终成功输出 - 需要从 md_url 获取 markdown 内容
+              addThinkingEvent('step', `文章生成成功: ${data.title || ''}`)
+              currentStep.value = '正在加载文章...'
+              
+              // 获取 markdown 内容
+              try {
+                const mdResponse = await fetch(`/api/agents/article${data.md_url}`)
+                if (mdResponse.ok) {
+                  resultMarkdown.value = await mdResponse.text()
+                } else {
+                  // 如果无法获取，显示摘要
+                  resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
+                }
+              } catch {
+                resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
+              }
+            } else if (data.status === 'error') {
+              // 错误输出
+              addThinkingEvent('step', `错误: ${data.error_message || '未知错误'}`)
+              throw new Error(data.error_message || '文章生成失败')
+            }
+            
+            // === 兼容旧版 StateGraph 格式（step_events）===
             if (data.step_events && Array.isArray(data.step_events)) {
               const newCount = data.step_events.length
               if (newCount > lastStepHistoryLength) {
@@ -224,7 +371,7 @@ const generateArticle = async () => {
               }
             }
             
-            // markdown 内容
+            // 旧版 markdown 内容（兼容）
             if (data.final_markdown) {
               resultMarkdown.value = data.final_markdown
             } else if (data.refined_markdown) {
