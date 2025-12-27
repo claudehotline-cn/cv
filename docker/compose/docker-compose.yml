@@ -7,12 +7,16 @@ services:
       MYSQL_DATABASE: "cv_cp"
       MYSQL_TCP_PORT: 3306
       MYSQL_ROOT_HOST: "%"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     ports:
       - "13306:3306"   # 宿主端口 → 容器 3306，用于本机或外部访问
     volumes:
       - mysql-data:/var/lib/mysql
       - ../../db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ../../db/mlflow_init.sql:/docker-entrypoint-initdb.d/02-mlflow.sql:ro
+      - ../../db/fixed_dump.sql:/docker-entrypoint-initdb.d/03-fixed-data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
       interval: 5s
@@ -377,6 +381,7 @@ services:
       - ../../docs:/docs:ro
       # Excel 文件基础目录（可根据实际需要调整/新增挂载）
       - ../../docs/examples:/data/excel:ro
+      - ../../agent-langchain:/app/agent-langchain
 
   agent-chat-ui:
     build:
@@ -484,6 +489,7 @@ services:
       - VITE_API_URL=/api
     depends_on:
       - rag-service
+      - article-agent
     ports:
       - "18210:80"
 

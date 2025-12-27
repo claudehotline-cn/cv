@@ -29,6 +29,41 @@ const md = new MarkdownIt({
 
 const renderMarkdown = (content: string) => {
   if (!content) return ''
+  
+  // 检查是否包含结构化数据标记
+  let markerMatch = null
+  if (content.includes('DATA_RESULT:')) {
+     markerMatch = content.match(/DATA_RESULT:(\{.*\})/s)
+  } else if (content.includes('CHART_DATA:')) {
+     markerMatch = content.match(/CHART_DATA:(\{.*\})/s)
+  }
+
+  if (markerMatch && markerMatch[1]) {
+    try {
+      let toolResult = JSON.parse(markerMatch[1])
+      // 兼容 ToolStrategy 结构: { name: "...", arguments: { ... } }
+      if (toolResult.arguments) {
+          toolResult = toolResult.arguments
+      }
+      
+      // 增强逻辑：如果包含结构化数据（如 chart option），不要直接返回空字符串
+      // 而是移除标记后渲染剩余的文本。这支持 "混合内容" (文字 + 图表数据)
+      
+      // 如果有显式的 summary (MainAgentOutput), 使用 summary
+      if (toolResult && toolResult.summary) {
+        return md.render(toolResult.summary)
+      }
+
+      // 如果没有显式 summary，移除标记，渲染原始内容
+      const cleanText = content.replace(markerMatch[0], '')
+      return md.render(cleanText)
+    } catch (e) {
+      console.warn('Failed to parse marker in renderMarkdown', e)
+      // 解析失败，回退到移除标记尝试显示
+      return md.render(content.replace(markerMatch[0], ''))
+    }
+  }
+
   return md.render(content)
 }
 
@@ -248,15 +283,38 @@ const runAnalysis = async () => {
                   if (msg.tool_calls && msg.tool_calls.length > 0) {
                     for (const toolCall of msg.tool_calls) {
                       let content = ''
-                      const args = toolCall.args
+                      const args = toolCall.args || {}
+                      
+                      // DEBUG: 输出工具调用名称
+                      console.log('TOOL_CALL:', toolCall.name, 'args keys:', Object.keys(args))
+                      
                       if (toolCall.name === 'data_db_run_sql') {
                         content = `执行 SQL:\n${args.sql}`
                       } else if (toolCall.name === 'python_execute') {
                         content = `执行 Python:\n${args.code}`
-                      } else if (toolCall.name === 'data_generate_chart') {
-                        content = `生成图表配置:\n${JSON.stringify(args, null, 2)}`
+                      } else if (toolCall.name === 'data_generate_chart' || toolCall.name === 'chart_agent' || (args && args.option)) {
+                        // 支持多种可能的工具名称，或者直接检测 args.option
+                        content = `生成图表配置...`
+                        // 关键修复：从工具调用参数中提取 option 并立即渲染图表
+                        if (args.option) {
+                          console.log('CHART: Found option in tool call args, toolName:', toolCall.name)
+                          // 解析 option（可能是字符串或对象）
+                          let chartOption = args.option
+                          if (typeof chartOption === 'string') {
+                            try {
+                              chartOption = JSON.parse(chartOption)
+                            } catch (e) {
+                              console.warn('Failed to parse option string:', e)
+                            }
+                          }
+                          if (chartOption && typeof chartOption === 'object') {
+                            console.log('CHART: Setting chartConfig from tool call args')
+                            chartConfig.value = chartOption
+                            setTimeout(renderChart, 100)
+                          }
+                        }
                       } else {
-                        content = `调用工具: ${JSON.stringify(args)}`
+                        content = `调用工具: ${toolCall.name} ${JSON.stringify(args).slice(0, 100)}`
                       }
                       addThinkingEvent('tool_call', content, toolCall.name)
                     }
@@ -269,21 +327,107 @@ const runAnalysis = async () => {
                 }
                 
                 // 2. 处理工具执行结果
+                // DEBUG: 输出完整消息结构（用于调试）
+                if (msg.type === 'tool' || msg.name) {
+                  console.log('FULL MSG:', JSON.stringify(msg, null, 2)?.slice(0, 500))
+                }
+                
                 if ((msg.type === 'tool' || msg.name === 'data_generate_chart' || msg.name === 'data_db_run_sql' || msg.name === 'python_execute') && msg.content) {
                   try {
-                    const toolResult = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content
+                    // 尝试解析 JSON
+                    let toolResult = null
+                    const content = msg.content
+                    let markerMatch = null
+                    if (typeof content === 'string') {
+                       // Debug log
+                       if (content.includes('DATA_RESULT') || content.includes('CHART_DATA')) {
+                           console.log('DEBUG: Found marker in content:', content.substring(0, 100) + '...')
+                       }
+
+                       if (content.includes('DATA_RESULT:')) {
+                           markerMatch = content.match(/DATA_RESULT:(\{.*\})/s)
+                       } else if (content.includes('CHART_DATA:')) {
+                           markerMatch = content.match(/CHART_DATA:(\{.*\})/s)
+                       }
+                    }
+
+                    if (markerMatch && markerMatch[1]) {
+                        console.log('DEBUG: Regex matched!')
+                        try {
+                          let toolResult = JSON.parse(markerMatch[1])
+                          console.log('DEBUG: Parsed JSON keys:', Object.keys(toolResult))
+                          
+                          // 兼容 ToolStrategy 结构: { name: "...", arguments: { ... } }
+                          if (toolResult.arguments) {
+                              console.log('DEBUG: Found arguments wrapper, unwrapping...')
+                              toolResult = toolResult.arguments
+                          }
+
+                          console.log('STRUCTURED DATA FOUND:', { 
+                              keys: Object.keys(toolResult), 
+                              hasOption: !!toolResult.option,
+                              hasSummary: !!toolResult.summary 
+                          })
+                          
+                          // 1. 处理图表
+                          if (toolResult.option) {
+                            console.log('DEBUG: Setting chartConfig and triggering render...')
+                            chartConfig.value = toolResult.option
+                            // Use nextTick + timeout to ensure DOM is ready
+                            setTimeout(() => {
+                                console.log('DEBUG: Calling renderChart()')
+                                renderChart()
+                            }, 100)
+                          }
+                          // 2. 处理 Summary (renderMarkdown 已处理显示)
+                          
+                        } catch (e) {
+                          console.warn('Failed to parse STRUCTURED DATA:', e)
+                        }
+                    } else if (typeof content === 'string' && (content.includes('DATA_RESULT') || content.includes('CHART_DATA'))) {
+                        console.warn('DEBUG: Marker found but Regex FAILED to match JSON payload! Check newline handling.')
+                    }
+                    
+                    // 方法1: 直接解析（如果还没解析成功）
+                    if (!toolResult && typeof content === 'object') {
+                      toolResult = content
+                    } else if (!toolResult && typeof content === 'string') {
+                      // 方法2: 检查是否以 { 开头
+                      const trimmed = content.trim()
+                      if (trimmed.startsWith('{')) {
+                        try {
+                          toolResult = JSON.parse(trimmed)
+                        } catch (e) {
+                          // 尝试提取 JSON
+                          const start = trimmed.indexOf('{')
+                          const end = trimmed.lastIndexOf('}')
+                          if (start !== -1 && end !== -1) {
+                            try {
+                              toolResult = JSON.parse(trimmed.slice(start, end + 1))
+                            } catch (e2) {}
+                          }
+                        }
+                      }
+                    }
+                    
+                    if (toolResult) {
+                      console.log('Tool Result parsed:', {name: msg.name, hasOption: !!toolResult.option, keys: Object.keys(toolResult)})
+                    } else {
+                      console.log('Tool Result NOT JSON:', msg.name, content?.slice?.(0, 100))
+                    }
                     
                     let resultDisplay = ''
                     if (msg.name === 'data_db_run_sql') {
                        resultDisplay = `SQL 执行结果: ${toolResult.total_rows} 行数据`
-                    } else if (msg.name === 'data_generate_chart') {
+                    } else if (msg.name === 'data_generate_chart' || (toolResult && toolResult.option)) {
                         // 检查是否是图表生成工具的结果
-                        if (toolResult.option) {
+                        // 增强：即使 msg.name 不匹配，只要 toolResult.option 存在就渲染图表
+                        if (toolResult && toolResult.option) {
                           console.log('Found chart option:', toolResult.option)
                           chartConfig.value = toolResult.option
                           // renderChart 在 watch 或 nextTick 处理
                           setTimeout(renderChart, 100) 
-                          resultDisplay = `图表生成成功: ${toolResult.chart_type}`
+                          resultDisplay = `图表生成成功: ${toolResult.chart_type || 'unknown'}`
                         }
                     } else if (msg.name === 'python_execute') {
                         resultDisplay = `Python 执行结果:\n${JSON.stringify(toolResult.result || toolResult, null, 2)}`
@@ -318,10 +462,41 @@ const runAnalysis = async () => {
 }
 
 const renderChart = () => {
-  if (!chartContainer.value || !chartConfig.value) return
+  console.log('renderChart called, container:', !!chartContainer.value, 'config:', !!chartConfig.value, 'config preview:', JSON.stringify(chartConfig.value)?.slice(0, 200))
+  if (!chartContainer.value || !chartConfig.value) {
+    console.warn('renderChart aborted: missing container or config')
+    return
+  }
   
-  chartInstance = echarts.init(chartContainer.value, 'dark')
-  chartInstance.setOption(chartConfig.value)
+  try {
+    chartInstance = echarts.init(chartContainer.value, 'dark')
+    
+    // 处理 tooltip 换行：将 series data 中的 \n 替换为 <br/>
+    const config = JSON.parse(JSON.stringify(chartConfig.value)) // deep clone
+    if (config.series) {
+      config.series.forEach((s: any) => {
+        if (s.data && Array.isArray(s.data)) {
+          s.data.forEach((d: any) => {
+            if (d && typeof d.name === 'string') {
+              d.name = d.name.replace(/\n/g, '<br/>')
+            }
+          })
+        }
+      })
+    }
+    
+    // 如果是散点图，使用函数 formatter 来正确渲染 HTML
+    if (config.tooltip && config.tooltip.formatter === '{b}') {
+      config.tooltip.formatter = function(params: any) {
+        return params.name // name 字段已经包含 <br/> 标签
+      }
+    }
+    
+    chartInstance.setOption(config)
+    console.log('ECharts setOption succeeded')
+  } catch (e) {
+    console.error('ECharts setOption failed:', e)
+  }
   
   window.addEventListener('resize', () => {
     chartInstance?.resize()

@@ -57,7 +57,7 @@ def get_sql_database(db_name: str) -> SQLDatabase:
     password = getattr(settings, "db_password", "123456")
 
     safe_password = quote_plus(password)
-    uri = f"mysql+pymysql://{user}:{safe_password}@{host}:{port}/{db_name}"
+    uri = f"mysql+pymysql://{user}:{safe_password}@{host}:{port}/{db_name}?charset=utf8mb4"
 
     _LOGGER.info("db_utils.get_sql_database uri=%s", uri.replace(safe_password, "***"))
     return SQLDatabase.from_uri(uri)
@@ -80,6 +80,7 @@ def _get_db_connection(db_name: str) -> pymysql.connections.Connection:
         database=db_name,
         cursorclass=DictCursor,
         autocommit=True,
+        charset="utf8mb4",  # 必须强制使用 utf8mb4
     )
 
 

@@ -54,6 +54,29 @@ def build_chat_llm(task_name: str = "generic") -> Any:
         raise RuntimeError(f"LLM 初始化失败（openai, task={task_name}）") from exc
 
 
+def build_structured_llm(schema: Any, task_name: str = "structured") -> Any:
+    """构造配置了结构化输出的 LLM。
+    
+    使用 LangChain 的 with_structured_output() 方法确保 LLM 返回符合 Pydantic schema 的数据。
+    
+    Args:
+        schema: Pydantic BaseModel 类，定义期望的输出格式
+        task_name: 任务名称用于日志
+        
+    Returns:
+        配置了结构化输出的 LLM，调用 invoke() 会直接返回 Pydantic 对象
+    """
+    base_llm = build_chat_llm(task_name=task_name)
+    
+    _LOGGER.info("llm.structured_output task=%s schema=%s", task_name, schema.__name__ if hasattr(schema, '__name__') else str(schema))
+    
+    try:
+        return base_llm.with_structured_output(schema)
+    except Exception as exc:
+        _LOGGER.error("llm.structured_output_failed task=%s error=%s", task_name, exc)
+        raise RuntimeError(f"结构化输出配置失败（task={task_name}）") from exc
+
+
 def invoke_llm_with_timeout(
     task_name: str,
     fn: Callable[[], Any],
