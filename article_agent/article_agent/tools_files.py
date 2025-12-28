@@ -215,78 +215,205 @@ def _extract_images_from_soup(soup: BeautifulSoup, url: str, max_images: int) ->
     3. alt 文本 - 通常是手动编写的描述
     4. 周围文本 - fallback
     """
+    from urllib.parse import urlparse
+    
+    domain = urlparse(url).netloc.lower()
+    is_wikipedia = "wikipedia.org" in domain
+    
     main = soup.find("main") or soup.find("article") or soup.body or soup
     images: List[Dict[str, Any]] = []
-
-    for img in main.find_all("img", limit=max_images * 2):  # 预取更多以便过滤
-        src = img.get("src")
-        if not src:
-            continue
-        # 过滤小图标和 base64 图片
-        if src.startswith("data:") or "icon" in src.lower() or "logo" in src.lower():
-            continue
-        full_url = urljoin(url, src)
-        alt = (img.get("alt") or "").strip()
+    seen_urls: set = set()  # 避免重复图片
+    
+    # Wikipedia 特殊处理：优先从 infobox 和 thumbinner 中提取高质量图片
+    if is_wikipedia:
+        # 1. 从 infobox 中提取主图
+        infobox = soup.find("table", class_="infobox")
+        if infobox:
+            for img in infobox.find_all("img", limit=3):
+                img_data = _process_wikipedia_image(img, url, seen_urls)
+                if img_data:
+                    images.append(img_data)
         
-        # 1. 尝试获取 figcaption（最准确）
-        figcaption_text = ""
+        # 2. 从 thumbinner (带说明的图片) 中提取
+        for thumb in soup.find_all("div", class_="thumbinner", limit=max_images * 2):
+            img = thumb.find("img")
+            if img:
+                img_data = _process_wikipedia_image(img, url, seen_urls, thumb)
+                if img_data:
+                    images.append(img_data)
+                    if len(images) >= max_images:
+                        break
+        
+        # 3. 从正文中提取其他图片
+        content = soup.find("div", id="mw-content-text") or main
+        for img in content.find_all("img", limit=max_images * 3):
+            if len(images) >= max_images:
+                break
+            img_data = _process_wikipedia_image(img, url, seen_urls)
+            if img_data:
+                images.append(img_data)
+    
+    # 通用图片提取（非 Wikipedia 或 Wikipedia 图片不足时的补充）
+    if len(images) < max_images:
+        for img in main.find_all("img", limit=max_images * 2):
+            src = img.get("src") or img.get("data-src")
+            if not src:
+                continue
+            
+            # 过滤小图标和 base64 图片
+            if src.startswith("data:"):
+                continue
+            src_lower = src.lower()
+            if "icon" in src_lower or "logo" in src_lower or "button" in src_lower:
+                continue
+            if "1x1" in src_lower or "pixel" in src_lower:
+                continue
+            
+            full_url = urljoin(url, src)
+            if full_url in seen_urls:
+                continue
+            seen_urls.add(full_url)
+            
+            alt = (img.get("alt") or "").strip()
+            
+            # 获取上下文信息
+            figcaption_text = ""
+            figure = img.find_parent("figure")
+            if figure:
+                figcaption = figure.find("figcaption")
+                if figcaption:
+                    figcaption_text = figcaption.get_text(strip=True)
+            
+            section_heading = ""
+            parent = img.parent
+            for _ in range(10):
+                if parent is None:
+                    break
+                prev_heading = parent.find_previous(["h1", "h2", "h3", "h4"])
+                if prev_heading:
+                    section_heading = prev_heading.get_text(strip=True)
+                    break
+                parent = parent.parent
+            
+            context_parts = []
+            if figcaption_text:
+                context_parts.append(f"图注: {figcaption_text}")
+            if section_heading:
+                context_parts.append(f"章节: {section_heading}")
+            if alt and len(alt) > 5:
+                context_parts.append(f"描述: {alt}")
+            
+            context = "; ".join(context_parts) if context_parts else alt or "无上下文"
+            
+            images.append({
+                "src": full_url,
+                "url": full_url,
+                "alt": alt,
+                "figcaption": figcaption_text,
+                "section_heading": section_heading,
+                "context": context,
+            })
+            if len(images) >= max_images:
+                break
+
+    return images
+
+
+def _process_wikipedia_image(img, base_url: str, seen_urls: set, container=None) -> Optional[Dict[str, Any]]:
+    """处理 Wikipedia 图片，返回图片信息字典或 None。"""
+    src = img.get("src") or img.get("data-src")
+    if not src:
+        return None
+    
+    # Wikipedia 图片过滤规则
+    src_lower = src.lower()
+    # 过滤 UI 图标和小图片
+    if any(x in src_lower for x in ["icon", "logo", "button", "arrow", "ambox", "edit", "lock"]):
+        return None
+    if "1x1" in src_lower or "pixel" in src_lower:
+        return None
+    # 过滤 base64 和过小的图片
+    if src.startswith("data:"):
+        return None
+    
+    # 获取图片尺寸，过滤小于 100px 的图片
+    width = img.get("width") or img.get("data-file-width")
+    height = img.get("height") or img.get("data-file-height")
+    try:
+        if width and int(width) < 100:
+            return None
+        if height and int(height) < 100:
+            return None
+    except (ValueError, TypeError):
+        pass
+    
+    # 转换为完整 URL
+    full_url = urljoin(base_url, src)
+    
+    # 尝试获取更高清的 Wikipedia 图片
+    # Wikipedia 缩略图 URL 示例: //upload.wikimedia.org/wikipedia/commons/thumb/xxx/220px-xxx.png
+    # 尝试获取原图或更大的版本
+    if "upload.wikimedia.org" in full_url and "/thumb/" in full_url:
+        # 获取更大尺寸的图片 (800px)
+        parts = full_url.rsplit("/", 1)
+        if len(parts) == 2 and "px-" in parts[1]:
+            # 替换尺寸为 800px
+            import re
+            larger_url = re.sub(r'\d+px-', '800px-', full_url)
+            full_url = larger_url
+    
+    if full_url in seen_urls:
+        return None
+    seen_urls.add(full_url)
+    
+    alt = (img.get("alt") or "").strip()
+    
+    # 获取 figcaption（Wikipedia 使用 thumbcaption）
+    figcaption_text = ""
+    if container:
+        caption_div = container.find("div", class_="thumbcaption")
+        if caption_div:
+            figcaption_text = caption_div.get_text(strip=True)
+    
+    # 尝试从 figure 获取
+    if not figcaption_text:
         figure = img.find_parent("figure")
         if figure:
             figcaption = figure.find("figcaption")
             if figcaption:
                 figcaption_text = figcaption.get_text(strip=True)
-        
-        # 2. 尝试获取所在章节的标题
-        section_heading = ""
-        parent = img.parent
-        for _ in range(10):  # 最多向上查找10层
-            if parent is None:
-                break
-            prev_heading = parent.find_previous(["h1", "h2", "h3", "h4"])
-            if prev_heading:
-                section_heading = prev_heading.get_text(strip=True)
-                break
-            parent = parent.parent
-        
-        # 3. 获取周围文本作为 fallback
-        surrounding_text = ""
-        if img.parent:
-            # 获取图片前后的文本节点
-            prev_text = ""
-            next_text = ""
-            prev_sibling = img.find_previous_sibling(string=True)
-            next_sibling = img.find_next_sibling(string=True)
-            if prev_sibling:
-                prev_text = str(prev_sibling).strip()[:100]
-            if next_sibling:
-                next_text = str(next_sibling).strip()[:100]
-            surrounding_text = f"{prev_text} {next_text}".strip()
-        
-        # 构建综合上下文
-        context_parts = []
-        if figcaption_text:
-            context_parts.append(f"图注: {figcaption_text}")
-        if section_heading:
-            context_parts.append(f"章节: {section_heading}")
-        if alt and len(alt) > 5:
-            context_parts.append(f"描述: {alt}")
-        if surrounding_text and not context_parts:
-            context_parts.append(f"周围文本: {surrounding_text[:100]}")
-        
-        context = "; ".join(context_parts) if context_parts else alt or "无上下文"
-        
-        images.append({
-            "src": full_url,
-            "url": full_url,
-            "alt": alt,
-            "figcaption": figcaption_text,
-            "section_heading": section_heading,
-            "context": context,  # 综合上下文
-        })
-        if len(images) >= max_images:
+    
+    # 获取所在章节标题
+    section_heading = ""
+    parent = img.parent
+    for _ in range(15):
+        if parent is None:
             break
+        prev_heading = parent.find_previous(["h1", "h2", "h3", "h4"])
+        if prev_heading:
+            section_heading = prev_heading.get_text(strip=True)
+            break
+        parent = parent.parent
+    
+    context_parts = []
+    if figcaption_text:
+        context_parts.append(f"图注: {figcaption_text}")
+    if section_heading:
+        context_parts.append(f"章节: {section_heading}")
+    if alt and len(alt) > 5:
+        context_parts.append(f"描述: {alt}")
+    
+    context = "; ".join(context_parts) if context_parts else alt or "无上下文"
+    
+    return {
+        "src": full_url,
+        "url": full_url,
+        "alt": alt,
+        "figcaption": figcaption_text,
+        "section_heading": section_heading,
+        "context": context,
+    }
 
-    return images
 
 
 def _fetch_html_with_playwright(url: str, timeout_sec: int) -> str:

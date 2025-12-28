@@ -77,8 +77,30 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_GEMINI_MODEL",
     )
 
+    outputs_dir: str = Field(
+        default="/data/outputs",
+        description="输出根目录",
+        alias="ARTICLE_AGENT_OUTPUTS_DIR",
+    )
+    artifacts_dir: str = Field(
+        default="/data/outputs/artifacts",
+        description="中间产物（元数据、JSON）存储目录。",
+        alias="ARTICLE_AGENT_ARTIFACTS_DIR",
+    )
+    drafts_dir: str = Field(
+        default="/data/outputs/artifacts/drafts",
+        description="AI 写作的章节草稿 markdown 目录。",
+        alias="ARTICLE_AGENT_DRAFTS_DIR",
+    )
+    
+    # 兼容旧代码，将 temp_dir 指向 artifacts_dir
+    temp_dir: str = Field(
+        default="/data/outputs/artifacts",
+        description="中间产物存储目录（已废弃，建议使用 artifacts_dir）。",
+        alias="ARTICLE_TEMP_DIR",
+    )
     articles_base_dir: str = Field(
-        default="/data/articles",
+        default="/data/outputs/articles",
         description="文章与资源文件的根目录。",
         alias="ARTICLE_AGENT_ARTICLES_BASE_DIR",
     )
@@ -87,6 +109,7 @@ class Settings(BaseSettings):
         description="对外暴露文章与资源的 URL 前缀。",
         alias="ARTICLE_AGENT_ARTICLES_BASE_URL",
     )
+
 
     enable_doc_refiner: bool = Field(
         default=True,

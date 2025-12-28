@@ -422,10 +422,12 @@ services:
       # VLM 配置（图片理解仍使用 Ollama，因为 Gemini VLM 需要单独配置）
       - ARTICLE_AGENT_VLM_ENABLED=true
       - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:30b
+      # 输出目录配置
+      - ARTICLE_TEMP_DIR=/data/drafts
       - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/articles
       - ARTICLE_AGENT_ARTICLES_BASE_URL=/articles
       # LangSmith 追踪配置（用于查看 Main Agent 推理过程）
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_API_KEY=
       - LANGSMITH_TRACING_V2=true
       - LANGSMITH_PROJECT=article-agent
     depends_on:
@@ -436,8 +438,8 @@ services:
     volumes:
       - ../../logs:/logs:rw
       - ../../docs:/docs:ro
-      - ../../logs/articles:/data/articles:rw
-      - ../../article_agent:/app/article_agent
+      - ../../article_agent:/app/article_agent:rw
+      - ../../article_agent/outputs:/data/outputs:rw
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8130/ || exit 1"]
       interval: 30s

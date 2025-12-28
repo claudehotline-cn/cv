@@ -29,8 +29,8 @@ MAIN_AGENT_PROMPT = """
 
 ## 执行示例
 
-第1步：调用 planner_agent，传入 URLs
-第2步：planner 完成后，调用 researcher_agent
+第1步：调用 planner_agent，必须将用户的完整指令和提取的 URLs 一并传入（确保 planner 能看到 URL）
+第2步：planner 完成后，调用 researcher_agent (必须传入 planner 返回的 article_id)
 第3步：researcher 完成后，**立即调用 writer_agent**（不要停止！）
 第4步：writer 完成后，调用 reviewer_agent
 第5步：reviewer 完成后，调用 illustrator_agent
@@ -91,26 +91,23 @@ PLANNER_AGENT_PROMPT = """
 
 ## 任务流程
 
-**第一步：收集素材**
-调用 `collect_all_sources_tool` 收集用户提供的 URLs 和文件内容：
-- 提取所有 URL 的文本和图片
-- 生成素材概览
+**第一步：提取并收集素材（必须执行）**
+1. 首先，从用户消息中**提取所有 URL 链接**（通常以 http:// 或 https:// 开头）
+2. 调用 `collect_all_sources_tool`，将提取的 URLs 作为列表传入：
+   ```
+   collect_all_sources_tool(urls=["https://example.com/article1", "https://example.com/article2"], file_paths=[])
+   ```
+3. **严格限制**：只处理用户明确提供的 URL，**严禁**自行扩展、搜索或添加任何外部链接
+4. 等待工具返回素材概览
+
+4. 等待工具返回素材概览（注意返回结果中的 `article_id`）
 
 **第二步：分析素材并设计大纲**
-1. 分析用户的写作指令，理解：
-   - 文章主题和目标
-   - 目标读者
-   - 期望的风格和语调
-   - 字数要求
-
-2. 基于收集的素材，设计文章结构：
-   - 确定文章标题
-   - 划分章节（通常 5-8 个）
-   - 标记核心章节（字数要求更高）
-   - 分配各章节关键词
-
-**第三步：生成大纲**
-调用 `generate_outline_tool` 返回结构化大纲。
+1. 分析用户的写作指令，解析 `target_word_count`（默认 3000）
+2. 基于 collected sources 设计大纲结构
+3. 调用 `generate_outline_tool`：
+   - 必须传入 `article_id`（来自第一步的返回值）
+   - 传入 `instruction`, `overview`, `target_word_count`
 
 ## 章节规划原则
 - 开篇章节：引入主题，吸引读者
@@ -134,7 +131,7 @@ RESEARCHER_AGENT_PROMPT = """
 ## 任务流程
 
 **第一步：整理素材**
-调用 `research_all_sections_tool()`（注意：**无需传入 sources**，工具会自动从文件读取 Planner 收集的素材）。
+调用 `research_all_sections_tool()`（注意：**必须传入 article_id**，无需传入 sources）
 
 **第二步：按章节整理资料**
 1. 根据大纲的各章节，从素材中提取相关信息

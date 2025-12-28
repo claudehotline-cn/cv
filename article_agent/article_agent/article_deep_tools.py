@@ -288,7 +288,9 @@ def collect_all_sources_tool(
     import os
     import json
     
-    base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+    from .config import get_settings
+    settings = get_settings()
+    base_dir = settings.artifacts_dir
     article_id = os.environ.get("ARTICLE_CURRENT_ID", str(uuid.uuid4())[:8])
     os.environ["ARTICLE_CURRENT_ID"] = article_id
     
@@ -317,6 +319,7 @@ def collect_all_sources_tool(
     log_tool_output("collect_all_sources_tool", {"overview": overview, "source_count": len(sources)})
     
     return {
+        "article_id": article_id,  # 返回生成的 article_id
         "sources": lightweight_sources,
         "overview": overview,
         "total_text_chars": total_text_chars,
@@ -341,7 +344,8 @@ def read_sources_tool(sources_file: str = "") -> Dict[str, Any]:
     
     # 如果没有指定文件，尝试从环境变量获取当前文章目录
     if not sources_file:
-        base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+        from .config import get_settings
+        base_dir = get_settings().artifacts_dir
         article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
         if article_id:
             sources_file = os.path.join(base_dir, f"article_{article_id}", "sources.json")
@@ -377,13 +381,14 @@ def read_sources_tool(sources_file: str = "") -> Dict[str, Any]:
 # ============================================================================
 
 @tool
-def generate_outline_tool(instruction: str, overview: str, target_word_count: int = 3000) -> Dict[str, Any]:
+def generate_outline_tool(instruction: str, overview: str, target_word_count: int = 3000, article_id: str = "") -> Dict[str, Any]:
     """根据用户指令和素材概览生成文章大纲。
     
     Args:
         instruction: 用户写作指令
         overview: 素材概览
         target_word_count: 目标总字数
+        article_id: 文章 ID (必须与 collect_all_sources_tool 返回的一致)
         
     Returns:
         OutlineOutput 字典
@@ -471,6 +476,24 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
         json_match = re.search(r'\{[\s\S]*\}', content)
         if json_match:
             result = json.loads(json_match.group())
+            
+            # 落盘：保存大纲到文件
+            try:
+                import os
+                import json
+                from .config import get_settings
+                
+                settings = get_settings()
+                base_dir = settings.artifacts_dir
+                article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
+                
+                if article_id:
+                    outline_file = os.path.join(base_dir, f"article_{article_id}", "outline.json")
+                    with open(outline_file, "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
+                    _LOGGER.info(f"Outline saved to: {outline_file}")
+            except Exception as e:
+                _LOGGER.warning(f"Failed to save outline to file: {e}")
             
             # 记录完整大纲结构
             sections = result.get("sections", [])
@@ -614,12 +637,14 @@ def research_section_tool(
 def research_all_sections_tool(
     outline: Dict[str, Any],
     sources: List[Dict[str, Any]] = None,
+    article_id: str = "",  # 新增：接收 article_id
 ) -> Dict[str, Any]:
     """为所有章节整理资料笔记。
     
     Args:
         outline: 文章大纲
-        sources: (可选) 即使传入也会被忽略，工具会自动从 sources.json 读取。
+        sources: (可选) 自动从 sources.json 读取
+        article_id: 文章 ID (必须传入，用于定位文件)
         
     Returns:
         ResearcherOutput 字典
@@ -653,8 +678,9 @@ def research_all_sections_tool(
     
     _LOGGER.info(f"research_all_sections_tool called. Outline sections: {len(outline.get('sections', []))}")
     
-    base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
-    article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+    from .config import get_settings
+    base_dir = get_settings().artifacts_dir
+    article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
     
     loaded_sources = []
     if article_id:
@@ -751,8 +777,9 @@ def research_all_sections_tool(
     
     # 落盘保存
     try:
-        base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
-        article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+        from .config import get_settings
+        base_dir = get_settings().artifacts_dir
+        article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
         if article_id:
             save_dir = os.path.join(base_dir, f"article_{article_id}")
             os.makedirs(save_dir, exist_ok=True)
@@ -904,7 +931,8 @@ def write_section_tool(
         import os
         
         # 使用环境变量或默认路径
-        base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+        from .config import get_settings
+        base_dir = get_settings().drafts_dir
         # 从 section_id 提取或生成 article_id
         article_id = os.environ.get("ARTICLE_CURRENT_ID", str(uuid.uuid4())[:8])
         os.environ["ARTICLE_CURRENT_ID"] = article_id  # 保存供后续使用
@@ -963,7 +991,9 @@ def write_all_sections_tool(
     import json
     
     # 优先加载 Persistent Outline
-    base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+    from .config import get_settings
+    settings = get_settings()
+    base_dir = settings.artifacts_dir
     article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
     
     loaded_outline = {}
@@ -986,7 +1016,7 @@ def write_all_sections_tool(
     # 强制从文件加载研究笔记（不使用内存数据）
     import os
     import json
-    base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+    # base_dir already set to artifacts_dir above
     article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
     
     loaded_notes = []
@@ -1168,7 +1198,10 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
     
     _LOGGER.info(f"review_draft_tool called with {len(drafts)} sections")
     
-    base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+    from .config import get_settings
+    settings = get_settings()
+    artifacts_dir = settings.artifacts_dir
+    drafts_dir = settings.drafts_dir
     article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
     
     # 1. 第一步：获取"藏宝图" (加载 Persistent Outline)
@@ -1176,7 +1209,7 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
     # 只有知道了 Section ID (例如 "sec_1")，我们由于 Writer 的命名规则 (sec_1.md)，才知道去磁盘的哪里寻找 Draft 文件。
     loaded_outline = {}
     if article_id:
-        outline_file = os.path.join(base_dir, f"article_{article_id}", "outline.json")
+        outline_file = os.path.join(artifacts_dir, f"article_{article_id}", "outline.json")
         if os.path.exists(outline_file):
             try:
                 with open(outline_file, "r", encoding="utf-8") as f:
@@ -1194,7 +1227,7 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
     
     found_drafts = []
     if outline and article_id:
-         article_dir = os.path.join(base_dir, f"article_{article_id}")
+         article_dir = os.path.join(drafts_dir, f"article_{article_id}")
          for sec in outline.get("sections", []):
              sec_id = sec.get("id") or sec.get("section_id")
              if sec_id:
@@ -1203,13 +1236,18 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
                  
                  # 兼容旧命名 (section_N.md)
                  if not os.path.exists(draft_path) and "sec_" in sec_id:
-                     try:
-                         idx = int(sec_id.split("_")[1])
-                         draft_path_alt = os.path.join(article_dir, f"section_{idx}.md")
-                         if os.path.exists(draft_path_alt):
-                             draft_path = draft_path_alt
-                     except:
-                         pass
+                     # 尝试匹配 section_sec_1.md (现在实际生成的格式)
+                     draft_path_prefix = os.path.join(article_dir, f"section_{sec_id}.md")
+                     if os.path.exists(draft_path_prefix):
+                         draft_path = draft_path_prefix
+                     else:
+                         try:
+                             idx = int(sec_id.split("_")[1])
+                             draft_path_alt = os.path.join(article_dir, f"section_{idx}.md")
+                             if os.path.exists(draft_path_alt):
+                                 draft_path = draft_path_alt
+                         except:
+                             pass
                          
                  if os.path.exists(draft_path):
                      found_drafts.append({
