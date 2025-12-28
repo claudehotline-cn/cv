@@ -60,7 +60,7 @@ def get_article_deep_agent_graph() -> Any:
     """
     
     # 使用配置的 LLM
-    # 启用推理模式 (Reasoning) 以增强任务规划能力，并输出 Instruction 日志
+    # 恢复推理模式 - 禁用推理会导致工具调用生成失败
     main_llm = build_chat_llm(task_name="article_deep_main", enable_reasoning=True)
     
     # ============================================================================

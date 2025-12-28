@@ -690,10 +690,15 @@ def research_all_sections_tool(
         all_images.extend(s.get("images", []))
     
     section_notes = []
-    for idx, sec in enumerate(outline.get("sections", [])):
-        # 兼容不同的 section 格式（id 或 section_id 或使用索引）
+    
+    # 并行处理所有章节 (Parallel Execution)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    def _research_single_section(idx: int, sec: Dict[str, Any]) -> Dict[str, Any]:
+        """单个章节的研究任务（在线程中执行）"""
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
+        _LOGGER.info(f"[Parallel] Starting research for section: {section_id}")
         
         result = research_section_tool.invoke({
             "section_id": section_id,
@@ -702,7 +707,38 @@ def research_all_sections_tool(
             "sources_text": all_text,
             "available_images": all_images,
         })
-        section_notes.append(result)
+        result["_order"] = idx  # 保留顺序信息
+        _LOGGER.info(f"[Parallel] Completed research for section: {section_id}")
+        return result
+    
+    sections = outline.get("sections", [])
+    max_workers = min(5, len(sections))  # RTX 5090D (32GB) 可支撑并发数 4
+    
+    _LOGGER.info(f"[Parallel] Starting parallel research with max_workers={max_workers} for {len(sections)} sections")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_research_single_section, idx, sec): idx
+            for idx, sec in enumerate(sections)
+        }
+        
+        results = []
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as e:
+                idx = futures[future]
+                _LOGGER.error(f"[Parallel] Failed to research section {idx}: {e}")
+                results.append({"section_id": f"sec_{idx+1}", "notes": f"研究失败: {e}", "relevant_images": [], "_order": idx})
+    
+    # 按原始顺序排序
+    results.sort(key=lambda x: x.get("_order", 0))
+    for r in results:
+        r.pop("_order", None)  # 移除临时排序字段
+    section_notes = results
+    
+    _LOGGER.info(f"[Parallel] All {len(section_notes)} sections researched")
     
     import os
     import json
@@ -730,20 +766,17 @@ def research_all_sections_tool(
     except Exception as exc:
         _LOGGER.warning(f"Failed to save research notes: {exc}")
     
-    # 构造轻量级结果 (返回给 Agent)
-    lightweight_notes = []
-    for note in section_notes:
-        note_copy = note.copy()
-        # 截断笔记内容，只保留预览
-        if "notes" in note_copy:
-            full_note = note_copy["notes"]
-            note_copy["notes"] = full_note[:200] + "..." if len(full_note) > 200 else full_note
-        lightweight_notes.append(note_copy)
+    # 只返回文件路径和状态，不返回笔记内容
+    # Main Agent 如需查看笔记可以读取文件
+    notes_file_path = full_output.get("notes_file", "")
     
     return {
-        "section_notes": lightweight_notes,
-        "source_summaries": full_output["source_summaries"],
-        "notes_file": full_output.get("notes_file", "")
+        "status": "SUCCESS",
+        "message": f"研究完成！已为 {len(section_notes)} 个章节整理好笔记并保存到文件。请立即调用 writer_agent 开始撰写文章。",
+        "next_step": "writer_agent",
+        "notes_file": notes_file_path,
+        "total_sections": len(section_notes),
+        "total_chars": sum(len(n.get("notes", "")) for n in section_notes),
     }
 
 
@@ -989,11 +1022,15 @@ def write_all_sections_tool(
     sections = outline.get("sections", [])
     _LOGGER.info(f"Processing {len(sections)} sections from outline")
     
-    for idx, sec in enumerate(sections):
-        # 兼容不同的 section 格式
+    # 并行处理所有章节 (Parallel Execution)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    def _write_single_section(idx: int, sec: Dict[str, Any]) -> Dict[str, Any]:
+        """单个章节的写作任务（在线程中执行）"""
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
         notes = notes_map.get(section_id, "")
+        _LOGGER.info(f"[Parallel] Starting writing for section: {section_id}")
         
         result = write_section_tool.invoke({
             "section_id": section_id,
@@ -1002,8 +1039,38 @@ def write_all_sections_tool(
             "notes": notes,
             "is_core": sec.get("is_core", False),
         })
-        drafts.append(result)
-        total_chars += result.get("char_count", 0)
+        result["_order"] = idx  # 保留顺序信息
+        _LOGGER.info(f"[Parallel] Completed writing for section: {section_id}")
+        return result
+    
+    max_workers = min(5, len(sections))  # RTX 5090D (32GB) 可支撑并发数 4
+    
+    _LOGGER.info(f"[Parallel] Starting parallel writing with max_workers={max_workers} for {len(sections)} sections")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_write_single_section, idx, sec): idx
+            for idx, sec in enumerate(sections)
+        }
+        
+        results = []
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as e:
+                idx = futures[future]
+                _LOGGER.error(f"[Parallel] Failed to write section {idx}: {e}")
+                results.append({"section_id": f"sec_{idx+1}", "content": f"写作失败: {e}", "char_count": 0, "_order": idx})
+    
+    # 按原始顺序排序
+    results.sort(key=lambda x: x.get("_order", 0))
+    for r in results:
+        total_chars += r.get("char_count", 0)
+        r.pop("_order", None)  # 移除临时排序字段
+    drafts = results
+    
+    _LOGGER.info(f"[Parallel] All {len(drafts)} sections written, total_chars={total_chars}")
     
     # 强制不返回 drafts 内容，确保下游 Reviewer 必须从文件系统读取
     # 但必须返回足够的 Metadata 告知 LLM 任务已完成，否则会导致 infinite retry loop
@@ -1281,6 +1348,9 @@ def match_images_tool(
     from langchain_core.messages import HumanMessage, SystemMessage
     
     _LOGGER.info(f"match_images_tool called with {len(available_images)} images")
+    
+    # 从 drafts 参数中提取文件路径
+    draft_files = [d.get("file_path") or d.get("path", "") for d in drafts if d]
     
     # 从文件读取所有草稿内容
     sections_content = []
