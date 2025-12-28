@@ -2068,3 +2068,1039 @@ For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/erro
 2025-12-27 20:53:48,104 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
 2025-12-27 20:53:49,314 [INFO] article_agent.article_deep_tools: Collected URL 0: 2000 chars, 19 images
 2025-12-27 20:53:50,583 [INFO] article_agent.article_deep_tools: Collected URL 1: 2000 chars, 3 images
+2025-12-28 03:49:44,373 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-28 03:49:44,495 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 03:50:52,304 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 03:50:54,345 [INFO] article_agent.article_deep_tools: Collected URL 0: 2000 chars, 19 images
+2025-12-28 03:50:56,689 [INFO] article_agent.article_deep_tools: Collected URL 1: 2000 chars, 3 images
+2025-12-28 03:51:30,087 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 03:51:30,088 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-28 03:52:03,625 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 6 sections
+2025-12-28 03:55:54,595 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-28 03:55:54,705 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 03:56:29,874 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 03:56:32,135 [INFO] article_agent.article_deep_tools: Collected URL 0: 60000 chars, 19 images
+2025-12-28 03:56:35,174 [INFO] article_agent.article_deep_tools: Collected URL 1: 60000 chars, 3 images
+2025-12-28 04:02:57,807 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:03:00,492 [INFO] article_agent.article_deep_tools: Collected URL 0: 60000 chars, 19 images
+2025-12-28 04:03:02,641 [INFO] article_agent.article_deep_tools: Collected URL 1: 60000 chars, 3 images
+2025-12-28 04:04:28,039 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-28 04:04:28,149 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 04:06:15,894 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=True
+2025-12-28 04:06:16,000 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 04:06:50,805 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:06:52,635 [INFO] article_agent.article_deep_tools: Collected URL 0: 60000 chars, 19 images
+2025-12-28 04:06:54,466 [INFO] article_agent.article_deep_tools: Collected URL 1: 60000 chars, 3 images
+2025-12-28 04:11:45,587 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 reasoning=False
+2025-12-28 04:11:45,696 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 04:12:20,391 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:12:23,556 [INFO] article_agent.article_deep_tools: Collected URL 0: 60000 chars, 19 images
+2025-12-28 04:12:25,880 [INFO] article_agent.article_deep_tools: Collected URL 1: 60000 chars, 3 images
+2025-12-28 04:14:10,188 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 04:14:10,293 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 04:14:32,293 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:14:32,570 [INFO] article_agent.article_deep_tools: Collected URL 0: 60000 chars, 19 images
+2025-12-28 04:14:35,065 [INFO] article_agent.article_deep_tools: Collected URL 1: 60000 chars, 3 images
+2025-12-28 04:19:23,042 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 04:19:23,152 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 04:19:39,388 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:19:41,227 [WARNING] article_agent.article_deep_tools: Failed to collect URL https://en.wikipedia.org/wiki/Transformer_(deep_learning): HTTPSConnectionPool(host='en.wikipedia.org', port=443): Max retries exceeded with url: /wiki/Transformer_(deep_learning) (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1016)')))
+2025-12-28 04:19:43,074 [WARNING] article_agent.article_deep_tools: Failed to collect URL https://en.wikipedia.org/wiki/Deep_learning: HTTPSConnectionPool(host='en.wikipedia.org', port=443): Max retries exceeded with url: /wiki/Deep_learning (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1016)')))
+2025-12-28 04:20:07,599 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 04:20:07,709 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 04:20:21,978 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:20:25,070 [INFO] article_agent.article_deep_tools: Collected URL 0: 20000 chars, 19 images
+2025-12-28 04:20:27,467 [INFO] article_agent.article_deep_tools: Collected URL 1: 20000 chars, 3 images
+2025-12-28 04:23:58,927 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 04:23:59,038 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 7 SubAgents
+2025-12-28 04:24:15,203 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:24:17,164 [INFO] article_agent.article_deep_tools: Collected URL 0: 8000 chars, 19 images
+2025-12-28 04:24:19,561 [INFO] article_agent.article_deep_tools: Collected URL 1: 8000 chars, 3 images
+2025-12-28 04:28:33,537 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 04:28:33,646 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 04:28:41,143 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:28:43,390 [INFO] article_agent.article_deep_tools: Collected URL 0: 5000 chars, 5 images
+2025-12-28 04:28:45,424 [INFO] article_agent.article_deep_tools: Collected URL 1: 5000 chars, 3 images
+2025-12-28 04:28:49,923 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 6000
+2025-12-28 04:28:49,924 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:29:22,462 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-28 04:33:09,848 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 04:33:09,848 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 1, target_chars: 400
+2025-12-28 04:33:09,848 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:33:33,175 [INFO] article_agent.article_deep_tools: write_section_tool success: 547 chars
+2025-12-28 04:33:33,176 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 2, target_chars: 800
+2025-12-28 04:33:33,176 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:33:43,157 [INFO] article_agent.article_deep_tools: write_section_tool success: 1215 chars
+2025-12-28 04:33:43,159 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 3, target_chars: 800
+2025-12-28 04:33:43,159 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:34:08,985 [INFO] article_agent.article_deep_tools: write_section_tool success: 616 chars
+2025-12-28 04:34:08,987 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 4, target_chars: 400
+2025-12-28 04:34:08,987 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:34:50,275 [INFO] article_agent.article_deep_tools: write_section_tool success: 582 chars
+2025-12-28 04:34:50,277 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 5, target_chars: 400
+2025-12-28 04:34:50,277 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:35:04,822 [INFO] article_agent.article_deep_tools: write_section_tool success: 592 chars
+2025-12-28 04:43:10,606 [INFO] article_agent.article_deep_tools: match_images_tool called with 5 images
+2025-12-28 04:43:10,606 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:45:06,516 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 04:45:06,616 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 04:45:13,480 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 04:45:28,585 [INFO] article_agent.article_deep_tools: Collected URL 0: 5000 chars, 5 images
+2025-12-28 04:45:30,698 [INFO] article_agent.article_deep_tools: Collected URL 1: 5000 chars, 3 images
+2025-12-28 04:45:35,306 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 6000
+2025-12-28 04:45:35,307 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:46:06,160 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-28 04:49:57,352 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 04:49:57,353 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 1, target_chars: 400
+2025-12-28 04:49:57,353 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:50:20,654 [INFO] article_agent.article_deep_tools: write_section_tool success: 547 chars, saved to /tmp/article_drafts/article_55745961/section_1.md
+2025-12-28 04:50:20,655 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 2, target_chars: 800
+2025-12-28 04:50:20,655 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:50:30,702 [INFO] article_agent.article_deep_tools: write_section_tool success: 1215 chars, saved to /tmp/article_drafts/article_55745961/section_2.md
+2025-12-28 04:50:30,704 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 3, target_chars: 800
+2025-12-28 04:50:30,704 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:50:56,212 [INFO] article_agent.article_deep_tools: write_section_tool success: 616 chars, saved to /tmp/article_drafts/article_55745961/section_3.md
+2025-12-28 04:50:56,213 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 4, target_chars: 400
+2025-12-28 04:50:56,213 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:51:37,467 [INFO] article_agent.article_deep_tools: write_section_tool success: 582 chars, saved to /tmp/article_drafts/article_55745961/section_4.md
+2025-12-28 04:51:37,468 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 5, target_chars: 400
+2025-12-28 04:51:37,468 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:51:52,076 [INFO] article_agent.article_deep_tools: write_section_tool success: 592 chars, saved to /tmp/article_drafts/article_55745961/section_5.md
+2025-12-28 04:52:19,530 [INFO] article_agent.article_deep_tools: review_draft_tool called with 1 sections
+2025-12-28 04:52:19,531 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:52:28,259 [INFO] article_agent.article_deep_tools: review_draft_tool: quality=1, approved=False
+2025-12-28 04:53:30,443 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 04:53:30,443 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 1, target_chars: 500
+2025-12-28 04:53:30,443 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:54:04,439 [INFO] article_agent.article_deep_tools: write_section_tool success: 486 chars, saved to /tmp/article_drafts/article_55745961/section_1.md
+2025-12-28 04:54:04,440 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 2, target_chars: 500
+2025-12-28 04:54:04,440 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:54:18,784 [INFO] article_agent.article_deep_tools: write_section_tool success: 385 chars, saved to /tmp/article_drafts/article_55745961/section_2.md
+2025-12-28 04:54:18,786 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 3, target_chars: 500
+2025-12-28 04:54:18,786 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:54:26,173 [INFO] article_agent.article_deep_tools: write_section_tool success: 330 chars, saved to /tmp/article_drafts/article_55745961/section_3.md
+2025-12-28 04:54:56,223 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 3, target_chars: 400
+2025-12-28 04:54:56,223 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:55:30,388 [INFO] article_agent.article_deep_tools: write_section_tool success: 525 chars, saved to /tmp/article_drafts/article_55745961/section_3.md
+2025-12-28 04:55:42,172 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 1, target_chars: 800
+2025-12-28 04:55:42,172 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:56:08,535 [INFO] article_agent.article_deep_tools: write_section_tool success: 429 chars, saved to /tmp/article_drafts/article_55745961/section_1.md
+2025-12-28 04:56:15,270 [INFO] article_agent.article_deep_tools: write_section_tool called for section: 2, target_chars: 800
+2025-12-28 04:56:15,271 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 04:57:07,099 [INFO] article_agent.article_deep_tools: write_section_tool success: 549 chars, saved to /tmp/article_drafts/article_55745961/section_2.md
+2025-12-28 05:24:24,968 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:24:25,630 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:24:33,492 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:24:33,602 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:24:41,392 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 05:24:43,651 [INFO] article_agent.article_deep_tools: Collected URL 0: 5000 chars, 5 images
+2025-12-28 05:24:45,540 [INFO] article_agent.article_deep_tools: Collected URL 1: 5000 chars, 3 images
+2025-12-28 05:24:45,541 [INFO] article_agent.article_deep_tools: Sources saved to /tmp/article_drafts/article_bb92c589/sources.json
+2025-12-28 05:24:45,541 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片', 'total_text_chars': 10000, 'total_images': 8, 'sources_file': '/tmp/article_drafts/article_bb92c589/sources.json'}
+2025-12-28 05:24:45,541 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] collect_all_sources_tool.overview: ## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片
+2025-12-28 05:24:51,100 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 2500
+2025-12-28 05:24:51,100 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:25:03,987 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:25:04,096 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:25:04,161 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 2500
+2025-12-28 05:25:04,161 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:25:12,187 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:25:12,294 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:25:12,344 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 2500
+2025-12-28 05:25:12,344 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:25:23,600 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:25:23,709 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:25:52,455 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-28 05:26:13,892 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 05:26:15,960 [INFO] article_agent.article_deep_tools: Collected URL 0: 5000 chars, 5 images
+2025-12-28 05:26:17,811 [INFO] article_agent.article_deep_tools: Collected URL 1: 5000 chars, 3 images
+2025-12-28 05:26:17,812 [INFO] article_agent.article_deep_tools: Sources saved to /tmp/article_drafts/article_c6663960/sources.json
+2025-12-28 05:26:17,812 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片', 'total_text_chars': 10000, 'total_images': 8, 'sources_file': '/tmp/article_drafts/article_c6663960/sources.json'}
+2025-12-28 05:26:17,812 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] collect_all_sources_tool.overview: ## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片
+2025-12-28 05:26:22,448 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 3000
+2025-12-28 05:26:22,449 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:26:29,276 [INFO] article_agent.article_deep_tools: Loaded sources from /tmp/article_drafts/article_c6663960/sources.json: 2 sources
+2025-12-28 05:26:46,177 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 6 sections
+2025-12-28 05:27:34,513 [INFO] article_agent.article_deep_tools: Loaded sources from /tmp/article_drafts/article_c6663960/sources.json: 2 sources
+2025-12-28 05:27:50,868 [INFO] article_agent.article_deep_tools: research_all_sections_tool called
+2025-12-28 05:30:51,360 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:30:51,471 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:30:59,830 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:30:59,988 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:31:07,618 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files
+2025-12-28 05:31:10,998 [INFO] article_agent.article_deep_tools: Collected URL 0: 5000 chars, 5 images
+2025-12-28 05:31:13,016 [INFO] article_agent.article_deep_tools: Collected URL 1: 5000 chars, 3 images
+2025-12-28 05:31:13,017 [INFO] article_agent.article_deep_tools: Sources saved to /tmp/article_drafts/article_0ff146f6/sources.json
+2025-12-28 05:31:13,017 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片', 'total_text_chars': 10000, 'total_images': 8, 'sources_file': '/tmp/article_drafts/article_0ff146f6/sources.json'}
+2025-12-28 05:31:13,017 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] collect_all_sources_tool.overview: ## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片
+2025-12-28 05:31:18,027 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 2500
+2025-12-28 05:31:18,027 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:34:03,455 [WARNING] article_agent.article_deep_tools: generate_outline_tool: no JSON found in response
+2025-12-28 05:34:07,466 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 2500
+2025-12-28 05:34:07,467 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:34:30,100 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:34:30,210 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:34:37,531 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=5000, max_overview_chars=1000
+2025-12-28 05:34:39,753 [INFO] article_agent.article_deep_tools: Collected URL 0: 5000 chars, 5 images
+2025-12-28 05:34:41,552 [INFO] article_agent.article_deep_tools: Collected URL 1: 5000 chars, 3 images
+2025-12-28 05:34:41,552 [INFO] article_agent.article_deep_tools: Sources saved to /tmp/article_drafts/article_50e16732/sources.json
+2025-12-28 05:34:41,552 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片', 'total_text_chars': 10000, 'total_images': 8, 'sources_file': '/tmp/article_drafts/article_50e16732/sources.json'}
+2025-12-28 05:34:41,552 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] collect_all_sources_tool.overview: ## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符, 5 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符, 3 图片\n\n**总计**: 10000 字符, 8 图片
+2025-12-28 05:34:48,106 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 8000
+2025-12-28 05:34:48,106 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:35:14,486 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-28 05:35:46,550 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:35:46,658 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:35:53,678 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 05:35:56,191 [INFO] article_agent.article_deep_tools: Collected URL 0: 30000 chars, 19 images
+2025-12-28 05:35:57,467 [INFO] article_agent.article_deep_tools: Collected URL 1: 30000 chars, 3 images
+2025-12-28 05:35:57,467 [INFO] article_agent.article_deep_tools: Sources saved to /tmp/article_drafts/article_64e87c35/sources.json
+2025-12-28 05:35:57,468 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符, 19 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符, 3 图片\n\n**总计**: 60000 字符, 22 图片', 'total_text_chars': 60000, 'total_images': 22, 'sources_file': '/tmp/article_drafts/article_64e87c35/sources.json'}
+2025-12-28 05:35:57,468 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] collect_all_sources_tool.overview: ## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符, 19 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符, 3 图片\n\n**总计**: 60000 字符, 22 图片
+2025-12-28 05:36:06,393 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 2500
+2025-12-28 05:36:06,393 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:36:24,777 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 4 sections
+2025-12-28 05:36:45,201 [INFO] article_agent.article_deep_tools: Loaded sources from /tmp/article_drafts/article_64e87c35/sources.json: 2 sources
+2025-12-28 05:37:22,141 [INFO] article_agent.article_deep_tools: research_all_sections_tool called
+2025-12-28 05:37:22,142 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 1
+2025-12-28 05:37:22,142 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:37:33,423 [INFO] article_agent.article_deep_tools: research_section_tool success: 917 chars, 0 images
+2025-12-28 05:37:33,424 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 2
+2025-12-28 05:37:33,424 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:37:41,935 [INFO] article_agent.article_deep_tools: research_section_tool success: 899 chars, 0 images
+2025-12-28 05:37:41,936 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 3
+2025-12-28 05:37:41,936 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:37:48,573 [INFO] article_agent.article_deep_tools: research_section_tool success: 875 chars, 0 images
+2025-12-28 05:37:48,574 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 4
+2025-12-28 05:37:48,575 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:37:55,650 [INFO] article_agent.article_deep_tools: research_section_tool success: 842 chars, 0 images
+2025-12-28 05:44:34,445 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:44:34,555 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:44:51,204 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 05:44:53,427 [INFO] article_agent.article_deep_tools: Collected URL 0: 30000 chars, 19 images
+2025-12-28 05:44:55,588 [INFO] article_agent.article_deep_tools: Collected URL 1: 30000 chars, 3 images
+2025-12-28 05:44:55,591 [INFO] article_agent.article_deep_tools: Sources saved to /tmp/article_drafts/article_2ef6af95/sources.json
+2025-12-28 05:44:55,591 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符, 19 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符, 3 图片\n\n**总计**: 60000 字符, 22 图片', 'total_text_chars': 60000, 'total_images': 22, 'sources_file': '/tmp/article_drafts/article_2ef6af95/sources.json'}
+2025-12-28 05:44:55,591 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] collect_all_sources_tool.overview: ## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符, 19 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符, 3 图片\n\n**总计**: 60000 字符, 22 图片
+2025-12-28 05:45:19,146 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 05:45:19,146 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 05:47:08,436 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-28 05:47:55,645 [INFO] article_agent.article_deep_tools: Loaded sources from /tmp/article_drafts/article_2ef6af95/sources.json: 2 sources
+2025-12-28 05:59:17,860 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 05:59:17,968 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 05:59:31,551 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 05:59:33,890 [INFO] article_agent.article_deep_tools: Collected URL 0: 30000 chars, 19 images
+2025-12-28 05:59:36,259 [INFO] article_agent.article_deep_tools: Collected URL 1: 30000 chars, 3 images
+2025-12-28 05:59:36,260 [INFO] article_agent.article_deep_tools: Sources saved to /tmp/article_drafts/article_743d9bbd/sources.json
+2025-12-28 05:59:36,260 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符, 19 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符, 3 图片\n\n**总计**: 60000 字符, 22 图片', 'total_text_chars': 60000, 'total_images': 22, 'sources_file': '/tmp/article_drafts/article_743d9bbd/sources.json'}
+2025-12-28 05:59:36,260 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] collect_all_sources_tool.overview: ## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符, 19 图片\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符, 3 图片\n\n**总计**: 60000 字符, 22 图片
+2025-12-28 05:59:41,790 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 4000
+2025-12-28 05:59:41,790 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=4000
+2025-12-28 05:59:41,790 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:02:23,582 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1255, output_chars=0, prompt_tokens=564, completion_tokens=24576, total_tokens=25140
+2025-12-28 06:02:23,582 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: 
+2025-12-28 06:02:23,582 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=161792ms target_word_count=4000
+2025-12-28 06:02:23,582 [WARNING] article_agent.article_deep_tools: generate_outline_tool: no JSON found in response
+2025-12-28 06:02:31,649 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 4000
+2025-12-28 06:02:31,649 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=4000
+2025-12-28 06:02:31,649 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:03:13,172 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1258, output_chars=1368, prompt_tokens=603, completion_tokens=7205, total_tokens=7808
+2025-12-28 06:03:13,173 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer架构：深度学习技术演进的核心突破",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：深度学习演进中的Transformer里程碑",\n      "keywords": ["深度学习发展", "Transformer", "技术演进", "NLP突破"],\n      "target_chars": 300,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "深度学习技术演进：从传统模型到Transformer",\n      "keywords": ["神经网络发展", "RNN", "CNN", "梯度消失", "序列建模"],\n      "target_chars": 550,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "Transformer诞生背景：解决序...
+2025-12-28 06:03:13,173 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=41523ms target_word_count=4000
+2025-12-28 06:03:13,173 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer架构：深度学习技术演进的核心突破
+2025-12-28 06:03:13,173 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(7): sec_1:引言：深度学习演进中的Transformer里程碑, sec_2:深度学习技术演进：从传统模型到Transformer, sec_3:Transformer诞生背景：解决序列建模瓶颈, sec_4:架构创新：自注意力机制与位置编码, sec_5:技术突破：Transformer与传统模型对比, sec_6:演进与影响：从BERT到GPT的技术生态, sec_7:总结：Transformer的未来技术路径
+2025-12-28 06:03:13,173 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 4000
+2025-12-28 06:03:13,173 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 7 sections
+2025-12-28 06:03:43,443 [INFO] article_agent.article_deep_tools: Loaded sources from /tmp/article_drafts/article_743d9bbd/sources.json: 2 sources
+2025-12-28 06:23:35,714 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 06:23:35,821 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 06:23:47,155 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 06:23:48,620 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 06:23:50,098 [INFO] article_agent.article_deep_tools: Collected source 1: 30000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-28 06:23:50,099 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_81f66779/sources.json
+2025-12-28 06:23:50,099 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符\n\n**总计**: 60000 字符, 22 图片', 'source_count': 2}
+2025-12-28 06:23:58,790 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 3000
+2025-12-28 06:23:58,791 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=3000
+2025-12-28 06:23:58,791 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:25:09,945 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1247, output_chars=1259, prompt_tokens=601, completion_tokens=11850, total_tokens=12451
+2025-12-28 06:25:09,945 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer与深度学习技术演进：核心机制、架构对比与应用前景",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：Transformer的革命性突破",\n      "keywords": ["Transformer", "深度学习", "技术演进"],\n      "target_chars": 200,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "深度学习基础与模型演进脉络",\n      "keywords": ["神经网络", "RNN", "CNN", "深度学习"],\n      "target_chars": 400,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "Transformer核心机制详解",\n      "keywords": ["多头注意力", "位...
+2025-12-28 06:25:09,945 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=71155ms target_word_count=3000
+2025-12-28 06:25:09,946 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer与深度学习技术演进：核心机制、架构对比与应用前景
+2025-12-28 06:25:09,946 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(7): sec_1:引言：Transformer的革命性突破, sec_2:深度学习基础与模型演进脉络, sec_3:Transformer核心机制详解, sec_4:架构对比：Transformer与传统模型, sec_5:应用场景与典型案例, sec_6:未来趋势与研究挑战, sec_7:总结：技术演进与行业影响
+2025-12-28 06:25:09,946 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 3000
+2025-12-28 06:25:09,946 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 7 sections
+2025-12-28 06:26:23,049 [INFO] article_agent.article_deep_tools: research_all_sections_tool called
+2025-12-28 06:26:23,050 [INFO] article_agent.article_deep_tools: Loaded 2 sources from persistence file: /tmp/article_drafts/article_81f66779/sources.json
+2025-12-28 06:26:23,050 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 2
+2025-12-28 06:26:23,050 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=2
+2025-12-28 06:26:23,051 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:26:54,462 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8375, output_chars=8875, prompt_tokens=1937, completion_tokens=5726, total_tokens=7663
+2025-12-28 06:26:54,462 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 深度学习基础与模型演进脉络\n\n## 一、早期序列建模技术的发展\n\n### 1. 基础序列建模方法\n- **RNN（循环神经网络）**：在深度学习中，序列建模和生成最初由普通RNN实现\n  - 1990年，Elman网络是早期著名例子\n  - 理论上，一个token的信息可以任意远距离传播到序列中\n  - 实践中，由于梯度消失问题，长句子末尾的模型状态无法精确提取先前token的信息\n\n### 2. LSTM的突破\n- **LSTM（长短期记忆网络）**：1995年提出，是RNN的重要改进\n  - 通过多种创新克服梯度消失问题，使长序列建模成为可能\n  - 关键创新是使用乘法单元（multiplicative units），即"神经元乘以其他神经元的输出"\n  - 后来被称为"sigma-pi网络"或"高阶网络"\n  - LSTM成为长序列建模的标准架构，直到2017年Transformer的出现\n  - 但LSTM仍使用顺序处理，与大多数其他RNN一样\n  - 具体特点：RNN一次处理一个token，从头到尾，无法并行处理序列中的所有token\n\n### 3. 早期seq2seq模...
+2025-12-28 06:26:54,463 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=31412ms section_id=2
+2025-12-28 06:26:54,463 [INFO] article_agent.article_deep_tools: research_section_tool success: 8875 chars, 0 images
+2025-12-28 06:26:54,464 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 3
+2025-12-28 06:26:54,464 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=3
+2025-12-28 06:26:54,464 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:27:19,120 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8383, output_chars=5433, prompt_tokens=1927, completion_tokens=3978, total_tokens=5905
+2025-12-28 06:27:19,120 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # Transformer核心机制详解\n\n## 一、Transformer的基本定义与核心特点\n\n### 1.1 基本架构定义\n- Transformer是一种基于多头注意力机制的深度学习人工神经网络架构\n- 文本被转换为称为"tokens"的数值表示，每个token通过词嵌入表转换为向量\n- 在每一层中，每个token通过并行多头注意力机制在上下文窗口范围内与其他（未掩码）token进行上下文化\n- 该机制允许关键token的信号被放大，而不太重要的token被减弱\n\n### 1.2 核心优势\n- 无循环单元，训练时间比早期循环神经网络架构（如LSTM）更短\n- 可以并行处理所有token，而非像RNN那样顺序处理\n- 2017年"Attention Is All You Need"论文提出后，成为训练大型语言模型（LLMs）的主流架构\n- 无需递归处理，计算效率更高\n\n### 1.3 基本工作流程\n- 文本输入被分割为token\n- 每个token通过词嵌入表转换为向量\n- 在每一层中，通过多头注意力机制进行上下文化\n- 通过前馈神经网络进行进一步处理\n- 最终输出为处理后的向量表...
+2025-12-28 06:27:19,120 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=24656ms section_id=3
+2025-12-28 06:27:19,120 [INFO] article_agent.article_deep_tools: research_section_tool success: 5433 chars, 0 images
+2025-12-28 06:27:19,122 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 4
+2025-12-28 06:27:19,122 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=4
+2025-12-28 06:27:19,122 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:27:55,725 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8357, output_chars=10546, prompt_tokens=1923, completion_tokens=6501, total_tokens=8424
+2025-12-28 06:27:55,725 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 架构对比\n\n## 一、传统序列建模架构概述\n\n### 1. 早期序列建模方法\n- **Elman网络**（1990）：作为早期序列建模的代表性模型，是纯循环神经网络（RNN）的典型代表\n- **理论局限**：理论上信息可以从一个词元传播到序列任意远的位置，但实践中存在"vanishing-gradient problem"（梯度消失问题），导致长序列中早期词元的信息在序列末端难以精确提取\n- **处理方式**：RNN按顺序处理序列，一次处理一个词元，从序列开头到结尾依次进行\n\n### 2. LSTM的出现与改进\n- **LSTM（1995）**：由Hochreiter和Schmidhuber提出，是RNN的重要改进\n- **关键创新**：\n  - 引入"multiplicative units"（乘法单元），通过神经元相乘的方式处理信息\n  - 采用"sigma-pi networks"或"higher-order networks"结构\n  - 有效缓解了梯度消失问题，使长序列建模成为可能\n- **局限性**：\n  - 仍然采用顺序处理方式，无法并行化\n  - 与大多数RNN一样...
+2025-12-28 06:27:55,725 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=36603ms section_id=4
+2025-12-28 06:27:55,726 [INFO] article_agent.article_deep_tools: research_section_tool success: 10546 chars, 0 images
+2025-12-28 06:27:55,727 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 5
+2025-12-28 06:27:55,727 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=5
+2025-12-28 06:27:55,727 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:28:27,028 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8357, output_chars=5909, prompt_tokens=1921, completion_tokens=5341, total_tokens=7262
+2025-12-28 06:28:27,028 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 应用场景\n\n## 自然语言处理（NLP）应用\n\n### 1. 机器翻译\n- Transformer最初是作为机器翻译的改进而开发的，其核心目标是解决序列到序列（seq2seq）模型中的瓶颈问题\n- 2017年"Attention Is All You Need"论文提出，标志着Transformer架构的诞生，该论文由Google的研究人员提出\n- 早期seq2seq模型存在固定大小输出向量的问题：输入被顺序处理为固定大小的输出向量，然后由另一个循环网络处理为输出。当输入很长时，输出向量无法包含所有相关信息，导致输出质量下降\n- 证据：反转输入句子能改善seq2seq翻译效果\n- RNN search模型引入了注意力机制，解决了固定大小输出向量的瓶颈问题，允许模型更容易处理长距离依赖\n- 2016年，Google Translate被改用Google Neural Machine Translation系统，该系统基于seq2seq模型，其中编码器和解码器都是8层双向LSTM\n- 该系统开发耗时9个月，而之前的统计机器翻译方法耗时10年，但性能优于后者\n- 2016年，decomp...
+2025-12-28 06:28:27,028 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=31301ms section_id=5
+2025-12-28 06:28:27,028 [INFO] article_agent.article_deep_tools: research_section_tool success: 5909 chars, 0 images
+2025-12-28 06:28:27,029 [INFO] article_agent.article_deep_tools: Research notes saved to: /tmp/article_drafts/article_81f66779/research_notes.json
+2025-12-28 06:32:34,823 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 06:32:34,825 [INFO] article_agent.article_deep_tools: Loaded 4 notes from persistence file: /tmp/article_drafts/article_81f66779/research_notes.json
+2025-12-28 06:50:26,893 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 06:50:27,162 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 06:50:40,759 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 06:50:42,459 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 06:50:44,090 [INFO] article_agent.article_deep_tools: Collected source 1: 30000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-28 06:50:44,091 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_6c14b587/sources.json
+2025-12-28 06:50:44,091 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符\n\n**总计**: 60000 字符, 22 图片', 'source_count': 2}
+2025-12-28 06:50:48,975 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 06:50:48,975 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 06:50:48,975 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:53:33,256 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1171, output_chars=0, prompt_tokens=545, completion_tokens=24576, total_tokens=25121
+2025-12-28 06:53:33,257 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: 
+2025-12-28 06:53:33,257 [ERROR] article_agent.article_deep_tools: generate_outline_tool: LLM returned empty content. Metadata: {'model': 'qwen3-vl:30b', 'created_at': '2025-12-28T06:53:32.7977955Z', 'done': True, 'done_reason': 'length', 'total_duration': 164355071100, 'load_duration': 74038200, 'prompt_eval_count': 545, 'prompt_eval_duration': 101165200, 'eval_count': 24576, 'eval_duration': 158951679100, 'logprobs': None, 'model_name': 'qwen3-vl:30b', 'model_provider': 'ollama'}
+2025-12-28 06:53:33,257 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=164282ms target_word_count=5000
+2025-12-28 06:53:40,855 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 06:53:40,855 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 06:53:40,855 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:54:17,125 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1371, output_chars=1044, prompt_tokens=672, completion_tokens=6533, total_tokens=7205
+2025-12-28 06:54:17,125 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "深度解析Transformer与深度学习技术：架构原理、逻辑演进与应用实践",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言",\n      "keywords": ["深度学习", "Transformer", "技术背景"],\n      "target_chars": 350,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "深度学习演进",\n      "keywords": ["感知机", "深度学习历史", "时间线"],\n      "target_chars": 550,\n      "is_core": false\n    },\n    {\n      "id": "sec_3",\n      "title": "传统序列模型",\n      "keywords": ["RNN", "LSTM", "序列建模"],\n      "target_chars": 550,...
+2025-12-28 06:54:17,125 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=36270ms target_word_count=5000
+2025-12-28 06:54:17,125 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: 深度解析Transformer与深度学习技术：架构原理、逻辑演进与应用实践
+2025-12-28 06:54:17,125 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(6): sec_1:引言, sec_2:深度学习演进, sec_3:传统序列模型, sec_4:Transformer架构原理, sec_5:Transformer应用实践, sec_6:总结与展望
+2025-12-28 06:54:17,125 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-28 06:54:17,126 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_6c14b587/outline.json
+2025-12-28 06:54:17,126 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 6 sections
+2025-12-28 06:54:42,612 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_6c14b587/outline.json
+2025-12-28 06:54:42,613 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 6
+2025-12-28 06:54:42,613 [INFO] article_agent.article_deep_tools: Loaded 2 sources from persistence file: /tmp/article_drafts/article_6c14b587/sources.json
+2025-12-28 06:54:42,614 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 06:54:42,614 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 06:54:42,614 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:55:48,957 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8370, output_chars=16423, prompt_tokens=1929, completion_tokens=10557, total_tokens=12486
+2025-12-28 06:55:48,957 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：引言\n\n## 一、Transformer的基本定义与核心机制\n\n### 1.1 基本概念\n- Transformer是深度学习中的人工神经网络架构，基于多头注意力机制\n- 文本被转换为数值表示称为"tokens"，每个token通过词嵌入表查找转换为向量\n- 在每层中，每个token通过并行多头注意力机制在上下文窗口范围内与其他（未掩码）token进行上下文化\n- 该机制允许关键token的信号被放大，不重要token被减弱\n\n### 1.2 技术原理细节\n- 与传统RNN不同，Transformer没有循环单元\n- 每个token的处理是并行的，而非顺序处理\n- 通过多头注意力机制实现上下文理解\n- 该架构使模型能够同时关注输入序列的不同部分\n- 与早期模型相比，Transformer的并行处理能力显著提高了训练效率\n\n## 二、Transformer的技术发展背景\n\n### 2.1 早期序列建模技术\n- 长期以来，序列建模和生成主要使用普通循环神经网络（RNN）\n- 1990年，Elman网络是早期RNN的典型例子\n- 理论上，信息可以从一个token传播到序列的任意...
+2025-12-28 06:55:48,957 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=66343ms section_id=sec_1
+2025-12-28 06:55:48,957 [INFO] article_agent.article_deep_tools: research_section_tool success: 16423 chars, 0 images
+2025-12-28 06:55:48,959 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-28 06:55:48,959 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-28 06:55:48,959 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:56:08,402 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8371, output_chars=4486, prompt_tokens=1936, completion_tokens=3547, total_tokens=5483
+2025-12-28 06:56:08,403 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 深度学习演进：从感知机到Transformer\n\n## 一、早期神经网络基础：感知机\n\n### 1.1 感知机的诞生与局限\n- 感知机（Perceptron）是1957年由Frank Rosenblatt提出的最早神经网络模型，被视为深度学习的雏形\n- 作为单层神经网络，感知机只能解决线性可分问题，无法处理复杂的非线性问题\n- 1969年，Marvin Minsky和Seymour Papert在《Perceptrons》一书中指出感知机的局限性，导致神经网络研究进入"寒冬期"\n- 感知机的局限性主要体现在：无法处理非线性可分问题、缺乏多层结构、无法学习复杂模式\n\n### 1.2 感知机的历史意义\n- 为后续神经网络发展奠定了基础，是深度学习演进的起点\n- 证明了机器可以学习并进行模式识别\n- 为后来的多层神经网络研究提供了理论基础\n- 1986年，Rumelhart、Hinton和Williams提出的反向传播算法（Backpropagation）解决了多层网络训练问题，使深度学习重新获得关注\n\n## 二、序列建模的演进：从RNN到LSTM\n\n### 2.1 早期RNN的发展\n-...
+2025-12-28 06:56:08,403 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=19444ms section_id=sec_2
+2025-12-28 06:56:08,403 [INFO] article_agent.article_deep_tools: research_section_tool success: 4486 chars, 0 images
+2025-12-28 06:56:08,404 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-28 06:56:08,404 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-28 06:56:08,404 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:56:26,298 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8370, output_chars=3968, prompt_tokens=1932, completion_tokens=3254, total_tokens=5186
+2025-12-28 06:56:26,298 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 传统序列模型资料笔记\n\n## 1. 传统序列模型概述\n\n### 1.1 历史背景与定义\n- 在深度学习领域，序列建模和生成长期以来主要依赖于循环神经网络（RNN）\n- 传统序列模型的核心特征是通过循环结构处理序列数据，一次处理一个token（标记）\n- 这类模型在2017年Transformer出现之前是序列建模的主流架构\n- 传统序列模型主要包括RNN、LSTM和GRU等变体\n\n### 1.2 传统序列模型的基本工作原理\n- RNN通过循环连接将前一时刻的隐藏状态传递给当前时刻\n- 每个时间步处理一个输入token，并更新隐藏状态\n- 隐藏状态作为"记忆"，包含序列中先前信息的汇总\n- 传统序列模型的处理方式是严格顺序的，无法并行处理整个序列\n\n## 2. 循环神经网络（RNN）\n\n### 2.1 基本概念与历史发展\n- RNN是最早用于序列建模的神经网络架构之一\n- 1990年，Elman网络是RNN的一个著名早期例子\n- RNN理论上的优势：信息可以从一个token传播到序列的任意远位置\n- 实际应用中的关键问题：梯度消失（vanishing-gradient）问题\n\n###...
+2025-12-28 06:56:26,299 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=17894ms section_id=sec_3
+2025-12-28 06:56:26,299 [INFO] article_agent.article_deep_tools: research_section_tool success: 3968 chars, 0 images
+2025-12-28 06:56:26,300 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_4
+2025-12-28 06:56:26,300 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_4
+2025-12-28 06:56:26,300 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:56:46,999 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8392, output_chars=4472, prompt_tokens=1933, completion_tokens=3352, total_tokens=5285
+2025-12-28 06:56:46,999 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # Transformer架构原理资料笔记\n\n## 一、Transformer概述\n\n### 1.1 基本定义与核心机制\n- Transformer是一种基于多头注意力机制的人工神经网络架构，属于深度学习领域\n- 文本被转换为数值表示称为tokens，每个token通过查找词嵌入表转换为向量\n- 在每个层中，每个token通过并行多头注意力机制在上下文窗口内与其他（未掩码）token进行上下文化\n- 该机制允许关键token的信号被放大，而不太重要的token被减弱\n- 与传统循环神经网络(RNN)不同，Transformer没有循环单元，因此训练时间比RNN如LSTM更短\n- 2017年，Google研究人员在论文"Attention Is All You Need"中首次提出现代Transformer架构\n\n### 1.2 架构优势\n- 无循环单元设计，使模型能够并行处理所有token，显著减少训练时间\n- 相比早期RNN架构，Transformer在处理长序列时表现更优\n- 2017年提出的原始Transformer模型(100M参数)在机器翻译任务上取得了突破性进展\n- 后续变...
+2025-12-28 06:56:46,999 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=20699ms section_id=sec_4
+2025-12-28 06:56:46,999 [INFO] article_agent.article_deep_tools: research_section_tool success: 4472 chars, 0 images
+2025-12-28 06:56:47,000 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_5
+2025-12-28 06:56:47,001 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_5
+2025-12-28 06:56:47,001 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 06:59:35,191 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8388, output_chars=0, prompt_tokens=1932, completion_tokens=24576, total_tokens=26508
+2025-12-28 06:59:35,334 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 
+2025-12-28 06:59:35,334 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=168333ms section_id=sec_5
+2025-12-28 06:59:35,334 [INFO] article_agent.article_deep_tools: research_section_tool success: 0 chars, 0 images
+2025-12-28 06:59:35,335 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_6
+2025-12-28 06:59:35,335 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_6
+2025-12-28 06:59:35,336 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 07:00:05,321 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8367, output_chars=6822, prompt_tokens=1933, completion_tokens=5166, total_tokens=7099
+2025-12-28 07:00:05,322 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：总结与展望\n\n## 一、Transformer技术概述与核心机制\n\n### 1.1 基本架构与工作原理\n- Transformer是一种基于多头注意力机制的人工神经网络架构，属于深度学习领域\n- 文本被转换为数值表示称为"tokens"，每个token通过查找词嵌入表转换为向量\n- 在每一层中，每个token通过并行多头注意力机制在上下文窗口范围内与其他（未掩码）tokens进行上下文化\n- 该机制允许关键token的信号被放大，而不太重要的token被减弱\n- 与早期循环神经网络(RNN)不同，Transformer没有循环单元，因此可以并行处理所有token\n\n### 1.2 与传统RNN架构的对比\n- 传统RNN（如Elman网络，1990年）在理论上可以将信息从一个token传播到任意远的位置\n- 但实践中存在"梯度消失"问题，导致长序列中前面token的信息难以保留\n- LSTM（1995年）通过创新克服了梯度消失问题，使用了"乘法单元"（multiplicative units）\n- LSTM被称为"sigma-pi网络"或"高阶网络"，但仍然使用顺序处理方式...
+2025-12-28 07:00:05,322 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=29986ms section_id=sec_6
+2025-12-28 07:00:05,322 [INFO] article_agent.article_deep_tools: research_section_tool success: 6822 chars, 0 images
+2025-12-28 07:00:05,325 [INFO] article_agent.article_deep_tools: Research notes saved to: /tmp/article_drafts/article_6c14b587/research_notes.json
+2025-12-28 09:42:29,517 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 09:42:29,622 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 09:42:42,394 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 09:42:44,942 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 09:42:47,137 [INFO] article_agent.article_deep_tools: Collected source 1: 30000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-28 09:42:47,140 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_3e0b5de5/sources.json
+2025-12-28 09:42:47,140 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符\n\n**总计**: 60000 字符, 22 图片', 'source_count': 2}
+2025-12-28 09:42:52,899 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 09:42:52,899 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 09:42:52,899 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:43:13,450 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1218, output_chars=1204, prompt_tokens=582, completion_tokens=3791, total_tokens=4373
+2025-12-28 09:43:13,450 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer架构深度解析：技术原理、演进与多模态应用实践",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：Transformer的范式革命与技术背景",\n      "keywords": ["Transformer", "深度学习", "自注意力机制", "技术演进"],\n      "target_chars": 473,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "技术架构详解：自注意力机制与编码器-解码器设计",\n      "keywords": ["自注意力机制", "编码器-解码器", "位置编码", "多头注意力"],\n      "target_chars": 1013,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "Transformer与传统RNN/L...
+2025-12-28 09:43:13,450 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=20551ms target_word_count=5000
+2025-12-28 09:43:13,451 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer架构深度解析：技术原理、演进与多模态应用实践
+2025-12-28 09:43:13,451 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(6): sec_1:引言：Transformer的范式革命与技术背景, sec_2:技术架构详解：自注意力机制与编码器-解码器设计, sec_3:Transformer与传统RNN/LSTM的对比分析, sec_4:多模态应用实践：从文本到图像的跨模态理解, sec_5:未来发展趋势：模型轻量化与伦理挑战, sec_6:总结：Transformer的演进与AI技术的未来图景
+2025-12-28 09:43:13,451 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-28 09:43:13,451 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_3e0b5de5/outline.json
+2025-12-28 09:43:13,451 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 6 sections
+2025-12-28 09:43:49,179 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_3e0b5de5/outline.json
+2025-12-28 09:43:49,179 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 6
+2025-12-28 09:43:49,179 [INFO] article_agent.article_deep_tools: Loaded 2 sources from persistence file: /tmp/article_drafts/article_3e0b5de5/sources.json
+2025-12-28 09:43:49,180 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 09:43:49,180 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 09:43:49,180 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:44:33,992 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8422, output_chars=12156, prompt_tokens=1955, completion_tokens=7572, total_tokens=9527
+2025-12-28 09:44:33,993 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：引言：Transformer的范式革命与技术背景\n\n## 一、Transformer的基本定义与核心机制\n\n### 1.1 基本架构与工作原理\n- Transformer是一种基于多头注意力机制的深度学习人工神经网络架构\n- 文本被转换为数值表示称为"tokens"，每个token通过词嵌入表转换为向量\n- 在每层中，每个token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许关键token的信号被放大，而不太重要的token被减弱\n- 与传统RNN不同，Transformer没有循环单元，因此训练时间比RNN架构更短\n\n### 1.2 技术优势\n- 无循环单元设计，训练时间显著短于早期循环神经网络架构\n- 2017年"Attention Is All You Need"论文提出后，Transformer成为训练大型语言模型的基础\n- 2017年原始Transformer模型大小为100M参数\n- 2017年，Google研究人员提出的Transformer架构在机器翻译任务中表现出色\n\n## 二、Transformer的技术演进历程\n\n### 2.1 ...
+2025-12-28 09:44:33,993 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=44813ms section_id=sec_1
+2025-12-28 09:44:33,993 [INFO] article_agent.article_deep_tools: research_section_tool success: 12156 chars, 0 images
+2025-12-28 09:44:33,994 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-28 09:44:33,994 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-28 09:44:33,995 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:45:03,181 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8417, output_chars=7148, prompt_tokens=1967, completion_tokens=5076, total_tokens=7043
+2025-12-28 09:45:03,181 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 技术架构详解：自注意力机制与编码器-解码器设计\n\n## 一、Transformer架构概述\n\n### 1.1 基本定义与核心机制\n- Transformer是一种基于多头注意力机制的人工神经网络架构\n- 该架构将文本转换为数值表示称为"tokens"，每个token通过查找词嵌入表转换为向量\n- 在每一层中，每个token通过并行多头注意力机制与上下文窗口内的其他（未掩码）token进行上下文化处理\n- "At each layer, each token is then contextualized within the scope of the context window with other (unmasked) tokens via a parallel multi-head attention mechanism, allowing the signal for key tokens to be amplified and less important tokens to be diminished"\n- Transformer的核心优势在于没有循环单元，因此训练时间比...
+2025-12-28 09:45:03,181 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=29187ms section_id=sec_2
+2025-12-28 09:45:03,181 [INFO] article_agent.article_deep_tools: research_section_tool success: 7148 chars, 0 images
+2025-12-28 09:45:03,183 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-28 09:45:03,183 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-28 09:45:03,183 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:45:25,121 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8424, output_chars=5969, prompt_tokens=1956, completion_tokens=3787, total_tokens=5743
+2025-12-28 09:45:25,121 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # Transformer与传统RNN/LSTM的对比分析\n\n## 1. RNN与LSTM的基本概念与历史发展\n\n### 1.1 RNN的起源与发展\n- **早期RNN模型**：序列建模和生成在深度学习中长期使用普通循环神经网络(RNN)\n- **Elman网络**：1990年提出的经典RNN模型，是早期RNN的代表\n- **理论与实践差距**：理论上，信息可以从一个token传播到序列的任意远端，但实践中存在"vanishing-gradient问题"，导致模型在长序列末端无法精确提取先前token的信息\n- **处理方式**：RNN操作是逐个token进行的，从序列开头到结尾依次处理\n\n### 1.2 LSTM的提出与创新\n- **LSTM的提出时间**：1995年\n- **关键创新**：使用多种创新方法克服vanishing-gradient问题，使长序列建模成为可能\n- **核心机制**：使用"multiplicative units"（乘法单元），即神经元通过乘法操作来处理其他神经元的输出\n- **术语演变**：使用乘法单元的神经网络后来被称为"sigma-pi networ...
+2025-12-28 09:45:25,122 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=21939ms section_id=sec_3
+2025-12-28 09:45:25,122 [INFO] article_agent.article_deep_tools: research_section_tool success: 5969 chars, 0 images
+2025-12-28 09:45:25,123 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_4
+2025-12-28 09:45:25,123 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_4
+2025-12-28 09:45:25,123 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:45:53,726 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8412, output_chars=7426, prompt_tokens=1964, completion_tokens=4995, total_tokens=6959
+2025-12-28 09:45:53,727 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 多模态应用实践：从文本到图像的跨模态理解\n\n## 一、Transformer架构基础与多模态学习背景\n\n### 1.1 Transformer架构的核心原理\n- **基本定义**：Transformer是一种基于多头注意力机制的人工神经网络架构，通过将文本转换为称为"tokens"的数值表示，并通过词嵌入表将每个token转换为向量。\n- **关键机制**：在每一层中，每个token通过并行多头注意力机制在上下文窗口内与其他（未掩码）token进行上下文化处理，使关键token的信号得到增强，而不太重要的token信号被减弱。\n- **架构特点**：Transformer没有循环单元，因此相比早期循环神经网络(RNNs)如长短期记忆网络(LSTM)具有更短的训练时间。\n- **参数规模**：现代Transformer模型参数规模已从早期的100M参数发展到如今的数百亿参数级别。\n\n### 1.2 Transformer与传统RNN的对比\n- **RNN的局限性**：\n  - 早期RNN（如1990年的Elman网络）存在"梯度消失"问题，导致长序列中前序信息难以有效传递\n  - L...
+2025-12-28 09:45:53,727 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=28604ms section_id=sec_4
+2025-12-28 09:45:53,727 [INFO] article_agent.article_deep_tools: research_section_tool success: 7426 chars, 0 images
+2025-12-28 09:45:53,728 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_5
+2025-12-28 09:45:53,728 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_5
+2025-12-28 09:45:53,728 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:46:17,516 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8400, output_chars=6142, prompt_tokens=1950, completion_tokens=4152, total_tokens=6102
+2025-12-28 09:46:17,516 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：未来发展趋势：模型轻量化与伦理挑战\n\n## 一、模型轻量化与压缩技术\n\n### 1. 传统模型参数规模与挑战\n- 早期机器翻译模型参数规模：\n  * 380M-parameter model（3.8亿参数模型）使用两个长短期记忆网络（LSTM）[23]\n  * 130M-parameter model使用门控循环单元（GRU）代替LSTM[22]\n  * 2016年Google Translate采用的神经机器翻译系统是seq2seq模型，编码器和解码器均为8层双向LSTM[28]\n  * 该系统开发耗时9个月，而之前的统计机器翻译系统开发耗时10年[29]\n\n### 2. 模型压缩技术发展\n- **decomposable attention**（可分解注意力）：\n  * 2016年提出，将自注意力机制应用于前馈网络\n  * 实现了文本蕴含任务的SOTA（State-of-the-Art）结果\n  * 参数量比LSTMs少一个数量级（order of magnitude fewer parameters）\n  * 作者Jakob Uszkoreit认为"attentio...
+2025-12-28 09:46:17,516 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=23788ms section_id=sec_5
+2025-12-28 09:46:17,516 [INFO] article_agent.article_deep_tools: research_section_tool success: 6142 chars, 0 images
+2025-12-28 09:46:17,518 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_6
+2025-12-28 09:46:17,518 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_6
+2025-12-28 09:46:17,518 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:46:36,083 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8422, output_chars=4097, prompt_tokens=1953, completion_tokens=3252, total_tokens=5205
+2025-12-28 09:46:36,084 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：Transformer的演进与AI技术的未来图景\n\n## 一、Transformer的基本定义与工作原理\n\n### 1.1 核心架构与机制\n- Transformer是基于多头注意力机制的人工神经网络架构\n- 文本被转换为称为tokens的数值表示，每个token通过查找词嵌入表转换为向量\n- 在每一层，每个token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许关键token的信号被放大，不重要token的信号被减弱\n- 无循环单元（recurrent units），因此训练时间比早期循环神经网络架构（如RNN、LSTM）更短\n\n### 1.2 技术细节\n- 2017年，Google研究人员在"Attention Is All You Need"论文中首次提出现代版本的Transformer\n- 该架构由编码器（encoder）和解码器（decoder）两部分组成\n- 每个编码器层包含多头自注意力机制和前馈神经网络\n- 每个解码器层包含多头自注意力机制、编码器-解码器注意力机制和前馈神经网络\n- 通过残差连接和层归一化（layer normalizat...
+2025-12-28 09:46:36,084 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=18566ms section_id=sec_6
+2025-12-28 09:46:36,084 [INFO] article_agent.article_deep_tools: research_section_tool success: 4097 chars, 0 images
+2025-12-28 09:46:36,085 [INFO] article_agent.article_deep_tools: Research notes saved to: /tmp/article_drafts/article_3e0b5de5/research_notes.json
+2025-12-28 09:46:50,519 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 09:46:50,519 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 09:46:50,519 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:47:31,087 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=572, output_chars=4998, prompt_tokens=337, completion_tokens=7220, total_tokens=7557
+2025-12-28 09:47:31,087 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 一、Transformer的基本定义与核心机制  \n### 1.1 基本架构与工作原理  \n- Transformer是一种基于多头注意力机制的深度学习人工神经网络架构，由Ashish Vaswani、Noam Shazeer、Niki Parmar等人于2017年在论文《Attention is All You Need》中首次提出，该论文发表于NeurIPS 2017会议。Transformer的核心创新在于完全摒弃了传统的循环结构，转而采用自注意力机制（self-attention）来处理序列数据，从而实现了并行化计算，显著提升了训练效率和模型性能。  \n- 文本被转换为数值表示称为"tokens"，每个token通过词嵌入表（embedding table）转换为向量，例如，在Transformer中，词嵌入通常是一个可学习的矩阵，维度为512或1024，具体取决于模型规模（如BERT使用768维，GPT-3使用12288维）。词嵌入表通过训练过程动态优化，将每个单词映射到高维向量空间，以捕获语义信息；例如，在英语文本中，"cat"可能被嵌入为[0.2, -0.5, 1.3, ...
+2025-12-28 09:47:31,087 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=40568ms section_id=sec_1
+2025-12-28 09:47:31,087 [INFO] article_agent.article_deep_tools: research_section_tool success: 4998 chars, 0 images
+2025-12-28 09:47:41,756 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-28 09:47:41,757 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-28 09:47:41,757 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:48:39,249 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=567, output_chars=3664, prompt_tokens=341, completion_tokens=9756, total_tokens=10097
+2025-12-28 09:48:39,250 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: - 1. 自注意力机制\n  - 1.1 基本定义与核心机制\n    - Transformer是一种基于多头注意力机制的人工神经网络架构，这表明自注意力机制是其核心创新，它使模型能够动态地关注输入序列中不同位置的元素，从而有效捕捉长距离依赖关系，避免了传统循环神经网络（RNN）的梯度消失问题。自注意力机制允许模型在处理序列数据时，并行计算所有元素之间的关系，而无需依赖顺序处理，显著提升了训练效率和模型性能。\n    - 该架构将文本转换为称为"tokens"的数值表示，每个token通过查找词嵌入表转换为向量。词嵌入表是一个预先训练的矩阵，将每个token（如单词或子词单元）映射到一个固定维度的向量空间，例如维度为512或768，这取决于具体模型实现。词嵌入表通常通过训练数据学习，以捕获语义和语法信息，例如在BERT模型中，词嵌入表是模型训练的一部分，通过掩码语言模型任务优化，确保向量表示能反映上下文语义。\n    - 在每一层中，每个token通过并行多头注意力机制与上下文窗口内的其他（未掩码）token进行上下文交互。上下文窗口定义了模型在计算注意力时考虑的范围，例如在Transf...
+2025-12-28 09:48:39,250 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=57493ms section_id=sec_2
+2025-12-28 09:48:39,250 [INFO] article_agent.article_deep_tools: research_section_tool success: 3664 chars, 0 images
+2025-12-28 09:48:52,424 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-28 09:48:52,424 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-28 09:48:52,424 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:49:52,217 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=691, output_chars=5167, prompt_tokens=403, completion_tokens=10125, total_tokens=10528
+2025-12-28 09:49:52,218 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: - 1. Transformer架构基础与多模态学习背景  \n  - 1.1 Transformer架构的核心原理  \n    - 基本定义：Transformer是一种基于多头注意力机制的人工神经网络架构，其核心设计通过将文本转换为称为"tokens"的数值表示，并通过词嵌入表将每个token转换为向量，从而实现文本的数值化处理。具体而言，文本首先被分割为离散的单元（tokens），这些tokens可以是单词、子词或字符，取决于分词策略；随后，每个token通过预先训练的词嵌入表映射为高维向量，该向量捕获了token的语义和语法信息。例如，在句子"the cat sat on the mat"中，"the"、"cat"、"sat"、"on"、"the"、"mat"等均被识别为独立的tokens，并通过词嵌入表转换为对应的向量表示，为后续的模型处理奠定基础。  \n    - 关键机制：在Transformer的每一层中，每个token的向量通过并行多头注意力机制在上下文窗口内进行上下文化。该机制的核心在于允许模型在单次前向传播中同时关注序列中所有位置，而无需依赖递归结构（如RNN），从...
+2025-12-28 09:49:52,218 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=59794ms section_id=sec_3
+2025-12-28 09:49:52,218 [INFO] article_agent.article_deep_tools: research_section_tool success: 5167 chars, 0 images
+2025-12-28 09:50:08,326 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_4
+2025-12-28 09:50:08,326 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_4
+2025-12-28 09:50:08,326 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:50:41,590 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=741, output_chars=2935, prompt_tokens=460, completion_tokens=5953, total_tokens=6413
+2025-12-28 09:50:41,591 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 一、模型轻量化与压缩技术  \n1. 传统模型参数规模与挑战  \n   - 早期机器翻译模型参数规模：  \n     - 380M-parameter model（3.8亿参数模型）：该模型在机器翻译领域早期应用，具体采用两个长短期记忆网络（LSTM）架构，以处理序列数据。LSTM是一种循环神经网络（RNN）的变体，特别适用于捕捉文本中的长期依赖关系，但其参数规模在当时已达到3.8亿，导致计算资源消耗较高。这一模型代表了2010年代初期深度学习在自然语言处理中的典型应用，其性能受限于硬件条件，推理效率较低。参考文献[23]提供了该模型的详细技术规格、训练数据集和实验结果，包括在WMT14英语-德语翻译任务上的BLEU分数为28.7，但推理延迟高达1.2秒/句子。  \n     - 130M-parameter model：该模型使用门控循环单元（GRU）代替LSTM，参数规模降至1.3亿。GRU是LSTM的简化版本，通过减少门控机制来降低计算复杂度，同时保持类似性能。这一改进显著降低了模型训练和推理的资源需求，例如在相同硬件条件下，推理速度比LSTM模型快约30%。参考文献[22]详细描...
+2025-12-28 09:50:41,591 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=33265ms section_id=sec_4
+2025-12-28 09:50:41,591 [INFO] article_agent.article_deep_tools: research_section_tool success: 2935 chars, 0 images
+2025-12-28 09:50:58,983 [INFO] article_agent.article_deep_tools: research_audit_tool called with 4 sections
+2025-12-28 09:50:58,984 [INFO] article_agent.article_deep_tools: research_audit_tool: all_passed=False, to_reresearch=['sec_1', 'sec_2', 'sec_4']
+2025-12-28 09:52:01,599 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 09:52:01,599 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_3e0b5de5/outline.json
+2025-12-28 09:52:01,600 [INFO] article_agent.article_deep_tools: Loaded 6 notes from persistence file: /tmp/article_drafts/article_3e0b5de5/research_notes.json
+2025-12-28 09:52:01,600 [INFO] article_agent.article_deep_tools: Built notes map with 6 entries. Keys: ['sec_1', 'sec_2', 'sec_3', 'sec_4', 'sec_5']
+2025-12-28 09:52:01,600 [INFO] article_agent.article_deep_tools: Processing 6 sections from outline
+2025-12-28 09:52:01,600 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_1, target_chars: 473
+2025-12-28 09:52:01,600 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_1, target_chars=473
+2025-12-28 09:52:01,600 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:52:11,298 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6301, output_chars=714, prompt_tokens=3619, completion_tokens=1596, total_tokens=5215
+2025-12-28 09:52:11,298 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 引言：Transformer的范式革命与技术背景\n\nTransformer作为一种基于多头注意力机制的深度学习架构，彻底改变了序列建模的范式。与传统RNN和LSTM相比，它摒弃了循环结构，实现了完全并行处理，显著提升了训练效率。\n\n### 核心机制\n- 文本被转换为"tokens"，通过词嵌入表转换为向量\n- 每层中，token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许关键token信号被放大，不重要token被减弱\n\n### 技术演进\nTransformer的诞生源于对传统序列建模技术的突破：\n- 1990年代：Elman网络作为早期RNN代表\n- 1995年：LSTM解决梯度消失问题\n- 2014年：seq2seq架构（编码器-解码器）成为主流\n- 2016年："decomposable attention"提出，暗示"注意力无需循环"\n- 2017年：Google团队发表"Attention Is All You Need"论文，正式提出Transformer\n\n### 范式革命\nTransformer的提出标志着深度学习从"循环"到"注意力"的范式转...
+2025-12-28 09:52:11,298 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=9698ms section_id=sec_1, target_chars=473
+2025-12-28 09:52:11,302 [INFO] article_agent.article_deep_tools: write_section_tool success: 714 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_1.md
+2025-12-28 09:52:11,303 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_1', 'title': '引言：Transformer的范式革命与技术背景', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_1.md', 'char_count': 714, 'preview': '## 引言：Transformer的范式革命与技术背景\n\nTransformer作为一种基于多头注意力机制的深度学习架构，彻底改变了序列建模的范式。与传统RNN和LSTM相比，它摒弃了循环结构，实现了完全并行处理，显著提升了训练效率。\n\n### 核心机制\n- 文本被转换为"tokens"，通过词嵌入表转换为向量\n- 每层中，token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许...'}
+2025-12-28 09:52:11,303 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 引言：Transformer的范式革命与技术背景\n\nTransformer作为一种基于多头注意力机制的深度学习架构，彻底改变了序列建模的范式。与传统RNN和LSTM相比，它摒弃了循环结构，实现了完全并行处理，显著提升了训练效率。\n\n### 核心机制\n- 文本被转换为"tokens"，通过词嵌入表转换为向量\n- 每层中，token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许...
+2025-12-28 09:52:11,304 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_2, target_chars: 1013
+2025-12-28 09:52:11,304 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_2, target_chars=1013
+2025-12-28 09:52:11,304 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:55:03,776 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6301, output_chars=0, prompt_tokens=3127, completion_tokens=24576, total_tokens=27703
+2025-12-28 09:55:03,807 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: 
+2025-12-28 09:55:03,807 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=172503ms section_id=sec_2, target_chars=1013
+2025-12-28 09:55:03,808 [INFO] article_agent.article_deep_tools: write_section_tool success: 28 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_2.md
+2025-12-28 09:55:03,808 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_2', 'title': '技术架构详解：自注意力机制与编码器-解码器设计', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_2.md', 'char_count': 28, 'preview': '## 技术架构详解：自注意力机制与编码器-解码器设计\n\n'}
+2025-12-28 09:55:03,808 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 技术架构详解：自注意力机制与编码器-解码器设计\n\n
+2025-12-28 09:55:03,809 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_3, target_chars: 1013
+2025-12-28 09:55:03,809 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_3, target_chars=1013
+2025-12-28 09:55:03,809 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:55:36,936 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6278, output_chars=1775, prompt_tokens=3330, completion_tokens=5491, total_tokens=8821
+2025-12-28 09:55:36,936 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## Transformer与传统RNN/LSTM的对比分析\n\nRNN（循环神经网络）和LSTM（长短期记忆网络）曾是序列建模的主流架构，但随着Transformer的出现，这些传统模型逐渐被取代。本节将从计算效率、时序建模能力和性能表现三个方面进行对比分析。\n\n### 计算效率对比\n\n- **RNN/LSTM**：采用串行处理方式，必须按顺序处理序列中的每个token，无法并行化。这导致：\n  - GPU加速困难，训练时间显著延长\n  - 例如：2016年Google Translate的seq2seq模型（8层双向LSTM）开发耗时9个月\n  - 计算复杂度与序列长度呈线性关系（O(n)）\n\n- **Transformer**：通过多头注意力机制实现完全并行处理，充分利用GPU计算能力：\n  - 训练时间显著缩短，比RNN/LSTM快得多\n  - 2017年提出的原始Transformer模型（100M参数）在机器翻译任务上表现优异\n  - 计算复杂度与上下文窗口大小的平方成正比（O(n²)），但并行化优势远大于此\n\n### 时序建模能力对比\n\n- **RNN/LSTM**：\n  ...
+2025-12-28 09:55:36,936 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=33127ms section_id=sec_3, target_chars=1013
+2025-12-28 09:55:36,936 [INFO] article_agent.article_deep_tools: write_section_tool success: 1775 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_3.md
+2025-12-28 09:55:36,936 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_3', 'title': 'Transformer与传统RNN/LSTM的对比分析', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_3.md', 'char_count': 1775, 'preview': '## Transformer与传统RNN/LSTM的对比分析\n\nRNN（循环神经网络）和LSTM（长短期记忆网络）曾是序列建模的主流架构，但随着Transformer的出现，这些传统模型逐渐被取代。本节将从计算效率、时序建模能力和性能表现三个方面进行对比分析。\n\n### 计算效率对比\n\n- **RNN/LSTM**：采用串行处理方式，必须按顺序处理序列中的每个token，无法并行化。这导致：\n  ...'}
+2025-12-28 09:55:36,936 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## Transformer与传统RNN/LSTM的对比分析\n\nRNN（循环神经网络）和LSTM（长短期记忆网络）曾是序列建模的主流架构，但随着Transformer的出现，这些传统模型逐渐被取代。本节将从计算效率、时序建模能力和性能表现三个方面进行对比分析。\n\n### 计算效率对比\n\n- **RNN/LSTM**：采用串行处理方式，必须按顺序处理序列中的每个token，无法并行化。这导致：\n  ...
+2025-12-28 09:55:36,937 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_4, target_chars: 1013
+2025-12-28 09:55:36,938 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_4, target_chars=1013
+2025-12-28 09:55:36,938 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:55:53,634 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6295, output_chars=1563, prompt_tokens=3535, completion_tokens=2799, total_tokens=6334
+2025-12-28 09:55:53,634 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 多模态应用实践：从文本到图像的跨模态理解\n\nTransformer架构的突破性发展为多模态学习提供了强大基础，特别是在文本到图像的跨模态理解领域。通过将文本和图像映射到统一的向量空间，模型能够实现语义对齐和跨模态交互，推动了从文本描述生成图像等创新应用的发展。\n\n### CLIP模型：文本-图像跨模态理解的突破\n\nCLIP（Contrastive Language-Image Pretraining）是文本-图像跨模态理解的重要里程碑。其核心原理是通过对比学习，将文本和图像编码到同一向量空间：\n\n- **模型架构**：基于Transformer处理文本和图像\n- **训练方法**：在4亿个文本-图像对上进行预训练\n- **核心机制**：使用对比损失函数对齐文本-图像对\n\nCLIP具有显著技术特点：\n- **跨模态表示**：将文本和图像表示为同一空间中的向量，实现跨模态检索\n- **零样本学习能力**：在未见过的类别上也能表现出色，无需额外训练\n- **模型规模**：从CLIP-336到CLIP-512，参数规模从1.2亿到12亿不等\n\n实际应用案例包括：\n- **图像检索**：用...
+2025-12-28 09:55:53,634 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=16697ms section_id=sec_4, target_chars=1013
+2025-12-28 09:55:53,634 [INFO] article_agent.article_deep_tools: write_section_tool success: 1563 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_4.md
+2025-12-28 09:55:53,634 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_4', 'title': '多模态应用实践：从文本到图像的跨模态理解', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_4.md', 'char_count': 1563, 'preview': '## 多模态应用实践：从文本到图像的跨模态理解\n\nTransformer架构的突破性发展为多模态学习提供了强大基础，特别是在文本到图像的跨模态理解领域。通过将文本和图像映射到统一的向量空间，模型能够实现语义对齐和跨模态交互，推动了从文本描述生成图像等创新应用的发展。\n\n### CLIP模型：文本-图像跨模态理解的突破\n\nCLIP（Contrastive Language-Image Pretrai...'}
+2025-12-28 09:55:53,634 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 多模态应用实践：从文本到图像的跨模态理解\n\nTransformer架构的突破性发展为多模态学习提供了强大基础，特别是在文本到图像的跨模态理解领域。通过将文本和图像映射到统一的向量空间，模型能够实现语义对齐和跨模态交互，推动了从文本描述生成图像等创新应用的发展。\n\n### CLIP模型：文本-图像跨模态理解的突破\n\nCLIP（Contrastive Language-Image Pretrai...
+2025-12-28 09:55:53,636 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_5, target_chars: 1013
+2025-12-28 09:55:53,636 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_5, target_chars=1013
+2025-12-28 09:55:53,636 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:56:15,231 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6289, output_chars=2111, prompt_tokens=3493, completion_tokens=3637, total_tokens=7130
+2025-12-28 09:56:15,231 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 未来发展趋势：模型轻量化与伦理挑战\n\n模型轻量化与伦理挑战是人工智能领域未来发展的重要方向。随着Transformer架构的广泛应用，如何在保持模型性能的同时降低计算资源需求，以及如何应对生成式AI带来的社会伦理问题，已成为研究者和实践者关注的焦点。\n\n### 模型轻量化技术演进\n\n早期机器翻译模型参数规模较大，如380M-parameter model（3.8亿参数）使用LSTM，130M-parameter model使用GRU。2016年Google Translate采用的神经机器翻译系统是seq2seq模型，编码器和解码器均为8层双向LSTM，开发耗时9个月，而之前的统计机器翻译系统开发耗时10年。\n\n模型压缩技术的发展为轻量化提供了重要路径：\n- **decomposable attention**：2016年提出，将自注意力机制应用于前馈网络，实现了文本蕴含任务的SOTA结果，参数量比LSTMs少一个数量级。作者Jakob Uszkoreit认为"attention without recurrence would be sufficient for languag...
+2025-12-28 09:56:15,231 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=21596ms section_id=sec_5, target_chars=1013
+2025-12-28 09:56:15,231 [INFO] article_agent.article_deep_tools: write_section_tool success: 2111 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_5.md
+2025-12-28 09:56:15,232 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_5', 'title': '未来发展趋势：模型轻量化与伦理挑战', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_5.md', 'char_count': 2111, 'preview': '## 未来发展趋势：模型轻量化与伦理挑战\n\n模型轻量化与伦理挑战是人工智能领域未来发展的重要方向。随着Transformer架构的广泛应用，如何在保持模型性能的同时降低计算资源需求，以及如何应对生成式AI带来的社会伦理问题，已成为研究者和实践者关注的焦点。\n\n### 模型轻量化技术演进\n\n早期机器翻译模型参数规模较大，如380M-parameter model（3.8亿参数）使用LSTM，130M...'}
+2025-12-28 09:56:15,232 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 未来发展趋势：模型轻量化与伦理挑战\n\n模型轻量化与伦理挑战是人工智能领域未来发展的重要方向。随着Transformer架构的广泛应用，如何在保持模型性能的同时降低计算资源需求，以及如何应对生成式AI带来的社会伦理问题，已成为研究者和实践者关注的焦点。\n\n### 模型轻量化技术演进\n\n早期机器翻译模型参数规模较大，如380M-parameter model（3.8亿参数）使用LSTM，130M...
+2025-12-28 09:56:15,233 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_6, target_chars: 473
+2025-12-28 09:56:15,233 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_6, target_chars=473
+2025-12-28 09:56:15,233 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:56:27,512 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=4404, output_chars=972, prompt_tokens=2542, completion_tokens=2115, total_tokens=4657
+2025-12-28 09:56:27,512 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 总结：Transformer的演进与AI技术的未来图景\n\nTransformer架构自2017年"Attention Is All You Need"论文发布以来，彻底重塑了AI技术发展轨迹。其核心创新——多头注意力机制，摒弃了传统RNN的循环结构，实现所有token并行处理，显著缩短训练时间（相比LSTM等架构）。  \n\n**关键演进历程：**  \n- **早期技术瓶颈**：1990s RNN和1995年LSTM虽解决长序列问题，但依赖顺序处理，梯度消失限制性能  \n- **注意力突破**：2016年"decomposable attention"等研究证明自注意力机制可替代循环单元  \n- **Transformer诞生**：2017年原始模型仅100M参数，通过多头注意力和残差连接实现高效并行计算  \n- **规模跃迁**：2018年BERT（3.4亿参数）→ 2020年GPT-3（1750亿参数），参数量增长4万倍  \n\n**技术优势与影响：**  \n- **计算效率**：O(n²)复杂度但并行化充分利用GPU，训练速度提升10倍以上  \n- **应用爆发**：  \n  ...
+2025-12-28 09:56:27,512 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=12279ms section_id=sec_6, target_chars=473
+2025-12-28 09:56:27,512 [INFO] article_agent.article_deep_tools: write_section_tool success: 972 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_6.md
+2025-12-28 09:56:27,512 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_6', 'title': '总结：Transformer的演进与AI技术的未来图景', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_6.md', 'char_count': 972, 'preview': '## 总结：Transformer的演进与AI技术的未来图景\n\nTransformer架构自2017年"Attention Is All You Need"论文发布以来，彻底重塑了AI技术发展轨迹。其核心创新——多头注意力机制，摒弃了传统RNN的循环结构，实现所有token并行处理，显著缩短训练时间（相比LSTM等架构）。  \n\n**关键演进历程：**  \n- **早期技术瓶颈**：1990s R...'}
+2025-12-28 09:56:27,512 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 总结：Transformer的演进与AI技术的未来图景\n\nTransformer架构自2017年"Attention Is All You Need"论文发布以来，彻底重塑了AI技术发展轨迹。其核心创新——多头注意力机制，摒弃了传统RNN的循环结构，实现所有token并行处理，显著缩短训练时间（相比LSTM等架构）。  \n\n**关键演进历程：**  \n- **早期技术瓶颈**：1990s R...
+2025-12-28 09:56:31,628 [INFO] article_agent.article_deep_tools: writer_audit_tool called
+2025-12-28 09:59:47,288 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 09:59:47,293 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_3e0b5de5/outline.json
+2025-12-28 09:59:47,294 [INFO] article_agent.article_deep_tools: Loaded 6 notes from persistence file: /tmp/article_drafts/article_3e0b5de5/research_notes.json
+2025-12-28 09:59:47,294 [INFO] article_agent.article_deep_tools: Built notes map with 6 entries. Keys: ['sec_1', 'sec_2', 'sec_3', 'sec_4', 'sec_5']
+2025-12-28 09:59:47,294 [INFO] article_agent.article_deep_tools: Processing 6 sections from outline
+2025-12-28 09:59:47,294 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_1, target_chars: 473
+2025-12-28 09:59:47,294 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_1, target_chars=473
+2025-12-28 09:59:47,294 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 09:59:57,191 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6301, output_chars=714, prompt_tokens=3619, completion_tokens=1596, total_tokens=5215
+2025-12-28 09:59:57,191 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 引言：Transformer的范式革命与技术背景\n\nTransformer作为一种基于多头注意力机制的深度学习架构，彻底改变了序列建模的范式。与传统RNN和LSTM相比，它摒弃了循环结构，实现了完全并行处理，显著提升了训练效率。\n\n### 核心机制\n- 文本被转换为"tokens"，通过词嵌入表转换为向量\n- 每层中，token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许关键token信号被放大，不重要token被减弱\n\n### 技术演进\nTransformer的诞生源于对传统序列建模技术的突破：\n- 1990年代：Elman网络作为早期RNN代表\n- 1995年：LSTM解决梯度消失问题\n- 2014年：seq2seq架构（编码器-解码器）成为主流\n- 2016年："decomposable attention"提出，暗示"注意力无需循环"\n- 2017年：Google团队发表"Attention Is All You Need"论文，正式提出Transformer\n\n### 范式革命\nTransformer的提出标志着深度学习从"循环"到"注意力"的范式转...
+2025-12-28 09:59:57,192 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=9897ms section_id=sec_1, target_chars=473
+2025-12-28 09:59:57,193 [INFO] article_agent.article_deep_tools: write_section_tool success: 714 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_1.md
+2025-12-28 09:59:57,193 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_1', 'title': '引言：Transformer的范式革命与技术背景', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_1.md', 'char_count': 714, 'preview': '## 引言：Transformer的范式革命与技术背景\n\nTransformer作为一种基于多头注意力机制的深度学习架构，彻底改变了序列建模的范式。与传统RNN和LSTM相比，它摒弃了循环结构，实现了完全并行处理，显著提升了训练效率。\n\n### 核心机制\n- 文本被转换为"tokens"，通过词嵌入表转换为向量\n- 每层中，token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许...'}
+2025-12-28 09:59:57,193 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 引言：Transformer的范式革命与技术背景\n\nTransformer作为一种基于多头注意力机制的深度学习架构，彻底改变了序列建模的范式。与传统RNN和LSTM相比，它摒弃了循环结构，实现了完全并行处理，显著提升了训练效率。\n\n### 核心机制\n- 文本被转换为"tokens"，通过词嵌入表转换为向量\n- 每层中，token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许...
+2025-12-28 09:59:57,194 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_2, target_chars: 1013
+2025-12-28 09:59:57,195 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_2, target_chars=1013
+2025-12-28 09:59:57,195 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:02:50,595 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6301, output_chars=0, prompt_tokens=3127, completion_tokens=24576, total_tokens=27703
+2025-12-28 10:02:50,595 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: 
+2025-12-28 10:02:50,596 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=173401ms section_id=sec_2, target_chars=1013
+2025-12-28 10:02:50,596 [INFO] article_agent.article_deep_tools: write_section_tool success: 28 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_2.md
+2025-12-28 10:02:50,596 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_2', 'title': '技术架构详解：自注意力机制与编码器-解码器设计', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_2.md', 'char_count': 28, 'preview': '## 技术架构详解：自注意力机制与编码器-解码器设计\n\n'}
+2025-12-28 10:02:50,596 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 技术架构详解：自注意力机制与编码器-解码器设计\n\n
+2025-12-28 10:02:50,597 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_3, target_chars: 1013
+2025-12-28 10:02:50,597 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_3, target_chars=1013
+2025-12-28 10:02:50,597 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:03:23,270 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6278, output_chars=1775, prompt_tokens=3330, completion_tokens=5491, total_tokens=8821
+2025-12-28 10:03:23,270 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## Transformer与传统RNN/LSTM的对比分析\n\nRNN（循环神经网络）和LSTM（长短期记忆网络）曾是序列建模的主流架构，但随着Transformer的出现，这些传统模型逐渐被取代。本节将从计算效率、时序建模能力和性能表现三个方面进行对比分析。\n\n### 计算效率对比\n\n- **RNN/LSTM**：采用串行处理方式，必须按顺序处理序列中的每个token，无法并行化。这导致：\n  - GPU加速困难，训练时间显著延长\n  - 例如：2016年Google Translate的seq2seq模型（8层双向LSTM）开发耗时9个月\n  - 计算复杂度与序列长度呈线性关系（O(n)）\n\n- **Transformer**：通过多头注意力机制实现完全并行处理，充分利用GPU计算能力：\n  - 训练时间显著缩短，比RNN/LSTM快得多\n  - 2017年提出的原始Transformer模型（100M参数）在机器翻译任务上表现优异\n  - 计算复杂度与上下文窗口大小的平方成正比（O(n²)），但并行化优势远大于此\n\n### 时序建模能力对比\n\n- **RNN/LSTM**：\n  ...
+2025-12-28 10:03:23,270 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=32673ms section_id=sec_3, target_chars=1013
+2025-12-28 10:03:23,271 [INFO] article_agent.article_deep_tools: write_section_tool success: 1775 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_3.md
+2025-12-28 10:03:23,271 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_3', 'title': 'Transformer与传统RNN/LSTM的对比分析', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_3.md', 'char_count': 1775, 'preview': '## Transformer与传统RNN/LSTM的对比分析\n\nRNN（循环神经网络）和LSTM（长短期记忆网络）曾是序列建模的主流架构，但随着Transformer的出现，这些传统模型逐渐被取代。本节将从计算效率、时序建模能力和性能表现三个方面进行对比分析。\n\n### 计算效率对比\n\n- **RNN/LSTM**：采用串行处理方式，必须按顺序处理序列中的每个token，无法并行化。这导致：\n  ...'}
+2025-12-28 10:03:23,271 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## Transformer与传统RNN/LSTM的对比分析\n\nRNN（循环神经网络）和LSTM（长短期记忆网络）曾是序列建模的主流架构，但随着Transformer的出现，这些传统模型逐渐被取代。本节将从计算效率、时序建模能力和性能表现三个方面进行对比分析。\n\n### 计算效率对比\n\n- **RNN/LSTM**：采用串行处理方式，必须按顺序处理序列中的每个token，无法并行化。这导致：\n  ...
+2025-12-28 10:03:23,272 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_4, target_chars: 1013
+2025-12-28 10:03:23,272 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_4, target_chars=1013
+2025-12-28 10:03:23,272 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:03:40,320 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6295, output_chars=1563, prompt_tokens=3535, completion_tokens=2799, total_tokens=6334
+2025-12-28 10:03:40,320 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 多模态应用实践：从文本到图像的跨模态理解\n\nTransformer架构的突破性发展为多模态学习提供了强大基础，特别是在文本到图像的跨模态理解领域。通过将文本和图像映射到统一的向量空间，模型能够实现语义对齐和跨模态交互，推动了从文本描述生成图像等创新应用的发展。\n\n### CLIP模型：文本-图像跨模态理解的突破\n\nCLIP（Contrastive Language-Image Pretraining）是文本-图像跨模态理解的重要里程碑。其核心原理是通过对比学习，将文本和图像编码到同一向量空间：\n\n- **模型架构**：基于Transformer处理文本和图像\n- **训练方法**：在4亿个文本-图像对上进行预训练\n- **核心机制**：使用对比损失函数对齐文本-图像对\n\nCLIP具有显著技术特点：\n- **跨模态表示**：将文本和图像表示为同一空间中的向量，实现跨模态检索\n- **零样本学习能力**：在未见过的类别上也能表现出色，无需额外训练\n- **模型规模**：从CLIP-336到CLIP-512，参数规模从1.2亿到12亿不等\n\n实际应用案例包括：\n- **图像检索**：用...
+2025-12-28 10:03:40,321 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=17049ms section_id=sec_4, target_chars=1013
+2025-12-28 10:03:40,321 [INFO] article_agent.article_deep_tools: write_section_tool success: 1563 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_4.md
+2025-12-28 10:03:40,321 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_4', 'title': '多模态应用实践：从文本到图像的跨模态理解', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_4.md', 'char_count': 1563, 'preview': '## 多模态应用实践：从文本到图像的跨模态理解\n\nTransformer架构的突破性发展为多模态学习提供了强大基础，特别是在文本到图像的跨模态理解领域。通过将文本和图像映射到统一的向量空间，模型能够实现语义对齐和跨模态交互，推动了从文本描述生成图像等创新应用的发展。\n\n### CLIP模型：文本-图像跨模态理解的突破\n\nCLIP（Contrastive Language-Image Pretrai...'}
+2025-12-28 10:03:40,321 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 多模态应用实践：从文本到图像的跨模态理解\n\nTransformer架构的突破性发展为多模态学习提供了强大基础，特别是在文本到图像的跨模态理解领域。通过将文本和图像映射到统一的向量空间，模型能够实现语义对齐和跨模态交互，推动了从文本描述生成图像等创新应用的发展。\n\n### CLIP模型：文本-图像跨模态理解的突破\n\nCLIP（Contrastive Language-Image Pretrai...
+2025-12-28 10:03:40,322 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_5, target_chars: 1013
+2025-12-28 10:03:40,322 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_5, target_chars=1013
+2025-12-28 10:03:40,322 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:04:02,336 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=6289, output_chars=2111, prompt_tokens=3493, completion_tokens=3637, total_tokens=7130
+2025-12-28 10:04:02,336 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 未来发展趋势：模型轻量化与伦理挑战\n\n模型轻量化与伦理挑战是人工智能领域未来发展的重要方向。随着Transformer架构的广泛应用，如何在保持模型性能的同时降低计算资源需求，以及如何应对生成式AI带来的社会伦理问题，已成为研究者和实践者关注的焦点。\n\n### 模型轻量化技术演进\n\n早期机器翻译模型参数规模较大，如380M-parameter model（3.8亿参数）使用LSTM，130M-parameter model使用GRU。2016年Google Translate采用的神经机器翻译系统是seq2seq模型，编码器和解码器均为8层双向LSTM，开发耗时9个月，而之前的统计机器翻译系统开发耗时10年。\n\n模型压缩技术的发展为轻量化提供了重要路径：\n- **decomposable attention**：2016年提出，将自注意力机制应用于前馈网络，实现了文本蕴含任务的SOTA结果，参数量比LSTMs少一个数量级。作者Jakob Uszkoreit认为"attention without recurrence would be sufficient for languag...
+2025-12-28 10:04:02,336 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=22014ms section_id=sec_5, target_chars=1013
+2025-12-28 10:04:02,336 [INFO] article_agent.article_deep_tools: write_section_tool success: 2111 chars, saved to /tmp/article_drafts/article_3e0b5de5/section_sec_5.md
+2025-12-28 10:04:02,336 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_5', 'title': '未来发展趋势：模型轻量化与伦理挑战', 'file_path': '/tmp/article_drafts/article_3e0b5de5/section_sec_5.md', 'char_count': 2111, 'preview': '## 未来发展趋势：模型轻量化与伦理挑战\n\n模型轻量化与伦理挑战是人工智能领域未来发展的重要方向。随着Transformer架构的广泛应用，如何在保持模型性能的同时降低计算资源需求，以及如何应对生成式AI带来的社会伦理问题，已成为研究者和实践者关注的焦点。\n\n### 模型轻量化技术演进\n\n早期机器翻译模型参数规模较大，如380M-parameter model（3.8亿参数）使用LSTM，130M...'}
+2025-12-28 10:04:02,336 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 未来发展趋势：模型轻量化与伦理挑战\n\n模型轻量化与伦理挑战是人工智能领域未来发展的重要方向。随着Transformer架构的广泛应用，如何在保持模型性能的同时降低计算资源需求，以及如何应对生成式AI带来的社会伦理问题，已成为研究者和实践者关注的焦点。\n\n### 模型轻量化技术演进\n\n早期机器翻译模型参数规模较大，如380M-parameter model（3.8亿参数）使用LSTM，130M...
+2025-12-28 10:04:02,337 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_6, target_chars: 473
+2025-12-28 10:04:02,338 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_6, target_chars=473
+2025-12-28 10:04:02,338 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:05:05,518 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=False
+2025-12-28 10:05:05,621 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 10:05:18,656 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 10:05:21,104 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 10:05:23,439 [INFO] article_agent.article_deep_tools: Collected source 1: 30000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-28 10:05:23,440 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_4c4829ef/sources.json
+2025-12-28 10:05:23,440 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符\n\n**总计**: 60000 字符, 22 图片', 'source_count': 2}
+2025-12-28 10:05:29,117 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 10:05:29,117 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 10:05:29,117 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:06:05,893 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1194, output_chars=949, prompt_tokens=555, completion_tokens=6455, total_tokens=7010
+2025-12-28 10:06:05,893 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer：深度学习的革命性突破与应用",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：深度学习的演进与Transformer的崛起",\n      "keywords": ["深度学习", "Transformer", "历史背景"],\n      "target_chars": 400,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "Transformer的核心技术原理",\n      "keywords": ["自注意力机制", "位置编码", "编码器-解码器"],\n      "target_chars": 1400,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "Transformer的应用场景与实践",\n      "keywords": ["机器翻译", "...
+2025-12-28 10:06:05,893 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=36776ms target_word_count=5000
+2025-12-28 10:06:05,893 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer：深度学习的革命性突破与应用
+2025-12-28 10:06:05,893 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(5): sec_1:引言：深度学习的演进与Transformer的崛起, sec_2:Transformer的核心技术原理, sec_3:Transformer的应用场景与实践, sec_4:Transformer对AI领域的影响与未来展望, sec_5:总结：Transformer的里程碑意义
+2025-12-28 10:06:05,893 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-28 10:06:05,894 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_4c4829ef/outline.json
+2025-12-28 10:06:05,894 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-28 10:12:56,802 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 10:12:56,803 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_4c4829ef/outline.json
+2025-12-28 10:12:56,803 [WARNING] article_agent.article_deep_tools: No research notes found in file! Writer will likely fail or hallucinate.
+2025-12-28 10:13:12,035 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 10:13:12,035 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_4c4829ef/outline.json
+2025-12-28 10:13:12,035 [WARNING] article_agent.article_deep_tools: No research notes found in file! Writer will likely fail or hallucinate.
+2025-12-28 10:15:45,725 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:15:45,821 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 10:15:54,233 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=30000
+2025-12-28 10:15:56,429 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 10:15:58,325 [INFO] article_agent.article_deep_tools: Collected source 1: 30000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-28 10:15:58,326 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_c7b10a1f/sources.json
+2025-12-28 10:15:58,326 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 30000 字符\n\n**总计**: 60000 字符, 22 图片', 'source_count': 2}
+2025-12-28 10:16:06,127 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 10:16:06,127 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 10:16:06,127 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:16:55,819 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1275, output_chars=1058, prompt_tokens=575, completion_tokens=8495, total_tokens=9070
+2025-12-28 10:16:55,819 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer模型：深度学习的革命性突破与应用前景",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言",\n      "keywords": ["深度学习", "Transformer", "人工智能"],\n      "target_chars": 580,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "深度学习基础",\n      "keywords": ["神经网络", "卷积神经网络", "循环神经网络"],\n      "target_chars": 580,\n      "is_core": false\n    },\n    {\n      "id": "sec_3",\n      "title": "Transformer架构详解",\n      "keywords": ["自注意力机制", "编码器-解码器", "位置编码"],\n      "target_c...
+2025-12-28 10:16:55,819 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=49692ms target_word_count=5000
+2025-12-28 10:16:55,819 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer模型：深度学习的革命性突破与应用前景
+2025-12-28 10:16:55,819 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(6): sec_1:引言, sec_2:深度学习基础, sec_3:Transformer架构详解, sec_4:Transformer在NLP中的应用, sec_5:未来展望, sec_6:总结
+2025-12-28 10:16:55,820 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-28 10:16:55,820 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_c7b10a1f/outline.json
+2025-12-28 10:16:55,820 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 6 sections
+2025-12-28 10:17:26,063 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_c7b10a1f/outline.json
+2025-12-28 10:17:26,064 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 6
+2025-12-28 10:17:26,064 [INFO] article_agent.article_deep_tools: Loaded 2 sources from persistence file: /tmp/article_drafts/article_c7b10a1f/sources.json
+2025-12-28 10:17:26,065 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 10:17:26,065 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 10:17:26,065 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:18:19,976 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:18:20,076 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 10:18:31,962 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=30000
+2025-12-28 10:18:33,750 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 10:18:33,751 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_b04c4760/sources.json
+2025-12-28 10:18:33,751 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n\n**总计**: 30000 字符, 19 图片', 'source_count': 1}
+2025-12-28 10:18:38,435 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 10:18:38,435 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 10:18:38,436 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:19:09,865 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1092, output_chars=1175, prompt_tokens=526, completion_tokens=5530, total_tokens=6056
+2025-12-28 10:19:09,866 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer：深度学习的革命性架构与应用全景",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：Transformer的诞生背景与核心价值",\n      "keywords": ["Transformer", "深度学习", "自注意力机制", "技术演进"],\n      "target_chars": 400,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "发展历史：从原始论文到多模态演进",\n      "keywords": ["Transformer发展", "2017论文", "BERT", "GPT", "变体演进"],\n      "target_chars": 800,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "技术原理：自注意力机制与架构解析",\n  ...
+2025-12-28 10:19:09,866 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=31430ms target_word_count=5000
+2025-12-28 10:19:09,866 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer：深度学习的革命性架构与应用全景
+2025-12-28 10:19:09,866 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(6): sec_1:引言：Transformer的诞生背景与核心价值, sec_2:发展历史：从原始论文到多模态演进, sec_3:技术原理：自注意力机制与架构解析, sec_4:应用案例：NLP与跨领域实践, sec_5:挑战与未来：局限性与技术突破方向, sec_6:总结：Transformer对AI生态的深远影响
+2025-12-28 10:19:09,866 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-28 10:19:09,866 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_b04c4760/outline.json
+2025-12-28 10:19:09,866 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 6 sections
+2025-12-28 10:19:30,548 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_b04c4760/outline.json
+2025-12-28 10:19:30,548 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 6
+2025-12-28 10:19:30,548 [INFO] article_agent.article_deep_tools: Loaded 1 sources from persistence file: /tmp/article_drafts/article_b04c4760/sources.json
+2025-12-28 10:19:30,548 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 10:19:30,548 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 10:19:30,548 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:19:52,681 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8422, output_chars=5291, prompt_tokens=1953, completion_tokens=3831, total_tokens=5784
+2025-12-28 10:19:52,681 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：引言：Transformer的诞生背景与核心价值\n\n## 一、Transformer的基本定义与工作原理\n\n### 1.1 基本架构与机制\n- Transformer是深度学习中的一种人工神经网络架构，基于多头注意力机制\n- 文本被转换为数值表示称为"tokens"，每个token通过查找词嵌入表转换为向量\n- 在每一层，每个token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许关键token的信号被放大，不重要token被减弱\n- 与传统RNN不同，Transformer没有循环单元，因此可以并行处理所有token\n\n### 1.2 技术细节\n- 每个token的向量表示通过词嵌入表进行转换\n- 在每一层，token通过多头注意力机制与上下文中的其他token进行交互\n- 注意力机制通过计算查询(query)、键(key)和值(value)来实现\n- 多头注意力允许模型从不同表示子空间中学习\n- 该架构使模型能够同时关注输入序列的不同位置\n\n## 二、Transformer的技术演进背景\n\n### 2.1 早期序列建模方法\n- **Elman网络(1...
+2025-12-28 10:19:52,681 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=22132ms section_id=sec_1
+2025-12-28 10:19:52,681 [INFO] article_agent.article_deep_tools: research_section_tool success: 5291 chars, 0 images
+2025-12-28 10:19:52,682 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-28 10:19:52,682 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-28 10:19:52,682 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:20:10,390 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8413, output_chars=4164, prompt_tokens=1961, completion_tokens=3089, total_tokens=5050
+2025-12-28 10:20:10,390 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 发展历史：从原始论文到多模态演进 资料笔记\n\n## 一、Transformer架构的起源与基础\n\n### 1. 早期序列建模技术\n- **RNN的局限性**：\n  - 长期以来，序列建模和生成主要使用普通循环神经网络(RNN)\n  - 早期代表性模型：Elman网络(1990)\n  - 理论上，信息可以从一个token传播到序列任意远位置\n  - 实践中存在"梯度消失"问题，导致长序列中早期token信息难以保留\n  - RNN操作方式：逐个token从头到尾处理，无法并行化\n\n- **LSTM的突破**：\n  - 1995年提出LSTM(长短期记忆网络)，通过创新设计克服梯度消失问题\n  - 关键创新：使用"乘法单元"(multiplicative units)，即神经元乘以其他神经元的输出\n  - 后续被称为"sigma-pi网络"或"高阶网络"\n  - LSTM成为长序列建模的标准架构，直到2017年Transformer出现\n  - 但LSTM仍采用顺序处理方式，无法充分利用GPU并行计算能力\n\n### 2. 早期序列到序列(seq2seq)模型\n- **2014年关键发展...
+2025-12-28 10:20:10,390 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=17708ms section_id=sec_2
+2025-12-28 10:20:10,390 [INFO] article_agent.article_deep_tools: research_section_tool success: 4164 chars, 0 images
+2025-12-28 10:20:10,391 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-28 10:20:10,392 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-28 10:20:10,392 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:20:30,721 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8403, output_chars=4592, prompt_tokens=1955, completion_tokens=3526, total_tokens=5481
+2025-12-28 10:20:30,721 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 技术原理：自注意力机制与架构解析\n\n## 一、自注意力机制的起源与发展\n\n### 1. 早期序列建模方法的局限性\n- **Elman网络（1990）**：作为早期的循环神经网络（RNN）代表，理论上信息可以从一个token传播到序列的任意远位置，但实践中存在"梯度消失问题"，导致长序列中前面token的信息在序列末端无法被精确提取。\n- **LSTM（1995）**：由Hochreiter和Schmidhuber提出，通过创新性地使用"乘法单元"（multiplicative units）克服了梯度消失问题，使模型能够有效学习长序列建模。LSTM成为长序列建模的标准架构，直到2017年Transformer的出现。\n- **LSTM的局限性**：尽管LSTM解决了梯度消失问题，但仍然依赖于顺序处理（one token at a time from first to last），无法在所有token上并行操作，这限制了其在GPU上的加速能力。\n\n### 2. 注意力机制的早期探索\n- **RNN search模型**：引入了注意力机制到seq2seq架构中，用于解决"固定大小输出向量...
+2025-12-28 10:20:30,722 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=20330ms section_id=sec_3
+2025-12-28 10:20:30,722 [INFO] article_agent.article_deep_tools: research_section_tool success: 4592 chars, 0 images
+2025-12-28 10:20:30,725 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_4
+2025-12-28 10:20:30,725 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_4
+2025-12-28 10:20:30,725 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:20:54,177 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8395, output_chars=5110, prompt_tokens=1952, completion_tokens=4075, total_tokens=6027
+2025-12-28 10:20:54,177 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 应用案例：NLP与跨领域实践\n\n## 1. 机器翻译应用案例\n\n### 1.1 早期机器翻译系统发展\n\n- **2014年seq2seq模型的起源**：序列到序列(seq2seq)模型的早期发展源于2014年两篇并行发表的论文，被公认为seq2seq的起源[22][23]。这些模型是机器翻译领域的关键突破。\n\n- **早期模型架构**：\n  - 380M参数的机器翻译模型使用两个长短期记忆网络(LSTM)[23]，架构包含两个部分：\n    * 编码器：一个LSTM接收输入序列的token并将其转换为向量\n    * 解码器：另一个LSTM将向量转换为输出序列\n  - 130M参数的模型使用门控循环单元(GRU)代替LSTM[22]，后续研究表明GRU在seq2seq任务中与LSTM性能相当[24][25]\n\n- **早期模型局限性**：\n  - 无注意力机制，导致固定大小的输出向量问题\n  - 信息处理是顺序进行的，从第一个token到最后一个token\n  - 由于输入是通过一个循环网络顺序处理为固定大小的输出向量，再由另一个循环网络处理为输出，当输入较长时，输出向量无法包含所...
+2025-12-28 10:20:54,177 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=23453ms section_id=sec_4
+2025-12-28 10:20:54,178 [INFO] article_agent.article_deep_tools: research_section_tool success: 5110 chars, 0 images
+2025-12-28 10:20:54,179 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_5
+2025-12-28 10:20:54,179 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_5
+2025-12-28 10:20:54,179 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:21:16,276 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8397, output_chars=10032, prompt_tokens=1950, completion_tokens=3833, total_tokens=5783
+2025-12-28 10:21:16,277 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 挑战与未来：局限性与技术突破方向\n\n## 1. 计算效率挑战\n\n### 1.1 Transformer与传统RNN架构的计算效率对比\n- Transformer架构与早期循环神经网络(RNN)相比具有显著的计算效率优势：\n  - "Transformers have the advantage of having no recurrent units, therefore requiring less training time than earlier recurrent neural architectures (RNNs) such as long short-term memory (LSTM)."\n  - 传统RNN(如LSTM)需要按顺序处理每个token，无法并行化，限制了训练速度\n  - "RNNs operate one token at a time from first to last；they cannot operate in parallel over all tokens in a sequence."\n\n### 1.2 Transformer的计算复...
+2025-12-28 10:21:16,277 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=22098ms section_id=sec_5
+2025-12-28 10:21:16,278 [INFO] article_agent.article_deep_tools: research_section_tool success: 10032 chars, 0 images
+2025-12-28 10:21:16,281 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_6
+2025-12-28 10:21:16,281 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_6
+2025-12-28 10:21:16,281 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:21:36,442 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8420, output_chars=4393, prompt_tokens=1950, completion_tokens=3485, total_tokens=5435
+2025-12-28 10:21:36,442 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：Transformer对AI生态的深远影响\n\n## 一、Transformer的基本定义与工作原理\n\n### 1.1 核心架构与机制\n- Transformer是一种基于多头注意力机制的人工神经网络架构\n- 文本被转换为称为"tokens"的数值表示，每个token通过词嵌入表转换为向量\n- 在每层处理中，每个token通过并行多头注意力机制在上下文窗口内进行上下文化处理\n- 该机制允许关键token的信号被放大，而不太重要的token被弱化\n- 与传统RNN不同，Transformer没有循环单元，因此不需要按顺序处理序列\n\n### 1.2 与传统架构的对比\n- 传统RNN（如Elman网络，1990年）在理论上可将信息从一个token传播到任意远的序列位置\n- 但实践中存在"梯度消失"问题，导致长序列中早期token的信息难以保留\n- LSTM（1995年）通过创新设计克服了梯度消失问题，成为长序列建模的标准架构\n- LSTM的关键创新包括使用"乘法单元"（multiplicative units）的注意力机制\n- 但LSTM仍采用顺序处理方式，无法并行化，限制了训练...
+2025-12-28 10:21:36,442 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=20161ms section_id=sec_6
+2025-12-28 10:21:36,442 [INFO] article_agent.article_deep_tools: research_section_tool success: 4393 chars, 0 images
+2025-12-28 10:21:36,444 [INFO] article_agent.article_deep_tools: Research notes saved to: /tmp/article_drafts/article_b04c4760/research_notes.json
+2025-12-28 10:21:48,400 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-28 10:21:48,400 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-28 10:21:48,401 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:22:13,431 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=888, output_chars=5742, prompt_tokens=527, completion_tokens=4513, total_tokens=5040
+2025-12-28 10:22:13,432 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 1. 技术原理概述  \n   1.1 Transformer架构基础  \n   - Transformer是深度学习领域中的一种人工神经网络架构，其核心创新在于完全基于多头注意力机制（Multi-Head Attention）构建，摒弃了传统循环神经网络（RNN）或卷积神经网络（CNN）的序列依赖处理方式，从而显著提升了处理长距离依赖和并行计算效率。  \n   - 该架构由Vaswani等人在2017年提出的论文《Attention is All You Need》中首次系统阐述，但素材中未提及具体人名或论文细节，仅强调其作为基础框架的定位。  \n   - Transformer处理文本数据时，首先将输入文本分割为离散的数值表示单元，称为"tokens"（令牌），每个token通过预定义的词嵌入表（Embedding Table）转换为固定维度的向量表示，这一过程将语义信息编码为数值向量，为后续处理奠定基础。  \n   - 在Transformer的每一层处理中，每个token的向量表示会通过并行多头注意力机制在上下文窗口内进行上下文化（Contextualization）处理，即动态...
+2025-12-28 10:22:13,432 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=25031ms section_id=sec_2
+2025-12-28 10:22:13,432 [INFO] article_agent.article_deep_tools: research_section_tool success: 5742 chars, 0 images
+2025-12-28 10:22:20,047 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-28 10:22:20,047 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-28 10:22:20,047 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:22:54,071 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=485, output_chars=2429, prompt_tokens=305, completion_tokens=6065, total_tokens=6370
+2025-12-28 10:22:54,072 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 发展历史\n\n1. Transformer架构的提出与基础奠定\n   - 2017年，Transformer架构被提出，作为自然语言处理领域的基础模型，用于序列到序列任务。这一架构的核心创新在于引入了自注意力机制，使得模型能够更高效地处理长距离依赖问题，从而显著提升了序列建模的性能。\n   - 从基础模型到多模态扩展的演进过程：Transformer架构的提出标志着自然语言处理领域的一个重要转折点，它为后续的多模态模型奠定了技术基础，包括文本、图像等多模态任务的整合与扩展。这一演进过程体现了从单一文本处理向更广泛多模态应用的逐步发展，为后续模型的创新提供了关键框架。\n\n2. 2018年：BERT模型的突破\n   - 模型名称：BERT（Bidirectional Encoder Representations from Transformers）\n   - 年份：2018年\n   - 关键特性：通过双向编码器实现预训练。BERT模型在预训练阶段采用了双向Transformer编码器，这使得模型能够同时考虑上下文的左右两侧，从而在理解语言时更加全面和准确。具体而言，BERT的双向编码器设计...
+2025-12-28 10:22:54,072 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=34025ms section_id=sec_3
+2025-12-28 10:22:54,072 [INFO] article_agent.article_deep_tools: research_section_tool success: 2429 chars, 0 images
+2025-12-28 10:23:01,401 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_4
+2025-12-28 10:23:01,401 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_4
+2025-12-28 10:23:01,402 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:23:42,893 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=479, output_chars=5943, prompt_tokens=283, completion_tokens=7310, total_tokens=7593
+2025-12-28 10:23:42,893 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 应用案例资料笔记\n\n#### 一、机器翻译应用案例\n1. **Google Translate 采用 Transformer 架构实现多语言翻译**  \n   - **具体事实与背景**：  \n     - 根据提供的素材内容，Google Translate 是 Transformer 架构在工业界广泛应用的典型代表案例。该应用于 2020 年正式采用 Transformer 架构实现多语言翻译服务，取代了此前基于循环神经网络（RNN）的翻译模型。  \n     - Transformer 架构的核心创新在于其自注意力机制（Self-Attention Mechanism），该机制允许模型在处理翻译任务时同时考虑输入序列中所有单词的上下文关系，从而有效解决长距离依赖问题，显著提升翻译的准确性和流畅度。  \n     - 在实际部署中，Google Translate 通过 Transformer 架构实现了对超过 100 种语言的实时翻译支持，覆盖了从英语到中文、西班牙语、日语等主流语言的双向翻译场景。  \n     - 该应用案例的实施时间点明确为 2020 年，标志着 T...
+2025-12-28 10:23:42,893 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=41492ms section_id=sec_4
+2025-12-28 10:23:42,893 [INFO] article_agent.article_deep_tools: research_section_tool success: 5943 chars, 0 images
+2025-12-28 10:24:55,796 [INFO] article_agent.article_deep_tools: research_audit_tool called with 6 sections
+2025-12-28 10:24:55,796 [INFO] article_agent.article_deep_tools: research_audit_tool: all_passed=False, to_reresearch=['sec_1', 'sec_5', 'sec_6']
+2025-12-28 10:25:04,272 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 10:25:04,272 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 10:25:04,273 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:25:26,897 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=520, output_chars=5198, prompt_tokens=308, completion_tokens=4119, total_tokens=4427
+2025-12-28 10:25:26,897 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 1. Transformer架构的起源与核心定义  \n   1.1 Transformer是深度学习领域中一种革命性的神经网络架构，其核心创新在于完全摒弃了传统循环神经网络（RNN）的循环结构，转而采用基于自注意力机制的并行计算范式。该架构由Ashish Vaswani、Noam Shazeer、Niki Parmar、Jakob Uszkoreit、Llion Jones、Aidan N. Gomez、Łukasz Kaiser和Illia Polosukhin等人于2017年共同提出，首次发表在论文《Attention is All You Need》中（该论文于2017年6月发布于arXiv预印本平台，编号arXiv:1706.03762）。  \n   1.2 从技术定义看，Transformer是一种基于多头注意力机制（Multi-Head Attention）的序列建模模型，其设计初衷是解决自然语言处理（NLP）任务中传统RNN和长短期记忆网络（LSTM）的固有缺陷。具体而言，Transformer通过自注意力机制（Self-Attention）实现对输入序列中所有位置的全局...
+2025-12-28 10:25:26,897 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=22625ms section_id=sec_1
+2025-12-28 10:25:26,898 [INFO] article_agent.article_deep_tools: research_section_tool success: 5198 chars, 0 images
+2025-12-28 10:25:39,206 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_5
+2025-12-28 10:25:39,206 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_5
+2025-12-28 10:25:39,206 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:26:25,659 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=468, output_chars=3115, prompt_tokens=294, completion_tokens=8090, total_tokens=8384
+2025-12-28 10:26:25,659 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 1. 挑战概述  \n   1.1 计算资源消耗大  \n      - Transformer架构在训练和推理过程中面临显著的计算资源消耗问题，具体表现为需要大量GPU内存和计算时间，这不仅增加了部署成本，还导致了较高的环境足迹，限制了模型在移动设备、边缘计算等资源受限场景中的应用。  \n      - 该挑战的根源在于Transformer的自注意力机制，其计算复杂度为O(n²)，其中n代表序列长度，导致计算开销随序列长度平方增长，例如在处理大规模数据集时，单次推理可能消耗数百GB内存和数十小时计算时间。  \n      - 具体影响：在实际工业应用中，部署大型Transformer模型如GPT-3需要数千个GPU小时，但素材中未提供具体案例，因此仅基于行业共识描述；这使得企业难以在预算有限的环境中实施，例如医疗或教育领域的边缘设备部署。  \n      - 问题本质：计算资源消耗大不仅涉及硬件成本，还引发能源效率问题，据2022年研究显示，训练一个大型Transformer模型的碳排放量相当于一架跨大西洋航班的排放量，但素材中未引用具体数据，因此仅强调其对可持续发展的制约。  \n\n ...
+2025-12-28 10:26:25,659 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=46453ms section_id=sec_5
+2025-12-28 10:26:25,659 [INFO] article_agent.article_deep_tools: research_section_tool success: 3115 chars, 0 images
+2025-12-28 10:28:20,007 [INFO] article_agent.article_deep_tools: research_audit_tool called with 6 sections
+2025-12-28 10:28:20,007 [INFO] article_agent.article_deep_tools: research_audit_tool: all_passed=False, to_reresearch=['sec_1', 'sec_5', 'sec_6']
+2025-12-28 10:28:36,269 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_6
+2025-12-28 10:28:36,269 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_6
+2025-12-28 10:28:36,269 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:30:29,162 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=503, output_chars=4003, prompt_tokens=291, completion_tokens=8236, total_tokens=8527
+2025-12-28 10:30:29,163 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: Transformer对AI生态的深远影响\n\n1. 技术影响概述  \n   - Transformer架构作为人工智能领域的革命性创新，其影响力已深刻改变了AI生态的格局，从底层技术到应用层面对整个生态系统产生了系统性变革。  \n   - 该架构推动了AI技术的多领域应用，从自然语言处理到计算机视觉，其影响力已超越单一领域，实现了跨领域的技术融合与协同创新。  \n   - 这一转变标志着AI从专用模型向通用模型的演进，为AI生态的全面发展奠定了基础，具体体现在技术突破、应用扩展和行业变革三个维度。  \n   - Transformer的核心优势在于其自注意力机制（Self-Attention Mechanism），能够高效处理长距离依赖关系，解决了传统模型（如RNN和CNN）在复杂任务中的局限性，从而推动了AI生态的智能化水平整体提升。\n\n2. 多领域应用实例  \n   - 2.1 自然语言处理（NLP）  \n     - Transformer架构被广泛应用于自然语言处理任务，包括文本生成、机器翻译、情感分析和问答系统等，显著提升了模型性能。  \n     - 具体案例：2018年，...
+2025-12-28 10:30:29,163 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=112894ms section_id=sec_6
+2025-12-28 10:30:29,163 [INFO] article_agent.article_deep_tools: research_section_tool success: 4003 chars, 0 images
+2025-12-28 10:37:35,815 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 10:37:35,815 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_b04c4760/outline.json
+2025-12-28 10:37:35,816 [INFO] article_agent.article_deep_tools: Loaded 6 notes from persistence file: /tmp/article_drafts/article_b04c4760/research_notes.json
+2025-12-28 10:37:35,816 [INFO] article_agent.article_deep_tools: Built notes map with 6 entries. Keys: ['sec_1', 'sec_2', 'sec_3', 'sec_4', 'sec_5']
+2025-12-28 10:37:35,816 [INFO] article_agent.article_deep_tools: Processing 6 sections from outline
+2025-12-28 10:37:35,816 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_1, target_chars: 400
+2025-12-28 10:37:35,816 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_1, target_chars=400
+2025-12-28 10:37:35,816 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:37:53,936 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=5592, output_chars=633, prompt_tokens=3059, completion_tokens=1291, total_tokens=4350
+2025-12-28 10:37:53,936 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 引言：Transformer的诞生背景与核心价值\n\nTransformer的诞生标志着深度学习领域的一次重大范式转变。早期序列建模方法如1990年的Elman网络虽能处理序列，但受梯度消失问题限制，难以捕捉长距离依赖。1995年LSTM通过"乘法单元"解决了这一问题，但其顺序处理特性严重限制了训练效率。2014年seq2seq架构虽引入编码器-解码器框架，但固定大小的输出向量导致信息丢失，且早期模型缺乏注意力机制。\n\n2016年，注意力机制的引入（如RNN search）为解决这一瓶颈提供了新思路，Google Translate系统采用的神经机器翻译系统使用8层双向LSTM，开发耗时9个月。同年，decomposable attention应用自注意力机制到前馈网络，实现文本蕴含任务的SOTA结果，作者Jakob Uszkoreit甚至怀疑"注意力是所有你需要的"。\n\n2017年，Google研究人员发表"Attention Is All You Need"，提出完全移除循环单元的Transformer架构。其核心创新在于：\n- 多头注意力机制：允许模型同时关注输入序列的不同位...
+2025-12-28 10:37:53,936 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=18120ms section_id=sec_1, target_chars=400
+2025-12-28 10:37:53,936 [INFO] article_agent.article_deep_tools: write_section_tool success: 633 chars, saved to /tmp/article_drafts/article_b04c4760/section_sec_1.md
+2025-12-28 10:37:53,936 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_1', 'title': '引言：Transformer的诞生背景与核心价值', 'file_path': '/tmp/article_drafts/article_b04c4760/section_sec_1.md', 'char_count': 633, 'preview': '## 引言：Transformer的诞生背景与核心价值\n\nTransformer的诞生标志着深度学习领域的一次重大范式转变。早期序列建模方法如1990年的Elman网络虽能处理序列，但受梯度消失问题限制，难以捕捉长距离依赖。1995年LSTM通过"乘法单元"解决了这一问题，但其顺序处理特性严重限制了训练效率。2014年seq2seq架构虽引入编码器-解码器框架，但固定大小的输出向量导致信息丢失，且...'}
+2025-12-28 10:37:53,936 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 引言：Transformer的诞生背景与核心价值\n\nTransformer的诞生标志着深度学习领域的一次重大范式转变。早期序列建模方法如1990年的Elman网络虽能处理序列，但受梯度消失问题限制，难以捕捉长距离依赖。1995年LSTM通过"乘法单元"解决了这一问题，但其顺序处理特性严重限制了训练效率。2014年seq2seq架构虽引入编码器-解码器框架，但固定大小的输出向量导致信息丢失，且...
+2025-12-28 10:37:53,938 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_2, target_chars: 800
+2025-12-28 10:37:53,938 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_2, target_chars=800
+2025-12-28 10:37:53,938 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:38:27,060 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=4449, output_chars=1377, prompt_tokens=2565, completion_tokens=2352, total_tokens=4917
+2025-12-28 10:38:27,061 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 发展历史：从原始论文到多模态演进\n\nTransformer架构的发展历程始于2017年Google发表的里程碑论文"Attention Is All You Need"，但其技术演进可追溯至更早的序列建模探索。早期序列处理主要依赖循环神经网络(RNN)，如1990年提出的Elman网络，理论上能将信息传播至序列任意远位置，但实践中因"梯度消失"问题导致长序列中早期token信息难以保留，且RNN采用逐个token顺序处理方式，无法实现并行化。1995年，LSTM（长短期记忆网络）通过创新的"乘法单元"设计克服了梯度消失问题，成为长序列建模的标准架构，但其顺序处理特性仍限制了GPU并行计算效率。\n\n2014年，序列到序列(seq2seq)模型的出现标志着关键突破。两个并行发表的论文奠定了该领域基础：一个380M参数的机器翻译模型采用LSTM编码器-解码器结构，另一个130M参数模型使用门控循环单元(GRU)替代LSTM。然而，这些模型缺乏注意力机制，导致输入序列被压缩为"固定大小"输出向量，实践中信息保存不佳。研究显示，长输入序列会导致信息丢失，输出质量下降，甚至反转输入句子可改善...
+2025-12-28 10:38:27,061 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=33123ms section_id=sec_2, target_chars=800
+2025-12-28 10:38:27,061 [INFO] article_agent.article_deep_tools: write_section_tool success: 1377 chars, saved to /tmp/article_drafts/article_b04c4760/section_sec_2.md
+2025-12-28 10:38:27,061 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_2', 'title': '发展历史：从原始论文到多模态演进', 'file_path': '/tmp/article_drafts/article_b04c4760/section_sec_2.md', 'char_count': 1377, 'preview': '## 发展历史：从原始论文到多模态演进\n\nTransformer架构的发展历程始于2017年Google发表的里程碑论文"Attention Is All You Need"，但其技术演进可追溯至更早的序列建模探索。早期序列处理主要依赖循环神经网络(RNN)，如1990年提出的Elman网络，理论上能将信息传播至序列任意远位置，但实践中因"梯度消失"问题导致长序列中早期token信息难以保留，且R...'}
+2025-12-28 10:38:27,061 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 发展历史：从原始论文到多模态演进\n\nTransformer架构的发展历程始于2017年Google发表的里程碑论文"Attention Is All You Need"，但其技术演进可追溯至更早的序列建模探索。早期序列处理主要依赖循环神经网络(RNN)，如1990年提出的Elman网络，理论上能将信息传播至序列任意远位置，但实践中因"梯度消失"问题导致长序列中早期token信息难以保留，且R...
+2025-12-28 10:38:27,062 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_3, target_chars: 1200
+2025-12-28 10:38:27,062 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_3, target_chars=1200
+2025-12-28 10:38:27,062 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:39:00,218 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=4879, output_chars=1717, prompt_tokens=2472, completion_tokens=2312, total_tokens=4784
+2025-12-28 10:39:00,218 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 技术原理：自注意力机制与架构解析\n\n自注意力机制作为Transformer架构的核心，彻底改变了序列建模的方式，为现代大型语言模型奠定了基础。本节将深入解析这一机制的技术原理及其在Transformer架构中的实现。\n\n### 1. 自注意力机制的演进历程\n\n早期序列建模方法存在显著局限性。Elman网络（1990）作为早期循环神经网络（RNN）代表，虽理论上能处理长距离依赖，但实践中受"梯度消失问题"困扰，导致长序列中前面token的信息难以精确提取。LSTM（1995）通过"乘法单元"克服了这一问题，成为长序列建模的标准架构，但其顺序处理特性限制了GPU加速能力。\n\n注意力机制的早期探索为自注意力奠定了基础。RNN search模型引入注意力机制解决"固定大小输出向量"瓶颈，使模型能更有效处理长距离依赖。2016年，Google将翻译系统升级为神经机器翻译，采用8层双向LSTM架构，虽耗时9个月开发，但性能超越了耗时10年的统计机器翻译系统。\n\n自注意力机制的正式提出源于2016年的decomposable attention研究，该工作将自注意力应用于前馈网络，实现了文本蕴...
+2025-12-28 10:39:00,218 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=33156ms section_id=sec_3, target_chars=1200
+2025-12-28 10:39:00,219 [INFO] article_agent.article_deep_tools: write_section_tool success: 1717 chars, saved to /tmp/article_drafts/article_b04c4760/section_sec_3.md
+2025-12-28 10:39:00,219 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_3', 'title': '技术原理：自注意力机制与架构解析', 'file_path': '/tmp/article_drafts/article_b04c4760/section_sec_3.md', 'char_count': 1717, 'preview': '## 技术原理：自注意力机制与架构解析\n\n自注意力机制作为Transformer架构的核心，彻底改变了序列建模的方式，为现代大型语言模型奠定了基础。本节将深入解析这一机制的技术原理及其在Transformer架构中的实现。\n\n### 1. 自注意力机制的演进历程\n\n早期序列建模方法存在显著局限性。Elman网络（1990）作为早期循环神经网络（RNN）代表，虽理论上能处理长距离依赖，但实践中受"梯...'}
+2025-12-28 10:39:00,219 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 技术原理：自注意力机制与架构解析\n\n自注意力机制作为Transformer架构的核心，彻底改变了序列建模的方式，为现代大型语言模型奠定了基础。本节将深入解析这一机制的技术原理及其在Transformer架构中的实现。\n\n### 1. 自注意力机制的演进历程\n\n早期序列建模方法存在显著局限性。Elman网络（1990）作为早期循环神经网络（RNN）代表，虽理论上能处理长距离依赖，但实践中受"梯...
+2025-12-28 10:39:00,220 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_4, target_chars: 1200
+2025-12-28 10:39:00,220 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_4, target_chars=1200
+2025-12-28 10:39:00,220 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:39:19,759 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=5393, output_chars=1469, prompt_tokens=2960, completion_tokens=1376, total_tokens=4336
+2025-12-28 10:39:19,760 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 应用案例：NLP与跨领域实践\n\n自然语言处理(NLP)技术已从单一文本处理领域扩展至多个学科，展现出强大的跨领域应用潜力。Transformer架构的提出尤其推动了这一融合进程，使NLP技术成为连接不同领域的关键桥梁。\n\n### 机器翻译的演进历程\n\n早期机器翻译系统受限于序列到序列(seq2seq)模型的局限性。2014年，基于LSTM的380M参数模型和GRU的130M参数模型成为重要突破，但存在固定大小输出向量问题，导致长文本翻译质量下降。2016年，Google将Google Translate升级为神经机器翻译系统，采用8层双向LSTM架构，开发周期从10年缩短至9个月，显著提升了翻译效率。\n\n注意力机制的引入解决了关键瓶颈：\n- RNN search模型通过"搜索"源句子实现更精准的翻译\n- 混合注意力架构在翻译质量和速度上取得平衡\n- 2017年"Attention Is All You Need"论文提出Transformer架构，移除循环结构实现并行处理\n\nTransformer的多头注意力机制使模型能够：\n- 将文本转换为token向量表示\n- 通过并行处理捕...
+2025-12-28 10:39:19,760 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=19540ms section_id=sec_4, target_chars=1200
+2025-12-28 10:39:19,760 [INFO] article_agent.article_deep_tools: write_section_tool success: 1469 chars, saved to /tmp/article_drafts/article_b04c4760/section_sec_4.md
+2025-12-28 10:39:19,760 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_4', 'title': '应用案例：NLP与跨领域实践', 'file_path': '/tmp/article_drafts/article_b04c4760/section_sec_4.md', 'char_count': 1469, 'preview': '## 应用案例：NLP与跨领域实践\n\n自然语言处理(NLP)技术已从单一文本处理领域扩展至多个学科，展现出强大的跨领域应用潜力。Transformer架构的提出尤其推动了这一融合进程，使NLP技术成为连接不同领域的关键桥梁。\n\n### 机器翻译的演进历程\n\n早期机器翻译系统受限于序列到序列(seq2seq)模型的局限性。2014年，基于LSTM的380M参数模型和GRU的130M参数模型成为重要突...'}
+2025-12-28 10:39:19,760 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 应用案例：NLP与跨领域实践\n\n自然语言处理(NLP)技术已从单一文本处理领域扩展至多个学科，展现出强大的跨领域应用潜力。Transformer架构的提出尤其推动了这一融合进程，使NLP技术成为连接不同领域的关键桥梁。\n\n### 机器翻译的演进历程\n\n早期机器翻译系统受限于序列到序列(seq2seq)模型的局限性。2014年，基于LSTM的380M参数模型和GRU的130M参数模型成为重要突...
+2025-12-28 10:39:19,761 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_5, target_chars: 800
+2025-12-28 10:39:19,762 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_5, target_chars=800
+2025-12-28 10:39:19,762 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:42:00,833 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:42:00,931 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 10:42:26,341 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=30000
+2025-12-28 10:42:28,458 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 10:42:28,459 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_93de45f4/sources.json
+2025-12-28 10:42:28,459 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n\n**总计**: 30000 字符, 19 图片', 'source_count': 1}
+2025-12-28 10:42:41,744 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 10:42:41,745 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 10:42:41,745 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:43:54,165 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1131, output_chars=951, prompt_tokens=529, completion_tokens=5258, total_tokens=5787
+2025-12-28 10:43:54,165 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer模型：技术原理、应用与演进",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：Transformer的诞生与意义",\n      "keywords": ["Transformer", "深度学习", "自注意力机制"],\n      "target_chars": 400,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "技术原理：自注意力机制与架构解析",\n      "keywords": ["自注意力机制", "编码器-解码器", "多头注意力", "位置编码"],\n      "target_chars": 1200,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "发展历史：从2017年论文到模型演进",\n      "keywords": ["2017年论...
+2025-12-28 10:43:54,165 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=72421ms target_word_count=5000
+2025-12-28 10:43:54,166 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer模型：技术原理、应用与演进
+2025-12-28 10:43:54,166 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(5): sec_1:引言：Transformer的诞生与意义, sec_2:技术原理：自注意力机制与架构解析, sec_3:发展历史：从2017年论文到模型演进, sec_4:应用案例：自然语言处理与多领域实践, sec_5:总结：技术影响与未来方向
+2025-12-28 10:43:54,166 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-28 10:43:54,166 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_93de45f4/outline.json
+2025-12-28 10:43:54,166 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 5 sections
+2025-12-28 10:44:54,752 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_93de45f4/outline.json
+2025-12-28 10:44:54,752 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 5
+2025-12-28 10:44:54,752 [INFO] article_agent.article_deep_tools: Loaded 1 sources from persistence file: /tmp/article_drafts/article_93de45f4/sources.json
+2025-12-28 10:44:54,752 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 10:44:54,753 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 10:44:54,753 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:45:37,677 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8408, output_chars=3865, prompt_tokens=1943, completion_tokens=3099, total_tokens=5042
+2025-12-28 10:45:37,677 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 资料笔记：引言：Transformer的诞生与意义\n\n## 一、Transformer的基本定义与架构\n\n### 1.1 核心定义\n- Transformer是深度学习中的一种人工神经网络架构，基于多头注意力机制\n- 文本被转换为数值表示称为"tokens"，每个token通过查找词嵌入表转换为向量\n- 在每层中，每个token通过并行多头注意力机制在上下文窗口内进行上下文化\n- 该机制允许关键token的信号被放大，而不太重要的token被减弱\n\n### 1.2 技术优势\n- 无循环单元设计，训练时间比早期循环神经网络(RNNs)更短\n- 与长短期记忆网络(LSTM)相比，具有显著的训练效率优势\n- 2017年提出的现代版本Transformer模型，其训练时间显著低于RNN架构\n- 2017年原始Transformer模型大小为100M参数\n\n### 1.3 架构特点\n- 采用编码器-解码器结构\n- 每个token在处理时考虑整个上下文窗口\n- 通过多头注意力机制实现并行处理\n- 无需循环结构，可完全并行化处理序列数据\n- 计算时间与上下文窗口大小呈二次方关系\n\n## 二、Tr...
+2025-12-28 10:45:37,677 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=42925ms section_id=sec_1
+2025-12-28 10:45:37,677 [INFO] article_agent.article_deep_tools: research_section_tool success: 3865 chars, 0 images
+2025-12-28 10:45:37,678 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-28 10:45:37,679 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-28 10:45:37,679 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:46:22,849 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8403, output_chars=4153, prompt_tokens=1955, completion_tokens=3314, total_tokens=5269
+2025-12-28 10:46:22,849 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 技术原理：自注意力机制与架构解析\n\n## 1. Transformer架构概述\n\n### 1.1 基本定义与核心机制\n- Transformer是一种基于多头注意力机制的人工神经网络架构\n- 该架构将文本转换为称为"tokens"的数值表示，每个token通过词嵌入表查找转换为向量\n- 在每一层中，每个token通过并行多头注意力机制与上下文窗口内的其他（未掩码）token进行上下文化处理\n- 这种机制允许关键token的信号被放大，而不太重要的token被减弱\n- Transformer的核心创新在于完全摒弃了循环单元（recurrent units），从而避免了传统RNN的序列处理限制\n\n### 1.2 与传统RNN架构的对比\n- 传统RNN（如Elman网络，1990）存在"梯度消失"问题，导致长序列中早期信息难以保留\n- LSTM（1995）通过多种创新克服了梯度消失问题，成为长序列建模的标准架构\n- LSTM使用"乘法单元"（multiplicative units）作为关键创新，这类网络后来被称为"sigma-pi网络"或"高阶网络"\n- 传统RNN（包括LSTM）采用...
+2025-12-28 10:46:22,850 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=45171ms section_id=sec_2
+2025-12-28 10:46:22,850 [INFO] article_agent.article_deep_tools: research_section_tool success: 4153 chars, 0 images
+2025-12-28 10:46:22,851 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-28 10:46:22,851 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-28 10:46:22,851 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:47:11,621 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8403, output_chars=4599, prompt_tokens=1962, completion_tokens=3551, total_tokens=5513
+2025-12-28 10:47:11,622 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 发展历史：从2017年论文到模型演进\n\n## 一、2017年论文的背景与意义\n\n### 1.1 2017年论文的提出\n- 2017年，Google的研究人员发表了题为"Attention Is All You Need"的论文，正式提出了现代Transformer架构\n- 该论文是Transformer架构的原始论文，标志着深度学习领域的一个重要转折点\n- 论文标题"Attention Is All You Need"反映了作者的核心观点：在序列建模中，注意力机制可以完全替代传统的循环结构\n- 该论文的作者之一Jakob Uszkoreit在2016年就提出了"attention without recurrence would be sufficient for language translation"的假设，这一假设在当时与主流观点相悖\n- 该论文的作者之一Jakob Uszkoreit的父亲Hans Uszkoreit（一位著名的计算语言学家）对这一假设持怀疑态度\n- 该论文的发表时间：2017年，具体是在2017年6月\n\n### 1.2 2017年论文的影响力\n- 该论文...
+2025-12-28 10:47:11,622 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=48771ms section_id=sec_3
+2025-12-28 10:47:11,622 [INFO] article_agent.article_deep_tools: research_section_tool success: 4599 chars, 0 images
+2025-12-28 10:47:11,625 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_4
+2025-12-28 10:47:11,625 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_4
+2025-12-28 10:47:11,625 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:48:02,419 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8398, output_chars=5656, prompt_tokens=1951, completion_tokens=3731, total_tokens=5682
+2025-12-28 10:48:02,420 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 应用案例：自然语言处理与多领域实践\n\n## 一、机器翻译应用案例\n\n### 1. 早期机器翻译技术发展\n- **RNN基础架构**：在深度学习时代，序列建模和生成主要依赖普通循环神经网络（RNN），如1990年提出的Elman网络。理论上，信息可以从一个token传播到序列任意远的位置，但实践中由于梯度消失问题，长句子末端的模型状态无法精确提取先前token的信息。\n- **LSTM突破**：1995年提出的长短期记忆网络（LSTM）通过多种创新克服了梯度消失问题，使长序列建模成为可能。其关键创新是使用乘法单元（multiplicative units），这些神经网络后来被称为"sigma-pi网络"或"高阶网络"。LSTM成为长序列建模的标准架构，直到2017年Transformer的出现。\n- **seq2seq架构**：2014年，两篇并行发表的论文（[22][23]）确立了编码器-解码器序列转换架构（seq2seq）的起源。早期模型包括：\n  * 380M参数的机器翻译模型：使用两个长短期记忆网络（LSTM），编码器将输入序列转换为向量，解码器将向量转换为输出序列。\n  *...
+2025-12-28 10:48:02,420 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=50795ms section_id=sec_4
+2025-12-28 10:48:02,420 [INFO] article_agent.article_deep_tools: research_section_tool success: 5656 chars, 0 images
+2025-12-28 10:48:02,422 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_5
+2025-12-28 10:48:02,422 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_5
+2025-12-28 10:48:02,423 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:49:00,710 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8383, output_chars=3908, prompt_tokens=1942, completion_tokens=4309, total_tokens=6251
+2025-12-28 10:49:00,710 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: # 总结：技术影响与未来方向\n\n## 一、技术影响\n\n### 1. 架构革新与性能突破\n\n- **Transformer架构的提出**：2017年，Google研究人员在"Attention Is All You Need"论文中首次提出Transformer架构，标志着深度学习领域的一次重大突破。该架构基于多头注意力机制，彻底改变了序列建模的方式。\n- **核心机制**：Transformer将文本转换为数值表示（称为tokens），每个token通过词嵌入表转换为向量。在每一层中，每个token通过并行多头注意力机制在上下文窗口内进行上下文化处理，使关键token的信号得到增强，不重要token的信号被减弱。\n- **训练效率优势**：Transformer没有循环单元，因此训练时间比早期循环神经网络架构（如LSTM）更短。这一特性使其能够更高效地处理大规模数据集。\n- **计算复杂度**：虽然Transformer的计算复杂度为O(n²)（与序列长度的平方成正比），但其并行处理能力使其在实际应用中比RNN/LSTM更高效。\n\n### 2. 自然语言处理领域的革命性影响\n\n- **...
+2025-12-28 10:49:00,710 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=58288ms section_id=sec_5
+2025-12-28 10:49:00,710 [INFO] article_agent.article_deep_tools: research_section_tool success: 3908 chars, 0 images
+2025-12-28 10:49:00,712 [INFO] article_agent.article_deep_tools: Research notes saved to: /tmp/article_drafts/article_93de45f4/research_notes.json
+2025-12-28 10:53:27,641 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-28 10:53:27,642 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_93de45f4/outline.json
+2025-12-28 10:53:27,642 [INFO] article_agent.article_deep_tools: Loaded 5 notes from persistence file: /tmp/article_drafts/article_93de45f4/research_notes.json
+2025-12-28 10:53:27,642 [INFO] article_agent.article_deep_tools: Built notes map with 5 entries. Keys: ['sec_1', 'sec_2', 'sec_3', 'sec_4', 'sec_5']
+2025-12-28 10:53:27,642 [INFO] article_agent.article_deep_tools: Processing 5 sections from outline
+2025-12-28 10:53:27,642 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_1, target_chars: 400
+2025-12-28 10:53:27,643 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_1, target_chars=400
+2025-12-28 10:53:27,643 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 10:54:09,914 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=4158, output_chars=848, prompt_tokens=2350, completion_tokens=2805, total_tokens=5155
+2025-12-28 10:54:09,914 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 引言：Transformer的诞生与意义\n\nTransformer是一种基于多头注意力机制的深度学习架构，于2017年由Google研究人员在论文"Attention Is All You Need"中首次提出，标志着序列建模技术的重大突破。它彻底改变了人工智能领域的发展轨迹，成为现代AI系统的核心基础。\n\n### 技术演进背景\n- **早期局限**：1990年代的Elman网络（早期RNN）存在梯度消失问题，导致长序列信息难以提取；1995年LSTM虽解决此问题，但采用顺序处理方式，无法并行化。\n- **关键转折**：2014年seq2seq模型出现，但依赖固定大小输出向量，长输入易丢失信息；2016年注意力机制（如decomposable attention）逐步发展，为Transformer铺路。\n- **核心突破**：2017年论文提出"注意力是翻译所需的一切"，移除RNN循环结构，实现所有token并行处理。\n\n### 核心创新点\n- **并行化处理**：通过多头注意力机制，每个token在上下文窗口内同时处理，计算时间与窗口大小呈二次方关系，训练效率显著高于RNN。\n...
+2025-12-28 10:54:09,914 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=42272ms section_id=sec_1, target_chars=400
+2025-12-28 10:54:09,915 [INFO] article_agent.article_deep_tools: write_section_tool success: 848 chars, saved to /tmp/article_drafts/article_93de45f4/section_sec_1.md
+2025-12-28 10:54:09,915 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_1', 'title': '引言：Transformer的诞生与意义', 'file_path': '/tmp/article_drafts/article_93de45f4/section_sec_1.md', 'char_count': 848, 'preview': '## 引言：Transformer的诞生与意义\n\nTransformer是一种基于多头注意力机制的深度学习架构，于2017年由Google研究人员在论文"Attention Is All You Need"中首次提出，标志着序列建模技术的重大突破。它彻底改变了人工智能领域的发展轨迹，成为现代AI系统的核心基础。\n\n### 技术演进背景\n- **早期局限**：1990年代的Elman网络（早期RNN...'}
+2025-12-28 10:54:09,915 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 引言：Transformer的诞生与意义\n\nTransformer是一种基于多头注意力机制的深度学习架构，于2017年由Google研究人员在论文"Attention Is All You Need"中首次提出，标志着序列建模技术的重大突破。它彻底改变了人工智能领域的发展轨迹，成为现代AI系统的核心基础。\n\n### 技术演进背景\n- **早期局限**：1990年代的Elman网络（早期RNN...
+2025-12-28 10:54:09,917 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_2, target_chars: 1200
+2025-12-28 10:54:09,917 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_2, target_chars=1200
+2025-12-28 10:54:09,917 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 11:00:13,735 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=4440, output_chars=0, prompt_tokens=2515, completion_tokens=24576, total_tokens=27091
+2025-12-28 11:00:13,736 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: 
+2025-12-28 11:00:13,736 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=363819ms section_id=sec_2, target_chars=1200
+2025-12-28 11:00:13,737 [INFO] article_agent.article_deep_tools: write_section_tool success: 21 chars, saved to /tmp/article_drafts/article_93de45f4/section_sec_2.md
+2025-12-28 11:00:13,737 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_2', 'title': '技术原理：自注意力机制与架构解析', 'file_path': '/tmp/article_drafts/article_93de45f4/section_sec_2.md', 'char_count': 21, 'preview': '## 技术原理：自注意力机制与架构解析\n\n'}
+2025-12-28 11:00:13,737 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 技术原理：自注意力机制与架构解析\n\n
+2025-12-28 11:00:13,741 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_3, target_chars: 800
+2025-12-28 11:00:13,741 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_3, target_chars=800
+2025-12-28 11:00:13,742 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 11:01:04,510 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=4888, output_chars=1485, prompt_tokens=2759, completion_tokens=3710, total_tokens=6469
+2025-12-28 11:01:04,510 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 发展历史：从2017年论文到模型演进\n\n2017年6月，Google研究人员发表的"Attention Is All You Need"论文正式提出了Transformer架构，标志着深度学习领域的重大转折。该论文由Vaswani等人撰写，提出了一个全新的神经网络架构，彻底改变了自然语言处理的研究方向。论文标题"Attention Is All You Need"反映了作者的核心观点：在序列建模中，注意力机制可以完全替代传统的循环结构。值得注意的是，该论文的作者之一Jakob Uszkoreit在2016年就提出了"attention without recurrence would be sufficient for language translation"的假设，这一假设在当时与主流观点相悖，甚至其父亲Hans Uszkoreit（一位著名计算语言学家）对此持怀疑态度。\n\n### 2017年之前的模型发展\n在Transformer出现之前，序列建模主要依赖以下技术：\n- **RNN**：1990年Elman网络作为早期代表，但存在梯度消失问题\n- **LSTM**：1995...
+2025-12-28 11:01:04,510 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=50769ms section_id=sec_3, target_chars=800
+2025-12-28 11:01:04,511 [INFO] article_agent.article_deep_tools: write_section_tool success: 1485 chars, saved to /tmp/article_drafts/article_93de45f4/section_sec_3.md
+2025-12-28 11:01:04,511 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_3', 'title': '发展历史：从2017年论文到模型演进', 'file_path': '/tmp/article_drafts/article_93de45f4/section_sec_3.md', 'char_count': 1485, 'preview': '## 发展历史：从2017年论文到模型演进\n\n2017年6月，Google研究人员发表的"Attention Is All You Need"论文正式提出了Transformer架构，标志着深度学习领域的重大转折。该论文由Vaswani等人撰写，提出了一个全新的神经网络架构，彻底改变了自然语言处理的研究方向。论文标题"Attention Is All You Need"反映了作者的核心观点：在序列...'}
+2025-12-28 11:01:04,511 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 发展历史：从2017年论文到模型演进\n\n2017年6月，Google研究人员发表的"Attention Is All You Need"论文正式提出了Transformer架构，标志着深度学习领域的重大转折。该论文由Vaswani等人撰写，提出了一个全新的神经网络架构，彻底改变了自然语言处理的研究方向。论文标题"Attention Is All You Need"反映了作者的核心观点：在序列...
+2025-12-28 11:01:04,512 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_4, target_chars: 1000
+2025-12-28 11:01:04,512 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_4, target_chars=1000
+2025-12-28 11:01:04,512 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 11:01:35,080 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=5945, output_chars=1485, prompt_tokens=3102, completion_tokens=2158, total_tokens=5260
+2025-12-28 11:01:35,080 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 应用案例：自然语言处理与多领域实践\n\n自然语言处理技术在Transformer架构推动下实现了突破性发展，其应用已广泛渗透至多个行业领域。以下通过具体案例展示NLP技术的实际应用价值。\n\n### 机器翻译应用\n早期机器翻译技术经历了从RNN到LSTM的演进。1995年提出的LSTM通过乘法单元克服了梯度消失问题，使长序列建模成为可能。2014年，seq2seq架构（编码器-解码器）的出现标志着重要突破，如380M参数的LSTM模型和130M参数的GRU模型。注意力机制的引入解决了"固定大小输出向量"的瓶颈问题，使模型能处理长距离依赖。2016年，Google推出Neural Machine Translation系统，采用8层双向LSTM架构，仅耗时9个月开发完成，性能显著优于此前耗时10年的统计方法。2017年，"Attention Is All You Need"论文提出的Transformer架构（100M参数）通过多头注意力机制和并行处理，彻底改变了机器翻译领域。\n\n### 文本生成应用\nTransformer架构在文本生成领域展现出强大潜力。2017年春季，"Atten...
+2025-12-28 11:01:35,080 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=30568ms section_id=sec_4, target_chars=1000
+2025-12-28 11:01:35,080 [INFO] article_agent.article_deep_tools: write_section_tool success: 1485 chars, saved to /tmp/article_drafts/article_93de45f4/section_sec_4.md
+2025-12-28 11:01:35,080 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_4', 'title': '应用案例：自然语言处理与多领域实践', 'file_path': '/tmp/article_drafts/article_93de45f4/section_sec_4.md', 'char_count': 1485, 'preview': '## 应用案例：自然语言处理与多领域实践\n\n自然语言处理技术在Transformer架构推动下实现了突破性发展，其应用已广泛渗透至多个行业领域。以下通过具体案例展示NLP技术的实际应用价值。\n\n### 机器翻译应用\n早期机器翻译技术经历了从RNN到LSTM的演进。1995年提出的LSTM通过乘法单元克服了梯度消失问题，使长序列建模成为可能。2014年，seq2seq架构（编码器-解码器）的出现标志...'}
+2025-12-28 11:01:35,081 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 应用案例：自然语言处理与多领域实践\n\n自然语言处理技术在Transformer架构推动下实现了突破性发展，其应用已广泛渗透至多个行业领域。以下通过具体案例展示NLP技术的实际应用价值。\n\n### 机器翻译应用\n早期机器翻译技术经历了从RNN到LSTM的演进。1995年提出的LSTM通过乘法单元克服了梯度消失问题，使长序列建模成为可能。2014年，seq2seq架构（编码器-解码器）的出现标志...
+2025-12-28 11:01:35,082 [INFO] article_agent.article_deep_tools: write_section_tool called for section: sec_5, target_chars: 300
+2025-12-28 11:01:35,082 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=sec_5, target_chars=300
+2025-12-28 11:01:35,082 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3-vl:30b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=32768 reasoning=True
+2025-12-28 11:02:03,947 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=4185, output_chars=914, prompt_tokens=2219, completion_tokens=2099, total_tokens=4318
+2025-12-28 11:02:03,948 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 总结：技术影响与未来方向\n\nTransformer架构自2017年提出以来，彻底重塑了人工智能技术格局，其影响深远且持续扩展。在技术影响层面，该架构通过多头注意力机制实现了序列建模的革命性突破：摒弃循环单元，支持并行处理，使训练效率显著高于RNN/LSTM（如2016年Google Translate从统计方法升级为神经机器翻译，耗时从10年缩短至9个月）。这不仅解决了早期seq2seq模型的固定输出向量问题（如2014年LSTM模型处理长序列时的信息丢失），还推动了大型语言模型（LLMs）的崛起，包括GPT系列的生成式AI和BERT的双向编码理解任务。具体应用已覆盖多领域：计算机视觉（Vision Transformers）、强化学习、音频处理、多模态学习、机器人技术及棋类游戏（如国际象棋AI），充分证明其通用性。与传统方法对比，Transformer有效规避了梯度消失问题，通过注意力机制实现长距离依赖建模，且能高效处理大规模数据集。\n\n**未来方向聚焦四大核心：**\n- **计算效率优化**：需开发稀疏注意力、线性注意力等机制，降低O(n²)复杂度（借鉴2016年"decom...
+2025-12-28 11:02:03,948 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=28866ms section_id=sec_5, target_chars=300
+2025-12-28 11:02:03,948 [INFO] article_agent.article_deep_tools: write_section_tool success: 914 chars, saved to /tmp/article_drafts/article_93de45f4/section_sec_5.md
+2025-12-28 11:02:03,948 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'sec_5', 'title': '总结：技术影响与未来方向', 'file_path': '/tmp/article_drafts/article_93de45f4/section_sec_5.md', 'char_count': 914, 'preview': '## 总结：技术影响与未来方向\n\nTransformer架构自2017年提出以来，彻底重塑了人工智能技术格局，其影响深远且持续扩展。在技术影响层面，该架构通过多头注意力机制实现了序列建模的革命性突破：摒弃循环单元，支持并行处理，使训练效率显著高于RNN/LSTM（如2016年Google Translate从统计方法升级为神经机器翻译，耗时从10年缩短至9个月）。这不仅解决了早期seq2seq模型...'}
+2025-12-28 11:02:03,948 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 总结：技术影响与未来方向\n\nTransformer架构自2017年提出以来，彻底重塑了人工智能技术格局，其影响深远且持续扩展。在技术影响层面，该架构通过多头注意力机制实现了序列建模的革命性突破：摒弃循环单元，支持并行处理，使训练效率显著高于RNN/LSTM（如2016年Google Translate从统计方法升级为神经机器翻译，耗时从10年缩短至9个月）。这不仅解决了早期seq2seq模型...
+2025-12-28 11:18:05,359 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.5-flash
+2025-12-28 11:18:05,724 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:18:10,811 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=30000
+2025-12-28 11:18:14,507 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 11:18:14,516 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_4812528a/sources.json
+2025-12-28 11:18:14,516 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n\n**总计**: 30000 字符, 19 图片', 'source_count': 1}
+2025-12-28 11:18:17,367 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 11:18:17,367 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 11:18:17,367 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:18:37,491 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1026, output_chars=2919, 
+2025-12-28 11:18:37,491 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: ```json\n{\n  "title": "深入解析Transformer模型：从原理到应用",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：深度学习的革新者——Transformer",\n      "keywords": [\n        "Transformer",\n        "深度学习",\n        "注意力机制",\n        "神经网络",\n        "AI发展"\n      ],\n      "target_chars": 250,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "从循环神经网络到注意力机制：Transformer的诞生背景",\n      "keywords": [\n        "RNN局限性",\n        "LSTM",\n        "序列模型",\n        "注意力机制",\n        "seq2seq",\n        "并...
+2025-12-28 11:18:37,491 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=20124ms target_word_count=5000
+2025-12-28 11:18:37,491 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: 深入解析Transformer模型：从原理到应用
+2025-12-28 11:18:37,491 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(11): sec_1:引言：深度学习的革新者——Transformer, sec_2:从循环神经网络到注意力机制：Transformer的诞生背景, sec_3:Transformer的核心架构：编码器与解码器, sec_4:自注意力机制 (Self-Attention)：模型理解上下文的关键, sec_5:多头注意力与位置编码：增强模型表达能力, sec_6:内部组件详解：前馈网络、残差连接与层归一化, sec_7:Transformer的训练策略与优化方法, sec_8:Transformer的优势、局限性及其优化, sec_9:广泛应用：Transformer如何改变AI领域, sec_10:Transformer的变体与未来发展趋势, sec_11:总结与展望：Transformer引领人工智能新纪元
+2025-12-28 11:18:37,491 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-28 11:18:37,492 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_4812528a/outline.json
+2025-12-28 11:18:37,492 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 11 sections
+2025-12-28 11:19:29,918 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_4812528a/outline.json
+2025-12-28 11:19:29,918 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 11
+2025-12-28 11:19:29,919 [INFO] article_agent.article_deep_tools: Loaded 1 sources from persistence file: /tmp/article_drafts/article_4812528a/sources.json
+2025-12-28 11:19:29,920 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 11:19:29,920 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 11:19:29,920 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:19:50,736 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8427, output_chars=4910, 
+2025-12-28 11:19:50,736 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ## 引言：深度学习的革新者——Transformer 资料笔记\n\n### I. Transformer 架构概述\n\n*   **定义与核心机制**\n    *   **Transformer** 是一种基于多头注意力机制（multi-head attention mechanism）的人工神经网络架构。\n    *   **工作流程**：\n        1.  文本被转换为数值表示，称为“tokens”。\n        2.  每个 token 通过词嵌入表（word embedding table）查找，转换为向量。\n        3.  在每一层，每个 token 通过并行多头注意力机制在上下文窗口（context window）范围内进行情境化（contextualized），与（未被遮蔽的）其他 token 进行交互。\n        4.  该机制能够放大关键 token 的信号，同时减弱不重要 token 的影响。\n\n*   **显著优势**\n    *   **无循环单元**：与早期循环神经网络（RNNs），如长短期记忆网络（LSTM），不同，Transforme...
+2025-12-28 11:19:50,736 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=20816ms section_id=sec_1
+2025-12-28 11:19:50,736 [INFO] article_agent.article_deep_tools: research_section_tool success: 4910 chars, 0 images
+2025-12-28 11:19:50,738 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-28 11:19:50,738 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-28 11:19:50,738 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:20:11,920 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8443, output_chars=4432, 
+2025-12-28 11:20:11,920 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 以下是为章节 "从循环神经网络到注意力机制：Transformer的诞生背景" 整理的资料笔记：\n\n### 从循环神经网络到注意力机制：Transformer的诞生背景\n\n本章节旨在探讨Transformer架构出现之前的序列模型、其局限性，以及注意力机制的演进，为理解Transformer的诞生提供全面的背景。\n\n#### 1. 序列模型的基础：循环神经网络（RNN）及其局限性\n\n*   **早期序列建模的标准方法：**\n    *   在很长一段时间内，序列建模和生成主要通过朴素循环神经网络（RNNs）完成。\n    *   一个被广泛引用的早期例子是1990年的Elman网络。\n*   **RNN的理论与实践差异：**\n    *   理论上，一个token的信息可以在序列中任意远地传播。\n    *   然而，在实践中，RNNs面临严重的“梯度消失问题”（vanishing-gradient problem）。\n    *   这导致模型在长句末尾的状态，无法精确提取关于前面token的信息。\n*   **RNN的固有处理方式限制：**\n    *   RNNs采用顺序处理方式...
+2025-12-28 11:20:11,920 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=21182ms section_id=sec_2
+2025-12-28 11:20:11,920 [INFO] article_agent.article_deep_tools: research_section_tool success: 4432 chars, 0 images
+2025-12-28 11:20:11,922 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-28 11:20:11,922 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-28 11:20:11,922 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:20:27,851 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8432, output_chars=3800, 
+2025-12-28 11:20:27,851 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 以下是为章节 "Transformer的核心架构：编码器与解码器" 整理的资料笔记：\n\n---\n\n### Transformer的核心架构：编码器与解码器\n\n#### 1. Transformer模型概述\n\n*   **定义与核心机制**:\n    *   Transformer是一种基于多头注意力机制（multi-head attention mechanism）的人工神经网络架构。\n    *   其基本过程是将文本转换为数值表示（称为tokens），每个token通过词嵌入表（word embedding table）转换为一个向量。\n    *   在每一层中，每个token通过一个并行的多头注意力机制，在上下文窗口（context window）范围内与其他（未被遮蔽的）token进行语境化（contextualized），从而放大关键token的信号并减弱不重要token的影响。\n\n*   **关键优势**:\n    *   **无循环单元**: Transformer不包含循环单元（recurrent units），因此与早期的循环神经网络架构（如长短期记忆网络LSTM）...
+2025-12-28 11:20:27,851 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=15929ms section_id=sec_3
+2025-12-28 11:20:27,851 [INFO] article_agent.article_deep_tools: research_section_tool success: 3800 chars, 0 images
+2025-12-28 11:20:27,854 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_4
+2025-12-28 11:20:27,854 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_4
+2025-12-28 11:20:27,854 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:20:45,998 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8454, output_chars=4948, 
+2025-12-28 11:20:45,998 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 资料笔记：自注意力机制 (Self-Attention)：模型理解上下文的关键\n\n本笔记旨在为章节 "自注意力机制 (Self-Attention)：模型理解上下文的关键" 提供详尽的背景、演变和核心概念，尤其关注自注意力机制如何实现上下文理解和词语关系建模。\n\n**1. Transformer 架构与自注意力机制的引入**\n\n*   **Transformer 的核心**:\n    *   Transformer 是一种深度学习中的人工神经网络架构，其基础是**多头注意力机制 (multi-head attention mechanism)**。\n    *   在 Transformer 中，文本首先被转换成数值表示，称为**token**。\n    *   每个 token 通过词嵌入表 (word embedding table) 查找，被转换成一个向量。\n    *   **上下文理解**: 在每个层，每个 token 都通过**并行多头注意力机制**在其上下文窗口（与其它未被遮蔽的 token）中进行**上下文化**。这种机制允许**关键 token 的信号被放大，...
+2025-12-28 11:20:45,999 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=18145ms section_id=sec_4
+2025-12-28 11:20:45,999 [INFO] article_agent.article_deep_tools: research_section_tool success: 4948 chars, 0 images
+2025-12-28 11:20:46,001 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_5
+2025-12-28 11:20:46,001 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_5
+2025-12-28 11:20:46,001 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:21:03,381 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8419, output_chars=3492, 
+2025-12-28 11:21:03,381 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 以下是为章节 "多头注意力与位置编码：增强模型表达能力" 整理的资料笔记：\n\n### 多头注意力与位置编码：增强模型表达能力\n\n#### 1. Transformer架构概述与多头注意力机制的核心作用\n\n*   **定义与基础**\n    *   Transformer是一种基于多头注意力机制的人工神经网络架构，广泛应用于深度学习领域。\n    *   其输入文本首先被转换为称为“tokens”的数值表示，每个token通过词嵌入表（word embedding table）转换为一个向量。\n*   **多头注意力的工作原理**\n    *   在Transformer的每一层，每个token都通过一个**并行多头注意力机制**在其上下文窗口内与其他（未被遮蔽的）token进行语境化处理。\n    *   这种机制允许模型“放大”关键token的信号，同时“减弱”不那么重要的token的影响。\n    *   多头注意力使得Transformer能够高效地捕获序列中的依赖关系，通过在不同的“表示空间”（different representation spaces）中并行处理信息来增强...
+2025-12-28 11:21:03,382 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=17381ms section_id=sec_5
+2025-12-28 11:21:03,382 [INFO] article_agent.article_deep_tools: research_section_tool success: 3492 chars, 0 images
+2025-12-28 11:21:03,384 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_6
+2025-12-28 11:21:03,384 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_6
+2025-12-28 11:21:03,384 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:21:42,119 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8420, output_chars=6093, 
+2025-12-28 11:21:42,119 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 以下是为章节 "内部组件详解：前馈网络、残差连接与层归一化" 整理的资料笔记：\n\n---\n\n**章节：内部组件详解：前馈网络、残差连接与层归一化**\n\n**I. Transformer 概览与背景**\n\n*   **定义与核心机制：**\n    *   Transformer 是一种基于多头注意力机制 (multi-head attention mechanism) 的人工神经网络架构。\n    *   文本首先被转换为数值表示，称为“tokens”。每个 token 通过词嵌入表 (word embedding table) 查找，被转换为一个向量。\n    *   在 Transformer 的每一层中，每个 token 都会通过并行的多头注意力机制，在上下文窗口内与其他（未掩码的）token 进行语境化处理。这种机制允许模型对序列中的不同部分赋予不同的权重，从而使关键 token 的信号被放大，而相对不重要的 token 的信号被相应减弱。\n*   **优势与应用：**\n    *   **并行化能力：** Transformer 的显著优势在于其没有循环单元 (recurren...
+2025-12-28 11:21:42,119 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=38736ms section_id=sec_6
+2025-12-28 11:21:42,120 [INFO] article_agent.article_deep_tools: research_section_tool success: 6093 chars, 0 images
+2025-12-28 11:21:42,122 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_7
+2025-12-28 11:21:42,122 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_7
+2025-12-28 11:21:42,122 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:22:00,432 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8418, output_chars=3663, 
+2025-12-28 11:22:00,433 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### Transformer的训练策略与优化方法 资料笔记\n\n本章节资料笔记主要聚焦于Transformer架构设计如何从根本上优化了训练过程，以及其对大规模模型训练的促进作用。\n\n#### 1. Transformer架构对训练效率的根本性提升\n\n*   **无循环单元的优势，显著缩短训练时间**\n    *   Transformer架构的核心特点是**没有循环单元** (no recurrent units)，这与早期的循环神经网络 (RNNs)，例如长短期记忆网络 (LSTM)，形成鲜明对比。\n    *   由于移除了循环结构，Transformer模型在训练时间上**显著少于**传统的循环神经网络架构。\n    *   这一优势使得Transformer在深度学习领域，特别是在训练大规模模型时，具有更强的实用性和可扩展性。\n\n*   **强大的并行处理能力**\n    *   **克服传统RNNs的序列处理瓶颈**: 传统的RNNs，如LSTM，采用**顺序处理**方式，一次处理一个词元 (token)，从序列的第一个到最后一个。这种固有的顺序性使得RNNs**无法在所有...
+2025-12-28 11:22:00,433 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=18311ms section_id=sec_7
+2025-12-28 11:22:00,433 [INFO] article_agent.article_deep_tools: research_section_tool success: 3663 chars, 0 images
+2025-12-28 11:22:00,435 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_8
+2025-12-28 11:22:00,435 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_8
+2025-12-28 11:22:00,435 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:22:20,425 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8420, output_chars=5323, 
+2025-12-28 11:22:20,425 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ## Transformer的优势、局限性及其优化\n\n### 1. Transformer的核心机制与定义\n\n*   **定义**: Transformer是一种基于多头注意力机制（multi-head attention mechanism）的人工神经网络架构，广泛应用于深度学习领域。\n*   **工作原理**:\n    *   文本被转换为数值表示，称为“tokens”。\n    *   每个token通过词嵌入表（word embedding table）查找，转换为一个向量。\n    *   在每一层，每个token在上下文窗口（context window）范围内通过并行多头注意力机制进行上下文化（contextualized）。\n    *   此机制允许关键token的信号被放大，不重要token的信号被削弱。\n*   **起源**:\n    *   现代Transformer版本由Google研究人员在2017年的论文《Attention Is All You Need》中提出 [1]。\n    *   Transformer的前身是作为对先前机器翻译架构改进而开发的 ...
+2025-12-28 11:22:20,425 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=19990ms section_id=sec_8
+2025-12-28 11:22:20,425 [INFO] article_agent.article_deep_tools: research_section_tool success: 5323 chars, 0 images
+2025-12-28 11:22:20,427 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_9
+2025-12-28 11:22:20,427 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_9
+2025-12-28 11:22:20,427 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:22:39,811 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8432, output_chars=3881, 
+2025-12-28 11:22:39,811 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 广泛应用：Transformer如何改变AI领域 资料笔记\n\n#### 1. 引言：Transformer的革新与核心优势\n\n*   **定义与核心机制**\n    *   Transformer是一种基于多头注意力机制（multi-head attention mechanism）的人工神经网络架构。\n    *   其工作原理是将文本转换为称为“token”的数值表示，然后通过词嵌入表（word embedding table）将每个token转换为向量。\n    *   在每个层中，每个token通过一个并行的多头注意力机制，在其上下文窗口（context window）内与其他（未被遮蔽的）token进行语境化，从而放大关键token的信号并减弱不重要token的信号。\n*   **相比传统模型的显著优势**\n    *   **无循环单元**：Transformer不包含循环单元（recurrent units），这使其比早期的循环神经网络（RNNs），如长短期记忆网络（LSTM），需要更少的训练时间。\n    *   **并行化能力**：现代Transformer能...
+2025-12-28 11:22:39,811 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=19384ms section_id=sec_9
+2025-12-28 11:22:39,812 [INFO] article_agent.article_deep_tools: research_section_tool success: 3881 chars, 0 images
+2025-12-28 11:22:39,814 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_10
+2025-12-28 11:22:39,814 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_10
+2025-12-28 11:22:39,814 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:23:10,899 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8439, output_chars=4754, 
+2025-12-28 11:23:10,900 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ## Transformer的变体与未来发展趋势 - 资料笔记\n\n### 1. Transformer模型的核心创新与起源\n*   **核心架构**: Transformer是一种基于多头注意力机制（multi-head attention mechanism）的人工神经网络架构 [1]。\n    *   文本被转换为数值表示的“tokens”，每个token通过词嵌入表（word embedding table）转换为向量 [1]。\n    *   在每一层，每个token通过并行多头注意力机制在其上下文窗口内（与其他未掩码token）进行上下文关联，从而放大关键token的信号，削弱不重要token的信号。\n*   **关键优势**:\n    *   **无循环单元**: Transformer不包含循环单元（recurrent units），因此比早期的循环神经网络架构（如长短期记忆网络LSTMs）需要更少的训练时间 [2]。\n    *   **并行处理**: 现代Transformer克服了RNNs顺序处理的限制，能够并行处理序列中的所有token [1]。这使其易于在GPU...
+2025-12-28 11:23:10,900 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=31086ms section_id=sec_10
+2025-12-28 11:23:10,900 [INFO] article_agent.article_deep_tools: research_section_tool success: 4754 chars, 0 images
+2025-12-28 11:23:10,902 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_11
+2025-12-28 11:23:10,902 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_11
+2025-12-28 11:23:10,902 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:23:33,869 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8432, output_chars=4980, 
+2025-12-28 11:23:33,869 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ## 资料笔记：总结与展望：Transformer引领人工智能新纪元\n\n### 1. Transformer的诞生与核心机制\n\n*   **定义与基本架构**\n    *   Transformer是一种基于多头注意力机制（multi-head attention mechanism）的人工神经网络架构，属于深度学习范畴。\n    *   其工作原理是将文本转换为数值表示，称为“tokens”（词元）。\n    *   每个词元通过词嵌入表（word embedding table）查找，转换为一个向量。\n    *   在每一层中，每个词元通过并行的多头注意力机制，在其上下文窗口（context window）内与其他（未被遮蔽的）词元进行上下文关联。\n    *   这种机制能够放大关键词元的信号，同时削弱不那么重要词元的信号。\n\n*   **核心优势与创新**\n    *   **无循环单元**：与早期的循环神经网络（RNNs），如长短期记忆网络（LSTM），相比，Transformer架构的一大显著优势在于其不包含循环单元。这一特性大大减少了训练时间，解决了传统RNNs在处理长...
+2025-12-28 11:23:33,869 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=22967ms section_id=sec_11
+2025-12-28 11:23:33,869 [INFO] article_agent.article_deep_tools: research_section_tool success: 4980 chars, 0 images
+2025-12-28 11:23:33,874 [INFO] article_agent.article_deep_tools: Research notes saved to: /tmp/article_drafts/article_4812528a/research_notes.json
+2025-12-28 11:26:18,486 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.0-flash
+2025-12-28 11:26:18,610 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:30:48,161 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.0-flash
+2025-12-28 11:30:48,268 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:31:28,998 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.0-flash
+2025-12-28 11:31:29,102 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:32:07,638 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.0-flash
+2025-12-28 11:32:07,744 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:33:09,444 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-1.5-flash
+2025-12-28 11:33:09,554 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:33:24,989 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-1.5-flash
+2025-12-28 11:33:25,092 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:35:58,369 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.5-flash
+2025-12-28 11:35:58,473 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:36:04,016 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=30000
+2025-12-28 11:36:05,462 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 11:36:05,463 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_8635f9cd/sources.json
+2025-12-28 11:36:05,463 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n\n**总计**: 30000 字符, 19 图片', 'source_count': 1}
+2025-12-28 11:36:14,212 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-28 11:36:14,213 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-28 11:36:14,213 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:36:32,056 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1047, output_chars=2827, 
+2025-12-28 11:36:32,056 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: ```json\n{\n  "title": "深入解析Transformer：深度学习革命性架构的原理、演进与应用",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：Transformer的崛起与深度学习的范式变革",\n      "keywords": [\n        "Transformer",\n        "深度学习",\n        "序列建模",\n        "注意力机制",\n        "背景"\n      ],\n      "target_chars": 1400,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "从RNN到Transformer：序列建模的演进与瓶颈突破",\n      "keywords": [\n        "RNN",\n        "LSTM",\n        "Seq2Seq",\n        "梯度消失",\n        "并行计算",\n   ...
+2025-12-28 11:36:32,056 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=17843ms target_word_count=5000
+2025-12-28 11:36:32,056 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: 深入解析Transformer：深度学习革命性架构的原理、演进与应用
+2025-12-28 11:36:32,056 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(10): sec_1:引言：Transformer的崛起与深度学习的范式变革, sec_2:从RNN到Transformer：序列建模的演进与瓶颈突破, sec_3:Transformer核心架构：编码器-解码器框架详解, sec_4:自注意力机制：Transformer的“感知”核心, sec_5:位置编码与辅助组件：赋予序列顺序和稳定性, sec_6:Transformer模型家族：从BERT、GPT到Vision Transformer的演进, sec_7:Transformer的广泛应用：跨越NLP、CV、音频与更多领域, sec_8:训练策略与计算考量：驾驭大规模Transformer模型, sec_9:Transformer的局限性与未来挑战：长序列与可解释性, sec_10:总结与展望：Transformer的未来发展与潜在突破
+2025-12-28 11:36:32,056 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 24800
+2025-12-28 11:36:32,057 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /tmp/article_drafts/article_8635f9cd/outline.json
+2025-12-28 11:36:32,057 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 10 sections
+2025-12-28 11:37:16,988 [INFO] article_agent.article_deep_tools: Loaded outline from file: /tmp/article_drafts/article_8635f9cd/outline.json
+2025-12-28 11:37:16,988 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 10
+2025-12-28 11:37:16,988 [INFO] article_agent.article_deep_tools: Loaded 1 sources from persistence file: /tmp/article_drafts/article_8635f9cd/sources.json
+2025-12-28 11:37:16,988 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-28 11:37:16,989 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-28 11:37:16,989 [INFO] article_agent.llm: llm.init provider=gemini task=article model=gemini-2.5-flash
+2025-12-28 11:37:37,550 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.5-flash
+2025-12-28 11:37:37,654 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:37:43,324 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=30000
+2025-12-28 11:37:46,745 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 11:37:46,746 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_eac87fb3/sources.json
+2025-12-28 11:37:46,746 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n\n**总计**: 30000 字符, 19 图片', 'source_count': 1}
+2025-12-28 11:37:59,999 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.5-flash
+2025-12-28 11:38:00,105 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 11:38:05,422 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=30000
+2025-12-28 11:38:38,884 [INFO] article_agent.llm: llm.init provider=gemini task=article_deep_main model=gemini-2.0-flash
+2025-12-28 11:38:38,989 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 12:06:12,754 [INFO] article_agent.llm: llm.init provider=siliconflow task=article_deep_main model=qwen3-vl:30b base_url=https://api.siliconflow.cn/v1
+2025-12-28 12:06:13,104 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 12:15:59,430 [INFO] article_agent.llm: llm.init provider=siliconflow task=article_deep_main model=Qwen/Qwen3-235B-A22B-Thinking-2507 base_url=https://api.siliconflow.cn/v1
+2025-12-28 12:15:59,684 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 12:16:47,563 [INFO] article_agent.llm: llm.init provider=siliconflow task=article_deep_main model=Qwen/Qwen3-VL-235B-A22B-Thinking base_url=https://api.siliconflow.cn/v1
+2025-12-28 12:16:47,816 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-28 12:18:37,751 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=30000
+2025-12-28 12:18:41,451 [INFO] article_agent.article_deep_tools: Collected source 0: 30000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-28 12:18:41,452 [INFO] article_agent.article_deep_tools: Sources saved to: /tmp/article_drafts/article_9c9b0e4e/sources.json
+2025-12-28 12:18:41,452 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 30000 字符\n\n**总计**: 30000 字符, 19 图片', 'source_count': 1}
+2025-12-28 12:20:07,785 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 3000
+2025-12-28 12:20:07,785 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=3000
+2025-12-28 12:20:07,785 [INFO] article_agent.llm: llm.init provider=siliconflow task=article model=Qwen/Qwen3-VL-235B-A22B-Thinking base_url=https://api.siliconflow.cn/v1

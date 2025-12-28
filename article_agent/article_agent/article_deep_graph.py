@@ -34,6 +34,7 @@ from .article_deep_tools import (
     # Planner tools
     generate_outline_tool,
     # Researcher tools
+    read_sources_tool,
     research_section_tool,
     research_all_sections_tool,
     research_audit_tool,
@@ -59,34 +60,27 @@ def get_article_deep_agent_graph() -> Any:
     """
     
     # 使用配置的 LLM
-    main_llm = build_chat_llm(task_name="article_deep_main")
+    # 启用推理模式 (Reasoning) 以增强任务规划能力，并输出 Instruction 日志
+    main_llm = build_chat_llm(task_name="article_deep_main", enable_reasoning=True)
     
     # ============================================================================
     # 定义子 Agent (Sub-Agents)
     # ============================================================================
     
-    # 1. Collector Agent - 素材收集
-    collector_agent = SubAgent(
-        name="collector_agent",
-        description=COLLECTOR_AGENT_DESCRIPTION,
-        system_prompt=COLLECTOR_AGENT_PROMPT,
-        tools=[fetch_url_tool, load_file_tool, collect_all_sources_tool],
-    )
-    
-    # 2. Planner Agent - 大纲规划
+    # 1. Planner Agent - 素材收集 + 大纲规划（合并 collector 功能）
     planner_agent = SubAgent(
         name="planner_agent",
         description=PLANNER_AGENT_DESCRIPTION,
         system_prompt=PLANNER_AGENT_PROMPT,
-        tools=[generate_outline_tool],
+        tools=[fetch_url_tool, load_file_tool, collect_all_sources_tool, generate_outline_tool],
     )
     
-    # 3. Researcher Agent - 资料整理
+    # 2. Researcher Agent - 资料整理
     researcher_agent = SubAgent(
         name="researcher_agent",
         description=RESEARCHER_AGENT_DESCRIPTION,
         system_prompt=RESEARCHER_AGENT_PROMPT,
-        tools=[research_section_tool, research_all_sections_tool, research_audit_tool],
+        tools=[read_sources_tool, research_section_tool, research_all_sections_tool, research_audit_tool],
     )
     
     # 4. Writer Agent - 内容撰写
@@ -137,8 +131,7 @@ def get_article_deep_agent_graph() -> Any:
     graph = create_deep_agent(
         model=main_llm,
         subagents=[
-            collector_agent,
-            planner_agent,
+            planner_agent,  # 包含素材收集 + 大纲规划
             researcher_agent,
             writer_agent,
             reviewer_agent,
@@ -150,7 +143,7 @@ def get_article_deep_agent_graph() -> Any:
         # response_format=response_format,  # 暂时禁用，让 Agent 自由执行
     )
     
-    _LOGGER.info("Article Deep Agent graph created with 7 SubAgents")
+    _LOGGER.info("Article Deep Agent graph created with 6 SubAgents")
     
     return graph
 

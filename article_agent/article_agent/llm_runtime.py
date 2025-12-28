@@ -6,6 +6,7 @@ from typing import Any, Callable, Type, TypeVar
 
 from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 
 from .config import get_settings
@@ -28,11 +29,12 @@ def build_chat_llm(task_name: str = "article", enable_reasoning: bool = True) ->
 
     if provider == "ollama":
         _LOGGER.info(
-            "llm.init provider=ollama task=%s model=%s base_url=%s num_predict=%s reasoning=%s",
+            "llm.init provider=ollama task=%s model=%s base_url=%s num_predict=%s num_ctx=%s reasoning=%s",
             task_name,
             settings.llm_model,
             settings.ollama_base_url,
             settings.ollama_num_predict,
+            settings.ollama_num_ctx,
             enable_reasoning,
         )
         try:
@@ -42,6 +44,7 @@ def build_chat_llm(task_name: str = "article", enable_reasoning: bool = True) ->
                 temperature=0,
                 reasoning=enable_reasoning,
                 num_predict=settings.ollama_num_predict,
+                num_ctx=settings.ollama_num_ctx,
             )
         except Exception as exc:  # pragma: no cover
             _LOGGER.error("llm.init_failed provider=ollama task=%s error=%s", task_name, exc)
@@ -67,6 +70,26 @@ def build_chat_llm(task_name: str = "article", enable_reasoning: bool = True) ->
         except Exception as exc:  # pragma: no cover
             _LOGGER.error("llm.init_failed provider=siliconflow task=%s error=%s", task_name, exc)
             raise RuntimeError(f"LLM 初始化失败（siliconflow, task={task_name}）") from exc
+
+    if provider == "gemini":
+        if not settings.google_api_key:
+            _LOGGER.error("llm.init_failed provider=gemini task=%s reason=missing_api_key", task_name)
+            raise RuntimeError("GOOGLE_API_KEY 未配置，无法初始化 Gemini LLM")
+
+        _LOGGER.info(
+            "llm.init provider=gemini task=%s model=%s",
+            task_name,
+            settings.gemini_model,
+        )
+        try:
+            return ChatGoogleGenerativeAI(
+                model=settings.gemini_model,
+                google_api_key=settings.google_api_key,
+                temperature=0,
+            )
+        except Exception as exc:  # pragma: no cover
+            _LOGGER.error("llm.init_failed provider=gemini task=%s error=%s", task_name, exc)
+            raise RuntimeError(f"LLM 初始化失败（gemini, task={task_name}）") from exc
 
     if not settings.openai_api_key:
         _LOGGER.error("llm.init_failed provider=openai task=%s reason=missing_api_key", task_name)

@@ -285,11 +285,29 @@ URLs: ${validUrlsList.join(', ')}
                         // ReviewerOutput
                         summary = data.approved ? `审阅通过 (评分: ${data.overall_quality || '-'})` : `需要修改: ${data.sections_to_rewrite?.join(', ') || ''}`
                       } else if (data.final_markdown) {
-                        // IllustratorOutput
+                        // IllustratorOutput - 保存最终 markdown
                         summary = `配图完成: ${data.placements?.length || 0} 张图片`
-                      } else if (data.md_url) {
-                        // AssemblerOutput
-                        summary = `文件已保存: ${data.md_path || data.md_url}`
+                        // 保存 illustrator 输出的 final_markdown，因为 assembler 可能不返回完整内容
+                        if (data.final_markdown) {
+                          resultMarkdown.value = data.final_markdown
+                        }
+                      } else if (data.md_url || data.md_path) {
+                        // AssemblerOutput - 文章保存成功，尝试获取内容
+                        summary = `文章保存成功: ${data.md_path || data.md_url}`
+                        currentStep.value = '正在加载文章...'
+                        
+                        // 尝试从 md_url 获取内容
+                        if (data.md_url) {
+                          try {
+                            const mdResponse = await fetch(`/api/agents/article${data.md_url}`)
+                            if (mdResponse.ok) {
+                              resultMarkdown.value = await mdResponse.text()
+                            }
+                          } catch (err) {
+                            console.warn('Failed to fetch markdown from md_url:', err)
+                          }
+                        }
+                        currentStep.value = '完成'
                       } else if (data.status) {
                         // 通用状态
                         summary = data.status === 'success' ? '执行成功' : `错误: ${data.error_message || '未知'}`

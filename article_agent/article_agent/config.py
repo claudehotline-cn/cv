@@ -10,9 +10,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """article_agent 全局配置。"""
 
-    llm_provider: Literal["openai", "ollama", "siliconflow"] = Field(
+    llm_provider: Literal["openai", "ollama", "siliconflow", "gemini"] = Field(
         default="ollama",
-        description="LLM 提供方：openai、ollama 或 siliconflow。默认使用本地 Ollama。",
+        description="LLM 提供方：openai、ollama、siliconflow 或 gemini。默认使用本地 Ollama。",
         alias="ARTICLE_AGENT_LLM_PROVIDER",
     )
     llm_model: str = Field(
@@ -34,6 +34,11 @@ class Settings(BaseSettings):
         default=24576,
         description="Ollama 生成最大 token 数（num_predict）。",
         alias="ARTICLE_AGENT_OLLAMA_NUM_PREDICT",
+    )
+    ollama_num_ctx: int = Field(
+        default=32768,
+        description="Ollama 上下文窗口大小（num_ctx）。",
+        alias="ARTICLE_AGENT_OLLAMA_NUM_CTX",
     )
 
     # VLM 配置（用于图片理解）
@@ -58,6 +63,18 @@ class Settings(BaseSettings):
         default="https://api.siliconflow.cn/v1",
         description="SiliconFlow OpenAI 兼容 API 的基础地址。",
         alias="SILICONFLOW_BASE_URL",
+    )
+
+    # Google Gemini 配置
+    google_api_key: Optional[str] = Field(
+        default=None,
+        description="Google AI Studio API Key（用于 Gemini 模型）。",
+        alias="GOOGLE_API_KEY",
+    )
+    gemini_model: str = Field(
+        default="gemini-2.5-flash-preview-05-20",
+        description="Gemini 模型名称。",
+        alias="ARTICLE_AGENT_GEMINI_MODEL",
     )
 
     articles_base_dir: str = Field(
