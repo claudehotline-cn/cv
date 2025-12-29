@@ -53,3 +53,5 @@ Thumbs.db
 .ort_trt_cache/
 video-analyzer/build-ninja/
 **/*.engine
+
+article_agent/outputs/
