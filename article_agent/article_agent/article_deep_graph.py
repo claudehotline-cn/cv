@@ -53,11 +53,105 @@ from .article_deep_tools import (
 _LOGGER = logging.getLogger("article_agent.article_deep_graph")
 
 
+
 def get_article_deep_agent_graph() -> Any:
     """构造并返回 Article Deep Agent (Multi-Agent 架构)。
     
     入口函数，被 langgraph.json 引用。
     """
+    from langchain.agents.middleware import AgentMiddleware
+    
+    class ThinkingLoggerMiddleware(AgentMiddleware):
+        """自定义 middleware 用于记录 Main Agent 的思维链内容。"""
+        
+        async def awrap_model_call(self, request, handler):
+            """异步包装模型调用，记录思维内容和工具调用诊断。"""
+            # 执行原始模型调用
+            response = await handler(request)
+            
+            # 提取并记录思维内容
+            try:
+                # ModelResponse.result 是 list[BaseMessage]
+                # 直接从消息中提取 reasoning_content
+                messages = getattr(response, 'result', None)
+                if not messages:
+                    _LOGGER.warning("[LLM_RESPONSE] No messages in response!")
+                    return response
+                
+                for msg in messages:
+                    # 诊断日志：检查 tool_calls 是否存在
+                    tool_calls = getattr(msg, 'tool_calls', None)
+                    content = getattr(msg, 'content', '')
+                    content_preview = content[:200] if content else "(empty)"
+                    
+                    if tool_calls:
+                        _LOGGER.info(
+                            "[LLM_RESPONSE] tool_calls PRESENT, count=%d, names=%s",
+                            len(tool_calls),
+                            [tc.get('name', 'unknown') if isinstance(tc, dict) else getattr(tc, 'name', 'unknown') for tc in tool_calls]
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "[LLM_RESPONSE] tool_calls MISSING! content_preview: %s",
+                            content_preview
+                        )
+                    
+                    # 记录思维链内容
+                    additional_kwargs = getattr(msg, 'additional_kwargs', {})
+                    thinking_content = additional_kwargs.get('reasoning_content', '')
+                    if thinking_content:
+                        thinking_preview = thinking_content[:2000]
+                        if len(thinking_content) > 2000:
+                            thinking_preview += "..."
+                        _LOGGER.info(
+                            "[CHAIN_OF_THOUGHT] main_agent thinking_len=%d:\n"
+                            "--- THINKING START ---\n%s\n--- THINKING END ---",
+                            len(thinking_content), thinking_preview
+                        )
+            except Exception as e:
+                _LOGGER.debug("ThinkingLoggerMiddleware.awrap_model_call error: %s", e)
+            
+            return response
+        
+        def wrap_tool_call(self, request, handler):
+            """同步包装工具调用，记录 tool 调用参数。"""
+            try:
+                tool_call = getattr(request, 'tool_call', {})
+                tool_name = tool_call.get('name', 'unknown') if isinstance(tool_call, dict) else getattr(tool_call, 'name', 'unknown')
+                tool_args = tool_call.get('args', {}) if isinstance(tool_call, dict) else getattr(tool_call, 'args', {})
+                # 截断长参数以避免日志爆炸
+                args_preview = str(tool_args)[:1000]
+                if len(str(tool_args)) > 1000:
+                    args_preview += "..."
+                _LOGGER.info(
+                    "[TOOL_CALL] Main Agent calling tool: %s\nArgs: %s",
+                    tool_name, args_preview
+                )
+            except Exception as e:
+                _LOGGER.debug("ThinkingLoggerMiddleware.wrap_tool_call logging error: %s", e)
+            return handler(request)
+
+        
+        async def awrap_tool_call(self, request, handler):
+            """异步包装工具调用，记录 tool 调用参数。"""
+            try:
+                tool_call = getattr(request, 'tool_call', {})
+                tool_name = tool_call.get('name', 'unknown') if isinstance(tool_call, dict) else getattr(tool_call, 'name', 'unknown')
+                tool_args = tool_call.get('args', {}) if isinstance(tool_call, dict) else getattr(tool_call, 'args', {})
+                # 截断长参数以避免日志爆炸
+                args_preview = str(tool_args)[:1000]
+                if len(str(tool_args)) > 1000:
+                    args_preview += "..."
+                _LOGGER.info(
+                    "[TOOL_CALL] Main Agent calling tool: %s\nArgs: %s",
+                    tool_name, args_preview
+                )
+            except Exception as e:
+                _LOGGER.debug("ThinkingLoggerMiddleware.awrap_tool_call logging error: %s", e)
+            return await handler(request)
+    
+    # 创建思维链日志 middleware
+    thinking_middleware = ThinkingLoggerMiddleware()
     
     # 使用配置的 LLM
     # 恢复推理模式 - 禁用推理会导致工具调用生成失败
@@ -140,6 +234,7 @@ def get_article_deep_agent_graph() -> Any:
         ],
         tools=[],  # Main Agent 不直接使用工具，通过 SubAgents 执行
         system_prompt=MAIN_AGENT_PROMPT,
+        middleware=[thinking_middleware],  # 添加思维链日志 middleware
         # response_format=response_format,  # 暂时禁用，让 Agent 自由执行
     )
     

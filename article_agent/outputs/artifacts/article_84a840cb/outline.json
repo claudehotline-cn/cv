@@ -1,0 +1,75 @@
+{
+  "title": "Transformer模型：架构、技术细节与应用深度解析",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言",
+      "keywords": [
+        "Transformer模型",
+        "深度学习",
+        "技术解析"
+      ],
+      "target_chars": 284,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "历史背景与演进",
+      "keywords": [
+        "2017年",
+        "Vaswani",
+        "Transformer论文",
+        "序列建模"
+      ],
+      "target_chars": 608,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "核心架构解析",
+      "keywords": [
+        "编码器-解码器",
+        "自注意力机制",
+        "多头注意力"
+      ],
+      "target_chars": 608,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "关键技术细节",
+      "keywords": [
+        "位置编码",
+        "前馈网络",
+        "残差连接",
+        "层归一化"
+      ],
+      "target_chars": 608,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "应用案例与影响",
+      "keywords": [
+        "BERT",
+        "GPT",
+        "机器翻译",
+        "自然语言处理"
+      ],
+      "target_chars": 608,
+      "is_core": true
+    },
+    {
+      "id": "sec_6",
+      "title": "总结与展望",
+      "keywords": [
+        "Transformer影响",
+        "未来方向",
+        "技术挑战"
+      ],
+      "target_chars": 284,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}

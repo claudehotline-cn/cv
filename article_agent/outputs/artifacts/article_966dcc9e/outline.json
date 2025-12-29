@@ -1,0 +1,70 @@
+{
+  "title": "Transformer：深度学习的革命性架构与应用",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言：Transformer的诞生与意义",
+      "keywords": [
+        "Transformer",
+        "深度学习",
+        "自注意力机制",
+        "2017",
+        "Vaswani"
+      ],
+      "target_chars": 350,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "架构详解：自注意力与多头机制",
+      "keywords": [
+        "自注意力",
+        "多头注意力",
+        "位置编码",
+        "编码器",
+        "解码器"
+      ],
+      "target_chars": 550,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "应用与影响：从机器翻译到语言模型",
+      "keywords": [
+        "BERT",
+        "GPT",
+        "机器翻译",
+        "NLP",
+        "预训练模型"
+      ],
+      "target_chars": 550,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "训练优化与挑战：计算资源与性能边界",
+      "keywords": [
+        "训练数据",
+        "计算资源",
+        "优化技巧",
+        "优缺点",
+        "扩展性"
+      ],
+      "target_chars": 550,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "未来展望与总结",
+      "keywords": [
+        "Transformer",
+        "深度学习",
+        "未来方向",
+        "技术演进"
+      ],
+      "target_chars": 350,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}

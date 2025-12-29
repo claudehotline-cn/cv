@@ -1,0 +1,64 @@
+{
+  "title": "Transformer模型：技术原理、应用场景与最新进展",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言",
+      "keywords": [
+        "Transformer模型",
+        "概述",
+        "介绍"
+      ],
+      "target_chars": 356,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "技术原理",
+      "keywords": [
+        "自注意力机制",
+        "编码器-解码器",
+        "Transformer架构",
+        "位置编码"
+      ],
+      "target_chars": 763,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "应用场景",
+      "keywords": [
+        "机器翻译",
+        "文本生成",
+        "自然语言处理",
+        "序列到序列任务"
+      ],
+      "target_chars": 763,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "最新进展",
+      "keywords": [
+        "BERT",
+        "GPT",
+        "预训练模型",
+        "Transformer变体"
+      ],
+      "target_chars": 763,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "总结",
+      "keywords": [
+        "关键点",
+        "影响",
+        "未来方向"
+      ],
+      "target_chars": 356,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}

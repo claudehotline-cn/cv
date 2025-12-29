@@ -1,0 +1,71 @@
+{
+  "title": "Transformer in Deep Learning: Architecture, Applications, and Future Directions",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言与背景",
+      "keywords": [
+        "Transformer起源",
+        "2017年论文",
+        "NLP发展"
+      ],
+      "target_chars": 360,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "核心架构解析",
+      "keywords": [
+        "自注意力机制",
+        "编码器-解码器",
+        "多头注意力"
+      ],
+      "target_chars": 780,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "关键技术细节",
+      "keywords": [
+        "位置编码",
+        "残差连接",
+        "层归一化"
+      ],
+      "target_chars": 780,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "应用场景与案例",
+      "keywords": [
+        "机器翻译",
+        "BERT",
+        "GPT系列"
+      ],
+      "target_chars": 360,
+      "is_core": false
+    },
+    {
+      "id": "sec_5",
+      "title": "发展趋势与挑战",
+      "keywords": [
+        "计算资源",
+        "多模态",
+        "伦理问题"
+      ],
+      "target_chars": 360,
+      "is_core": false
+    },
+    {
+      "id": "sec_6",
+      "title": "总结",
+      "keywords": [
+        "技术影响",
+        "未来方向"
+      ],
+      "target_chars": 360,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}

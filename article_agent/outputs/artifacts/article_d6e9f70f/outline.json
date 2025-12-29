@@ -1,0 +1,61 @@
+{
+  "title": "Transformer：自注意力机制如何重塑深度学习",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言：深度学习的革命性突破",
+      "keywords": [
+        "Transformer",
+        "深度学习",
+        "自注意力机制"
+      ],
+      "target_chars": 400,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "自注意力机制：Transformer的核心引擎",
+      "keywords": [
+        "自注意力",
+        "编码器-解码器",
+        "位置编码"
+      ],
+      "target_chars": 800,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "Transformer的现实应用场景",
+      "keywords": [
+        "机器翻译",
+        "文本生成",
+        "语音识别"
+      ],
+      "target_chars": 700,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "未来趋势：从多模态到高效模型",
+      "keywords": [
+        "多模态",
+        "模型优化",
+        "效率提升"
+      ],
+      "target_chars": 700,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "总结：Transformer的深远影响",
+      "keywords": [
+        "Transformer",
+        "深度学习",
+        "未来展望"
+      ],
+      "target_chars": 400,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}

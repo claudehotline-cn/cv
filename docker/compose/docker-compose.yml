@@ -417,19 +417,21 @@ services:
       # - SILICONFLOW_API_KEY=sk-avpmyivhdeookplzzvdnpqnnaaunzhvvdismbxezwljnatqp
       # - ARTICLE_AGENT_LLM_MODEL=Qwen/Qwen3-VL-235B-A22B-Thinking
       # Ollama 配置（备用）
-      - ARTICLE_AGENT_LLM_MODEL=qwen3-vl:30b
+      - ARTICLE_AGENT_LLM_MODEL=qwen3-vl:8b
       - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # VLM 配置（图片理解仍使用 Ollama，因为 Gemini VLM 需要单独配置）
       - ARTICLE_AGENT_VLM_ENABLED=true
-      - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:30b
+      - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:8b
       # 输出目录配置
       - ARTICLE_TEMP_DIR=/data/drafts
       - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/articles
       - ARTICLE_AGENT_ARTICLES_BASE_URL=/articles
       # LangSmith 追踪配置（用于查看 Main Agent 推理过程）
-      - LANGSMITH_API_KEY=
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - LANGSMITH_TRACING_V2=true
       - LANGSMITH_PROJECT=article-agent
+      # 禁用代码热重载（避免任务执行中断）
+      - LANGGRAPH_RELOAD=false
     depends_on:
       agent-langchain:
         condition: service_started
@@ -438,7 +440,7 @@ services:
     volumes:
       - ../../logs:/logs:rw
       - ../../docs:/docs:ro
-      - ../../article_agent:/app/article_agent:rw
+      # - ../../article_agent:/app/article_agent:rw
       - ../../article_agent/outputs:/data/outputs:rw
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8130/ || exit 1"]

@@ -1,0 +1,94 @@
+{
+  "title": "Transformer：深度学习中的自注意力机制与应用",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言：Transformer的诞生背景",
+      "keywords": [
+        "Transformer",
+        "深度学习",
+        "自然语言处理"
+      ],
+      "target_chars": 200,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "核心架构：编码器-解码器设计",
+      "keywords": [
+        "编码器",
+        "解码器",
+        "多头注意力"
+      ],
+      "target_chars": 450,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "自注意力机制详解",
+      "keywords": [
+        "QKV矩阵",
+        "注意力权重",
+        "序列建模"
+      ],
+      "target_chars": 450,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "位置编码技术原理",
+      "keywords": [
+        "正弦函数",
+        "位置信息",
+        "序列顺序"
+      ],
+      "target_chars": 400,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "训练与优化方法",
+      "keywords": [
+        "交叉熵损失",
+        "优化器",
+        "梯度下降"
+      ],
+      "target_chars": 450,
+      "is_core": true
+    },
+    {
+      "id": "sec_6",
+      "title": "应用领域与实际案例",
+      "keywords": [
+        "机器翻译",
+        "文本生成",
+        "BERT模型"
+      ],
+      "target_chars": 450,
+      "is_core": true
+    },
+    {
+      "id": "sec_7",
+      "title": "优缺点与技术挑战",
+      "keywords": [
+        "计算效率",
+        "数据需求",
+        "长距离依赖"
+      ],
+      "target_chars": 400,
+      "is_core": true
+    },
+    {
+      "id": "sec_8",
+      "title": "总结：Transformer的未来影响",
+      "keywords": [
+        "深度学习",
+        "模型演进",
+        "技术趋势"
+      ],
+      "target_chars": 200,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}

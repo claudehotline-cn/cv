@@ -50,9 +50,22 @@ def log_performance(operation: str, **extra_info):
 
 
 def log_llm_response(operation: str, response, input_chars: int = 0):
-    """记录 LLM 响应的详细信息。"""
+    """记录 LLM 响应的详细信息，包括思维链。"""
+    import re
+    
     output_content = response.content if hasattr(response, 'content') else str(response)
     output_chars = len(output_content)
+    
+    # 提取思维链内容
+    # 方式1: langchain-ollama reasoning=True 时，思维内容在 additional_kwargs['reasoning_content']
+    thinking_content = ""
+    if hasattr(response, 'additional_kwargs'):
+        thinking_content = response.additional_kwargs.get('reasoning_content', '')
+    
+    # 方式2: 如果 additional_kwargs 没有，尝试从 content 中提取 <think>...</think>
+    if not thinking_content:
+        thinking_match = re.search(r'<think[^>]*>(.*?)</think>', output_content, re.DOTALL | re.IGNORECASE)
+        thinking_content = thinking_match.group(1).strip() if thinking_match else ""
     
     # 尝试获取 token 使用信息（如果可用）
     token_info = ""
@@ -71,12 +84,25 @@ def log_llm_response(operation: str, response, input_chars: int = 0):
             token_info = f"prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, total_tokens={total_tokens}"
     
     _LOGGER.info(
-        f"[LLM] {operation} input_chars={input_chars}, output_chars={output_chars}, {token_info}"
+        f"[LLM] {operation} input_chars={input_chars}, output_chars={output_chars}, thinking_chars={len(thinking_content)}, {token_info}"
     )
     
-    # 记录输出内容预览（最多 500 字符）
-    preview = output_content[:500].replace('\n', '\\n')
-    if len(output_content) > 500:
+    # 记录思维链内容（Chain of Thought）
+    if thinking_content:
+        thinking_preview = thinking_content[:2000]
+        if len(thinking_content) > 2000:
+            thinking_preview += "..."
+        _LOGGER.info(
+            f"[CHAIN_OF_THOUGHT] {operation}:\n"
+            f"--- THINKING START ---\n"
+            f"{thinking_preview}\n"
+            f"--- THINKING END ---"
+        )
+    
+    # 记录输出内容预览（移除思维链后的内容，最多 500 字符）
+    actual_content = re.sub(r'<think[^>]*>.*?</think>', '', output_content, flags=re.DOTALL | re.IGNORECASE).strip()
+    preview = actual_content[:500].replace('\n', '\\n')
+    if len(actual_content) > 500:
         preview += "..."
     _LOGGER.info(f"[LLM_OUTPUT] {operation}: {preview}")
 
@@ -318,13 +344,14 @@ def collect_all_sources_tool(
     # 记录详细输出
     log_tool_output("collect_all_sources_tool", {"overview": overview, "source_count": len(sources)})
     
-    return {
-        "article_id": article_id,  # 返回生成的 article_id
-        "sources": lightweight_sources,
+    # 只返回文件路径和摘要信息，不返回完整 sources 列表
+    result = {
+        "article_id": article_id,
+        "sources_file": sources_file,  # 告诉后续 Agent 文件位置
         "overview": overview,
         "total_text_chars": total_text_chars,
         "total_images": total_images,
-        "sources_file": sources_file,  # 告诉后续 Agent 文件位置
+        "sources_count": len(sources),
     }
     return result
 
@@ -518,7 +545,13 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
                 _LOGGER.warning(f"Failed to save outline: {e}")
             
             _LOGGER.info(f"generate_outline_tool success: {len(result.get('sections', []))} sections")
-            return result
+            # 只返回文件路径，不返回内存对象
+            return {
+                "article_id": article_id,
+                "outline_path": outline_file,
+                "sections_count": len(result.get("sections", [])),
+                "title": result.get("title", ""),
+            }
         else:
             _LOGGER.warning(f"generate_outline_tool: no JSON found in response")
             return {
@@ -738,7 +771,7 @@ def research_all_sections_tool(
         return result
     
     sections = outline.get("sections", [])
-    max_workers = min(5, len(sections))  # RTX 5090D (32GB) 可支撑并发数 4
+    max_workers = min(2, len(sections))  # 与 OLLAMA_NUM_PARALLEL=2 对应
     
     _LOGGER.info(f"[Parallel] Starting parallel research with max_workers={max_workers} for {len(sections)} sections")
     
@@ -860,6 +893,7 @@ def write_section_tool(
     target_chars: int,
     notes: str,
     is_core: bool = False,
+    review_feedback: str = "",
 ) -> Dict[str, Any]:
     """撰写指定章节内容。
     
@@ -869,6 +903,7 @@ def write_section_tool(
         target_chars: 目标字数
         notes: 资料笔记
         is_core: 是否核心章节
+        review_feedback: 审阅反馈（可选，用于修改稿件）
         
     Returns:
         SectionDraft 字典
@@ -880,12 +915,22 @@ def write_section_tool(
     
     min_chars = 800 if is_core else 400
     
+    # 如果有审阅反馈，添加到 prompt 中
+    review_section = ""
+    if review_feedback:
+        review_section = f"""
+【审阅反馈 - 需要修正】
+{review_feedback}
+请根据以上审阅反馈修改章节内容，确保解决所有问题。
+"""
+        _LOGGER.info(f"write_section_tool has review feedback for section {section_id}")
+    
     system_prompt = f"""
 你是 Writer，负责撰写文章的一个章节。
 
 【任务】
 根据资料笔记，撰写章节 "{section_title}" 的内容。
-
+{review_section}
 【要求】
 1. 字数目标：{target_chars} 字符（最少 {min_chars} 字符）
 2. 使用 Markdown 格式，以 "## {section_title}" 开头
@@ -1039,6 +1084,18 @@ def write_all_sections_tool(
             "error": "Research notes file not found or empty. Please run Researcher first."
         }
     
+    # 加载审阅反馈（如果存在）- 用于修改稿件
+    review_feedback = {}
+    if article_id:
+        review_file = os.path.join(base_dir, f"article_{article_id}", "review.json")
+        if os.path.exists(review_file):
+            try:
+                with open(review_file, "r", encoding="utf-8") as f:
+                    review_feedback = json.load(f)
+                _LOGGER.info(f"Loaded review feedback from: {review_file}, approved={review_feedback.get('approved')}")
+            except Exception as e:
+                _LOGGER.warning(f"Failed to load review feedback: {e}")
+    
     # 使用加载的笔记
     section_notes = loaded_notes
     
@@ -1060,6 +1117,18 @@ def write_all_sections_tool(
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
         notes = notes_map.get(section_id, "")
+        
+        # 查找该章节的审阅反馈
+        section_review = ""
+        if review_feedback and review_feedback.get("section_feedback"):
+            for fb in review_feedback.get("section_feedback", []):
+                if fb.get("section_id") == section_id:
+                    issues = fb.get("issues", [])
+                    suggestions = fb.get("suggestions", [])
+                    section_review = f"审阅反馈 - 问题: {', '.join(issues) if issues else '无'}; 建议: {', '.join(suggestions) if suggestions else '无'}"
+                    _LOGGER.info(f"[Parallel] Section {section_id} has review feedback: {section_review[:100]}")
+                    break
+        
         _LOGGER.info(f"[Parallel] Starting writing for section: {section_id}")
         
         result = write_section_tool.invoke({
@@ -1068,12 +1137,13 @@ def write_all_sections_tool(
             "target_chars": sec.get("target_chars", 500),
             "notes": notes,
             "is_core": sec.get("is_core", False),
+            "review_feedback": section_review,  # 传递审阅反馈
         })
         result["_order"] = idx  # 保留顺序信息
         _LOGGER.info(f"[Parallel] Completed writing for section: {section_id}")
         return result
     
-    max_workers = min(5, len(sections))  # RTX 5090D (32GB) 可支撑并发数 4
+    max_workers = min(2, len(sections))  # 与 OLLAMA_NUM_PARALLEL=2 对应
     
     _LOGGER.info(f"[Parallel] Starting parallel writing with max_workers={max_workers} for {len(sections)} sections")
     
@@ -1338,6 +1408,22 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
             if "approved" not in result:
                 result["approved"] = result.get("overall_quality", 0) >= 7
             _LOGGER.info(f"review_draft_tool: quality={result.get('overall_quality')}, approved={result.get('approved')}")
+            
+            # 保存审阅结果到文件，供 Writer 读取
+            try:
+                from .config import get_settings
+                article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+                if article_id:
+                    review_dir = os.path.join(get_settings().artifacts_dir, f"article_{article_id}")
+                    os.makedirs(review_dir, exist_ok=True)
+                    review_file = os.path.join(review_dir, "review.json")
+                    with open(review_file, "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
+                    _LOGGER.info(f"Review saved to: {review_file}")
+                    result["review_file"] = review_file
+            except Exception as e:
+                _LOGGER.warning(f"Failed to save review to file: {e}")
+            
             return result
         else:
             # 默认通过
@@ -1387,12 +1473,28 @@ def match_images_tool(
     
     _LOGGER.info(f"match_images_tool called with {len(available_images)} images")
     
+    # 如果 drafts 为空，尝试自动发现
+    article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+    _LOGGER.info(f"match_images_tool: article_id={article_id}, drafts count={len(drafts) if drafts else 0}")
+    
+    if not drafts and article_id:
+        from .config import get_settings
+        import glob
+        drafts_dir = os.path.join(get_settings().drafts_dir, f"article_{article_id}")
+        _LOGGER.info(f"match_images_tool: Auto-discovering in {drafts_dir}, exists={os.path.exists(drafts_dir)}")
+        if os.path.exists(drafts_dir):
+            draft_files_found = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+            drafts = [{"file_path": f} for f in draft_files_found]
+            _LOGGER.info(f"Auto-discovered {len(drafts)} drafts in {drafts_dir}: {draft_files_found[:3]}")
+        else:
+            _LOGGER.warning(f"Drafts directory not found: {drafts_dir}")
+    
     # 从 drafts 参数中提取文件路径
     draft_files = [d.get("file_path") or d.get("path", "") for d in drafts if d]
     
     # 从文件读取所有草稿内容
     sections_content = []
-    _LOGGER.info(f"match_images_tool called with {len(available_images)} images, {len(draft_files)} files")
+    _LOGGER.info(f"match_images_tool processing {len(draft_files)} draft files: {draft_files[:3]}")
     
     # 1. 读取所有草稿内容
     full_content = ""
@@ -1561,17 +1663,43 @@ def assemble_article_tool(
     
     _LOGGER.info(f"assemble_article_tool called for: {article_id}, path: {final_markdown_path}")
     
+    # 初始化变量
     final_markdown = ""
-    if final_markdown_path and os.path.exists(final_markdown_path):
-        try:
-            with open(final_markdown_path, "r", encoding="utf-8") as f:
-                final_markdown = f.read()
-        except Exception as e:
-            _LOGGER.error(f"Failed to read final markdown from {final_markdown_path}: {e}")
-            return {"error": f"Failed to read file: {e}"}
-    else:
-        _LOGGER.error(f"Final markdown file not found: {final_markdown_path}")
-        return {"error": "Final markdown file not found"}
+    
+    # 自动发现逻辑：如果没有传入路径，尝试自动查找
+    if not final_markdown_path or not os.path.exists(final_markdown_path):
+        from .config import get_settings
+        # 优先查找 draft_with_images.md
+        drafts_dir = os.path.join(get_settings().drafts_dir, f"article_{article_id}")
+        candidate_path = os.path.join(drafts_dir, "draft_with_images.md")
+        if os.path.exists(candidate_path):
+            final_markdown_path = candidate_path
+            _LOGGER.info(f"Auto-discovered final markdown: {final_markdown_path}")
+        else:
+            # 如果没有 draft_with_images.md，尝试合并所有 section_*.md
+            import glob
+            section_files = sorted(glob.glob(os.path.join(drafts_dir, "section_*.md")))
+            if section_files:
+                _LOGGER.info(f"No draft_with_images.md found, merging {len(section_files)} section files")
+                merged_content = ""
+                for sf in section_files:
+                    with open(sf, "r", encoding="utf-8") as f:
+                        merged_content += f.read() + "\n\n"
+                # 直接使用合并内容，跳过文件读取
+                final_markdown = merged_content
+    
+    if not final_markdown:
+        if final_markdown_path and os.path.exists(final_markdown_path):
+            try:
+                with open(final_markdown_path, "r", encoding="utf-8") as f:
+                    final_markdown = f.read()
+            except Exception as e:
+                _LOGGER.error(f"Failed to read final markdown from {final_markdown_path}: {e}")
+                return {"error": f"Failed to read file: {e}"}
+        else:
+            _LOGGER.error(f"Final markdown file not found: {final_markdown_path}")
+            return {"error": "Final markdown file not found"}
+
     
     # 清理 Markdown
     cleaned_md = final_markdown
@@ -1593,7 +1721,7 @@ def assemble_article_tool(
             "article_id": article_id,
             "md_path": result.get("md_path", ""),
             "md_url": result.get("md_url", ""),
-            "final_markdown": cleaned_md, # Restore content for UI display
+            "final_content": cleaned_md, # 返回最终内容供前端展示 (Return final content for frontend display)
         }
     except Exception as exc:
         _LOGGER.error(f"assemble_article_tool failed: {exc}")

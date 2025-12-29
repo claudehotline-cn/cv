@@ -432,9 +432,16 @@ def planner_agent(instruction: str, rough_sources_overview: Any) -> OutlineOutpu
         timeout_sec=600.0,  # VLM 模型需要更长超时时间
     )
     
-    # 记录思维过程到日志（后续可以通过 adispatch_custom_event 发送给前端）
+    # 记录思维过程到日志
     if thinking:
-        _LOGGER.info("planner_agent.thinking len=%d preview=%s", len(thinking), thinking[:200])
+        thinking_preview = thinking[:2000]
+        if len(thinking) > 2000:
+            thinking_preview += "..."
+        _LOGGER.info(
+            "[CHAIN_OF_THOUGHT] planner_agent thinking_len=%d:\n"
+            "--- THINKING START ---\n%s\n--- THINKING END ---",
+            len(thinking), thinking_preview
+        )
     
     outline = result if isinstance(result, OutlineOutput) else OutlineOutput.model_validate(result)
     normalized, _id_mapping = normalize_outline(outline)

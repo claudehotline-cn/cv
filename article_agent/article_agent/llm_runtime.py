@@ -320,7 +320,16 @@ async def astream_llm_with_thinking(
                         content_buffer += full_text
                         break
         
-        _LOGGER.debug(
+        # 记录思维链内容到日志
+        if thinking_buffer:
+            _LOGGER.info(
+                "astream_llm_with_thinking.thinking task=%s thinking_len=%d\n--- CHAIN OF THOUGHT ---\n%s\n--- END CHAIN OF THOUGHT ---",
+                task_name,
+                len(thinking_buffer),
+                thinking_buffer[:3000] + ("..." if len(thinking_buffer) > 3000 else ""),
+            )
+        
+        _LOGGER.info(
             "astream_llm_with_thinking.done task=%s thinking_len=%d content_len=%d",
             task_name,
             len(thinking_buffer),
