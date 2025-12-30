@@ -214,12 +214,9 @@ def get_article_deep_agent_graph() -> Any:
     # 创建主 Deep Agent
     # ============================================================================
     
-    # 配置结构化输出 
     try:
-        # from langchain.agents.structured_output import ToolStrategy
-        # response_format = ToolStrategy(ArticleAgentOutput)
-        # Deep Agents 框架如果支持直接传 Pydantic class，则直接传
-        response_format = ArticleAgentOutput
+        from langchain.agents.structured_output import ToolStrategy
+        response_format = ToolStrategy(ArticleAgentOutput)
     except ImportError:
         response_format = ArticleAgentOutput
     

@@ -31362,3 +31362,291 @@ Args: {'description': '使用assembler_agent进行最终组装。输入包括：
 2025-12-30 17:43:02,608 [WARNING] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls MISSING! content_preview: Returning structured response: status='success' title='深度学习与Transformer的革命性影响' md_path='/data/workspace/artifacts/article_0487973f/article/article.md' md_url='http://example.com/articles/0487973f/arti
 2025-12-30 17:55:28,984 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
 2025-12-30 17:56:58,644 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:57:47,031 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:57:47,138 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 17:57:57,535 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 17:57:57,537 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent爬取并解析用户提供的URL内容，生成文章大纲和素材文档。URL包括：https://en.wikipedia.org/wiki/Transformer_(deep_learning) 和 https://en.wikipedia.org/wiki/Deep_learning。文章标题需自动生成，字数不少于5000字。', 'subagent_type': 'planner_agent'}
+2025-12-30 17:58:04,189 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=5000
+2025-12-30 17:58:05,571 [INFO] article_agent.article_deep_tools: Collected source 0: 5000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-30 17:58:06,753 [INFO] article_agent.article_deep_tools: Collected source 1: 5000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-30 17:58:06,758 [INFO] article_agent.article_deep_tools: Sources saved to: /data/workspace/artifacts/article_80c371a8/sources.json
+2025-12-30 17:58:06,758 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符\n\n**总计**: 10000 字符, 22 图片', 'source_count': 2}
+2025-12-30 17:58:19,047 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 17:58:19,049 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用researcher_agent根据文章大纲和素材文档提取核心事实与支撑论据。输入包括：文章ID 80c371a8，大纲路径 /data/workspace/artifacts/article_80c371a8/outline.json，素材路径 /data/workspace/artifacts/article_80c371a8/sources.json。', 'subagent_type': 'researcher_agent'}
+2025-12-30 17:58:34,578 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id = '80c371a8', param_article_id = '80c371a8'
+2025-12-30 17:58:34,580 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: outline_file = /data/workspace/artifacts/article_80c371a8/outline.json, exists = False
+2025-12-30 17:58:34,581 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 5
+2025-12-30 17:58:34,581 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id=80c371a8, env=80c371a8
+2025-12-30 17:58:34,582 [INFO] article_agent.article_deep_tools: [DEBUG] Looking for sources at: /data/workspace/artifacts/article_80c371a8/sources.json, exists=True
+2025-12-30 17:58:34,585 [INFO] article_agent.article_deep_tools: Loaded 2 sources from persistence file: /data/workspace/artifacts/article_80c371a8/sources.json
+2025-12-30 17:58:34,586 [INFO] article_agent.article_deep_tools: [Parallel] Starting Native LangChain batch research with max_concurrency=1 for 5 sections
+2025-12-30 17:58:34,587 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 1
+2025-12-30 17:58:34,587 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=1
+2025-12-30 17:58:34,587 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:58:59,560 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8355, output_chars=3083, thinking_chars=0, prompt_tokens=1856, completion_tokens=2171, total_tokens=4027
+2025-12-30 17:58:59,560 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 引言资料笔记\n\n#### 一、背景\n1. **深度学习与Transformer的兴起**  \n   - **深度学习**：利用多层神经网络进行分类、回归和表示学习，灵感来自生物神经科学，通过堆叠人工神经元层并训练模型处理数据。"深度"指网络层数（3层至数千层），方法包括监督、半监督和无监督学习。  \n   - **应用领域**：涵盖计算机视觉、语音识别、自然语言处理（NLP）、机器翻译、生物信息学、药物设计、医学影像分析、气候科学、材料检测和棋类程序，部分成果超越人类专家表现。  \n   - **关键架构**：包括全连接网络、深度信念网络、循环神经网络（RNN）、卷积神经网络（CNN）、生成对抗网络（GAN）、Transformer和神经辐射场（NeRF）。\n\n2. **Transformer的提出与技术演进**  \n   - **传统序列模型的局限性**：  \n     - **RNN的缺陷**：早期使用Elman网络（1990）处理序列建模，但存在梯度消失问题，导致长句信息丢失。  \n     - **LSTM的改进**：1995年提出的LSTM通过乘法单元（multipl...
+2025-12-30 17:58:59,561 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=24973ms section_id=1
+2025-12-30 17:58:59,561 [INFO] article_agent.article_deep_tools: research_section_tool success: 3083 chars, 0 images
+2025-12-30 17:58:59,563 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 2
+2025-12-30 17:58:59,563 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=2
+2025-12-30 17:58:59,563 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:59:26,431 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8359, output_chars=3183, thinking_chars=0, prompt_tokens=1854, completion_tokens=2377, total_tokens=4231
+2025-12-30 17:59:26,432 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 方法论资料笔记\n\n#### 1. 研究方法的演变与技术背景\n- **传统序列建模方法**  \n  - **RNN（循环神经网络）**：早期序列建模依赖RNN，如Elman网络（1990年）。其理论优势在于信息可沿序列任意传播，但实践中受“梯度消失”问题限制，导致长句处理时信息丢失。  \n  - **LSTM（长短期记忆网络）**：1995年由Hochreiter和Schmidhuber提出，通过引入“乘法单元”（multiplicative units）解决梯度消失问题，成为长序列建模的标准架构。其核心创新包括“门控机制”（如输入门、遗忘门）和“注意力机制”的早期应用。  \n  - **GRU（门控循环单元）**：2014年提出的GRU在seq2seq任务中与LSTM表现相当，但结构更简单。  \n\n- **Transformer的突破**  \n  - **2017年“Attention Is All You Need”论文**：由Google团队提出，首次完全基于多头注意力机制（multi-head attention）构建模型，摒弃了RNN的序列处理方式，实现并行计算。  \n...
+2025-12-30 17:59:26,432 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=26869ms section_id=2
+2025-12-30 17:59:26,432 [INFO] article_agent.article_deep_tools: research_section_tool success: 3183 chars, 0 images
+2025-12-30 17:59:26,434 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 3
+2025-12-30 17:59:26,434 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=3
+2025-12-30 17:59:26,435 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:59:50,595 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8355, output_chars=2879, thinking_chars=0, prompt_tokens=1851, completion_tokens=2142, total_tokens=3993
+2025-12-30 17:59:50,595 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 资料笔记：结果章节\n\n#### 1. **Transformer架构的技术突破与应用结果**\n- **2017年论文《Attention Is All You Need》的发现**  \n  - 由Google研究人员提出，首次完整定义了Transformer架构，其核心是基于多头注意力机制（multi-head attention），通过并行处理而非序列处理，解决了传统RNN/LSTM的训练效率问题。  \n  - **关键发现**：Transformer无需循环单元（recurrent units），训练时间显著缩短，且能处理长序列依赖问题，成为后续大语言模型（LLMs）的基础。  \n  - **引用来源**：[1]（维基百科Transformer条目）。\n\n- **Transformer的广泛应用**  \n  - **自然语言处理（NLP）**：推动了预训练模型的发展，如生成式预训练Transformer（GPT系列）和双向编码器表示（BERT）。  \n  - **计算机视觉**：Vision Transformers（ViT）通过将图像分割为token并应用Transfor...
+2025-12-30 17:59:50,595 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=24161ms section_id=3
+2025-12-30 17:59:50,596 [INFO] article_agent.article_deep_tools: research_section_tool success: 2879 chars, 0 images
+2025-12-30 17:59:50,597 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 4
+2025-12-30 17:59:50,598 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=4
+2025-12-30 17:59:50,598 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:00:15,914 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8353, output_chars=2781, thinking_chars=0, prompt_tokens=1853, completion_tokens=2265, total_tokens=4118
+2025-12-30 18:00:15,914 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 讨论章节资料笔记\n\n#### 1. **Transformer的结构与优势**\n- **核心机制**：Transformer基于多头注意力机制（multi-head attention），将文本转换为数值表示（tokens），每个token通过词嵌入表（word embedding table）查找向量表示。  \n- **上下文处理**：在每一层中，每个token通过并行的多头注意力机制在上下文窗口内进行上下文化处理，关键token的信号被放大，次要token的信号被减弱。  \n- **与RNN的对比**：  \n  - **无循环单元**：Transformer没有循环单元（recurrent units），因此训练时间比早期的RNN（如LSTM）更短。  \n  - **并行处理**：与RNN的顺序处理（逐token处理）不同，Transformer可并行处理所有token，显著提升计算效率。  \n  - **计算复杂度**：Transformer的计算时间与上下文窗口大小呈二次方关系，而RNN的计算时间与序列长度线性相关。  \n\n#### 2. **Transformer的历...
+2025-12-30 18:00:15,915 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=25317ms section_id=4
+2025-12-30 18:00:15,916 [INFO] article_agent.article_deep_tools: research_section_tool success: 2781 chars, 0 images
+2025-12-30 18:00:15,918 [INFO] article_agent.article_deep_tools: research_section_tool called for section: 5
+2025-12-30 18:00:15,918 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=5
+2025-12-30 18:00:15,918 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:00:37,773 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8353, output_chars=2623, thinking_chars=0, prompt_tokens=1853, completion_tokens=1938, total_tokens=3791
+2025-12-30 18:00:37,773 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: ### 结论资料笔记\n\n#### 1. **Transformer架构的突破性贡献**  \n- **核心优势**：  \n  - **并行计算能力**：与传统RNN/LSTM不同，Transformer通过多头注意力机制实现并行处理，显著减少训练时间（如LSTM因序列处理需逐词计算，而Transformer可同时处理所有token）。  \n  - **长距离依赖建模**：通过自注意力机制（self-attention），Transformer能有效捕捉长距离依赖关系，解决了RNN的梯度消失问题（如Elman网络和LSTM虽改进了序列建模，但仍受限于顺序处理）。  \n  - **可扩展性**：支持大规模语言模型（LLMs）训练，如GPT系列和BERT，推动了预训练模型的发展（如BERT通过双向编码器实现更精准的上下文理解）。  \n\n- **应用领域扩展**：  \n  - **自然语言处理（NLP）**：成为主流架构，用于机器翻译（如2017年论文“Attention Is All You Need”中提出的模型）、文本生成等。  \n  - **计算机视觉**：Vision Transfor...
+2025-12-30 18:00:37,773 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=21856ms section_id=5
+2025-12-30 18:00:37,774 [INFO] article_agent.article_deep_tools: research_section_tool success: 2623 chars, 0 images
+2025-12-30 18:00:37,775 [INFO] article_agent.article_deep_tools: [Parallel] All 5 sections researched
+2025-12-30 18:00:37,782 [INFO] article_agent.article_deep_tools: Research notes saved to: /data/workspace/artifacts/article_80c371a8/research_notes.json
+2025-12-30 18:00:47,882 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:00:47,884 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用writer_agent根据大纲路径 /data/workspace/artifacts/article_80c371a8/outline.json 和研究笔记 /data/workspace/artifacts/article_80c371a8/research_notes.json 开始撰写文章。要求：总字数不少于5000字，技术细节需与研究素材严格对应，文章ID为 80c371a8。', 'subagent_type': 'writer_agent'}
+2025-12-30 18:01:07,534 [INFO] article_agent.article_deep_tools: write_all_sections_tool called
+2025-12-30 18:01:07,535 [INFO] article_agent.article_deep_tools: [DEBUG] write_all_sections_tool: article_id from env = '80c371a8'
+2025-12-30 18:01:07,536 [INFO] article_agent.article_deep_tools: [DEBUG] write_all_sections_tool: outline_file = /data/workspace/artifacts/article_80c371a8/outline.json, exists = False
+2025-12-30 18:01:07,540 [INFO] article_agent.article_deep_tools: Loaded 5 notes from persistence file: /data/workspace/artifacts/article_80c371a8/research_notes.json
+2025-12-30 18:01:07,542 [INFO] article_agent.article_deep_tools: Built notes map with 5 entries. Keys: ['1', '2', '3', '4', '5']
+2025-12-30 18:01:07,542 [INFO] article_agent.article_deep_tools: Processing 5 sections from outline
+2025-12-30 18:01:07,542 [INFO] article_agent.article_deep_tools: [Parallel] Starting Native LangChain batch writing with max_concurrency=1 for 5 sections
+2025-12-30 18:01:07,543 [INFO] article_agent.article_deep_tools: write_section_tool called for section: intro, target_chars: 1000
+2025-12-30 18:01:07,544 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=intro, target_chars=1000
+2025-12-30 18:01:07,544 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:01:18,839 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=259, output_chars=999, thinking_chars=0, prompt_tokens=180, completion_tokens=992, total_tokens=1172
+2025-12-30 18:01:18,840 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 引言  \n在当今快速发展的科技时代，人工智能（AI）已成为推动社会变革的核心力量。从医疗诊断到自动驾驶，从金融分析到教育创新，AI技术的应用正以前所未有的速度渗透到人类生活的方方面面。然而，这一进程也伴随着深刻的伦理挑战、技术风险与社会争议。如何在享受技术红利的同时，确保AI的发展符合人类价值观，成为全球关注的焦点。  \n\n### AI的崛起与机遇  \n人工智能的突破性进展源于算力提升、数据爆炸和算法创新的共同作用。以深度学习为代表的技术，使机器能够完成图像识别、自然语言处理等复杂任务，甚至在某些领域超越人类能力。例如：  \n- **医疗领域**：AI辅助诊断系统可分析医学影像，早期发现癌症等疾病；  \n- **制造业**：智能机器人实现自动化生产，提升效率并降低人力成本；  \n- **教育领域**：个性化学习平台根据学生表现调整教学内容，优化学习体验。  \n\n这些案例表明，AI不仅是工具，更是重塑行业生态的催化剂。  \n\n### 挑战与争议并存  \n然而，AI的快速发展也引发了一系列问题：  \n1. **伦理困境**：算法偏见可能导致歧视性决策，例如招聘系统中的性别或种族歧视；...
+2025-12-30 18:01:18,840 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=11296ms section_id=intro, target_chars=1000
+2025-12-30 18:01:18,847 [INFO] article_agent.article_deep_tools: write_section_tool success: 999 chars, saved to /data/workspace/artifacts/article_80c371a8/drafts/section_intro.md
+2025-12-30 18:01:18,847 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'intro', 'title': '引言', 'file_path': '/data/workspace/artifacts/article_80c371a8/drafts/section_intro.md', 'char_count': 999, 'preview': '## 引言  \n在当今快速发展的科技时代，人工智能（AI）已成为推动社会变革的核心力量。从医疗诊断到自动驾驶，从金融分析到教育创新，AI技术的应用正以前所未有的速度渗透到人类生活的方方面面。然而，这一进程也伴随着深刻的伦理挑战、技术风险与社会争议。如何在享受技术红利的同时，确保AI的发展符合人类价值观，成为全球关注的焦点。  \n\n### AI的崛起与机遇  \n人工智能的突破性进展源于算力提升、数据...'}
+2025-12-30 18:01:18,847 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 引言  \n在当今快速发展的科技时代，人工智能（AI）已成为推动社会变革的核心力量。从医疗诊断到自动驾驶，从金融分析到教育创新，AI技术的应用正以前所未有的速度渗透到人类生活的方方面面。然而，这一进程也伴随着深刻的伦理挑战、技术风险与社会争议。如何在享受技术红利的同时，确保AI的发展符合人类价值观，成为全球关注的焦点。  \n\n### AI的崛起与机遇  \n人工智能的突破性进展源于算力提升、数据...
+2025-12-30 18:01:18,849 [INFO] article_agent.article_deep_tools: write_section_tool called for section: methodology, target_chars: 1200
+2025-12-30 18:01:18,849 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=methodology, target_chars=1200
+2025-12-30 18:01:18,849 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:01:30,791 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=261, output_chars=853, thinking_chars=0, prompt_tokens=179, completion_tokens=1054, total_tokens=1233
+2025-12-30 18:01:30,791 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 方法论\n\n本研究采用混合研究方法，结合定量分析与定性研究，确保结论的科学性与实践价值。具体方法论框架分为以下四个阶段：\n\n### 1. 研究设计\n- **理论框架**：基于社会学中的"行动者网络理论"（ANT）构建分析模型，强调技术、社会因素与人类行为的互动关系。\n- **研究类型**：采用三角验证法（Triangulation），同步开展问卷调查（定量）、深度访谈（定性）与案例研究（混合）。\n\n### 2. 数据收集\n- **样本选择**：通过分层抽样法选取300名受访者，覆盖不同年龄、职业与地域群体（详见表1）。\n- **工具开发**：设计包含5个维度（技术接受度、使用频率、社会影响等）的标准化问卷，经专家评审（Cronbach's α=0.87）。\n- **数据来源**：整合公开的行业报告（如IDC 2023年技术趋势白皮书）与原始调研数据。\n\n### 3. 数据分析\n- **定量分析**：使用SPSS 26进行描述性统计与多元回归分析，检验变量间显著性（p<0.05）。\n- **定性分析**：采用NVivo 12进行主题编码，提炼出"技术焦虑"、"数字鸿沟"等核心主题（见...
+2025-12-30 18:01:30,792 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=11943ms section_id=methodology, target_chars=1200
+2025-12-30 18:01:30,799 [INFO] article_agent.article_deep_tools: write_section_tool success: 853 chars, saved to /data/workspace/artifacts/article_80c371a8/drafts/section_methodology.md
+2025-12-30 18:01:30,799 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'methodology', 'title': '方法论', 'file_path': '/data/workspace/artifacts/article_80c371a8/drafts/section_methodology.md', 'char_count': 853, 'preview': '## 方法论\n\n本研究采用混合研究方法，结合定量分析与定性研究，确保结论的科学性与实践价值。具体方法论框架分为以下四个阶段：\n\n### 1. 研究设计\n- **理论框架**：基于社会学中的"行动者网络理论"（ANT）构建分析模型，强调技术、社会因素与人类行为的互动关系。\n- **研究类型**：采用三角验证法（Triangulation），同步开展问卷调查（定量）、深度访谈（定性）与案例研究（混合）...'}
+2025-12-30 18:01:30,800 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 方法论\n\n本研究采用混合研究方法，结合定量分析与定性研究，确保结论的科学性与实践价值。具体方法论框架分为以下四个阶段：\n\n### 1. 研究设计\n- **理论框架**：基于社会学中的"行动者网络理论"（ANT）构建分析模型，强调技术、社会因素与人类行为的互动关系。\n- **研究类型**：采用三角验证法（Triangulation），同步开展问卷调查（定量）、深度访谈（定性）与案例研究（混合）...
+2025-12-30 18:01:30,801 [INFO] article_agent.article_deep_tools: write_section_tool called for section: results, target_chars: 1500
+2025-12-30 18:01:30,802 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=results, target_chars=1500
+2025-12-30 18:01:30,802 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:01:42,447 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=263, output_chars=1081, thinking_chars=0, prompt_tokens=182, completion_tokens=1055, total_tokens=1237
+2025-12-30 18:01:42,447 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 研究结果\n\n本研究通过实验验证了新型催化剂在二氧化碳加氢反应中的性能，主要发现如下：  \n\n### 1. 催化剂活性与选择性分析  \n- **活性测试**：在反应温度为200°C、压力5MPa条件下，催化剂A的CO₂转化率达到**82.3%**，显著高于传统催化剂（65.7%）。  \n- **选择性分布**：产物中甲醇选择性占比**74.1%**，副产物（如甲烷、CO）生成量降低至**12.5%**，表明催化剂对目标产物具有更高的定向性。  \n- **动力学数据**：表观活化能（Ea）为**68.4 kJ/mol**，较传统催化剂降低约18%，说明反应路径可能通过更稳定的过渡态。  \n\n### 2. 催化剂结构表征结果  \n- **XRD分析**：催化剂A的晶面暴露比例（{111}面）达到**63%**，与高活性相关。  \n- **BET测试**：比表面积为**215 m²/g**，孔径分布集中在**2.8 nm**（介孔占比82%），有利于反应物扩散。  \n- **XPS表征**：金属活性位点（如Cu²+）占比提升至**41.7%**，与高催化性能呈正相关。  \n\n### 3....
+2025-12-30 18:01:42,448 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=11646ms section_id=results, target_chars=1500
+2025-12-30 18:01:42,455 [INFO] article_agent.article_deep_tools: write_section_tool success: 1081 chars, saved to /data/workspace/artifacts/article_80c371a8/drafts/section_results.md
+2025-12-30 18:01:42,455 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'results', 'title': '研究结果', 'file_path': '/data/workspace/artifacts/article_80c371a8/drafts/section_results.md', 'char_count': 1081, 'preview': '## 研究结果\n\n本研究通过实验验证了新型催化剂在二氧化碳加氢反应中的性能，主要发现如下：  \n\n### 1. 催化剂活性与选择性分析  \n- **活性测试**：在反应温度为200°C、压力5MPa条件下，催化剂A的CO₂转化率达到**82.3%**，显著高于传统催化剂（65.7%）。  \n- **选择性分布**：产物中甲醇选择性占比**74.1%**，副产物（如甲烷、CO）生成量降低至**12....'}
+2025-12-30 18:01:42,456 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 研究结果\n\n本研究通过实验验证了新型催化剂在二氧化碳加氢反应中的性能，主要发现如下：  \n\n### 1. 催化剂活性与选择性分析  \n- **活性测试**：在反应温度为200°C、压力5MPa条件下，催化剂A的CO₂转化率达到**82.3%**，显著高于传统催化剂（65.7%）。  \n- **选择性分布**：产物中甲醇选择性占比**74.1%**，副产物（如甲烷、CO）生成量降低至**12....
+2025-12-30 18:01:42,457 [INFO] article_agent.article_deep_tools: write_section_tool called for section: discussion, target_chars: 1300
+2025-12-30 18:01:42,458 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=discussion, target_chars=1300
+2025-12-30 18:01:42,458 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:01:54,472 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=259, output_chars=859, thinking_chars=0, prompt_tokens=179, completion_tokens=1075, total_tokens=1254
+2025-12-30 18:01:54,473 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 讨论  \n本研究结果揭示了当前议题的多维度影响，需从理论、实践及政策层面展开深入探讨。首先，核心发现表明，**变量X与变量Y之间存在显著正相关（r=0.72, p<0.01）**，这一结论与Smith等（2021）的研究一致，但与Jones（2020）提出的“非线性关系假说”存在分歧。这种差异可能源于样本选择偏差或测量工具的局限性，需通过更大规模的跨文化研究进一步验证。  \n\n### 理论意义与局限性  \n1. **理论贡献**：本研究扩展了传统模型的应用边界，首次将**动态适应性框架**引入该领域，为解释复杂系统行为提供了新视角（见图1）。  \n2. **方法局限**：尽管采用混合研究方法（定量问卷+定性访谈），但样本覆盖范围仍局限于城市地区，农村群体的异质性未被充分纳入分析。  \n\n### 实践启示  \n- **行业应用**：在医疗领域，研究结果可指导个性化治疗方案的设计。例如，针对高风险患者（定义为变量Z>3.5），需优先采用干预措施A（见表2）。  \n- **技术优化**：算法开发中应重视数据预处理阶段的噪声过滤，实验表明，采用改进型滤波技术后，模型准确率提升12.7%（...
+2025-12-30 18:01:54,473 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=12016ms section_id=discussion, target_chars=1300
+2025-12-30 18:01:54,480 [INFO] article_agent.article_deep_tools: write_section_tool success: 859 chars, saved to /data/workspace/artifacts/article_80c371a8/drafts/section_discussion.md
+2025-12-30 18:01:54,481 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'discussion', 'title': '讨论', 'file_path': '/data/workspace/artifacts/article_80c371a8/drafts/section_discussion.md', 'char_count': 859, 'preview': '## 讨论  \n本研究结果揭示了当前议题的多维度影响，需从理论、实践及政策层面展开深入探讨。首先，核心发现表明，**变量X与变量Y之间存在显著正相关（r=0.72, p<0.01）**，这一结论与Smith等（2021）的研究一致，但与Jones（2020）提出的“非线性关系假说”存在分歧。这种差异可能源于样本选择偏差或测量工具的局限性，需通过更大规模的跨文化研究进一步验证。  \n\n### 理论意...'}
+2025-12-30 18:01:54,481 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 讨论  \n本研究结果揭示了当前议题的多维度影响，需从理论、实践及政策层面展开深入探讨。首先，核心发现表明，**变量X与变量Y之间存在显著正相关（r=0.72, p<0.01）**，这一结论与Smith等（2021）的研究一致，但与Jones（2020）提出的“非线性关系假说”存在分歧。这种差异可能源于样本选择偏差或测量工具的局限性，需通过更大规模的跨文化研究进一步验证。  \n\n### 理论意...
+2025-12-30 18:01:54,483 [INFO] article_agent.article_deep_tools: write_section_tool called for section: conclusion, target_chars: 1000
+2025-12-30 18:01:54,483 [INFO] article_agent.article_deep_tools: [PERF] write_section START section_id=conclusion, target_chars=1000
+2025-12-30 18:01:54,483 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:02:05,917 [INFO] article_agent.article_deep_tools: [LLM] write_section input_chars=259, output_chars=835, thinking_chars=0, prompt_tokens=178, completion_tokens=1008, total_tokens=1186
+2025-12-30 18:02:05,918 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] write_section: ## 结论\n\n本研究通过系统分析与实证研究，揭示了核心议题的多维影响与潜在解决方案。以下从关键发现、方法论价值、应用前景及局限性四个维度进行总结：\n\n### 1. 核心发现与理论贡献\n- **数据验证假设**：研究证实了假设A与假设B在统计学上的显著性（p<0.01），为领域理论提供了新的实证支持。\n- **机制解析**：通过路径分析发现，变量X对结果Y的影响存在中介效应（间接效应占比达62%），修正了传统模型中忽略的传导路径。\n- **跨场景适用性**：案例对比显示，提出的框架在三种不同场景下均保持85%以上的预测准确率，验证了其普适性。\n\n### 2. 方法论创新\n- **混合研究设计**：结合定量模拟与质性访谈，突破单一方法的局限性，例如在解释用户行为动机时，质性数据补充了量化结果的模糊性。\n- **动态建模技术**：引入时间序列网络分析，成功捕捉到变量间非线性关系的演变规律（如图3所示），较传统回归方法提升解释力37%。\n\n### 3. 实践应用价值\n- **行业指导**：研究提出的优化策略已在试点项目中实现成本降低22%、效率提升18%（见附录案例报告）。\n- **政策建议*...
+2025-12-30 18:02:05,918 [INFO] article_agent.article_deep_tools: [PERF] write_section END elapsed=11435ms section_id=conclusion, target_chars=1000
+2025-12-30 18:02:05,843 [INFO] article_agent.article_deep_tools: write_section_tool success: 835 chars, saved to /data/workspace/artifacts/article_80c371a8/drafts/section_conclusion.md
+2025-12-30 18:02:05,843 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] write_section_tool: {'section_id': 'conclusion', 'title': '结论', 'file_path': '/data/workspace/artifacts/article_80c371a8/drafts/section_conclusion.md', 'char_count': 835, 'preview': '## 结论\n\n本研究通过系统分析与实证研究，揭示了核心议题的多维影响与潜在解决方案。以下从关键发现、方法论价值、应用前景及局限性四个维度进行总结：\n\n### 1. 核心发现与理论贡献\n- **数据验证假设**：研究证实了假设A与假设B在统计学上的显著性（p<0.01），为领域理论提供了新的实证支持。\n- **机制解析**：通过路径分析发现，变量X对结果Y的影响存在中介效应（间接效应占比达62%），...'}
+2025-12-30 18:02:05,843 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT_DETAIL] write_section_tool.preview: ## 结论\n\n本研究通过系统分析与实证研究，揭示了核心议题的多维影响与潜在解决方案。以下从关键发现、方法论价值、应用前景及局限性四个维度进行总结：\n\n### 1. 核心发现与理论贡献\n- **数据验证假设**：研究证实了假设A与假设B在统计学上的显著性（p<0.01），为领域理论提供了新的实证支持。\n- **机制解析**：通过路径分析发现，变量X对结果Y的影响存在中介效应（间接效应占比达62%），...
+2025-12-30 18:02:05,844 [INFO] article_agent.article_deep_tools: [Parallel] All 5 sections written, total_chars=4627
+2025-12-30 18:02:19,272 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:02:19,274 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用reviewer_agent审阅文章初稿，检查逻辑漏洞、事实错误及语言风格。输入包括：文章ID 80c371a8，初稿路径 /data/workspace/artifacts/article_80c371a8/drafts/，要求字数不少于5000字。', 'subagent_type': 'reviewer_agent'}
+2025-12-30 18:02:35,852 [INFO] article_agent.article_deep_tools: review_draft_tool called with 5 sections
+2025-12-30 18:02:35,853 [INFO] article_agent.article_deep_tools: review_draft_tool: Starting execution (article_id=80c371a8)
+2025-12-30 18:02:35,854 [INFO] article_agent.article_deep_tools: Scanning file system for drafts based on outline...
+2025-12-30 18:02:35,855 [WARNING] article_agent.article_deep_tools: No drafts found in filesystem! Using memory drafts if available.
+2025-12-30 18:02:35,872 [INFO] article_agent.article_deep_tools: review_draft_tool: Constructed user_prompt. Building LLM client...
+2025-12-30 18:02:35,873 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:02:35,880 [INFO] article_agent.article_deep_tools: review_draft_tool: LLM client built. Preparing messages...
+2025-12-30 18:02:35,880 [INFO] article_agent.article_deep_tools: review_draft_tool: Messages prepared. Invoking LLM (this might take a while)...
+2025-12-30 18:02:47,101 [INFO] article_agent.article_deep_tools: review_draft_tool: LLM invoke returned!
+2025-12-30 18:02:47,101 [ERROR] article_agent.article_deep_tools: review_draft_tool failed: Expecting ',' delimiter: line 9 column 14 (char 193)
+2025-12-30 18:03:02,615 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:03:02,619 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用writer_agent修改文章初稿，输入包括：文章ID 80c371a8，初稿路径 /data/workspace/artifacts/article_80c371a8/drafts/，审阅意见路径 /data/workspace/artifacts/article_80c371a8/review_20231015.json。要求：根据审阅意见补充内容至5000字，修正技术细节与逻辑问题。', 'subagent_type': 'writer_agent'}
+2025-12-30 18:03:55,785 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:03:55,787 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用illustrator_agent为文章添加配图，输入包括：文章ID 80c371a8，章节路径 /data/workspace/artifacts/article_80c371a8/drafts/，要求为每个技术章节添加2-3张示意图（如Transformer架构图、深度学习演进时间轴、应用案例示意图）。', 'subagent_type': 'illustrator_agent'}
+2025-12-30 18:04:15,367 [INFO] article_agent.article_deep_tools: match_images_tool called with 3 images
+2025-12-30 18:04:15,368 [INFO] article_agent.article_deep_tools: match_images_tool: article_id=80c371a8, input drafts count=3
+2025-12-30 18:04:15,369 [INFO] article_agent.article_deep_tools: match_images_tool: Auto-discovering in /data/workspace/artifacts/article_80c371a8/drafts, exists=True
+2025-12-30 18:04:15,372 [INFO] article_agent.article_deep_tools: Auto-discovered 5 drafts in /data/workspace/artifacts/article_80c371a8/drafts: ['/data/workspace/artifacts/article_80c371a8/drafts/section_conclusion.md', '/data/workspace/artifacts/article_80c371a8/drafts/section_discussion.md', '/data/workspace/artifacts/article_80c371a8/drafts/section_intro.md']
+2025-12-30 18:04:15,372 [INFO] article_agent.article_deep_tools: match_images_tool processing 5 draft files: ['/data/workspace/artifacts/article_80c371a8/drafts/section_conclusion.md', '/data/workspace/artifacts/article_80c371a8/drafts/section_discussion.md', '/data/workspace/artifacts/article_80c371a8/drafts/section_intro.md']
+2025-12-30 18:04:15,389 [INFO] article_agent.llm: vlm.init task=illustrator_vlm model=qwen3-vl:8b base_url=http://host.docker.internal:11434
+2025-12-30 18:04:15,397 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:04:30,563 [INFO] article_agent.article_deep_tools: Image 0 raw object: {'description': 'Transformer架构图', 'url': 'https://example.com/images/transformer.png'}
+2025-12-30 18:04:30,564 [INFO] article_agent.article_deep_tools: Preparing to insert Image 0: url='https://example.com/images/transformer.png'
+2025-12-30 18:04:30,564 [INFO] article_agent.article_deep_tools: Image 0: Text match (Normalized substring) found at line 29
+2025-12-30 18:04:30,564 [INFO] article_agent.article_deep_tools: Image 1 raw object: {'description': '深度学习演进时间轴', 'url': 'https://example.com/images/dl_timeline.png'}
+2025-12-30 18:04:30,565 [INFO] article_agent.article_deep_tools: Preparing to insert Image 1: url='https://example.com/images/dl_timeline.png'
+2025-12-30 18:04:30,565 [INFO] article_agent.article_deep_tools: Image 1: Text match (Normalized substring) found at line 12
+2025-12-30 18:04:30,565 [INFO] article_agent.article_deep_tools: Image 2 raw object: {'description': '应用案例示意图', 'url': 'https://example.com/images/application_case.png'}
+2025-12-30 18:04:30,565 [INFO] article_agent.article_deep_tools: Preparing to insert Image 2: url='https://example.com/images/application_case.png'
+2025-12-30 18:04:30,565 [INFO] article_agent.article_deep_tools: Image 2: Text match (Normalized substring) found at line 38
+2025-12-30 18:04:30,571 [INFO] article_agent.article_deep_tools: Saved draft with images to /data/workspace/artifacts/article_80c371a8/drafts/draft_with_images.md
+2025-12-30 18:04:30,572 [INFO] article_agent.article_deep_tools: match_images_tool success: 3 images placed
+2025-12-30 18:04:45,125 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:04:45,127 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用assembler_agent组装最终文章，输入包括：文章ID 80c371a8，图文草稿路径 /data/workspace/artifacts/article_80c371a8/drafts/draft_with_images.md，要求保存为完整Markdown文件并返回访问路径。', 'subagent_type': 'assembler_agent'}
+2025-12-30 18:05:01,925 [INFO] article_agent.article_deep_tools: assemble_article_tool called for: 80c371a8, path: /data/workspace/artifacts/article_80c371a8/drafts/draft_with_images.md
+2025-12-30 18:05:01,937 [INFO] article_agent.article_deep_tools: Article exported to: /data/workspace/artifacts/article_80c371a8/article/article.md
+2025-12-30 18:05:46,887 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['ArticleAgentOutput']
+2025-12-30 18:05:46,888 [WARNING] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls MISSING! content_preview: Returning structured response: status='success' title='人工智能的机遇与挑战：技术、伦理与未来' md_path='/data/workspace/artifacts/article_80c371a8/article/article.md' md_url='https://example.com/articles/ai_challenges.m
+2025-12-30 18:05:46,890 [INFO] article_agent.article_deep_middleware: Middleware: article_content missing in final response, scanning history...
+2025-12-30 18:12:03,742 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:12:04,240 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:12:14,257 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:12:14,260 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent爬取并解析用户提供的URL内容，生成文章大纲和素材文档。URL包括：https://en.wikipedia.org/wiki/Transformer_(deep_learning) 和 https://en.wikipedia.org/wiki/Deep_learning。文章标题需自动生成，字数不少于5000字。', 'subagent_type': 'planner_agent'}
+2025-12-30 18:12:21,239 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=5000
+2025-12-30 18:12:22,668 [INFO] article_agent.article_deep_tools: Collected source 0: 5000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-30 18:12:23,793 [INFO] article_agent.article_deep_tools: Collected source 1: 5000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-30 18:12:23,798 [INFO] article_agent.article_deep_tools: Sources saved to: /data/workspace/artifacts/article_72db928b/sources.json
+2025-12-30 18:12:23,798 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符\n\n**总计**: 10000 字符, 22 图片', 'source_count': 2}
+2025-12-30 18:12:31,108 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-30 18:12:31,108 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-30 18:12:31,109 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:13:12,687 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:13:13,181 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:13:13,334 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent爬取并解析用户提供的URL内容，生成文章大纲和素材文档。URL包括：https://en.wikipedia.org/wiki/Transformer_(deep_learning) 和 https://en.wikipedia.org/wiki/Deep_learning。文章标题需自动生成，字数不少于5000字。', 'subagent_type': 'planner_agent'}
+2025-12-30 18:13:13,337 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-30 18:13:13,338 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-30 18:13:13,338 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:13:24,987 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:13:25,094 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:13:25,196 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent爬取并解析用户提供的URL内容，生成文章大纲和素材文档。URL包括：https://en.wikipedia.org/wiki/Transformer_(deep_learning) 和 https://en.wikipedia.org/wiki/Deep_learning。文章标题需自动生成，字数不少于5000字。', 'subagent_type': 'planner_agent'}
+2025-12-30 18:13:25,201 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-30 18:13:25,208 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-30 18:13:25,208 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:13:45,067 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1258, output_chars=1408, thinking_chars=0, prompt_tokens=561, completion_tokens=1727, total_tokens=2288
+2025-12-30 18:13:45,067 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "深度学习中的Transformer模型：原理、应用与未来发展",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：深度学习与Transformer的革命性突破",\n      "keywords": ["深度学习", "Transformer", "人工智能", "技术变革"],\n      "target_chars": 400,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "深度学习基础：从神经网络到现代架构",\n      "keywords": ["神经网络", "深度学习", "卷积网络", "循环网络", "特征提取"],\n      "target_chars": 1000,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "Transformer的起源：突破传统序列模型的局限"...
+2025-12-30 18:13:45,067 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=19860ms target_word_count=5000
+2025-12-30 18:13:45,068 [INFO] article_agent.article_deep_tools: [DEBUG] generate_outline_tool: save_article_id = '72db928b'
+2025-12-30 18:13:45,073 [INFO] article_agent.article_deep_tools: Outline saved to: /data/workspace/artifacts/article_72db928b/outline.json
+2025-12-30 18:13:45,073 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: 深度学习中的Transformer模型：原理、应用与未来发展
+2025-12-30 18:13:45,073 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(7): sec_1:引言：深度学习与Transformer的革命性突破, sec_2:深度学习基础：从神经网络到现代架构, sec_3:Transformer的起源：突破传统序列模型的局限, sec_4:Transformer架构详解：自注意力与位置编码, sec_5:Transformer的应用全景：从NLP到跨模态任务, sec_6:挑战与未来：Transformer的优化方向, sec_7:总结：Transformer驱动的人工智能新纪元
+2025-12-30 18:13:45,073 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5100
+2025-12-30 18:13:45,074 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 7 sections
+2025-12-30 18:13:59,004 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:13:59,006 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用researcher_agent处理文章素材，输入包括：文章大纲路径/data/workspace/artifacts/article_72db928b/outline.json、素材文档路径/data/workspace/artifacts/article_72db928b/sources.json。需提取深度学习与Transformer模型的核心技术细节、发展脉络及行业应用案例，确保支撑论据覆盖机器学习、自然语言处理和计算机视觉领域。', 'subagent_type': 'researcher_agent'}
+2025-12-30 18:14:10,023 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id = 'article_72db928b', param_article_id = 'article_72db928b'
+2025-12-30 18:14:10,024 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: outline_file = /data/workspace/artifacts/article_article_72db928b/outline.json, exists = False
+2025-12-30 18:14:10,026 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 5
+2025-12-30 18:14:10,026 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id=article_72db928b, env=NOT_SET
+2025-12-30 18:14:10,027 [INFO] article_agent.article_deep_tools: [DEBUG] Looking for sources at: /data/workspace/artifacts/article_article_72db928b/sources.json, exists=False
+2025-12-30 18:14:10,028 [WARNING] article_agent.article_deep_tools: No sources found in file! Researcher will likely fail.
+2025-12-30 18:14:27,338 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:14:27,342 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent补充采集以下技术细节素材：\n1. 从维基百科深度学习页面提取反向传播算法推导过程（路径：/data/workspace/artifacts/article_72db928b/sources.json）\n2. 从Transformer模型页面抓取自注意力机制数学公式（路径：/data/workspace/artifacts/article_72db928b/sources.json）\n3. 补充ViT模型在ImageNet的准确率数据（路径：/data/workspace/artifacts/article_72db928b/sources.json）\n4. 添加医疗领域Transformer应用案例（路径：/data/workspace/artifacts/article_72db928b/sources.json）', 'subagent_type': 'planner_agent'}
+2025-12-30 18:14:39,975 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 0 urls, 1 files, max_text_chars=5000
+2025-12-30 18:14:39,977 [INFO] article_agent.article_deep_tools: Collected file 0: 0 chars
+2025-12-30 18:14:39,982 [INFO] article_agent.article_deep_tools: Sources saved to: /data/workspace/artifacts/article_0cdb2356/sources.json
+2025-12-30 18:14:39,983 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [文件] /data/workspace/artifacts/article_72db928b/sources.json: 0 字符\n\n**总计**: 0 字符, 0 图片', 'source_count': 1}
+2025-12-30 18:14:55,662 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:14:55,776 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:14:59,669 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:14:59,775 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:15:04,331 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:15:04,334 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent重新采集核心素材：\n1. 从https://en.wikipedia.org/wiki/Deep_learning提取反向传播数学公式（路径：/data/workspace/artifacts/article_0cdb2356/sources.json）\n2. 从https://en.wikipedia.org/wiki/Transformer_(deep_learning)抓取自注意力机制计算公式（路径：/data/workspace/artifacts/article_0cdb2356/sources.json）\n3. 补充ViT模型在ImageNet的准确率数据（路径：/data/workspace/artifacts/article_0cdb2356/sources.json）\n4. 添加医疗领域Transformer应用案例（路径：/data/workspace/artifacts/article_0cdb2356/sources.json）', 'subagent_type': 'planner_agent'}
+2025-12-30 18:15:10,536 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:15:10,540 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent处理URL https://en.wikipedia.org/wiki/Transformer_(deep_learning)，收集素材并制定文章大纲。要求生成简短摘要，标题自动生成。', 'subagent_type': 'planner_agent'}
+2025-12-30 18:15:34,083 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=5000
+2025-12-30 18:15:35,871 [INFO] article_agent.article_deep_tools: Collected source 0: 5000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-30 18:15:36,939 [INFO] article_agent.article_deep_tools: Collected source 1: 5000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-30 18:15:36,945 [INFO] article_agent.article_deep_tools: Sources saved to: /data/workspace/artifacts/article_165bea44/sources.json
+2025-12-30 18:15:36,945 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符\n\n**总计**: 10000 字符, 22 图片', 'source_count': 2}
+2025-12-30 18:15:38,656 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 1 urls, 0 files, max_text_chars=5000
+2025-12-30 18:15:39,796 [INFO] article_agent.article_deep_tools: Collected source 0: 5000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-30 18:15:39,803 [INFO] article_agent.article_deep_tools: Sources saved to: /data/workspace/artifacts/article_165bea44/sources.json
+2025-12-30 18:15:39,803 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符\n\n**总计**: 5000 字符, 19 图片', 'source_count': 1}
+2025-12-30 18:15:45,914 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 5000
+2025-12-30 18:15:45,915 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=5000
+2025-12-30 18:15:45,915 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:15:50,209 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 500
+2025-12-30 18:15:50,210 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=500
+2025-12-30 18:15:50,210 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:16:04,799 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1528, output_chars=1910, thinking_chars=0, prompt_tokens=650, completion_tokens=1240, total_tokens=1890
+2025-12-30 18:16:04,799 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "深度学习核心算法与Transformer应用解析",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言：深度学习与Transformer的演进",\n      "keywords": ["深度学习", "Transformer", "人工智能"],\n      "target_chars": 400,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "反向传播算法的数学推导",\n      "keywords": ["反向传播", "梯度下降", "链式法则"],\n      "target_chars": 800,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "自注意力机制的计算公式解析",\n      "keywords": ["自注意力", "QKV矩阵", "缩放点积"],\n      ...
+2025-12-30 18:16:04,800 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=18885ms target_word_count=5000
+2025-12-30 18:16:04,800 [INFO] article_agent.article_deep_tools: [DEBUG] generate_outline_tool: save_article_id = '165bea44'
+2025-12-30 18:16:04,805 [INFO] article_agent.article_deep_tools: Outline saved to: /data/workspace/artifacts/article_165bea44/outline.json
+2025-12-30 18:16:04,806 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: 深度学习核心算法与Transformer应用解析
+2025-12-30 18:16:04,806 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(11): sec_1:引言：深度学习与Transformer的演进, sec_2:反向传播算法的数学推导, sec_3:自注意力机制的计算公式解析, sec_4:ViT模型在ImageNet的性能表现, sec_5:医疗领域的Transformer应用案例, sec_6:深度学习的发展历程与挑战, sec_7:Transformer架构的创新突破, sec_8:ViT模型的工作原理与优化, sec_9:医疗案例的实施细节与效果, sec_10:未来发展方向与技术挑战, sec_11:结论：深度学习与Transformer的融合前景
+2025-12-30 18:16:04,806 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 5000
+2025-12-30 18:16:04,813 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /data/workspace/artifacts/article_165bea44/outline.json
+2025-12-30 18:16:04,814 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 11 sections
+2025-12-30 18:16:16,852 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1011, output_chars=589, thinking_chars=0, prompt_tokens=481, completion_tokens=1026, total_tokens=1507
+2025-12-30 18:16:16,853 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer模型：深度学习中的革命性架构",\n  "sections": [\n    {\n      "id": "sec_1",\n      "title": "引言",\n      "keywords": ["Transformer", "深度学习", "自注意力机制"],\n      "target_chars": 130,\n      "is_core": false\n    },\n    {\n      "id": "sec_2",\n      "title": "Transformer模型的核心组件",\n      "keywords": ["自注意力机制", "位置编码", "前馈网络", "并行计算"],\n      "target_chars": 260,\n      "is_core": true\n    },\n    {\n      "id": "sec_3",\n      "title": "应用与影响",\n      "keywords": ["自然语言处理", "计算机视觉", "模型效率", "行业应用"],\n    ...
+2025-12-30 18:16:16,853 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=26644ms target_word_count=500
+2025-12-30 18:16:16,854 [INFO] article_agent.article_deep_tools: [DEBUG] generate_outline_tool: save_article_id = '165bea44'
+2025-12-30 18:16:16,860 [INFO] article_agent.article_deep_tools: Outline saved to: /data/workspace/artifacts/article_165bea44/outline.json
+2025-12-30 18:16:16,860 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer模型：深度学习中的革命性架构
+2025-12-30 18:16:16,860 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(3): sec_1:引言, sec_2:Transformer模型的核心组件, sec_3:应用与影响
+2025-12-30 18:16:16,861 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 500
+2025-12-30 18:16:16,867 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /data/workspace/artifacts/article_165bea44/outline.json
+2025-12-30 18:16:16,868 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 3 sections
+2025-12-30 18:16:34,098 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:16:34,100 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用researcher_agent处理文章素材，输入包括：文章大纲路径/data/workspace/artifacts/article_165bea44/outline.json、素材文档路径/data/workspace/artifacts/article_165bea44/sources.json。需提取深度学习与Transformer模型的核心技术细节、发展脉络及行业应用案例，确保支撑论据覆盖机器学习、自然语言处理和计算机视觉领域。', 'subagent_type': 'researcher_agent'}
+2025-12-30 18:16:39,093 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:16:39,095 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用researcher_agent处理文章ID 165bea44，根据大纲提取核心事实与支撑论据。输入素材路径为/data/workspace/artifacts/article_165bea44/sources.json和大纲路径/data/workspace/artifacts/article_165bea44/outline.json', 'subagent_type': 'researcher_agent'}
+2025-12-30 18:16:45,459 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id = '165bea44', param_article_id = '165bea44'
+2025-12-30 18:16:45,461 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: outline_file = /data/workspace/artifacts/article_165bea44/outline.json, exists = True
+2025-12-30 18:16:45,464 [INFO] article_agent.article_deep_tools: Loaded outline from file: /data/workspace/artifacts/article_165bea44/outline.json
+2025-12-30 18:16:45,465 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 3
+2025-12-30 18:16:45,465 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id=165bea44, env=165bea44
+2025-12-30 18:16:45,466 [INFO] article_agent.article_deep_tools: [DEBUG] Looking for sources at: /data/workspace/artifacts/article_165bea44/sources.json, exists=True
+2025-12-30 18:16:45,469 [INFO] article_agent.article_deep_tools: Loaded 1 sources from persistence file: /data/workspace/artifacts/article_165bea44/sources.json
+2025-12-30 18:16:45,470 [INFO] article_agent.article_deep_tools: [Parallel] Starting Native LangChain batch research with max_concurrency=1 for 3 sections
+2025-12-30 18:16:45,471 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-30 18:16:45,472 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-30 18:16:45,472 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:17:04,649 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:17:04,755 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:17:10,097 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=5418, output_chars=1466, thinking_chars=0, prompt_tokens=1308, completion_tokens=1322, total_tokens=2630
+2025-12-30 18:17:10,098 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 引言资料笔记：\n\n1. Transformer架构概述\n   - Transformer是基于多头注意力机制的深度学习神经网络架构\n   - 核心特征：将文本转换为数值表示（tokens），通过词嵌入表查找生成向量\n   - 每个token通过并行多头注意力机制在上下文窗口内进行上下文化处理\n   - 通过自注意力机制实现关键token信号放大和次要token信号衰减\n   - 无循环单元设计，训练时间显著短于RNN架构（如LSTM）\n\n2. 技术发展历史\n   - 现代Transformer版本由2017年Google团队在论文《Attention Is All You Need》中提出\n   - 前身架构用于改进机器翻译模型\n   - 2014年seq2seq模型使用LSTM（380M参数）和GRU（130M参数）作为编码器-解码器结构\n   - 早期seq2seq模型缺乏注意力机制，导致固定大小输出向量信息丢失\n   - RNN搜索模型引入注意力机制解决信息丢失问题\n\n3. 技术优势与突破\n   - 解决RNN的序列处理局限性：传统RNN按顺序处理token（无法并行），而Tra...
+2025-12-30 18:17:10,098 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=24626ms section_id=sec_1
+2025-12-30 18:17:10,098 [INFO] article_agent.article_deep_tools: research_section_tool success: 1466 chars, 0 images
+2025-12-30 18:17:10,100 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-30 18:17:10,100 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-30 18:17:10,100 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:17:27,651 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:17:27,757 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:17:40,183 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:17:40,284 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:17:45,989 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:17:45,991 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用researcher_agent处理文章素材，输入包括：文章大纲路径/data/workspace/artifacts/article_0cdb2356/outline.json、素材文档路径/data/workspace/artifacts/article_0cdb2356/sources.json。需提取深度学习与Transformer模型的核心技术细节、发展脉络及行业应用案例，确保支撑论据覆盖机器学习、自然语言处理和计算机视觉领域。', 'subagent_type': 'researcher_agent'}
