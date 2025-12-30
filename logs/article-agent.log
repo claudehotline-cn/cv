@@ -31361,3 +31361,4 @@ Args: {'description': '使用assembler_agent进行最终组装。输入包括：
 2025-12-30 17:43:02,608 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['ArticleAgentOutput']
 2025-12-30 17:43:02,608 [WARNING] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls MISSING! content_preview: Returning structured response: status='success' title='深度学习与Transformer的革命性影响' md_path='/data/workspace/artifacts/article_0487973f/article/article.md' md_url='http://example.com/articles/0487973f/arti
 2025-12-30 17:55:28,984 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:56:58,644 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
