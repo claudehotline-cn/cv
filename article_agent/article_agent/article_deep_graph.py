@@ -24,6 +24,7 @@ from .article_deep_prompts import (
     ASSEMBLER_AGENT_PROMPT,
     ASSEMBLER_AGENT_DESCRIPTION,
 )
+from .article_deep_middleware import ArticleContentMiddleware
 from .article_deep_schemas import ArticleAgentOutput
 from .article_deep_tools import (
     # Collector tools
@@ -234,7 +235,7 @@ def get_article_deep_agent_graph() -> Any:
         ],
         tools=[],  # Main Agent 不直接使用工具，通过 SubAgents 执行
         system_prompt=MAIN_AGENT_PROMPT,
-        middleware=[thinking_middleware],  # 添加思维链日志 middleware
+        middleware=[thinking_middleware, ArticleContentMiddleware()],  # 添加思维链日志和内容填充 middleware
         backend=FilesystemBackend(
             root_dir="/data/workspace",
             virtual_mode=False
