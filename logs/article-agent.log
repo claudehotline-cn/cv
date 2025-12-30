@@ -31650,3 +31650,19 @@ Args: {'description': '使用researcher_agent处理文章ID 165bea44，根据大
 2025-12-30 18:17:45,989 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
 2025-12-30 18:17:45,991 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
 Args: {'description': '使用researcher_agent处理文章素材，输入包括：文章大纲路径/data/workspace/artifacts/article_0cdb2356/outline.json、素材文档路径/data/workspace/artifacts/article_0cdb2356/sources.json。需提取深度学习与Transformer模型的核心技术细节、发展脉络及行业应用案例，确保支撑论据覆盖机器学习、自然语言处理和计算机视觉领域。', 'subagent_type': 'researcher_agent'}
+2025-12-30 18:26:57,556 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 18:26:57,666 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 18:26:57,898 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用researcher_agent处理文章素材，输入包括：文章大纲路径/data/workspace/artifacts/article_0cdb2356/outline.json、素材文档路径/data/workspace/artifacts/article_0cdb2356/sources.json。需提取深度学习与Transformer模型的核心技术细节、发展脉络及行业应用案例，确保支撑论据覆盖机器学习、自然语言处理和计算机视觉领域。', 'subagent_type': 'researcher_agent'}
+2025-12-30 18:27:23,919 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:27:23,921 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用writer_agent撰写文章，输入包括：文章大纲路径/data/workspace/artifacts/article_0cdb2356/outline.json、研究素材路径/data/workspace/artifacts/article_0cdb2356/notes/section_notes.json。要求按章节生成Markdown草稿，重点阐述深度学习与Transformer模型的技术原理，确保数学公式、算法推导和应用数据的准确性，总字数不少于5000字。', 'subagent_type': 'writer_agent'}
+2025-12-30 18:28:07,911 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:28:07,913 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用reviewer_agent审阅文章初稿，输入包括：文章初稿路径/data/workspace/artifacts/article_0cdb2356/drafts/、用户原始要求（5000字技术文章，需包含深度学习与Transformer模型的技术细节、数学公式、应用案例）。重点检查：1. 算法推导准确性 2. 行业数据完整性 3. 技术表述严谨性 4. 图文对应关系', 'subagent_type': 'reviewer_agent'}
+2025-12-30 18:28:27,295 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['ls']
+2025-12-30 18:28:27,297 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: ls
+Args: {'path': '/data/workspace/artifacts/article_0cdb2356/drafts/'}
+2025-12-30 18:28:34,299 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 18:28:34,302 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用writer_agent重新生成文章草稿，输入包括：文章大纲路径/data/workspace/artifacts/article_0cdb2356/outline.json、研究素材路径/data/workspace/artifacts/article_0cdb2356/notes/section_notes.json。要求严格按章节生成Markdown草稿并保存到/data/workspace/artifacts/article_0cdb2356/drafts/目录，确保文件路径格式为section_1.md, section_2.md等。', 'subagent_type': 'writer_agent'}

@@ -27,6 +27,23 @@ class ArticleContentMiddleware(AgentMiddleware):
             elif isinstance(resp, dict):
                 current_content = resp.get("article_content")
             
+            # Debug log for frontend response
+            try:
+                if hasattr(resp, "model_dump"):
+                    debug_dict = resp.model_dump()
+                elif hasattr(resp, "dict"):
+                    debug_dict = resp.dict()
+                else: 
+                    debug_dict = resp if isinstance(resp, dict) else str(resp)
+                
+                # Truncate long content for log readability but show length
+                log_copy = debug_dict.copy() if isinstance(debug_dict, dict) else {}
+                content_len = len(log_copy.get("article_content") or "")
+                log_copy["article_content"] = f"<CONTENT_LENGTH_{content_len}>"
+                _LOGGER.info(f"Middleware: Final structured_response passed to frontend: {json.dumps(log_copy, default=str)}")
+            except Exception as e:
+                _LOGGER.error(f"Middleware: Failed to log response: {e}")
+
             # Only proceed if content is missing
             if not current_content or len(current_content) < 100:
                 _LOGGER.info("Middleware: article_content missing in final response. Scanning history...")
