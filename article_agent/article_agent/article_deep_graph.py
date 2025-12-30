@@ -25,7 +25,7 @@ from .article_deep_prompts import (
     ASSEMBLER_AGENT_DESCRIPTION,
 )
 from .article_deep_middleware import ArticleContentMiddleware
-from .article_deep_schemas import ArticleAgentOutput
+from .article_deep_schemas import ArticleAgentOutput, AssemblerOutput
 from .article_deep_tools import (
     # Collector tools
     fetch_url_tool,
