@@ -201,13 +201,20 @@ def get_article_deep_agent_graph() -> Any:
         tools=[match_images_tool],
     )
     
+    # 配置 Assembler 的结构化输出
+    try:
+        from langchain.agents.structured_output import ToolStrategy
+        assembler_response_format = ToolStrategy(AssemblerOutput)
+    except ImportError:
+        assembler_response_format = AssemblerOutput
+
     # 7. Assembler Agent - 组装输出
     assembler_agent = SubAgent(
         name="assembler_agent",
         description=ASSEMBLER_AGENT_DESCRIPTION,
         system_prompt=ASSEMBLER_AGENT_PROMPT,
         tools=[assemble_article_tool],
-        response_format=AssemblerOutput,  # Enable structured output to pass content back
+        response_format=assembler_response_format,  # Enable structured output via ToolStrategy
         middleware=[ArticleContentMiddleware()], # Apply middleware to ensure content is passed to Main Agent
     )
 
