@@ -208,6 +208,7 @@ def get_article_deep_agent_graph() -> Any:
         system_prompt=ASSEMBLER_AGENT_PROMPT,
         tools=[assemble_article_tool],
         response_format=AssemblerOutput,  # Enable structured output to pass content back
+        middleware=[ArticleContentMiddleware()], # Apply middleware to ensure content is passed to Main Agent
     )
 
     # ============================================================================
