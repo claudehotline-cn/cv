@@ -58,7 +58,9 @@ class ArticleContentMiddleware(AgentMiddleware):
                     content_str = str(msg.content)
                     msg_type = type(msg).__name__
                     
-                    # _LOGGER.info(f"Msg[-{i+1}] ({msg_type}): {content_str[:100]}...")
+                    # Log first 200 chars to identify content format
+                    if "article_content" in content_str:
+                        _LOGGER.info(f"Msg[-{i+1}] ({msg_type}) contains 'article_content'. Preview: {content_str[:200]}...")
                     
                     # 1. 尝试直接从 ToolMessage 中提取 (DeepAgents 可能会把 SubAgent 结果作为 Tool Message)
                     if isinstance(msg, ToolMessage) or (msg_type == "ToolMessage"):
@@ -91,6 +93,25 @@ class ArticleContentMiddleware(AgentMiddleware):
                 else:
                     _LOGGER.warning("Middleware: Failed to find article_content in ANY message history.")
         
+        # Fallback: If structured_response is missing but we have a final message with content
+        elif result and hasattr(result, "content") and len(str(result.content)) > 100:
+             _LOGGER.warning("Middleware: Structured response MISSING. Fallback: Wrapping raw message content.")
+             # Construct a fallback dictionary matching ArticleAgentOutput
+             fallback_resp = {
+                 "status": "success",
+                 "title": "Generated Article",
+                 "md_path": "",
+                 "md_url": "",
+                 "summary": "Generated from raw output.",
+                 "word_count": len(str(result.content)),
+                 "article_content": str(result.content),
+                 "error_message": None
+             }
+             _LOGGER.info(f"Middleware: Created fallback structured_response with {len(str(result.content))} chars.")
+             return {"structured_response": fallback_resp}
+
+        return None
+
         return None
 
     def _extract_content(self, text: str) -> Optional[str]:
@@ -105,7 +126,18 @@ class ArticleContentMiddleware(AgentMiddleware):
         except:
             pass
             
-        # 2. Try clean prefix JSON (e.g. DATA_RESULT:...)
+        # 2. Try ast.literal_eval (Handles Python dict string representation: {'key': 'value'})
+        try:
+            import ast
+            # Only attempt if it looks like a dict
+            if text.strip().startswith("{") and "article_content" in text:
+                data = ast.literal_eval(text)
+                if isinstance(data, dict) and data.get("article_content"):
+                    return data["article_content"]
+        except:
+            pass
+            
+        # 3. Try clean prefix JSON (e.g. DATA_RESULT:...)
         if "DATA_RESULT:" in text:
             try:
                 clean = text.split("DATA_RESULT:", 1)[1].strip()
@@ -115,15 +147,38 @@ class ArticleContentMiddleware(AgentMiddleware):
             except:
                 pass
 
-        # 3. Try Regex (fallback for dirty strings)
-        # 查找 "article_content": "..." 模式
-        # 注意：Markdown 内容可能包含转义字符，regex 提取比较危险，但可以尝试
+        # 4. Try Regex for key='value' or key="value" format (Common in some LLM text outputs)
+        # Matches: article_content='...' or article_content="..."
+        # Note: This is a basic regex and might fail on complex nested quotes, but handles simple cases.
         try:
-            # 匹配 "article_content": " (capturing group) ", 
-            # 这是一个非贪婪匹配，可能无法匹配包含转义引号的内容
-            # 更好的方式是寻找 key 的位置，然后尝试解析后续的 value
-            pass 
-        except:
-            pass
-            
+            # Match article_content='...' single usage
+            patterns = [
+                r"article_content='((?:[^'\\]|\\.)*)'",  # Single qoutes
+                r'article_content="((?:[^"\\]|\\.)*)"',  # Double quotes
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, text, re.DOTALL)
+                if match:
+                    return match.group(1)
+        except Exception as e:
+            _LOGGER.debug(f"Middleware: Regex extraction failed: {e}")
+
+        # 5. Try "Header: Content" format (Common in Assembler natural language output)
+        # Matches text after "- 文章内容:" or "文章内容:"
+        markers = ["- 文章内容:", "文章内容:"]
+        for marker in markers:
+            if marker in text:
+                try:
+                    # Extract everything after marker
+                    parts = text.split(marker, 1)
+                    if len(parts) > 1:
+                        candidate = parts[1].strip()
+                        # Clean up known trailing phrases from prompt
+                        if "任务圆满结束" in candidate:
+                            candidate = candidate.split("任务圆满结束")[0].strip()
+                        if len(candidate) > 100: # Simple validation to ensure it's actual content
+                             return candidate
+                except:
+                    pass
+
         return None

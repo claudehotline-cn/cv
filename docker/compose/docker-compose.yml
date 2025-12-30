@@ -413,7 +413,7 @@ services:
     environment:
       # LLM 提供方：gemini | ollama | openai | siliconflow
       - ARTICLE_AGENT_LLM_PROVIDER=ollama
-      - ARTICLE_AGENT_LLM_MODEL=qwen3:14b
+      - ARTICLE_AGENT_LLM_MODEL=qwen3:30b
       - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # VLM 配置
       - ARTICLE_AGENT_VLM_ENABLED=true
