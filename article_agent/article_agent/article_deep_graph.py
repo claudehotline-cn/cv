@@ -207,8 +207,9 @@ def get_article_deep_agent_graph() -> Any:
         description=ASSEMBLER_AGENT_DESCRIPTION,
         system_prompt=ASSEMBLER_AGENT_PROMPT,
         tools=[assemble_article_tool],
+        response_format=AssemblerOutput,  # Enable structured output to pass content back
     )
-    
+
     # ============================================================================
     # 创建主 Deep Agent
     # ============================================================================

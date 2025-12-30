@@ -1,65 +1,78 @@
 import logging
-import os
+import json
 from typing import Any, Dict, Optional
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import AgentState
+from langchain_core.messages import AIMessage
 from langgraph.runtime import Runtime
 
 _LOGGER = logging.getLogger(__name__)
 
 class ArticleContentMiddleware(AgentMiddleware):
-    """Middleware to populate article_content from filesystem if missing.
+    """Middleware to bubbling up article_content from Assembler to Main Agent output.
     
-    This helps avoid passing massive strings through the LLM context and ensures
-    the frontend receives the full content even if the LLM truncates it.
+    It scans the message history for the Assembler's output (which now includes article_content)
+    and populates the final response with it.
     """
     
     def after_agent(self, state: AgentState, runtime: Runtime[Any], result: Any = None) -> Dict[str, Any] | None:
-        """After agent execution, check/populate article_content."""
+        """After agent execution, populate article_content from message history."""
         
-        # Check if we have a structured response
+        # Check if we have a structured response (ArticleAgentOutput)
         if "structured_response" in state and state["structured_response"]:
             resp = state["structured_response"]
             
-            # We are looking for ArticleAgentOutput (or compatible dict)
-            # It should have 'md_path' and 'article_content' fields.
-            
-            md_path = None
-            article_content = None
-            
-            # Handle Pydantic model
-            if hasattr(resp, "md_path"):
-                md_path = getattr(resp, "md_path", None)
-                article_content = getattr(resp, "article_content", None)
-            # Handle Dict
+            # Check if article_content is missing
+            current_content = None
+            if hasattr(resp, "article_content"):
+                current_content = getattr(resp, "article_content", None)
             elif isinstance(resp, dict):
-                md_path = resp.get("md_path")
-                article_content = resp.get("article_content")
+                current_content = resp.get("article_content")
             
-            # If we have a path but incomplete content
-            if md_path and (not article_content or len(article_content) < 1000):
-                if os.path.exists(md_path):
-                    try:
-                        _LOGGER.info(f"Middleware: Reading full content from file: {md_path}")
-                        with open(md_path, "r", encoding="utf-8") as f:
-                            full_content = f.read()
-                        
-                        _LOGGER.info(f"Middleware: Read {len(full_content)} chars. Updating response.")
-                        
-                        # Update the response
-                        if hasattr(resp, "model_copy"):
-                            # Pydantic - use model_copy to return new instance
-                            new_resp = resp.model_copy(update={"article_content": full_content})
-                            return {"structured_response": new_resp}
-                        elif isinstance(resp, dict):
-                            # Dict - update in place (or copy)
-                            resp["article_content"] = full_content
-                            return {"structured_response": resp}
-                            
-                    except Exception as e:
-                        _LOGGER.warning(f"Middleware: Failed to read file {md_path}: {e}")
-                else:
-                    _LOGGER.warning(f"Middleware: File not found at {md_path}")
+            # Only proceed if content is missing or too short
+            if not current_content or len(current_content) < 100:
+                _LOGGER.info("Middleware: article_content missing in final response, scanning history...")
+                
+                # Scan messages for Assembler's output
+                # We look for a message from 'assembler_agent' or containing 'article_content' in tool output
+                messages = state.get("messages", [])
+                found_content = None
+                
+                for msg in reversed(messages):
+                    # Check structured tool output in content (DeepAgents bubbles up sub-agent result)
+                    if isinstance(msg, AIMessage) and msg.content:
+                        content_str = str(msg.content)
+                        # Check if it looks like JSON and has article_content
+                        # DeepAgents SubAgents return JSON string in content often
+                        if "article_content" in content_str and len(content_str) > 1000:
+                             try:
+                                # Try to parse json if it looks like one
+                                # Or regex extract it? JSON parsing is safer but might be partial text
+                                # Let's try to see if we can find the `article_content` field
+                                start_idx = content_str.find('"article_content"')
+                                if start_idx != -1:
+                                    # Very naive extraction if JSON is complex, but let's try strict JSON first
+                                    # Often the content is "DATA_RESULT:..." or just raw JSON
+                                    clean_json = content_str.strip()
+                                    if clean_json.startswith("DATA_RESULT:"):
+                                        clean_json = clean_json[12:]
+                                    
+                                    data = json.loads(clean_json)
+                                    if "article_content" in data and data["article_content"]:
+                                        found_content = data["article_content"]
+                                        _LOGGER.info(f"Middleware: Found content in message history (length={len(found_content)})")
+                                        break
+                             except:
+                                 pass
+                
+                if found_content:
+                    # Update response
+                    if hasattr(resp, "model_copy"):
+                        new_resp = resp.model_copy(update={"article_content": found_content})
+                        return {"structured_response": new_resp}
+                    elif isinstance(resp, dict):
+                        resp["article_content"] = found_content
+                        return {"structured_response": resp}
         
         return None

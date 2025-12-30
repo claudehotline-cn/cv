@@ -160,6 +160,7 @@ class AssemblerOutput(BaseModel):
     article_id: str = Field(description="文章 ID")
     md_path: str = Field(description="Markdown 文件本地路径")
     md_url: str = Field(description="Markdown 文件可访问 URL")
+    article_content: Optional[str] = Field(default=None, description="文章完整内容")
 
 
 # ============ Main Agent Output ============
