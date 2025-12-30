@@ -332,7 +332,7 @@ URLs: ${validUrlsList.join(', ')}
                 }
                 
                 // 处理最终 AI 回复内容
-                if (isAIMessage && msg.content && typeof msg.content === 'string' && !msg.tool_calls) {
+                if (isAIMessage && msg.content && typeof msg.content === 'string' && !msg.tool_calls?.length) {
                   // 可能是最终回复，尝试解析 markdown
                   if (msg.content.includes('#') || msg.content.length > 500) {
                     resultMarkdown.value = msg.content

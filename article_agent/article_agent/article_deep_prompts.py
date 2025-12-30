@@ -316,7 +316,10 @@ ASSEMBLER_AGENT_PROMPT = """
 文章组装完成后，你**必须**输出最终文本回复，格式如下：
 "最终文章已组装完成！
 - 最终文件路径: [工具返回的 md_path]
+- 文章内容: [工具返回的 article_content 完整内容]
 任务圆满结束。"
+
+**注意**：你必须将工具返回的 `article_content` 完整内容复制到回复中，不要省略或缩减。这是前端展示文章的唯一来源。
 """.strip()
 
 ASSEMBLER_AGENT_DESCRIPTION = "文章组装员，保存文件并返回路径"

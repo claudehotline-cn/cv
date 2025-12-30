@@ -30870,3 +30870,54 @@ Args: {'description': '使用assembler_agent汇总图文内容并进行排版润
 2025-12-30 17:12:04,049 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
 2025-12-30 17:12:23,393 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
 2025-12-30 17:12:23,490 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 17:12:48,560 [INFO] article_agent.llm: llm.init provider=ollama task=article_deep_main model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:12:48,665 [INFO] article_agent.article_deep_graph: Article Deep Agent graph created with 6 SubAgents
+2025-12-30 17:13:23,540 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 17:13:23,542 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用planner_agent爬取并解析用户提供的URL内容，生成文章大纲和素材文档。输入URL: https://en.wikipedia.org/wiki/Transformer_(deep_learning), https://en.wikipedia.org/wiki/Deep_learning', 'subagent_type': 'planner_agent'}
+2025-12-30 17:13:28,398 [INFO] article_agent.article_deep_tools: collect_all_sources_tool called with 2 urls, 0 files, max_text_chars=5000
+2025-12-30 17:13:29,569 [INFO] article_agent.article_deep_tools: Collected source 0: 5000 chars from https://en.wikipedia.org/wiki/Transformer_(deep_learning)
+2025-12-30 17:13:30,672 [INFO] article_agent.article_deep_tools: Collected source 1: 5000 chars from https://en.wikipedia.org/wiki/Deep_learning
+2025-12-30 17:13:30,680 [INFO] article_agent.article_deep_tools: Sources saved to: /data/workspace/artifacts/article_dcf4d20b/sources.json
+2025-12-30 17:13:30,680 [INFO] article_agent.article_deep_tools: [TOOL_OUTPUT] collect_all_sources_tool: {'overview': '## 素材概览\n\n- [Transformer (deep learning) - Wikipedia](https://en.wikipedia.org/wiki/Transformer_(deep_learning)): 5000 字符\n- [Deep learning - Wikipedia](https://en.wikipedia.org/wiki/Deep_learning): 5000 字符\n\n**总计**: 10000 字符, 22 图片', 'source_count': 2}
+2025-12-30 17:13:36,588 [INFO] article_agent.article_deep_tools: generate_outline_tool called with target_word_count: 3000
+2025-12-30 17:13:36,588 [INFO] article_agent.article_deep_tools: [PERF] generate_outline START target_word_count=3000
+2025-12-30 17:13:36,589 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:14:08,188 [INFO] article_agent.article_deep_tools: [LLM] generate_outline input_chars=1117, output_chars=1007, thinking_chars=0, prompt_tokens=512, completion_tokens=3475, total_tokens=3987
+2025-12-30 17:14:08,188 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] generate_outline: {\n  "title": "Transformer与深度学习：原理、应用与未来发展",\n  "sections": [\n    {"id": "sec_1", "title": "引言", "keywords": ["深度学习", "Transformer", "人工智能"], "target_chars": 300, "is_core": false},\n    {"id": "sec_2", "title": "深度学习概述", "keywords": ["神经网络", "卷积网络", "RNN", "深度学习应用"], "target_chars": 700, "is_core": true},\n    {"id": "sec_3", "title": "Transformer架构详解", "keywords": ["自注意力机制", "编码器-解码器", "NLP", "Transformer应用"], "target_chars": 700, "is_core": true},\n    {"id": "sec_4", "title": "深度学习与Transformer的比较...
+2025-12-30 17:14:08,189 [INFO] article_agent.article_deep_tools: [PERF] generate_outline END elapsed=31600ms target_word_count=3000
+2025-12-30 17:14:08,189 [INFO] article_agent.article_deep_tools: [DEBUG] generate_outline_tool: save_article_id = 'dcf4d20b'
+2025-12-30 17:14:08,193 [INFO] article_agent.article_deep_tools: Outline saved to: /data/workspace/artifacts/article_dcf4d20b/outline.json
+2025-12-30 17:14:08,194 [INFO] article_agent.article_deep_tools: [OUTLINE] 标题: Transformer与深度学习：原理、应用与未来发展
+2025-12-30 17:14:08,194 [INFO] article_agent.article_deep_tools: [OUTLINE] 章节(7): sec_1:引言, sec_2:深度学习概述, sec_3:Transformer架构详解, sec_4:深度学习与Transformer的比较分析, sec_5:实际应用案例, sec_6:挑战与未来发展方向, sec_7:总结
+2025-12-30 17:14:08,194 [INFO] article_agent.article_deep_tools: [OUTLINE] 预估字数: 3000
+2025-12-30 17:14:08,201 [INFO] article_agent.article_deep_tools: [OUTLINE] Saved to: /data/workspace/artifacts/article_dcf4d20b/outline.json
+2025-12-30 17:14:08,202 [INFO] article_agent.article_deep_tools: generate_outline_tool success: 7 sections
+2025-12-30 17:14:18,184 [INFO] article_agent.article_deep_graph: [LLM_RESPONSE] tool_calls PRESENT, count=1, names=['task']
+2025-12-30 17:14:18,186 [INFO] article_agent.article_deep_graph: [TOOL_CALL] Main Agent calling tool: task
+Args: {'description': '使用researcher_agent根据文章大纲和素材文档，提取核心事实与支撑论据。输入参数：article_id=dcf4d20b，outline_path=/data/workspace/artifacts/article_dcf4d20b/outline.json，sources_path=/data/workspace/artifacts/article_dcf4d20b/sources.json', 'subagent_type': 'researcher_agent'}
+2025-12-30 17:14:42,214 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id = 'dcf4d20b', param_article_id = 'dcf4d20b'
+2025-12-30 17:14:42,215 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: outline_file = /data/workspace/artifacts/article_dcf4d20b/outline.json, exists = True
+2025-12-30 17:14:42,218 [INFO] article_agent.article_deep_tools: Loaded outline from file: /data/workspace/artifacts/article_dcf4d20b/outline.json
+2025-12-30 17:14:42,218 [INFO] article_agent.article_deep_tools: research_all_sections_tool called. Outline sections: 7
+2025-12-30 17:14:42,219 [INFO] article_agent.article_deep_tools: [DEBUG] research_all_sections_tool: article_id=dcf4d20b, env=dcf4d20b
+2025-12-30 17:14:42,220 [INFO] article_agent.article_deep_tools: [DEBUG] Looking for sources at: /data/workspace/artifacts/article_dcf4d20b/sources.json, exists=True
+2025-12-30 17:14:42,223 [INFO] article_agent.article_deep_tools: Loaded 2 sources from persistence file: /data/workspace/artifacts/article_dcf4d20b/sources.json
+2025-12-30 17:14:42,223 [INFO] article_agent.article_deep_tools: [Parallel] Starting Native LangChain batch research with max_concurrency=1 for 7 sections
+2025-12-30 17:14:42,225 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_1
+2025-12-30 17:14:42,225 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_1
+2025-12-30 17:14:42,225 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:14:58,167 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8370, output_chars=2268, thinking_chars=0, prompt_tokens=1856, completion_tokens=1713, total_tokens=3569
+2025-12-30 17:14:58,167 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 引言  \n- **深度学习与人工智能的关联**  \n  - 深度学习是人工智能（AI）领域的重要分支，通过多层神经网络实现复杂任务（如分类、回归、表示学习）。  \n  - 深度学习的灵感来源于生物神经科学，但现代模型并不直接模拟生物大脑功能，而是通过分层抽象表示数据。  \n  - 应用领域涵盖计算机视觉、语音识别、自然语言处理（NLP）、机器翻译、生物信息学、药物设计、医疗影像分析、气候科学、材料检测及棋类程序等，部分成果已超越人类专家水平。  \n\n- **Transformer的起源与发展**  \n  - **定义与结构**  \n    - Transformer是基于多头注意力机制（multi-head attention）的神经网络架构，将文本转换为数值表示（token），并通过词嵌入表（word embedding table）将每个token映射为向量。  \n    - 每一层通过并行的多头注意力机制，将token在上下文窗口内进行上下文化处理，关键token的信号被放大，次要token的信号被弱化。  \n  - **技术优势**  \n    - 无循环单元（recurren...
+2025-12-30 17:14:58,168 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=15943ms section_id=sec_1
+2025-12-30 17:14:58,168 [INFO] article_agent.article_deep_tools: research_section_tool success: 2268 chars, 0 images
+2025-12-30 17:14:58,170 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_2
+2025-12-30 17:14:58,170 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_2
+2025-12-30 17:14:58,170 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
+2025-12-30 17:15:21,814 [INFO] article_agent.article_deep_tools: [LLM] research_section input_chars=8378, output_chars=3762, thinking_chars=0, prompt_tokens=1868, completion_tokens=2572, total_tokens=4440
+2025-12-30 17:15:21,815 [INFO] article_agent.article_deep_tools: [LLM_OUTPUT] research_section: 深度学习概述  \n---  \n\n### 一、深度学习的定义与核心概念  \n1. **基本定义**  \n   - 深度学习是机器学习的一个分支，利用多层神经网络（通常包含3层至数千层）进行数据处理，目标包括分类、回归、表示学习等。  \n   - “深度”一词源于网络中多层结构的使用，而非直接模仿生物神经系统的复杂性。  \n\n2. **核心机制**  \n   - **层次化特征提取**：通过多层结构逐步将输入数据转化为更抽象的表示。例如，图像识别中，第一层可能检测边缘，第二层组合边缘为形状，第三层识别物体部件，最终层完成整体识别。  \n   - **自动特征学习**：与传统机器学习依赖人工特征工程不同，深度学习模型能自主学习最优特征，减少人工干预。  \n\n3. **技术基础**  \n   - **神经网络架构**：包括全连接网络、深度信念网络、卷积神经网络（CNN）、循环神经网络（RNN）、生成对抗网络（GAN）、Transformer等。  \n   - **训练方法**：支持监督学习、半监督学习和无监督学习，通过梯度下降等优化算法调整参数。  \n\n---\n\n### 二、主要深度学习架构及...
+2025-12-30 17:15:21,815 [INFO] article_agent.article_deep_tools: [PERF] research_section END elapsed=23645ms section_id=sec_2
+2025-12-30 17:15:21,815 [INFO] article_agent.article_deep_tools: research_section_tool success: 3762 chars, 0 images
+2025-12-30 17:15:21,817 [INFO] article_agent.article_deep_tools: research_section_tool called for section: sec_3
+2025-12-30 17:15:21,817 [INFO] article_agent.article_deep_tools: [PERF] research_section START section_id=sec_3
+2025-12-30 17:15:21,818 [INFO] article_agent.llm: llm.init provider=ollama task=article model=qwen3:14b base_url=http://host.docker.internal:11434 num_predict=24576 num_ctx=8192
