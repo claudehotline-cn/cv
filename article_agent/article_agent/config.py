@@ -36,7 +36,7 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_OLLAMA_NUM_PREDICT",
     )
     ollama_num_ctx: int = Field(
-        default=32768,
+        default=8192,  # 减少上下文窗口以加速推理
         description="Ollama 上下文窗口大小（num_ctx）。",
         alias="ARTICLE_AGENT_OLLAMA_NUM_CTX",
     )
@@ -83,19 +83,19 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_OUTPUTS_DIR",
     )
     artifacts_dir: str = Field(
-        default="/data/outputs/artifacts",
+        default="/data/workspace/artifacts",
         description="中间产物（元数据、JSON）存储目录。",
         alias="ARTICLE_AGENT_ARTIFACTS_DIR",
     )
     drafts_dir: str = Field(
-        default="/data/outputs/artifacts/drafts",
+        default="/data/workspace/drafts",
         description="AI 写作的章节草稿 markdown 目录。",
         alias="ARTICLE_AGENT_DRAFTS_DIR",
     )
     
     # 兼容旧代码，将 temp_dir 指向 artifacts_dir
     temp_dir: str = Field(
-        default="/data/outputs/artifacts",
+        default="/data/workspace/artifacts",
         description="中间产物存储目录（已废弃，建议使用 artifacts_dir）。",
         alias="ARTICLE_TEMP_DIR",
     )
@@ -205,6 +205,25 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+def get_article_dir(article_id: str) -> str:
+    """获取指定文章的根目录 (artifacts/article_{id})"""
+    import os
+    settings = get_settings()
+    # 确保 artifacts_dir 是绝对路径
+    base = settings.artifacts_dir
+    return os.path.join(base, f"article_{article_id}")
+
+def get_drafts_dir(article_id: str) -> str:
+    """获取指定文章的草稿目录 (artifacts/article_{id}/drafts)"""
+    import os
+    return os.path.join(get_article_dir(article_id), "drafts")
+
+def get_final_article_dir(article_id: str) -> str:
+    """获取指定文章的最终产物目录 (artifacts/article_{id}/article)"""
+    import os
+    return os.path.join(get_article_dir(article_id), "article")
 
 
 __all__ = ["Settings", "get_settings"]

@@ -1,0 +1,89 @@
+{
+  "title": "Transformer与深度学习：原理、应用与未来发展",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言",
+      "keywords": [
+        "深度学习",
+        "Transformer",
+        "人工智能"
+      ],
+      "target_chars": 300,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "深度学习概述",
+      "keywords": [
+        "神经网络",
+        "卷积网络",
+        "RNN",
+        "深度学习应用"
+      ],
+      "target_chars": 700,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "Transformer架构详解",
+      "keywords": [
+        "自注意力机制",
+        "编码器-解码器",
+        "NLP",
+        "Transformer应用"
+      ],
+      "target_chars": 700,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "深度学习与Transformer的比较分析",
+      "keywords": [
+        "对比",
+        "优势",
+        "应用场景",
+        "技术差异"
+      ],
+      "target_chars": 400,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "实际应用案例",
+      "keywords": [
+        "自然语言处理",
+        "计算机视觉",
+        "语音识别",
+        "行业应用"
+      ],
+      "target_chars": 300,
+      "is_core": false
+    },
+    {
+      "id": "sec_6",
+      "title": "挑战与未来发展方向",
+      "keywords": [
+        "计算资源",
+        "模型可解释性",
+        "研究趋势",
+        "技术瓶颈"
+      ],
+      "target_chars": 300,
+      "is_core": false
+    },
+    {
+      "id": "sec_7",
+      "title": "总结",
+      "keywords": [
+        "总结",
+        "深度学习",
+        "Transformer",
+        "未来展望"
+      ],
+      "target_chars": 300,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}

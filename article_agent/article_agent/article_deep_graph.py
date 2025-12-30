@@ -6,12 +6,11 @@ import logging
 from typing import Any
 
 from deepagents import create_deep_agent, SubAgent
+from deepagents.backends import FilesystemBackend
 
 from .llm_runtime import build_chat_llm
 from .article_deep_prompts import (
     MAIN_AGENT_PROMPT,
-    COLLECTOR_AGENT_PROMPT,
-    COLLECTOR_AGENT_DESCRIPTION,
     PLANNER_AGENT_PROMPT,
     PLANNER_AGENT_DESCRIPTION,
     RESEARCHER_AGENT_PROMPT,
@@ -155,7 +154,7 @@ def get_article_deep_agent_graph() -> Any:
     
     # 使用配置的 LLM
     # 恢复推理模式 - 禁用推理会导致工具调用生成失败
-    main_llm = build_chat_llm(task_name="article_deep_main", enable_reasoning=True)
+    main_llm = build_chat_llm(task_name="article_deep_main")
     
     # ============================================================================
     # 定义子 Agent (Sub-Agents)
@@ -214,12 +213,13 @@ def get_article_deep_agent_graph() -> Any:
     # ============================================================================
     
     # 配置结构化输出 
-    # 注意：暂时禁用 response_format，让 Main Agent 自由执行 SubAgents
-    # try:
-    #     from langchain.agents.structured_output import ToolStrategy
-    #     response_format = ToolStrategy(ArticleAgentOutput)
-    # except ImportError:
-    #     response_format = ArticleAgentOutput
+    try:
+        # from langchain.agents.structured_output import ToolStrategy
+        # response_format = ToolStrategy(ArticleAgentOutput)
+        # Deep Agents 框架如果支持直接传 Pydantic class，则直接传
+        response_format = ArticleAgentOutput
+    except ImportError:
+        response_format = ArticleAgentOutput
     
     # 创建 Deep Agent
     graph = create_deep_agent(
@@ -235,7 +235,11 @@ def get_article_deep_agent_graph() -> Any:
         tools=[],  # Main Agent 不直接使用工具，通过 SubAgents 执行
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[thinking_middleware],  # 添加思维链日志 middleware
-        # response_format=response_format,  # 暂时禁用，让 Agent 自由执行
+        backend=FilesystemBackend(
+            root_dir="/data/workspace",
+            virtual_mode=False
+        ),
+        response_format=response_format,  # 启用结构化输出
     )
     
     _LOGGER.info("Article Deep Agent graph created with 6 SubAgents")

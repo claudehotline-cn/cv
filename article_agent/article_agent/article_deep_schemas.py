@@ -171,6 +171,7 @@ class ArticleAgentOutput(BaseModel):
     md_url: str = Field(description="Markdown 文件可访问 URL")
     summary: str = Field(description="文章摘要")
     word_count: int = Field(description="总字数")
+    article_content: Optional[str] = Field(default=None, description="完整的文章 Markdown 内容")
     error_message: Optional[str] = Field(default=None, description="错误信息（如有）")
 
 

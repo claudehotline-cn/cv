@@ -291,13 +291,17 @@ URLs: ${validUrlsList.join(', ')}
                         if (data.final_markdown) {
                           resultMarkdown.value = data.final_markdown
                         }
-                      } else if (data.md_url || data.md_path) {
-                        // AssemblerOutput - 文章保存成功，尝试获取内容
-                        summary = `文章保存成功: ${data.md_path || data.md_url}`
+                      } else if (data.md_url || data.md_path || data.article_content) {
+                        // AssemblerOutput - 文章保存成功
+                        summary = `文章保存成功: ${data.md_path || data.md_url || ''}`
                         currentStep.value = '正在加载文章...'
                         
-                        // 尝试从 md_url 获取内容
-                        if (data.md_url) {
+                        // 优先使用 article_content
+                        if (data.article_content) {
+                          resultMarkdown.value = data.article_content
+                          currentStep.value = '完成'
+                        } else if (data.md_url) {
+                          // 回退：尝试从 md_url 获取内容
                           try {
                             const mdResponse = await fetch(`/api/agents/article${data.md_url}`)
                             if (mdResponse.ok) {
@@ -306,8 +310,10 @@ URLs: ${validUrlsList.join(', ')}
                           } catch (err) {
                             console.warn('Failed to fetch markdown from md_url:', err)
                           }
+                          currentStep.value = '完成'
+                        } else {
+                          currentStep.value = '完成'
                         }
-                        currentStep.value = '完成'
                       } else if (data.status) {
                         // 通用状态
                         summary = data.status === 'success' ? '执行成功' : `错误: ${data.error_message || '未知'}`
@@ -336,22 +342,31 @@ URLs: ${validUrlsList.join(', ')}
             }
             
             // === 处理 ArticleAgentOutput 格式 ===
-            if (data.status === 'success' && data.md_url) {
-              // 最终成功输出 - 需要从 md_url 获取 markdown 内容
-              addThinkingEvent('step', `文章生成成功: ${data.title || ''}`)
-              currentStep.value = '正在加载文章...'
-              
-              // 获取 markdown 内容
-              try {
-                const mdResponse = await fetch(`/api/agents/article${data.md_url}`)
-                if (mdResponse.ok) {
-                  resultMarkdown.value = await mdResponse.text()
-                } else {
-                  // 如果无法获取，显示摘要
-                  resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
+            console.log('[DEBUG] Checking ArticleAgentOutput - status:', data.status, 'article_content:', !!data.article_content, 'md_url:', data.md_url)
+            if (data.status === 'success') {
+              console.log('[DEBUG] status=success, article_content length:', data.article_content?.length)
+              // 优先使用直接返回的 article_content
+              if (data.article_content) {
+                 console.log('[DEBUG] Using article_content!')
+                 addThinkingEvent('step', `文章生成成功: ${data.title || ''}`)
+                 resultMarkdown.value = data.article_content
+                 currentStep.value = '完成'
+              } else if (data.md_url) {
+                // 回退：尝试从 md_url 获取 (虽然可能 404)
+                addThinkingEvent('step', `文章生成成功: ${data.title || ''}`)
+                currentStep.value = '正在加载文章...'
+                
+                try {
+                  const mdResponse = await fetch(`/api/agents/article${data.md_url}`)
+                  if (mdResponse.ok) {
+                    resultMarkdown.value = await mdResponse.text()
+                  } else {
+                    // 如果无法获取，显示摘要
+                    resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
+                  }
+                } catch {
+                   resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
                 }
-              } catch {
-                resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
               }
             } else if (data.status === 'error') {
               // 错误输出

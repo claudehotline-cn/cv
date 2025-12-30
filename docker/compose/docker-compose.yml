@@ -413,18 +413,14 @@ services:
     environment:
       # LLM 提供方：gemini | ollama | openai | siliconflow
       - ARTICLE_AGENT_LLM_PROVIDER=ollama
-      # SiliconFlow 配置
-      # - SILICONFLOW_API_KEY=sk-avpmyivhdeookplzzvdnpqnnaaunzhvvdismbxezwljnatqp
-      # - ARTICLE_AGENT_LLM_MODEL=Qwen/Qwen3-VL-235B-A22B-Thinking
-      # Ollama 配置（备用）
-      - ARTICLE_AGENT_LLM_MODEL=qwen3-vl:8b
+      - ARTICLE_AGENT_LLM_MODEL=qwen3:14b
       - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
-      # VLM 配置（图片理解仍使用 Ollama，因为 Gemini VLM 需要单独配置）
+      # VLM 配置
       - ARTICLE_AGENT_VLM_ENABLED=true
       - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:8b
       # 输出目录配置
-      - ARTICLE_TEMP_DIR=/data/drafts
-      - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/articles
+      - ARTICLE_TEMP_DIR=/data/workspace/artifacts
+      - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/workspace/articles
       - ARTICLE_AGENT_ARTICLES_BASE_URL=/articles
       # LangSmith 追踪配置（用于查看 Main Agent 推理过程）
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
@@ -441,7 +437,8 @@ services:
       - ../../logs:/logs:rw
       - ../../docs:/docs:ro
       # - ../../article_agent:/app/article_agent:rw
-      - ../../article_agent/outputs:/data/outputs:rw
+
+      - ../../article_agent/workspace:/data/workspace:rw
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8130/ || exit 1"]
       interval: 30s

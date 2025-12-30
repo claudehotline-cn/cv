@@ -16,12 +16,11 @@ _LOGGER = logging.getLogger("article_agent.llm")
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
-def build_chat_llm(task_name: str = "article", enable_reasoning: bool = True) -> Any:
+def build_chat_llm(task_name: str = "article") -> Any:
     """根据全局 Settings 构造用于内容整理的 Chat LLM 客户端。
     
     Args:
         task_name: 任务名称，用于日志
-        enable_reasoning: 是否启用思维模式（Qwen3），结构化输出时应设为 False
     """
 
     settings = get_settings()
@@ -29,22 +28,21 @@ def build_chat_llm(task_name: str = "article", enable_reasoning: bool = True) ->
 
     if provider == "ollama":
         _LOGGER.info(
-            "llm.init provider=ollama task=%s model=%s base_url=%s num_predict=%s num_ctx=%s reasoning=%s",
+            "llm.init provider=ollama task=%s model=%s base_url=%s num_predict=%s num_ctx=%s",
             task_name,
             settings.llm_model,
             settings.ollama_base_url,
             settings.ollama_num_predict,
             settings.ollama_num_ctx,
-            enable_reasoning,
         )
         try:
             return ChatOllama(
                 model=settings.llm_model,
                 base_url=settings.ollama_base_url,
                 temperature=0,
-                reasoning=enable_reasoning,
                 num_predict=settings.ollama_num_predict,
                 num_ctx=settings.ollama_num_ctx,
+                timeout=300.0, # 5分钟超时，防止长文本任务中断
             )
         except Exception as exc:  # pragma: no cover
             _LOGGER.error("llm.init_failed provider=ollama task=%s error=%s", task_name, exc)
@@ -131,6 +129,7 @@ def build_vlm_client(task_name: str = "vlm_analyze") -> Any:
             model=vlm_model,
             base_url=settings.ollama_base_url,
             temperature=0,
+            timeout=300.0, # 5分钟超时
         )
     except Exception as exc:  # pragma: no cover
         _LOGGER.error("vlm.init_failed task=%s error=%s", task_name, exc)
@@ -147,7 +146,7 @@ def build_structured_chat_llm(output_model: Type[TModel], task_name: str = "arti
     """
 
     # 结构化输出必须禁用 reasoning，否则思维过程会破坏 JSON 格式
-    base_llm = build_chat_llm(task_name=task_name, enable_reasoning=False)
+    base_llm = build_chat_llm(task_name=task_name)
 
     try:
         # 通过 LangChain 的 structured output 功能，让 LLM 直接按 Pydantic 模型输出结构化结果。

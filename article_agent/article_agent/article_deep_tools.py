@@ -239,8 +239,8 @@ def collect_all_sources_tool(
     from .tools_files import fetch_url_with_images, load_text_from_file
     
     # 固定参数，不允许 LLM 覆盖
-    max_text_chars = 30000
-    max_overview_chars = 5000
+    max_text_chars = 5000  # 限制每个源的最大读取字符数，避免 Context 过长
+    max_overview_chars = 2000
     max_images_per_source = 30
     
     _LOGGER.info(f"collect_all_sources_tool called with {len(urls or [])} urls, {len(file_paths or [])} files, max_text_chars={max_text_chars}")
@@ -314,13 +314,13 @@ def collect_all_sources_tool(
     import os
     import json
     
-    from .config import get_settings
+    from .config import get_settings, get_article_dir
     settings = get_settings()
-    base_dir = settings.artifacts_dir
     article_id = os.environ.get("ARTICLE_CURRENT_ID", str(uuid.uuid4())[:8])
     os.environ["ARTICLE_CURRENT_ID"] = article_id
     
-    article_dir = os.path.join(base_dir, f"article_{article_id}")
+    # 使用 helper 获取路径 (artifacts/article_{id})
+    article_dir = get_article_dir(article_id)
     os.makedirs(article_dir, exist_ok=True)
     
     # 保存完整素材到 JSON 文件 (包含 full_text)
@@ -371,11 +371,11 @@ def read_sources_tool(sources_file: str = "") -> Dict[str, Any]:
     
     # 如果没有指定文件，尝试从环境变量获取当前文章目录
     if not sources_file:
-        from .config import get_settings
-        base_dir = get_settings().artifacts_dir
+        from .config import get_article_dir
         article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
         if article_id:
-            sources_file = os.path.join(base_dir, f"article_{article_id}", "sources.json")
+            article_dir = get_article_dir(article_id)
+            sources_file = os.path.join(article_dir, "sources.json")
     
     if not sources_file or not os.path.exists(sources_file):
         _LOGGER.warning(f"Sources file not found: {sources_file}")
@@ -422,6 +422,7 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
     """
     import json
     import re
+    import os
     from .llm_runtime import build_chat_llm
     from langchain_core.messages import HumanMessage, SystemMessage
     
@@ -506,19 +507,21 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
             
             # 落盘：保存大纲到文件
             try:
-                import os
-                import json
-                from .config import get_settings
-                
-                settings = get_settings()
-                base_dir = settings.artifacts_dir
-                article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
-                
-                if article_id:
-                    outline_file = os.path.join(base_dir, f"article_{article_id}", "outline.json")
+                # 如果参数没传，从环境变量获取
+                save_article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
+                _LOGGER.info(f"[DEBUG] generate_outline_tool: save_article_id = '{save_article_id}'")
+                if save_article_id:
+                    # 使用 helper 获取路径 (artifacts/article_{id})
+                    from .config import get_article_dir
+                    save_dir = get_article_dir(save_article_id)
+                    os.makedirs(save_dir, exist_ok=True)
+                    
+                    outline_file = os.path.join(save_dir, "outline.json")
                     with open(outline_file, "w", encoding="utf-8") as f:
                         json.dump(result, f, ensure_ascii=False, indent=2)
                     _LOGGER.info(f"Outline saved to: {outline_file}")
+                else:
+                    _LOGGER.warning("[DEBUG] generate_outline_tool: article_id is EMPTY, cannot save outline!")
             except Exception as e:
                 _LOGGER.warning(f"Failed to save outline to file: {e}")
             
@@ -529,13 +532,14 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
             _LOGGER.info(f"[OUTLINE] 章节({len(sections)}): {sections_str}")
             _LOGGER.info(f"[OUTLINE] 预估字数: {result.get('estimated_total_chars', 0)}")
             
-            # 落盘保存
+            # 落盘保存 (备用路径，已在上面保存过了)
+            # 这里可以删除或保留为备用 - 我们保留并使用新路径
+            outline_file = ""  # Initialize before the if block
             try:
-                import os
-                base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+                from .config import get_article_dir
                 article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
                 if article_id:
-                    save_dir = os.path.join(base_dir, f"article_{article_id}")
+                    save_dir = get_article_dir(article_id)
                     os.makedirs(save_dir, exist_ok=True)
                     outline_file = os.path.join(save_dir, "outline.json")
                     with open(outline_file, "w", encoding="utf-8") as f:
@@ -689,12 +693,16 @@ def research_all_sections_tool(
     import json
     
     # 优先加载 Persistent Outline (此时 outline 参数可能是空的)
-    base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
-    article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+    from .config import get_settings, get_article_dir
+    settings = get_settings()
+    article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
+    _LOGGER.info(f"[DEBUG] research_all_sections_tool: article_id = '{article_id}', param_article_id = '{article_id}'")
     
     loaded_outline = {}
     if article_id:
-        outline_file = os.path.join(base_dir, f"article_{article_id}", "outline.json")
+        article_dir = get_article_dir(article_id)
+        outline_file = os.path.join(article_dir, "outline.json")
+        _LOGGER.info(f"[DEBUG] research_all_sections_tool: outline_file = {outline_file}, exists = {os.path.exists(outline_file)}")
         if os.path.exists(outline_file):
             try:
                 with open(outline_file, "r", encoding="utf-8") as f:
@@ -702,6 +710,8 @@ def research_all_sections_tool(
                 _LOGGER.info(f"Loaded outline from file: {outline_file}")
             except Exception as e:
                     _LOGGER.warning(f"Failed to load outline from file: {e}")
+    else:
+        _LOGGER.warning("[DEBUG] research_all_sections_tool: article_id is EMPTY!")
 
     if loaded_outline:
         outline = loaded_outline
@@ -711,13 +721,15 @@ def research_all_sections_tool(
     
     _LOGGER.info(f"research_all_sections_tool called. Outline sections: {len(outline.get('sections', []))}")
     
-    from .config import get_settings
-    base_dir = get_settings().artifacts_dir
+    # 重新使用 get_article_dir (已在上面加载 outline 时导入)
     article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
+    _LOGGER.info(f"[DEBUG] research_all_sections_tool: article_id={article_id}, env={os.environ.get('ARTICLE_CURRENT_ID', 'NOT_SET')}")
     
     loaded_sources = []
     if article_id:
-        sources_file = os.path.join(base_dir, f"article_{article_id}", "sources.json")
+        article_dir = get_article_dir(article_id)
+        sources_file = os.path.join(article_dir, "sources.json")
+        _LOGGER.info(f"[DEBUG] Looking for sources at: {sources_file}, exists={os.path.exists(sources_file)}")
         if os.path.exists(sources_file):
             try:
                 with open(sources_file, "r", encoding="utf-8") as f:
@@ -753,49 +765,42 @@ def research_all_sections_tool(
     # 并行处理所有章节 (Parallel Execution)
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
-    def _research_single_section(idx: int, sec: Dict[str, Any]) -> Dict[str, Any]:
-        """单个章节的研究任务（在线程中执行）"""
+    sections = outline.get("sections", [])
+    max_workers = 1  # 强制串行执行 (Sequential Execution)
+    
+    _LOGGER.info(f"[Parallel] Starting Native LangChain batch research with max_concurrency={max_workers} for {len(sections)} sections")
+    
+    # 构造 batch 输入
+    batch_inputs = []
+    for idx, sec in enumerate(sections):
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
-        _LOGGER.info(f"[Parallel] Starting research for section: {section_id}")
-        
-        result = research_section_tool.invoke({
+        batch_inputs.append({
             "section_id": section_id,
             "section_title": section_title,
             "keywords": sec.get("keywords", []),
             "sources_text": all_text,
             "available_images": all_images,
         })
-        result["_order"] = idx  # 保留顺序信息
-        _LOGGER.info(f"[Parallel] Completed research for section: {section_id}")
-        return result
     
-    sections = outline.get("sections", [])
-    max_workers = min(2, len(sections))  # 与 OLLAMA_NUM_PARALLEL=2 对应
-    
-    _LOGGER.info(f"[Parallel] Starting parallel research with max_workers={max_workers} for {len(sections)} sections")
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_research_single_section, idx, sec): idx
-            for idx, sec in enumerate(sections)
-        }
-        
-        results = []
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as e:
-                idx = futures[future]
-                _LOGGER.error(f"[Parallel] Failed to research section {idx}: {e}")
-                results.append({"section_id": f"sec_{idx+1}", "notes": f"研究失败: {e}", "relevant_images": [], "_order": idx})
-    
-    # 按原始顺序排序
-    results.sort(key=lambda x: x.get("_order", 0))
-    for r in results:
-        r.pop("_order", None)  # 移除临时排序字段
-    section_notes = results
+    # 使用 LangChain 原生 batch
+    from langchain_core.runnables import RunnableConfig
+    try:
+        # return_exceptions=True 允许部分失败（取决于 LangChain 版本，标准 batch 可能抛出错误）
+        # 这里我们就让它抛错，因为 research_section_tool 内部已有 catch-all
+        section_notes = research_section_tool.batch(
+            batch_inputs,
+            config=RunnableConfig(max_concurrency=max_workers)
+        )
+    except Exception as e:
+        _LOGGER.error(f"[Parallel] Batch research failed: {e}")
+        section_notes = []
+        for inp in batch_inputs:
+             section_notes.append({
+                 "section_id": inp["section_id"], 
+                 "notes": f"批量研究失败: {e}", 
+                 "relevant_images": []
+             })
     
     _LOGGER.info(f"[Parallel] All {len(section_notes)} sections researched")
     
@@ -810,11 +815,10 @@ def research_all_sections_tool(
     
     # 落盘保存
     try:
-        from .config import get_settings
-        base_dir = get_settings().artifacts_dir
+        from .config import get_article_dir
         article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
         if article_id:
-            save_dir = os.path.join(base_dir, f"article_{article_id}")
+            save_dir = get_article_dir(article_id)
             os.makedirs(save_dir, exist_ok=True)
             notes_file = os.path.join(save_dir, "research_notes.json")
             
@@ -976,13 +980,15 @@ def write_section_tool(
         import os
         
         # 使用环境变量或默认路径
-        from .config import get_settings
-        base_dir = get_settings().drafts_dir
+        # 使用环境变量或默认路径
+        from .config import get_settings, get_drafts_dir
+        
         # 从 section_id 提取或生成 article_id
         article_id = os.environ.get("ARTICLE_CURRENT_ID", str(uuid.uuid4())[:8])
         os.environ["ARTICLE_CURRENT_ID"] = article_id  # 保存供后续使用
         
-        article_dir = os.path.join(base_dir, f"article_{article_id}")
+        # 使用 helper 获取路径 (artifacts/article_{id}/drafts)
+        article_dir = get_drafts_dir(article_id)
         os.makedirs(article_dir, exist_ok=True)
         
         file_name = f"section_{section_id}.md"
@@ -1036,14 +1042,16 @@ def write_all_sections_tool(
     import json
     
     # 优先加载 Persistent Outline
-    from .config import get_settings
+    from .config import get_settings, get_article_dir
     settings = get_settings()
-    base_dir = settings.artifacts_dir
     article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+    _LOGGER.info(f"[DEBUG] write_all_sections_tool: article_id from env = '{article_id}'")
     
     loaded_outline = {}
     if article_id:
-        outline_file = os.path.join(base_dir, f"article_{article_id}", "outline.json")
+        article_dir = get_article_dir(article_id)
+        outline_file = os.path.join(article_dir, "outline.json")
+        _LOGGER.info(f"[DEBUG] write_all_sections_tool: outline_file = {outline_file}, exists = {os.path.exists(outline_file)}")
         if os.path.exists(outline_file):
             try:
                 with open(outline_file, "r", encoding="utf-8") as f:
@@ -1051,6 +1059,8 @@ def write_all_sections_tool(
                 _LOGGER.info(f"Loaded outline from file: {outline_file}")
             except Exception as e:
                     _LOGGER.warning(f"Failed to load outline from file: {e}")
+    else:
+        _LOGGER.warning("[DEBUG] write_all_sections_tool: article_id is EMPTY!")
 
     if loaded_outline:
         outline = loaded_outline
@@ -1059,14 +1069,13 @@ def write_all_sections_tool(
         return {"drafts": [], "error": "Missing outline"}
     
     # 强制从文件加载研究笔记（不使用内存数据）
-    import os
-    import json
-    # base_dir already set to artifacts_dir above
+    # 重用 get_article_dir
     article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
     
     loaded_notes = []
     if article_id:
-        notes_file = os.path.join(base_dir, f"article_{article_id}", "research_notes.json")
+        article_dir = get_article_dir(article_id)
+        notes_file = os.path.join(article_dir, "research_notes.json")
         if os.path.exists(notes_file):
             try:
                 with open(notes_file, "r", encoding="utf-8") as f:
@@ -1087,7 +1096,8 @@ def write_all_sections_tool(
     # 加载审阅反馈（如果存在）- 用于修改稿件
     review_feedback = {}
     if article_id:
-        review_file = os.path.join(base_dir, f"article_{article_id}", "review.json")
+        article_dir = get_article_dir(article_id)
+        review_file = os.path.join(article_dir, "review.json")
         if os.path.exists(review_file):
             try:
                 with open(review_file, "r", encoding="utf-8") as f:
@@ -1109,11 +1119,16 @@ def write_all_sections_tool(
     sections = outline.get("sections", [])
     _LOGGER.info(f"Processing {len(sections)} sections from outline")
     
-    # 并行处理所有章节 (Parallel Execution)
+    # 并行处理所有章节 (Parallel Execution) - 现已改为串行
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
-    def _write_single_section(idx: int, sec: Dict[str, Any]) -> Dict[str, Any]:
-        """单个章节的写作任务（在线程中执行）"""
+    max_workers = 1  # 强制串行执行 (Sequential Execution)
+    
+    _LOGGER.info(f"[Parallel] Starting Native LangChain batch writing with max_concurrency={max_workers} for {len(sections)} sections")
+    
+    # 构造 batch 输入
+    batch_inputs = []
+    for idx, sec in enumerate(sections):
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
         notes = notes_map.get(section_id, "")
@@ -1129,46 +1144,35 @@ def write_all_sections_tool(
                     _LOGGER.info(f"[Parallel] Section {section_id} has review feedback: {section_review[:100]}")
                     break
         
-        _LOGGER.info(f"[Parallel] Starting writing for section: {section_id}")
-        
-        result = write_section_tool.invoke({
+        batch_inputs.append({
             "section_id": section_id,
             "section_title": section_title,
             "target_chars": sec.get("target_chars", 500),
             "notes": notes,
             "is_core": sec.get("is_core", False),
-            "review_feedback": section_review,  # 传递审阅反馈
+            "review_feedback": section_review,
         })
-        result["_order"] = idx  # 保留顺序信息
-        _LOGGER.info(f"[Parallel] Completed writing for section: {section_id}")
-        return result
-    
-    max_workers = min(2, len(sections))  # 与 OLLAMA_NUM_PARALLEL=2 对应
-    
-    _LOGGER.info(f"[Parallel] Starting parallel writing with max_workers={max_workers} for {len(sections)} sections")
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_write_single_section, idx, sec): idx
-            for idx, sec in enumerate(sections)
-        }
-        
-        results = []
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as e:
-                idx = futures[future]
-                _LOGGER.error(f"[Parallel] Failed to write section {idx}: {e}")
-                results.append({"section_id": f"sec_{idx+1}", "content": f"写作失败: {e}", "char_count": 0, "_order": idx})
-    
-    # 按原始顺序排序
-    results.sort(key=lambda x: x.get("_order", 0))
-    for r in results:
-        total_chars += r.get("char_count", 0)
-        r.pop("_order", None)  # 移除临时排序字段
-    drafts = results
+
+    # 使用 LangChain 原生 batch
+    from langchain_core.runnables import RunnableConfig
+    try:
+        drafts = write_section_tool.batch(
+            batch_inputs,
+            config=RunnableConfig(max_concurrency=max_workers)
+        )
+    except Exception as e:
+        _LOGGER.error(f"[Parallel] Batch writing failed: {e}")
+        drafts = []
+        for inp in batch_inputs:
+            drafts.append({
+                "section_id": inp["section_id"],
+                "content": f"写作失败: {e}",
+                "char_count": 0
+            })
+
+    # 计算总字数
+    for d in drafts:
+        total_chars += d.get("char_count", 0)
     
     _LOGGER.info(f"[Parallel] All {len(drafts)} sections written, total_chars={total_chars}")
     
@@ -1268,18 +1272,20 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
     
     _LOGGER.info(f"review_draft_tool called with {len(drafts)} sections")
     
-    from .config import get_settings
+    from .config import get_settings, get_article_dir, get_drafts_dir
     settings = get_settings()
-    artifacts_dir = settings.artifacts_dir
-    drafts_dir = settings.drafts_dir
+    # artifacts_dir = settings.artifacts_dir (unused directly)
+    # drafts_dir = settings.drafts_dir (unused directly)
     article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+    _LOGGER.info(f"review_draft_tool: Starting execution (article_id={article_id})")
     
     # 1. 第一步：获取"藏宝图" (加载 Persistent Outline)
     # 我们必须先加载 Outline，因为它是唯一包含 Section ID 的地方。
     # 只有知道了 Section ID (例如 "sec_1")，我们由于 Writer 的命名规则 (sec_1.md)，才知道去磁盘的哪里寻找 Draft 文件。
     loaded_outline = {}
     if article_id:
-        outline_file = os.path.join(artifacts_dir, f"article_{article_id}", "outline.json")
+        article_dir = get_article_dir(article_id)
+        outline_file = os.path.join(article_dir, "outline.json")
         if os.path.exists(outline_file):
             try:
                 with open(outline_file, "r", encoding="utf-8") as f:
@@ -1288,8 +1294,7 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
             except Exception as e:
                 _LOGGER.warning(f"Failed to load outline from file: {e}")
 
-    if loaded_outline:
-        outline = loaded_outline
+    outline = loaded_outline or {}
         
     # 2. 强制从大纲和文件系统读取草稿 (忽略内存输入的 drafts)
     # 用户要求：即使 drafts 不为空，也要读文件
@@ -1297,7 +1302,7 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
     
     found_drafts = []
     if outline and article_id:
-         article_dir = os.path.join(drafts_dir, f"article_{article_id}")
+         article_dir = get_drafts_dir(article_id)
          for sec in outline.get("sections", []):
              sec_id = sec.get("id") or sec.get("section_id")
              if sec_id:
@@ -1386,18 +1391,21 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
 {instruction}
 
 【文章草稿】
-{all_markdown[:10000]}
+{all_markdown[:3000]}  # 限制审核内容量，加速处理
 
 请审阅并输出 JSON：
 """
-
+    _LOGGER.info("review_draft_tool: Constructed user_prompt. Building LLM client...")
     try:
         llm = build_chat_llm()
+        _LOGGER.info("review_draft_tool: LLM client built. Preparing messages...")
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
+        _LOGGER.info("review_draft_tool: Messages prepared. Invoking LLM (this might take a while)...")
         response = llm.invoke(messages)
+        _LOGGER.info("review_draft_tool: LLM invoke returned!")
         content = response.content.strip()
         
         # 提取 JSON
@@ -1411,10 +1419,10 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
             
             # 保存审阅结果到文件，供 Writer 读取
             try:
-                from .config import get_settings
+                from .config import get_settings, get_article_dir
                 article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
                 if article_id:
-                    review_dir = os.path.join(get_settings().artifacts_dir, f"article_{article_id}")
+                    review_dir = get_article_dir(article_id)
                     os.makedirs(review_dir, exist_ok=True)
                     review_file = os.path.join(review_dir, "review.json")
                     with open(review_file, "w", encoding="utf-8") as f:
@@ -1473,17 +1481,33 @@ def match_images_tool(
     
     _LOGGER.info(f"match_images_tool called with {len(available_images)} images")
     
-    # 如果 drafts 为空，尝试自动发现
+    # 如果 available_images 为空，尝试从 sources.json 加载
     article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
-    _LOGGER.info(f"match_images_tool: article_id={article_id}, drafts count={len(drafts) if drafts else 0}")
+    if not available_images and article_id:
+        from .config import get_settings, get_article_dir
+        sources_file = os.path.join(get_article_dir(article_id), "sources.json")
+        if os.path.exists(sources_file):
+            try:
+                with open(sources_file, "r", encoding="utf-8") as f:
+                    sources_data = json.load(f)
+                    for source in sources_data.get("sources", []):
+                        available_images.extend(source.get("images", []))
+                _LOGGER.info(f"Auto-loaded {len(available_images)} images from {sources_file}")
+            except Exception as e:
+                _LOGGER.warning(f"Failed to load images from sources.json: {e}")
     
-    if not drafts and article_id:
-        from .config import get_settings
+    _LOGGER.info(f"match_images_tool: article_id={article_id}, input drafts count={len(drafts) if drafts else 0}")
+    
+    # 强制使用自动发现逻辑，忽略 LLM 可能传入的错误路径
+    # 因为 LLM 经常传入不存在的路径如 /sec/xxx/sec_1.md
+    if article_id:
+        from .config import get_settings, get_drafts_dir
         import glob
-        drafts_dir = os.path.join(get_settings().drafts_dir, f"article_{article_id}")
+        drafts_dir = get_drafts_dir(article_id)
         _LOGGER.info(f"match_images_tool: Auto-discovering in {drafts_dir}, exists={os.path.exists(drafts_dir)}")
         if os.path.exists(drafts_dir):
             draft_files_found = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+            # 覆盖 LLM 传入的可能错误的 drafts
             drafts = [{"file_path": f} for f in draft_files_found]
             _LOGGER.info(f"Auto-discovered {len(drafts)} drafts in {drafts_dir}: {draft_files_found[:3]}")
         else:
@@ -1517,11 +1541,55 @@ def match_images_tool(
             "final_markdown": "", # Return empty markdown if failed
         }
     
-    # 2. 准备图片信息（仅前10张作为候选，避免 Context 爆炸）
+    # 2. 使用 VLM 分析图片内容（如果启用）
+    from .llm_runtime import build_vlm_client
+    import base64
+    import httpx
+    
+    vlm = build_vlm_client(task_name="illustrator_vlm")
+    images_with_desc = []
+    
+    for i, img in enumerate(available_images[:10]):  # 限制前10张
+        img_url = img.get("path_or_url", "")
+        alt = img.get("alt", "")
+        description = alt  # 默认使用 alt
+        
+        if vlm and img_url:
+            try:
+                # 尝试用 VLM 分析图片
+                from langchain_core.messages import HumanMessage
+                
+                # 构造带图片的消息
+                vlm_message = HumanMessage(
+                    content=[
+                        {"type": "text", "text": "请用一句话简洁描述这张图片的内容，重点说明它展示了什么技术概念或架构。只输出描述，不要其他内容。"},
+                        {"type": "image_url", "image_url": {"url": img_url}},
+                    ]
+                )
+                
+                vlm_response = vlm.invoke([vlm_message])
+                description = vlm_response.content.strip()[:100]  # 限制长度
+                _LOGGER.info(f"VLM analyzed image {i+1}: {description[:50]}...")
+            except Exception as e:
+                _LOGGER.warning(f"VLM analysis failed for image {i+1}: {e}")
+                description = alt or f"图片{i+1}"
+        
+        images_with_desc.append({
+            "index": i,
+            "url": img_url,
+            "description": description
+        })
+    
+    # 准备图片信息供 LLM 匹配
     images_info = "\n".join([
-        f"- 图片{i+1}: {img.get('path_or_url', '')[:50]}... | alt: {img.get('alt', '')}"
-        for i, img in enumerate(available_images[:10])
+        f"- 图片{d['index']+1}: {d['description']}"
+        for d in images_with_desc
     ])
+    
+    # 3. 提取文章标题
+    headings = re.findall(r'^(#{1,3}\s+.+)$', full_content, re.MULTILINE)
+    if not headings:
+        headings = ["无标题"]
     
     system_prompt = f"""
 你是 Illustrator，负责为文章选择和放置合适的图片。
@@ -1534,14 +1602,19 @@ def match_images_tool(
 
 【任务】
 1. 从可用图片中选择最多 5 张与文章内容相关的图片
-2. 确定每张图片应放置在哪个标题后
+2. 确定每张图片应放置在哪个标题 (after_heading) 下的哪个段落后 (insert_after_text)
 3. 生成图片说明
 
 【输出格式】
 输出 JSON：
 {{
   "placements": [
-    {{"image_index": 0, "after_heading": "## 引言", "caption": "图片说明"}}
+    {{
+      "image_index": 0, 
+      "after_heading": "## 引言", 
+      "insert_after_text": "这是一个快速发展的领域...",  // 目标段落的末尾文字（约10-20字），用于精确定位
+      "caption": "图片说明"
+    }}
   ]
 }}
 """
@@ -1569,24 +1642,117 @@ def match_images_tool(
             placements = result.get("placements", [])
             
             # 构建最终 Markdown（插入图片）
-            final_markdown = full_content
-            for p in reversed(placements):  # 倒序插入，避免位置偏移
+            lines = full_content.split('\n')
+            
+            # 预处理：按行索引插入，需要处理偏移，或者倒序处理
+            # 这里采用倒序插入，这样前面的索引不会受影响
+            
+            # 为了倒序处理，我们需要先计算出所有图片的插入行号
+            insertion_ops = [] # (line_index, img_md)
+            
+            for p in placements:
                 img_idx = p.get("image_index", 0)
                 if img_idx < len(available_images):
                     img = available_images[img_idx]
-                    img_url = img.get("path_or_url", "")
-                    alt = img.get("alt", "")
-                    caption = p.get("caption", "")
-                    after_heading = p.get("after_heading", "")
+                    # Log image object for debugging
+                    _LOGGER.info(f"Image {img_idx} raw object: {img}")
                     
-                    # 在标题后插入图片
-                    img_md = f"\n\n![{caption or alt}]({img_url})\n*{caption}*\n"
-                    if after_heading:
-                        final_markdown = final_markdown.replace(
-                            after_heading,
-                            after_heading + img_md,
-                            1
-                        )
+                    img_url = img.get("path_or_url") or img.get("url") or ""
+                    alt = img.get("alt", "")
+                    caption = p.get("caption", "") or alt
+                    after_heading = p.get("after_heading", "")
+                    insert_after_text = p.get("insert_after_text", "").strip()
+                    
+                    if not img_url:
+                        _LOGGER.warning(f"Image {img_idx} has EMPTY URL! Skipping insertion or inserting placeholder. Source: {img}")
+                    else:
+                        _LOGGER.info(f"Preparing to insert Image {img_idx}: url='{img_url}'")
+
+                    img_md = f"\n\n![{caption}]({img_url})\n*{caption}*\n"
+                    
+                    # 1. 找到 Heading 行
+                    heading_line_idx = -1
+                    for i, line in enumerate(lines):
+                        if line.strip() == after_heading or line.strip().endswith(after_heading.lstrip('#').strip()):
+                            heading_line_idx = i
+                            break
+                    
+                    if heading_line_idx == -1:
+                        _LOGGER.warning(f"Heading not found: {after_heading}, skipping image {img_idx}")
+                        continue
+                        
+                    # 2. 在 Heading 后查找插入点
+                    insert_line_idx = heading_line_idx + 1 # 默认插在标题后
+                    
+                    # 确定查找范围：直到下一个标题
+                    search_end_idx = len(lines)
+                    for i in range(heading_line_idx + 1, len(lines)):
+                        if lines[i].strip().startswith("#"):
+                            search_end_idx = i
+                            break
+                    
+                    # 如果有具体文本锚点，尝试定位
+                    if insert_after_text:
+                        import difflib
+                        
+                        found_anchor = False
+                        best_score = 0.0
+                        best_idx = -1
+                        
+                        # 归一化文本（移除空格和标点）
+                        def normalize(s):
+                            return "".join(c.lower() for c in s if c.isalnum())
+                        
+                        norm_target = normalize(insert_after_text)
+                        
+                        # 第一轮：尝试精确子串匹配（忽略大小写和标点）
+                        if len(norm_target) > 5:
+                           for i in range(heading_line_idx + 1, search_end_idx):
+                               line_norm = normalize(lines[i])
+                               # 如果锚点文本足够具体，且能在行中找到
+                               if norm_target in line_norm:
+                                   insert_line_idx = i + 1
+                                   found_anchor = True
+                                   _LOGGER.info(f"Image {img_idx}: Text match (Normalized substring) found at line {i+1}")
+                                   break
+                        
+                        # 第二轮：如果没找到，尝试模糊相似度匹配 (Levenshtein)
+                        if not found_anchor and len(norm_target) > 10:
+                            for i in range(heading_line_idx + 1, search_end_idx):
+                                line_norm = normalize(lines[i])
+                                if len(line_norm) < 5: continue
+                                
+                                # 计算相似度 ratio
+                                matcher = difflib.SequenceMatcher(None, norm_target, line_norm)
+                                ratio = matcher.ratio()
+                                # 或者检查包含关系的相似度
+                                if len(line_norm) > len(norm_target):
+                                     # 如果行比目标长，检查是否包含目标（即寻找最佳子序列匹配）
+                                     # 这里简化为直接比较 ratio，或者用 RealQuickRatio
+                                     pass
+                                
+                                if ratio > best_score:
+                                    best_score = ratio
+                                    best_idx = i
+                            
+                            # 阈值判定 (0.7 比较宽松，因为 LLM 经常改写)
+                            if best_score > 0.6: 
+                                insert_line_idx = best_idx + 1
+                                found_anchor = True
+                                _LOGGER.info(f"Image {img_idx}: Fuzzy match found at line {best_idx+1} (score={best_score:.2f})")
+                        
+                        if not found_anchor:
+                            _LOGGER.info(f"Image {img_idx}: Anchor text '{insert_after_text[:20]}...' not found (best score {best_score:.2f}) under {after_heading}, placing after heading")
+                    
+                    insertion_ops.append((insert_line_idx, img_md))
+
+            # 执行插入 (倒序)
+            insertion_ops.sort(key=lambda x: x[0], reverse=True)
+            
+            for line_idx, content in insertion_ops:
+                lines.insert(line_idx, content)
+            
+            final_markdown = "\n".join(lines)
             
             formatted_placements = [
                 {
@@ -1601,10 +1767,10 @@ def match_images_tool(
             # 保存到文件
             final_path = ""
             try:
-                base_dir = os.environ.get("ARTICLE_TEMP_DIR", "/tmp/article_drafts")
+                from .config import get_drafts_dir
                 article_id = os.environ.get("ARTICLE_CURRENT_ID", "")
                 if article_id:
-                    save_dir = os.path.join(base_dir, f"article_{article_id}")
+                    save_dir = get_drafts_dir(article_id)  # drafts 目录
                     os.makedirs(save_dir, exist_ok=True)
                     final_path = os.path.join(save_dir, "draft_with_images.md")
                     with open(final_path, "w", encoding="utf-8") as f:
@@ -1668,25 +1834,37 @@ def assemble_article_tool(
     
     # 自动发现逻辑：如果没有传入路径，尝试自动查找
     if not final_markdown_path or not os.path.exists(final_markdown_path):
-        from .config import get_settings
-        # 优先查找 draft_with_images.md
-        drafts_dir = os.path.join(get_settings().drafts_dir, f"article_{article_id}")
-        candidate_path = os.path.join(drafts_dir, "draft_with_images.md")
+        from .config import get_settings, get_article_dir, get_drafts_dir
+        settings = get_settings()
+        article_id = article_id or os.environ.get("ARTICLE_CURRENT_ID", "")
+        
+        # 优先查找 drafts 目录下的 draft_with_images.md (由 Illustrator 生成)
+        # 修正逻辑：draft_with_images.md 现在位于 drafts 目录中 (artifacts/article_{id}/drafts)
+        drafts_dir = get_drafts_dir(article_id)
+        candidate_path = os.path.join(drafts_dir, "draft_with_images.md") # Illustrator's output
+        
         if os.path.exists(candidate_path):
             final_markdown_path = candidate_path
-            _LOGGER.info(f"Auto-discovered final markdown: {final_markdown_path}")
+            _LOGGER.info(f"Auto-discovered final markdown in drafts: {final_markdown_path}")
         else:
-            # 如果没有 draft_with_images.md，尝试合并所有 section_*.md
-            import glob
-            section_files = sorted(glob.glob(os.path.join(drafts_dir, "section_*.md")))
-            if section_files:
-                _LOGGER.info(f"No draft_with_images.md found, merging {len(section_files)} section files")
-                merged_content = ""
-                for sf in section_files:
-                    with open(sf, "r", encoding="utf-8") as f:
-                        merged_content += f.read() + "\n\n"
-                # 直接使用合并内容，跳过文件读取
-                final_markdown = merged_content
+            # 其次查找 artifacts 根目录 (兼容旧数据)
+            artifacts_dir = get_article_dir(article_id)
+            candidate_path_old = os.path.join(artifacts_dir, "draft_with_images.md")
+            if os.path.exists(candidate_path_old):
+                final_markdown_path = candidate_path_old
+                _LOGGER.info(f"Auto-discovered final markdown in artifacts (legacy): {final_markdown_path}")
+            else:
+                # 如果没有 draft_with_images.md，尝试合并所有 section_*.md
+                import glob
+                section_files = sorted(glob.glob(os.path.join(drafts_dir, "section_*.md")))
+                if section_files:
+                    _LOGGER.info(f"No draft_with_images.md found, merging {len(section_files)} section files")
+                    merged_content = ""
+                    for sf in section_files:
+                        with open(sf, "r", encoding="utf-8") as f:
+                            merged_content += f.read() + "\n\n"
+                    # 直接使用合并内容，跳过文件读取
+                    final_markdown = merged_content
     
     if not final_markdown:
         if final_markdown_path and os.path.exists(final_markdown_path):
@@ -1714,14 +1892,34 @@ def assemble_article_tool(
     if not cleaned_md.strip().startswith("#"):
         cleaned_md = f"# {title}\n\n{cleaned_md}"
     
+    # 落盘：保存最终文章
+    # 修正逻辑：最终文章保存到 artifacts/article_{id}/article/article.md
+    from .config import get_final_article_dir
+    article_dir = get_final_article_dir(article_id) # artifacts/article_{id}/article
+    os.makedirs(article_dir, exist_ok=True)
+    
+    # 始终命名为 article.md 以便统一
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", title).strip() or "article"
+    # output_filename = f"{safe_title}.md"
+    output_filename = "article.md" 
+    output_path = os.path.join(article_dir, output_filename)
+        
     try:
-        result = export_markdown(cleaned_md, title, article_id)
-        _LOGGER.info(f"assemble_article_tool success: {result.get('md_path')}")
+        # export_markdown 原本负责写入文件，现在直接在 tool 里写，或者调整 export_markdown 
+        # 这里直接写入文件，因为 export_markdown 可能还依赖旧的环境变量逻辑
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(cleaned_md)
+        _LOGGER.info(f"Article exported to: {output_path}")
+        
+        # 兼容旧的返回值结构，伪造 md_url (或者由前端根据 id 拼装)
+        # 前端现在主要用 final_content, md_url 只是 fallback
+        md_url = f"/api/articles/{article_id}/content" # 假设有个 API
+        
         return {
             "article_id": article_id,
-            "md_path": result.get("md_path", ""),
-            "md_url": result.get("md_url", ""),
-            "final_content": cleaned_md, # 返回最终内容供前端展示 (Return final content for frontend display)
+            "md_path": output_path,
+            "md_url": md_url,
+            "article_content": cleaned_md,  # 前端期望的字段名
         }
     except Exception as exc:
         _LOGGER.error(f"assemble_article_tool failed: {exc}")

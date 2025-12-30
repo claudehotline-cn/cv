@@ -1,0 +1,66 @@
+{
+  "title": "Transformer模型：深度学习中的革命性架构及其应用",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言：Transformer的诞生与影响",
+      "keywords": [
+        "Transformer",
+        "深度学习",
+        "自然语言处理",
+        "机器翻译"
+      ],
+      "target_chars": 400,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "核心技术：自注意力机制与并行计算",
+      "keywords": [
+        "自注意力机制",
+        "位置编码",
+        "多头注意力",
+        "前馈网络"
+      ],
+      "target_chars": 900,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "应用领域：从机器翻译到预训练模型",
+      "keywords": [
+        "BERT",
+        "GPT",
+        "文本生成",
+        "语言建模"
+      ],
+      "target_chars": 900,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "挑战与优化：计算资源与模型扩展",
+      "keywords": [
+        "计算效率",
+        "模型压缩",
+        "长文本处理",
+        "硬件加速"
+      ],
+      "target_chars": 400,
+      "is_core": false
+    },
+    {
+      "id": "sec_5",
+      "title": "总结：Transformer的未来方向",
+      "keywords": [
+        "技术演进",
+        "跨模态应用",
+        "量子计算",
+        "AI研究"
+      ],
+      "target_chars": 400,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 3000
+}
