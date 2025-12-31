@@ -55,3 +55,4 @@ video-analyzer/build-ninja/
 **/*.engine
 
 article_agent/outputs/
+article_agent/workspace/
