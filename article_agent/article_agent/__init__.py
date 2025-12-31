@@ -7,7 +7,7 @@ import os
 
 # Initialize structlog for structured logging
 try:
-    from .logging_config import configure_structlog
+    from .deep_agent.utils.logging.logging_config import configure_structlog
     configure_structlog()
 except ImportError:
     # Fallback if structlog is not available

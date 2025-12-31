@@ -1,0 +1,27 @@
+{
+  "overall_quality": 1,
+  "section_feedback": [
+    {
+      "section_id": "sec_1",
+      "quality_score": 1,
+      "issues": [
+        "未提供任何文章内容（仅显示'限制审核内容量，加速处理'）",
+        "无法验证技术细节准确性（如自注意力公式、架构图说明）",
+        "无法确认字数是否达标（当前内容0字）",
+        "缺失BERT/GPT案例分析",
+        "章节逻辑连贯性无从评估"
+      ],
+      "suggestions": [
+        "请提供完整文章草稿内容",
+        "确保包含技术公式（如自注意力计算：\\( \\text{Attention}(Q,K,V) = \\text{softmax}(\\frac{QK^T}{\\sqrt{d_k}})V \\)）",
+        "补充BERT/GPT架构对比案例（如BERT的双向编码 vs GPT的自回归解码）",
+        "确保字数≥5000字（当前内容量为0）",
+        "按标准技术文档结构组织章节（引言→核心原理→案例→总结）"
+      ]
+    }
+  ],
+  "sections_to_rewrite": [
+    "全部章节（因无内容可评审）"
+  ],
+  "approved": false
+}

@@ -416,7 +416,7 @@ services:
       - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # VLM 配置
       - ARTICLE_AGENT_VLM_ENABLED=true
-      - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:8b
+      - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:30b
       # 输出目录配置
       - ARTICLE_TEMP_DIR=/data/workspace/artifacts
       - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/workspace/articles

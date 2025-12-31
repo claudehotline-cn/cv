@@ -1,8 +1,8 @@
 {
   "graphs": {
-    "content-deep-agent": "article_agent.deep_graph:get_content_graph",
-    "article-deep-agent": "article_agent.article_deep_graph:get_article_deep_agent_graph",
-    "content-chat-agent": "article_agent.chat_graph:get_content_chat_agent_graph"
+    "content-deep-agent": "article_agent.state_graph.graph:get_content_graph",
+    "article-deep-agent": "article_agent.deep_agent.graph:get_article_deep_agent_graph",
+    "content-chat-agent": "article_agent.state_graph.chat_graph:get_content_chat_agent_graph"
   },
   "dependencies": [
     "article_agent",
