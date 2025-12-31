@@ -16,15 +16,19 @@ _LOGGER = logging.getLogger("article_agent.llm")
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
-def build_chat_llm(task_name: str = "article") -> Any:
+def build_chat_llm(task_name: str = "article", num_ctx_override: int = None) -> Any:
     """根据全局 Settings 构造用于内容整理的 Chat LLM 客户端。
     
     Args:
         task_name: 任务名称，用于日志
+        num_ctx_override: 可选，覆盖默认的上下文窗口大小（用于需要更大窗口的任务如 Illustrator）
     """
 
     settings = get_settings()
     provider = settings.llm_provider.lower()
+    
+    # 使用覆盖值或默认值
+    actual_num_ctx = num_ctx_override if num_ctx_override else settings.ollama_num_ctx
 
     if provider == "ollama":
         _LOGGER.info(
@@ -33,7 +37,7 @@ def build_chat_llm(task_name: str = "article") -> Any:
             settings.llm_model,
             settings.ollama_base_url,
             settings.ollama_num_predict,
-            settings.ollama_num_ctx,
+            actual_num_ctx,
         )
         try:
             return ChatOllama(
@@ -41,7 +45,7 @@ def build_chat_llm(task_name: str = "article") -> Any:
                 base_url=settings.ollama_base_url,
                 temperature=0,
                 num_predict=settings.ollama_num_predict,
-                num_ctx=settings.ollama_num_ctx,
+                num_ctx=actual_num_ctx,
                 timeout=600.0, # 10分钟超时，防止长文本任务中断
             )
         except Exception as exc:  # pragma: no cover

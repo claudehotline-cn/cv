@@ -123,9 +123,16 @@ def match_images_tool(
         _LOGGER.info(f"match_images_tool: Auto-discovering in {drafts_dir}, exists={os.path.exists(drafts_dir)}")
         if os.path.exists(drafts_dir):
             draft_files_found = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+            # 按章节号排序：section_sec_1.md, section_sec_2.md, ...
+            # 提取 sec_N 中的 N 进行数字排序
+            import re
+            def extract_section_num(path):
+                match = re.search(r'section_sec_(\d+)', path)
+                return int(match.group(1)) if match else 999
+            draft_files_found.sort(key=extract_section_num)
             # 覆盖 LLM 传入的可能错误的 drafts
             drafts = [{"file_path": f} for f in draft_files_found]
-            _LOGGER.info(f"Auto-discovered {len(drafts)} drafts in {drafts_dir}: {draft_files_found[:3]}")
+            _LOGGER.info(f"Auto-discovered {len(drafts)} drafts in {drafts_dir} (sorted): {draft_files_found[:3]}")
         else:
             _LOGGER.warning(f"Drafts directory not found: {drafts_dir}")
     
@@ -217,7 +224,8 @@ def match_images_tool(
     user_prompt = ILLUSTRATOR_MATCH_USER_PROMPT.format(content_preview=full_content[:5000])
 
     try:
-        llm = build_chat_llm()
+        # Illustrator 需要更大的上下文窗口来处理图片描述 + 文章内容
+        llm = build_chat_llm(task_name="illustrator", num_ctx_override=16384)
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),

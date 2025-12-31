@@ -56,9 +56,15 @@ def assemble_article_tool(
             else:
                 # 如果没有 draft_with_images.md，尝试合并所有 section_*.md
                 import glob
-                section_files = sorted(glob.glob(os.path.join(drafts_dir, "section_*.md")))
+                section_files = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+                # 按章节号数字排序：section_sec_1.md, section_sec_2.md, ...
+                import re
+                def extract_section_num(path):
+                    match = re.search(r'section_sec_(\d+)', path)
+                    return int(match.group(1)) if match else 999
+                section_files.sort(key=extract_section_num)
                 if section_files:
-                    _LOGGER.info(f"No draft_with_images.md found, merging {len(section_files)} section files")
+                    _LOGGER.info(f"No draft_with_images.md found, merging {len(section_files)} section files (sorted)")
                     merged_content = ""
                     for sf in section_files:
                         with open(sf, "r", encoding="utf-8") as f:
