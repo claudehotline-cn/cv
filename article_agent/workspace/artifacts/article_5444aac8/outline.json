@@ -1,0 +1,78 @@
+{
+  "title": "Transformer架构：深度学习革命的核心引擎",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言：深度学习与Transformer的崛起",
+      "keywords": [
+        "深度学习",
+        "Transformer",
+        "NLP革命",
+        "AI技术演进"
+      ],
+      "target_chars": 500,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "Transformer架构核心原理",
+      "keywords": [
+        "自注意力机制",
+        "多头注意力",
+        "编码器-解码器结构",
+        "位置编码"
+      ],
+      "target_chars": 1200,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "Transformer与传统模型的对比分析",
+      "keywords": [
+        "RNN局限性",
+        "CNN处理序列",
+        "并行计算优势",
+        "序列建模效率"
+      ],
+      "target_chars": 1000,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "Transformer在实际应用中的突破",
+      "keywords": [
+        "BERT",
+        "GPT系列",
+        "机器翻译",
+        "自然语言处理"
+      ],
+      "target_chars": 1000,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "技术挑战与未来发展方向",
+      "keywords": [
+        "计算资源需求",
+        "模型轻量化",
+        "多模态扩展",
+        "自监督学习"
+      ],
+      "target_chars": 800,
+      "is_core": true
+    },
+    {
+      "id": "sec_6",
+      "title": "总结：Transformer对AI生态的深远影响",
+      "keywords": [
+        "深度学习范式转变",
+        "工业级应用普及",
+        "研究方向演进",
+        "技术生态重构"
+      ],
+      "target_chars": 500,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 5000
+}

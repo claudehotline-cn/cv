@@ -15,9 +15,31 @@ const md = new MarkdownIt({
   typographer: true
 }).use(texmath, {
   engine: katex,
-  delimiters: 'dollars',
-  katexOptions: { displayMode: false }
+  delimiters: ['dollars', 'beg_end'], // Support $...$ and \begin...\end
+  katexOptions: { displayMode: false, throwOnError: false, macros: { "\\\\": "\\\\" } } // Fix double backslash issue in tables
 })
+
+// 自定义图片渲染：使用 figure 和 figcaption 显示 caption (alt)
+md.renderer.rules.image = (tokens, idx) => {
+  const token = tokens[idx]
+  if (!token) return ''
+  
+  const src = token.attrGet('src')
+  const alt = token.content
+  
+  if (!src) return ''
+  
+  // 如果有 alt 文本，渲染为带标题的图片
+  if (alt) {
+    return `<figure>
+      <img src="${src}" alt="${alt}" loading="lazy">
+      <figcaption>${alt}</figcaption>
+    </figure>`
+  }
+  
+  // 否则只渲染图片
+  return `<img src="${src}" alt="${alt}" loading="lazy">`
+}
 
 // 状态
 const urls = ref<string[]>([''])
@@ -879,12 +901,25 @@ const downloadMarkdown = () => {
   margin-bottom: 1em;
 }
 
+.markdown-preview :deep(figure) {
+  margin: 1.5em 0;
+  text-align: center;
+}
+
 .markdown-preview :deep(img) {
   max-width: 100%;
+  min-width: 50%; /* 避免图片过小 */
   height: auto;
   border-radius: 8px;
-  margin: 1em 0;
-  display: block;
+  display: inline-block; /* 配合 figure text-align: center */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.markdown-preview :deep(figcaption) {
+  margin-top: 0.5em;
+  font-size: 0.9em;
+  color: #a6adc8;
+  font-style: italic;
 }
 
 .markdown-preview :deep(ul),

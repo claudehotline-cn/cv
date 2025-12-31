@@ -1,0 +1,89 @@
+{
+  "title": "Transformer架构与深度学习：基础、应用与未来趋势",
+  "sections": [
+    {
+      "id": "sec_1",
+      "title": "引言：Transformer与深度学习的革命性关联",
+      "keywords": [
+        "深度学习",
+        "Transformer架构",
+        "自然语言处理",
+        "神经网络革命"
+      ],
+      "target_chars": 400,
+      "is_core": false
+    },
+    {
+      "id": "sec_2",
+      "title": "深度学习基础：历史脉络与核心模型",
+      "keywords": [
+        "神经网络",
+        "反向传播",
+        "卷积神经网络",
+        "循环神经网络"
+      ],
+      "target_chars": 800,
+      "is_core": true
+    },
+    {
+      "id": "sec_3",
+      "title": "Transformer架构详解：自注意力机制与编码器-解码器",
+      "keywords": [
+        "自注意力机制",
+        "多头注意力",
+        "编码器-解码器结构",
+        "位置编码"
+      ],
+      "target_chars": 1000,
+      "is_core": true
+    },
+    {
+      "id": "sec_4",
+      "title": "NLP应用突破：机器翻译与文本生成的范式转变",
+      "keywords": [
+        "机器翻译",
+        "序列建模",
+        "文本生成",
+        "Transformer在NLP中的应用"
+      ],
+      "target_chars": 800,
+      "is_core": true
+    },
+    {
+      "id": "sec_5",
+      "title": "变体模型演进：BERT、GPT与T5的技术突破",
+      "keywords": [
+        "BERT",
+        "GPT系列",
+        "预训练模型",
+        "模型微调"
+      ],
+      "target_chars": 800,
+      "is_core": true
+    },
+    {
+      "id": "sec_6",
+      "title": "未来挑战：计算效率与多模态融合的前沿探索",
+      "keywords": [
+        "计算效率",
+        "模型可解释性",
+        "多模态学习",
+        "资源优化"
+      ],
+      "target_chars": 800,
+      "is_core": true
+    },
+    {
+      "id": "sec_7",
+      "title": "总结：Transformer对AI生态的深远影响",
+      "keywords": [
+        "深度学习革命",
+        "模型架构演进",
+        "AI技术发展"
+      ],
+      "target_chars": 400,
+      "is_core": false
+    }
+  ],
+  "estimated_total_chars": 5000
+}

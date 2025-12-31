@@ -385,22 +385,21 @@ services:
 
   agent-chat-ui:
     build:
-      context: ../..
-      dockerfile: docker/agent-chat-ui/Dockerfile
-      args:
-        # 让前端默认直连 article-agent（可按需改为实际对外域名/地址）
-        NEXT_PUBLIC_API_URL: http://localhost:18130
-        NEXT_PUBLIC_ASSISTANT_ID: content-chat-agent
+      context: ../../rag-ui
+      dockerfile: Dockerfile
     image: cv/agent-chat-ui:latest
     container_name: agent-chat-ui
     depends_on:
       agent-langchain:
         condition: service_started
     ports:
-      - "18120:3000"
+      - "18120:80"
     volumes:
-      # 挂载 article-agent 导出的 Markdown/图片目录，供下载路由使用
-      - ../../logs/articles:/articles:ro
+      # 挂载 article-agent 导出的 Markdown/图片目录，供下载路由使用 (注意：Nginx 静态服务需要配置，或者前端通过 API 获取)
+      # 这里暂时保留挂载，虽然纯前端静态包可能无法直接像 Next.js SSR 那样直接读文件系统，
+      # 但通常是前端请求后端 API，后端返回 URL。
+      # 如果 rag-ui 有 nginx 配置反代 /articles 到本地文件系统，则需要挂载到 nginx 目录。
+      - ../../logs/articles:/usr/share/nginx/html/articles:ro
 
   article-agent:
     build:
