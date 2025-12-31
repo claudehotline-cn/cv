@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from deepagents import create_deep_agent, SubAgent
-from deepagents.backends import FilesystemBackend
+from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend
 
 from ..config.llm_runtime import build_chat_llm
 from .prompts import (
@@ -24,7 +24,7 @@ from .prompts import (
     ASSEMBLER_AGENT_PROMPT,
     ASSEMBLER_AGENT_DESCRIPTION,
 )
-from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware
+from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, IllustratorValidationMiddleware, AssemblerStateMiddleware
 from .schemas import ArticleAgentOutput, AssemblerOutput
 from .tools import (
     # Collector tools
@@ -61,9 +61,7 @@ def get_article_deep_agent_graph() -> Any:
     """
     # 创建思维链日志 middleware
     thinking_middleware = ThinkingLoggerMiddleware()
-    
-    # 创建思维链日志 middleware
-    thinking_middleware = ThinkingLoggerMiddleware()
+
     
     # 使用配置的 LLM
     # 恢复推理模式 - 禁用推理会导致工具调用生成失败
@@ -111,6 +109,7 @@ def get_article_deep_agent_graph() -> Any:
         description=ILLUSTRATOR_AGENT_DESCRIPTION,
         system_prompt=ILLUSTRATOR_AGENT_PROMPT,
         tools=[match_images_tool],
+        middleware=[IllustratorValidationMiddleware()], # Validate image paths
     )
     
     # 配置 Assembler 的结构化输出
@@ -127,7 +126,7 @@ def get_article_deep_agent_graph() -> Any:
         system_prompt=ASSEMBLER_AGENT_PROMPT,
         tools=[assemble_article_tool],
         response_format=assembler_response_format,  # Enable structured output via ToolStrategy
-        middleware=[ArticleContentMiddleware()], # Apply middleware to ensure content is passed to Main Agent
+        middleware=[AssemblerStateMiddleware()], # Write md_path to State for Main Agent Middleware to read
     )
 
     # ============================================================================
@@ -154,9 +153,14 @@ def get_article_deep_agent_graph() -> Any:
         tools=[],  # Main Agent 不直接使用工具，通过 SubAgents 执行
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[thinking_middleware, ArticleContentMiddleware()],  # 添加思维链日志和内容填充 middleware
-        backend=FilesystemBackend(
-            root_dir="/data/workspace",
-            virtual_mode=False
+        backend=lambda rt: CompositeBackend(
+            default=FilesystemBackend(
+                root_dir="/data/workspace",
+                virtual_mode=False
+            ),
+            routes={
+                "/_state/": StateBackend(rt)  # State 路由，用于 SubAgent 到 Main Agent 的数据共享
+            }
         ),
         response_format=response_format,  # 启用结构化输出
     )

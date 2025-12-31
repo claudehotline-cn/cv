@@ -213,6 +213,9 @@ def get_article_dir(article_id: str) -> str:
     settings = get_settings()
     # 确保 artifacts_dir 是绝对路径
     base = settings.artifacts_dir
+    # 避免重复添加 article_ 前缀
+    if article_id.startswith("article_"):
+        return os.path.join(base, article_id)
     return os.path.join(base, f"article_{article_id}")
 
 def get_drafts_dir(article_id: str) -> str:

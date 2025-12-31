@@ -33,7 +33,7 @@ def fetch_url_tool(url: str, max_images: int = 30, max_text_chars: int = 60000) 
     Returns:
         包含 title, text, images 的字典
     """
-    from ...utils.files import fetch_url_with_images
+    from ..utils.files import fetch_url_with_images
     
     _LOGGER.info(f"fetch_url_tool called with url: {url[:50]}...")
     try:
@@ -80,7 +80,7 @@ def load_file_tool(file_path: str, max_text_chars: int = 60000) -> Dict[str, Any
     Returns:
         包含 title, text 的字典
     """
-    from ...utils.files import load_text_from_file
+    from ..utils.files import load_text_from_file
     
     _LOGGER.info(f"load_file_tool called with file_path: {file_path}")
     try:
@@ -117,7 +117,7 @@ def collect_all_sources_tool(
     Returns:
         CollectorOutput 字典
     """
-    from ...utils.files import fetch_url_with_images, load_text_from_file
+    from ..utils.files import fetch_url_with_images, load_text_from_file
     
     # 固定参数，不允许 LLM 覆盖
     max_text_chars = 5000  # 限制每个源的最大读取字符数，避免 Context 过长

@@ -42,7 +42,7 @@ def build_chat_llm(task_name: str = "article") -> Any:
                 temperature=0,
                 num_predict=settings.ollama_num_predict,
                 num_ctx=settings.ollama_num_ctx,
-                timeout=300.0, # 5分钟超时，防止长文本任务中断
+                timeout=600.0, # 10分钟超时，防止长文本任务中断
             )
         except Exception as exc:  # pragma: no cover
             _LOGGER.error("llm.init_failed provider=ollama task=%s error=%s", task_name, exc)
@@ -129,7 +129,7 @@ def build_vlm_client(task_name: str = "vlm_analyze") -> Any:
             model=vlm_model,
             base_url=settings.ollama_base_url,
             temperature=0,
-            timeout=300.0, # 5分钟超时
+            timeout=600.0, # 10分钟超时
         )
     except Exception as exc:  # pragma: no cover
         _LOGGER.error("vlm.init_failed task=%s error=%s", task_name, exc)
@@ -165,7 +165,7 @@ def invoke_with_structured_thinking(
     messages: list,
     output_model: Type[TModel],
     task_name: str = "article",
-    timeout_sec: float = 180.0,
+    timeout_sec: float = 600.0,
 ) -> tuple[str, TModel]:
     """调用 LLM 并获取结构化输出。
     

@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+import os
 from typing import Any, Dict, Optional
 
 from langchain.agents.middleware import AgentMiddleware
@@ -100,6 +101,71 @@ class ThinkingLoggerMiddleware(AgentMiddleware):
         return await handler(request)
 
 
+class AssemblerStateMiddleware(AgentMiddleware):
+    """Middleware for Assembler SubAgent: 将 Assembler 的输出写入 State，供 Main Agent Middleware 读取。
+    
+    这个 Middleware 应该注册在 Assembler SubAgent 上，而不是 Main Agent 上。
+    它会在 Assembler 执行完成后，将 md_path 和 article_id 写入 state["_assembler_meta"]。
+    """
+    
+    def after_agent(self, state: AgentState, runtime: Runtime[Any], result: Any = None) -> Dict[str, Any] | None:
+        """After Assembler execution, extract md_path and write to State."""
+        
+        _LOGGER.info("AssemblerStateMiddleware: Extracting assembler output...")
+        
+        # 尝试从 ToolMessage 或 structured_response 中提取数据
+        md_path = None
+        article_id = None
+        title = None
+        
+        # 1. 优先从 ToolMessage 提取（Tool 返回的真实路径，最可靠）
+        messages = state.get("messages", [])
+        for msg in reversed(messages):
+            content_str = str(getattr(msg, "content", ""))
+            # 检查是否包含 assemble_article_tool 的输出（包含 md_path 和 article_content）
+            if "md_path" in content_str and "article_content" in content_str:
+                try:
+                    data = json.loads(content_str)
+                    if isinstance(data, dict) and data.get("md_path"):
+                        md_path = data.get("md_path")
+                        article_id = data.get("article_id")
+                        title = data.get("title")
+                        _LOGGER.info(f"AssemblerStateMiddleware: Found real path in ToolMessage: {md_path}")
+                        break
+                except:
+                    pass
+        
+        # 2. 回退：从 structured_response 提取（可能是幻觉路径，不太可靠）
+        if not md_path:
+            if "structured_response" in state and state["structured_response"]:
+                resp = state["structured_response"]
+                if hasattr(resp, "md_path"):
+                    md_path = resp.md_path
+                    article_id = getattr(resp, "article_id", None)
+                    title = getattr(resp, "title", None)
+                    _LOGGER.warning(f"AssemblerStateMiddleware: Using structured_response path (may be hallucinated): {md_path}")
+                elif isinstance(resp, dict):
+                    md_path = resp.get("md_path")
+                    article_id = resp.get("article_id")
+                    title = resp.get("title")
+                    _LOGGER.warning(f"AssemblerStateMiddleware: Using structured_response path (may be hallucinated): {md_path}")
+        
+        if md_path:
+            _LOGGER.info(f"AssemblerStateMiddleware: Writing to State: md_path={md_path}, article_id={article_id}")
+            # 写入 State
+            return {
+                "_assembler_meta": {
+                    "md_path": md_path,
+                    "article_id": article_id,
+                    "title": title
+                }
+            }
+        else:
+            _LOGGER.warning("AssemblerStateMiddleware: Could not extract md_path from Assembler output")
+        
+        return None
+
+
 class ArticleContentMiddleware(AgentMiddleware):
     """Middleware to bubbling up article_content from Assembler to Main Agent output (In-Memory)."""
     
@@ -136,7 +202,71 @@ class ArticleContentMiddleware(AgentMiddleware):
 
             # Only proceed if content is missing
             if not current_content or len(current_content) < 100:
-                _LOGGER.info("Middleware: article_content missing in final response. Scanning history...")
+                _LOGGER.info("Middleware: article_content missing in final response. Checking sources...")
+                
+                # ========== 优先层级 0: 从 State 读取 _assembler_meta (由 AssemblerStateMiddleware 写入) ==========
+                assembler_meta = state.get("_assembler_meta")
+                if assembler_meta and isinstance(assembler_meta, dict):
+                    real_md_path = assembler_meta.get("md_path")
+                    _LOGGER.info(f"Middleware: Found _assembler_meta in State! md_path={real_md_path}")
+                    if real_md_path and os.path.exists(real_md_path):
+                        try:
+                            with open(real_md_path, 'r', encoding='utf-8') as f:
+                                real_content = f.read()
+                            
+                            if len(real_content) > 100:
+                                _LOGGER.info(f"Middleware: Successfully loaded from State path! md_path={real_md_path}, Content length: {len(real_content)}")
+                                
+                                # Update response with both content and path
+                                if hasattr(resp, "model_copy"):
+                                    new_resp = resp.model_copy(update={
+                                        "article_content": real_content,
+                                        "md_path": real_md_path
+                                    })
+                                    return {"structured_response": new_resp}
+                                elif isinstance(resp, dict):
+                                    resp["article_content"] = real_content
+                                    resp["md_path"] = real_md_path
+                                    return {"structured_response": resp}
+                        except Exception as e:
+                            _LOGGER.warning(f"Middleware: Failed to read from State path {real_md_path}: {e}")
+                    else:
+                        _LOGGER.warning(f"Middleware: State md_path file not found: {real_md_path}")
+                else:
+                    _LOGGER.info("Middleware: _assembler_meta not found in State. StateBackend may not be propagating.")
+                # ============================================================================
+                
+                # ========== 优先层级 1: 从消息历史扫描 assemble_article_tool 的返回值 ==========
+                _LOGGER.info("Middleware: Trying ToolMessage scanning as fallback...")
+                messages = state.get("messages", [])
+                for msg in reversed(messages):
+                    content_str = str(getattr(msg, "content", ""))
+                    # 检查是否是 assemble_article_tool 的输出（包含 md_path 和 article_content）
+                    if "md_path" in content_str and "article_content" in content_str:
+                        try:
+                            data = json.loads(content_str)
+                            if isinstance(data, dict):
+                                tool_md_path = data.get("md_path")
+                                tool_content = data.get("article_content")
+                                if tool_md_path and tool_content and len(tool_content) > 100:
+                                    _LOGGER.info(f"Middleware: Found assemble_article_tool output! md_path={tool_md_path}, content_len={len(tool_content)}")
+                                    
+                                    # 直接用 Tool 返回的内容覆盖
+                                    if hasattr(resp, "model_copy"):
+                                        new_resp = resp.model_copy(update={
+                                            "article_content": tool_content,
+                                            "md_path": tool_md_path
+                                        })
+                                        return {"structured_response": new_resp}
+                                    elif isinstance(resp, dict):
+                                        resp["article_content"] = tool_content
+                                        resp["md_path"] = tool_md_path
+                                        return {"structured_response": resp}
+                        except:
+                            pass
+                # ============================================================================
+                
+                _LOGGER.info("Middleware: assemble_article_tool output not found. Falling back to other sources...")
                 
                 messages = state.get("messages", [])
                 found_content = None
@@ -154,12 +284,40 @@ class ArticleContentMiddleware(AgentMiddleware):
                     
                     # 1. 尝试直接从 ToolMessage 中提取 (DeepAgents 可能会把 SubAgent 结果作为 Tool Message)
                     if isinstance(msg, ToolMessage) or (msg_type == "ToolMessage"):
-                        # 检查是否包含 article_content
-                        if "article_content" in content_str:
+                        # 检查是否是 assemble_article_tool 的输出 (name 属性可能存在于 msg 对象或 additional_kwargs)
+                        tool_name = getattr(msg, 'name', '') or msg.additional_kwargs.get('name', '')
+                        
+                        # 优先匹配 assembler 的工具调用
+                        if tool_name == 'assemble_article_tool' or 'assemble' in tool_name or "article_content" in content_str:
                              extracted = self._extract_content(content_str)
                              if extracted:
                                  found_content = extracted
-                                 _LOGGER.info(f"Middleware: Found content in ToolMessage[-{i+1}]")
+                                 # 如果同时发现了 md_path，也可以顺便更新（修复路径幻觉）
+                                 try:
+                                     data = json.loads(content_str)
+                                     if isinstance(data, dict):
+                                         found_path = data.get("md_path")
+                                         if found_path:
+                                             _LOGGER.info(f"Middleware: Found verifiable md_path in ToolMessage: {found_path}. Overwriting response.")
+                                             # Update both content and path
+                                             if hasattr(resp, "model_copy"):
+                                                 resp = resp.model_copy(update={"article_content": found_content, "md_path": found_path})
+                                                 return {"structured_response": resp}
+                                             elif isinstance(resp, dict):
+                                                 resp["article_content"] = found_content
+                                                 resp["md_path"] = found_path
+                                                 return {"structured_response": resp}
+                                 except Exception as e: 
+                                     _LOGGER.warning(f"Middleware: Failed to parse md_path from ToolMessage: {e}")
+                                     
+                                 _LOGGER.info(f"Middleware: Found content in ToolMessage[-{i+1}] (Name: {tool_name})")
+                                 # Update content only if path extraction failed
+                                 if hasattr(resp, "model_copy"):
+                                     new_resp = resp.model_copy(update={"article_content": found_content})
+                                     return {"structured_response": new_resp}
+                                 elif isinstance(resp, dict):
+                                     resp["article_content"] = found_content
+                                     return {"structured_response": resp}
                                  break
 
                     # 2. 尝试从 AIMessage 中提取 (SubAgent 的输出可能被包装在 AIMessage 中)
@@ -182,6 +340,30 @@ class ArticleContentMiddleware(AgentMiddleware):
                         return {"structured_response": resp}
                 else:
                     _LOGGER.warning("Middleware: Failed to find article_content in ANY message history.")
+                    
+                    # 3. Fallback: Try reading from md_path if available in response
+                    md_path = None
+                    if hasattr(resp, "md_path") and resp.md_path:
+                        md_path = resp.md_path
+                    elif isinstance(resp, dict) and resp.get("md_path"):
+                        md_path = resp.get("md_path")
+                        
+                    if md_path and os.path.exists(md_path):
+                        try:
+                            _LOGGER.info(f"Middleware: Reading content from file system: {md_path}")
+                            with open(md_path, 'r', encoding='utf-8') as f:
+                                file_content = f.read()
+                            
+                            if len(file_content) > 100:
+                                # Update response
+                                if hasattr(resp, "model_copy"):
+                                    new_resp = resp.model_copy(update={"article_content": file_content})
+                                    return {"structured_response": new_resp}
+                                elif isinstance(resp, dict):
+                                    resp["article_content"] = file_content
+                                    return {"structured_response": resp}
+                        except Exception as e:
+                            _LOGGER.error(f"Middleware: Failed to read from md_path: {e}")
         
         # Fallback: If structured_response is missing but we have a final message with content
         elif result and hasattr(result, "content") and len(str(result.content)) > 100:
@@ -271,4 +453,65 @@ class ArticleContentMiddleware(AgentMiddleware):
                 except:
                     pass
 
+        return None
+
+class IllustratorValidationMiddleware(AgentMiddleware):
+    """验证 Illustrator 生成的图片路径是否存在，并尝试修复。"""
+    
+    def after_agent(self, state: AgentState, runtime: Runtime[Any], result: Any = None) -> Dict[str, Any] | None:
+        """检查 Illustrator 输出的 markdown 文件中的图片路径。"""
+        
+        # 1. 尝试从结构化输出中获取 output
+        output = None
+        if "structured_response" in state and state["structured_response"]:
+            output = state["structured_response"]
+        # 2. 或者尝试从最后的消息中解析 (如果 Illustrator 还没有完全结构化)
+        elif result and hasattr(result, "content"):
+             # 这里简化处理，暂时只处理结构化输出或明确的 dict
+             pass
+             
+        md_path = None
+        if isinstance(output, dict):
+            md_path = output.get("final_markdown_path")
+        elif hasattr(output, "final_markdown_path"):
+            md_path = output.final_markdown_path
+            
+        if not md_path:
+            return None
+
+        # 验证文件是否存在
+        if not md_path or not os.path.exists(md_path):
+            _LOGGER.warning(f"IllustratorValidationMiddleware: Markdown file not found at {md_path}")
+            return None
+            
+        try:
+            with open(md_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 提取所有图片链接
+            # 匹配 ![alt](url)
+            img_refs = re.findall(r'!\[.*?\]\((.*?)\)', content)
+            
+            valid_count = 0
+            missing_paths = []
+            
+            for img_path in img_refs:
+                # 忽略网络 URL
+                if img_path.startswith("http://") or img_path.startswith("https://"):
+                    valid_count += 1
+                    continue
+                    
+                if os.path.exists(img_path):
+                    valid_count += 1
+                else:
+                    missing_paths.append(img_path)
+            
+            _LOGGER.info(f"Illustrator Output Validation: {valid_count} verified, {len(missing_paths)} missing images in {md_path}")
+            
+            if missing_paths:
+                _LOGGER.warning(f"Missing images in draft: {missing_paths}")
+                
+        except Exception as e:
+             _LOGGER.error(f"IllustratorValidationMiddleware error: {e}")
+             
         return None

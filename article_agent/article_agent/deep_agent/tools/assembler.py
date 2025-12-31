@@ -108,6 +108,9 @@ def assemble_article_tool(
             f.write(cleaned_md)
         _LOGGER.info(f"Article exported to: {output_path}")
         
+        # 注意：md_path 和 article_id 由 AssemblerStateMiddleware 自动写入 State
+        # 无需在这里手动写入文件
+        
         # 兼容旧的返回值结构，伪造 md_url (或者由前端根据 id 拼装)
         # 前端现在主要用 final_content, md_url 只是 fallback
         md_url = f"/api/articles/{article_id}/content" # 假设有个 API

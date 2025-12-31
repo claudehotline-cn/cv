@@ -435,7 +435,7 @@ services:
     volumes:
       - ../../logs:/logs:rw
       - ../../docs:/docs:ro
-      # - ../../article_agent:/app/article_agent:rw
+      - ../../article_agent:/app/article_agent:rw
 
       - ../../article_agent/workspace:/data/workspace:rw
     healthcheck:

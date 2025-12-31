@@ -5,6 +5,9 @@ import logging
 import os
 import json
 import re
+import base64
+import requests
+import mimetypes
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -21,34 +24,92 @@ from .prompts import ILLUSTRATOR_MATCH_SYSTEM_PROMPT, ILLUSTRATOR_MATCH_USER_PRO
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.illustrator")
 
+def _encode_image(path_or_url: str) -> Optional[str]:
+    """将图片（路径或 URL）转换为 Base64 Data URI。
+    
+    由于 Ollama 运行在宿主机，无法直接访问容器内的文件，
+    因此必须将图片转换为 Base64 字符串传递。
+    """
+    if not path_or_url:
+        return None
+        
+    try:
+        image_data = None
+        mime_type = None
+        
+        # 1. Handle URL
+        if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
+            try:
+                # Set timeout to avoid hanging, add User-Agent to avoid 403
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                }
+                response = requests.get(path_or_url, timeout=10, headers=headers)
+                response.raise_for_status()
+                image_data = response.content
+                # Try to guess mime type from header or url
+                content_type = response.headers.get('Content-Type')
+                if content_type:
+                    mime_type = content_type
+                else:
+                    mime_type, _ = mimetypes.guess_type(path_or_url)
+            except Exception as e:
+                _LOGGER.warning(f"Failed to download image: {path_or_url}, error: {e}")
+                return None
+                
+        # 2. Handle Local File
+        elif os.path.exists(path_or_url):
+            try:
+                with open(path_or_url, "rb") as f:
+                    image_data = f.read()
+                mime_type, _ = mimetypes.guess_type(path_or_url)
+            except Exception as e:
+                _LOGGER.warning(f"Failed to read local image: {path_or_url}, error: {e}")
+                return None
+        else:
+            _LOGGER.warning(f"Image path not found: {path_or_url}")
+            return None
+
+        if not mime_type:
+            mime_type = "image/jpeg" # Default fallback
+            
+        base64_data = base64.b64encode(image_data).decode('utf-8')
+        return f"data:{mime_type};base64,{base64_data}"
+        
+    except Exception as e:
+        _LOGGER.error(f"Error encoding image {path_or_url}: {e}")
+        return None
+
 @tool
 def match_images_tool(
     drafts: List[Dict[str, Any]],
-    available_images: List[Dict[str, Any]],
     max_images: int = 5,
 ) -> Dict[str, Any]:
     """匹配图片到文章内容，确定放置位置。
     
     Args:
         drafts: 各章节草稿（包含 file_path）
-        available_images: 可用图片列表
         max_images: 最大图片数
         
     Returns:
         IllustratorOutput 字典
     """
+    available_images = []
     
-    _LOGGER.info(f"match_images_tool called with {len(available_images)} images")
+    _LOGGER.info(f"match_images_tool called")
     
     # 如果 available_images 为空，尝试从 sources.json 加载
-    # 如果 available_images 为空，尝试从 sources.json 加载
+    # 强制从 sources.json 加载，防止 LLM 幻觉传递错误的 available_images
     article_id = get_current_article_id()
-    if not available_images and article_id:
+    if article_id:
         sources_data = load_article_artifact(article_id, "sources.json")
         for source in sources_data.get("sources", []):
             available_images.extend(source.get("images", []))
-        if available_images:
-            _LOGGER.info(f"Auto-loaded {len(available_images)} images from artifacts")
+            
+    if available_images:
+        _LOGGER.info(f"Loaded {len(available_images)} images from artifacts")
+    else:
+        _LOGGER.warning("No images loaded from sources.json!")
     
     _LOGGER.info(f"match_images_tool: article_id={article_id}, input drafts count={len(drafts) if drafts else 0}")
     
@@ -108,16 +169,21 @@ def match_images_tool(
         
         if vlm and img_url:
             try:
-                # 尝试用 VLM 分析图片
-                from langchain_core.messages import HumanMessage
+                # 转换图片为 Base64
+                # HumanMessage 已在文件顶部导入
                 
-                # 构造带图片的消息
-                vlm_message = HumanMessage(
-                    content=[
-                        {"type": "text", "text": "请用一句话简洁描述这张图片的内容，重点说明它展示了什么技术概念或架构。只输出描述，不要其他内容。"},
-                        {"type": "image_url", "image_url": {"url": img_url}},
-                    ]
-                )
+                encoded_image = _encode_image(img_url)
+                
+                if encoded_image:
+                    # 构造带图片的消息
+                    vlm_message = HumanMessage(
+                        content=[
+                            {"type": "text", "text": "请用一句话简洁描述这张图片的内容，重点说明它展示了什么技术概念或架构。只输出描述，不要其他内容。"},
+                            {"type": "image_url", "image_url": {"url": encoded_image}},
+                        ]
+                    )
+                else:
+                    raise ValueError(f"Failed to encode image: {img_url}")
                 
                 vlm_response = vlm.invoke([vlm_message])
                 description = vlm_response.content.strip()[:100]  # 限制长度
@@ -312,7 +378,7 @@ def match_images_tool(
                 "preview": final_markdown[:200] + "..."
             }
         else:
-            _LOGGER.warning(f"match_images_tool: no JSON found")
+            _LOGGER.warning(f"match_images_tool: no JSON found. Raw content:\n{content}")
             return {
                 "placements": [],
                 "final_markdown_path": "",

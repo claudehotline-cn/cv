@@ -33,7 +33,7 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
     # 1. 第一步：获取"藏宝图" (加载 Persistent Outline)
     # 我们必须先加载 Outline，因为它是唯一包含 Section ID 的地方。
     # 只有知道了 Section ID (例如 "sec_1")，我们由于 Writer 的命名规则 (sec_1.md)，才知道去磁盘的哪里寻找 Draft 文件。
-    article_id = get_current_article_id(article_id)
+    article_id = get_current_article_id()
     _LOGGER.info(f"review_draft_tool: Starting execution (article_id={article_id})")
     
     loaded_outline = load_article_artifact(article_id, "outline.json")
