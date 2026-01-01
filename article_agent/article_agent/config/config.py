@@ -10,14 +10,14 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """article_agent 全局配置。"""
 
-    llm_provider: Literal["openai", "ollama", "siliconflow", "gemini"] = Field(
-        default="ollama",
-        description="LLM 提供方：openai、ollama、siliconflow 或 gemini。默认使用本地 Ollama。",
+    llm_provider: Literal["openai", "ollama", "siliconflow", "gemini", "vllm"] = Field(
+        default="vllm",
+        description="LLM 提供方：openai、ollama、siliconflow、gemini 或 vllm。默认使用 vLLM。",
         alias="ARTICLE_AGENT_LLM_PROVIDER",
     )
     llm_model: str = Field(
-        default="qwen3:30b",
-        description="默认对话 / 推理模型名称（在 Ollama 场景下默认为 qwen3:30b）。",
+        default="/data/models/qwen3-vl-8b-instruct-awq",
+        description="默认对话 / 推理模型名称（统一使用 VLM 模型）。",
         alias="ARTICLE_AGENT_LLM_MODEL",
     )
     openai_api_key: Optional[str] = Field(
@@ -35,10 +35,27 @@ class Settings(BaseSettings):
         description="Ollama 生成最大 token 数（num_predict）。",
         alias="ARTICLE_AGENT_OLLAMA_NUM_PREDICT",
     )
+    vllm_model: str = Field(
+        default="/data/models/qwen3-vl-8b-instruct-awq",
+        description="vLLM 统一模型名称（8B VL AWQ，同时支持文本和视觉）。",
+        alias="ARTICLE_AGENT_VLLM_MODEL",
+    )
     ollama_num_ctx: int = Field(
         default=8192,  # 减少上下文窗口以加速推理
         description="Ollama 上下文窗口大小（num_ctx）。",
         alias="ARTICLE_AGENT_OLLAMA_NUM_CTX",
+    )
+
+    # vLLM 配置
+    vllm_base_url: str = Field(
+        default="http://vllm:8000/v1",
+        description="vLLM OpenAI 兼容 API 地址（LLM）。",
+        alias="ARTICLE_AGENT_VLLM_BASE_URL",
+    )
+    vllm_vl_base_url: str = Field(
+        default="http://vllm:8000/v1",
+        description="vLLM OpenAI 兼容 API 地址（VLM，与 LLM 统一）。",
+        alias="ARTICLE_AGENT_VLLM_VL_BASE_URL",
     )
 
     # VLM 配置（用于图片理解）
@@ -48,8 +65,8 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_VLM_ENABLED",
     )
     vlm_model: str = Field(
-        default="qwen3-vl:30b",
-        description="VLM 模型名称（用于图片内容理解）。",
+        default="/data/models/qwen3-vl-8b-thinking-awq",
+        description="VLM 模型名称（与 LLM 统一使用同一模型）。",
         alias="ARTICLE_AGENT_VLM_MODEL",
     )
 

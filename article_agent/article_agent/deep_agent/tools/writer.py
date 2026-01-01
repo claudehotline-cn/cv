@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from ...config.llm_runtime import build_chat_llm
+from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response, log_tool_output
 from ..utils.artifacts import get_current_article_id, load_article_artifact, save_draft_file
 from .prompts import WRITER_SECTION_REVIEW_FEEDBACK, WRITER_SECTION_SYSTEM_PROMPT, WRITER_SECTION_USER_PROMPT
@@ -71,7 +71,7 @@ def write_section_tool(
             # 记录 LLM 响应详情
             log_llm_response("write_section", response, input_chars=input_chars)
             
-            markdown = response.content.strip()
+            markdown = extract_text_content(response)
         
         # 确保以标题开头
         if not markdown.startswith("#"):

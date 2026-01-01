@@ -88,3 +88,18 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  # vLLM GPU 配置
+  vllm:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+

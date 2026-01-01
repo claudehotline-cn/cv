@@ -16,6 +16,57 @@ _LOGGER = logging.getLogger("article_agent.llm")
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
+def extract_text_content(response) -> str:
+    """从 LLM 响应中提取文本内容。
+    
+    支持 LangChain v1 的 content_blocks 列表格式和传统字符串格式。
+    
+    Args:
+        response: LLM 响应对象，可能有 content 属性（字符串或列表）
+        
+    Returns:
+        提取的纯文本内容
+    """
+    try:
+        content = response.content
+        _LOGGER.debug(f"[extract_text_content] input type: {type(content)}")
+        
+        # 1. 优先尝试处理字符串
+        if isinstance(content, str):
+            return content.strip()
+        
+        # 2. 处理列表 (包括 list, Pydantic list 等)
+        if isinstance(content, list) or hasattr(content, '__iter__'):
+            _LOGGER.debug("[extract_text_content] processing iterable content")
+            text_parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    block_type = block.get("type", "unknown")
+                    if block_type == "text":
+                        text_parts.append(str(block.get("text", "")))
+                    elif block_type == "reasoning":
+                        pass
+                    else:
+                        text = block.get("text", "")
+                        if text:
+                            text_parts.append(str(text))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+                else:
+                    # 兜底：尝试转为字符串
+                    text_parts.append(str(block))
+            return "\n".join(text_parts).strip()
+            
+        # 3. 兜底：强制转字符串
+        return str(content).strip()
+
+    except Exception as e:
+        _LOGGER.error(f"[extract_text_content] failed: {e}")
+        # 最后的防线：确保返回字符串
+        return str(response.content if hasattr(response, 'content') else "").strip()
+
+
+
 def build_chat_llm(task_name: str = "article", num_ctx_override: int = None) -> Any:
     """根据全局 Settings 构造用于内容整理的 Chat LLM 客户端。
     
@@ -73,6 +124,27 @@ def build_chat_llm(task_name: str = "article", num_ctx_override: int = None) -> 
             _LOGGER.error("llm.init_failed provider=siliconflow task=%s error=%s", task_name, exc)
             raise RuntimeError(f"LLM 初始化失败（siliconflow, task={task_name}）") from exc
 
+    if provider == "vllm":
+        _LOGGER.info(
+            "llm.init provider=vllm task=%s model=%s base_url=%s",
+            task_name,
+            settings.llm_model,
+            settings.vllm_base_url,
+        )
+        try:
+            return ChatOpenAI(
+                model=settings.llm_model,
+                base_url=settings.vllm_base_url,
+                api_key="not-needed",
+                temperature=0,
+                timeout=600.0,
+                # 使用 LangChain 1.0 content_blocks 标准化访问，将思考内容分离到 ReasoningContentBlock
+                output_version="v1",
+            )
+        except Exception as exc:
+            _LOGGER.error("llm.init_failed provider=vllm task=%s error=%s", task_name, exc)
+            raise RuntimeError(f"LLM 初始化失败（vllm, task={task_name}）") from exc
+
     if provider == "gemini":
         if not settings.google_api_key:
             _LOGGER.error("llm.init_failed provider=gemini task=%s reason=missing_api_key", task_name)
@@ -112,7 +184,7 @@ def build_chat_llm(task_name: str = "article", num_ctx_override: int = None) -> 
 def build_vlm_client(task_name: str = "vlm_analyze") -> Any:
     """构造用于图片理解的 VLM 客户端。
     
-    使用 Ollama 的 VLM 模型（如 qwen3-vl:30b）进行图片语义分析。
+    支持 Ollama 和 vLLM 两种后端。
     """
     settings = get_settings()
     
@@ -120,9 +192,31 @@ def build_vlm_client(task_name: str = "vlm_analyze") -> Any:
         return None
     
     vlm_model = getattr(settings, "vlm_model", "qwen3-vl:30b")
+    provider = settings.llm_provider.lower()
     
+    # 使用 vLLM VLM 后端
+    if provider == "vllm":
+        _LOGGER.info(
+            "vlm.init provider=vllm task=%s model=%s base_url=%s",
+            task_name,
+            vlm_model,
+            settings.vllm_vl_base_url,
+        )
+        try:
+            return ChatOpenAI(
+                model=vlm_model,
+                base_url=settings.vllm_vl_base_url,
+                api_key="not-needed",
+                temperature=0,
+                timeout=600.0,
+            )
+        except Exception as exc:
+            _LOGGER.error("vlm.init_failed provider=vllm task=%s error=%s", task_name, exc)
+            return None
+    
+    # 默认使用 Ollama
     _LOGGER.info(
-        "vlm.init task=%s model=%s base_url=%s",
+        "vlm.init provider=ollama task=%s model=%s base_url=%s",
         task_name,
         vlm_model,
         settings.ollama_base_url,

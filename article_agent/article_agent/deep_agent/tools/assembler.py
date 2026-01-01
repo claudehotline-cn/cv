@@ -58,7 +58,6 @@ def assemble_article_tool(
                 import glob
                 section_files = glob.glob(os.path.join(drafts_dir, "section_*.md"))
                 # 按章节号数字排序：section_sec_1.md, section_sec_2.md, ...
-                import re
                 def extract_section_num(path):
                     match = re.search(r'section_sec_(\d+)', path)
                     return int(match.group(1)) if match else 999
@@ -134,5 +133,6 @@ def assemble_article_tool(
             "article_id": article_id,
             "md_path": f"/data/articles/{article_id}.md",
             "md_url": f"/articles/{article_id}.md",
+            "article_content": "", # Ensure key exists to satisfy middleware strict check
             "error": str(exc),
         }

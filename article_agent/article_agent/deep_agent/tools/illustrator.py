@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ...config.llm_runtime import build_chat_llm, build_vlm_client
+from ...config.llm_runtime import build_chat_llm, build_vlm_client, extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response
 from ..utils.artifacts import (
     get_current_article_id, 
@@ -193,7 +193,7 @@ def match_images_tool(
                     raise ValueError(f"Failed to encode image: {img_url}")
                 
                 vlm_response = vlm.invoke([vlm_message])
-                description = vlm_response.content.strip()[:100]  # 限制长度
+                description = extract_text_content(vlm_response)[:100]  # 限制长度
                 _LOGGER.info(f"VLM analyzed image {i+1}: {description[:50]}...")
             except Exception as e:
                 _LOGGER.warning(f"VLM analysis failed for image {i+1}: {e}")
@@ -231,7 +231,7 @@ def match_images_tool(
             HumanMessage(content=user_prompt),
         ]
         response = llm.invoke(messages)
-        content = response.content.strip()
+        content = extract_text_content(response)
         
         # 提取 JSON
         json_match = re.search(r'\{[\s\S]*\}', content)

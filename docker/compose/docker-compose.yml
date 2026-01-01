@@ -410,13 +410,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      # LLM 提供方：gemini | ollama | openai | siliconflow
-      - ARTICLE_AGENT_LLM_PROVIDER=ollama
-      - ARTICLE_AGENT_LLM_MODEL=qwen3:30b
-      - ARTICLE_AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # LLM 提供方：gemini | ollama | openai | siliconflow | vllm
+      - ARTICLE_AGENT_LLM_PROVIDER=vllm
+      - ARTICLE_AGENT_LLM_MODEL=/data/models/qwen3-vl-8b-instruct-awq
+      - ARTICLE_AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       # VLM 配置
       - ARTICLE_AGENT_VLM_ENABLED=true
-      - ARTICLE_AGENT_VLM_MODEL=qwen3-vl:30b
+      - ARTICLE_AGENT_VLM_MODEL=/data/models/qwen3-vl-8b-instruct-awq
+      - ARTICLE_AGENT_VLLM_VL_BASE_URL=http://vllm:8000/v1
       # 输出目录配置
       - ARTICLE_TEMP_DIR=/data/workspace/artifacts
       - ARTICLE_AGENT_ARTICLES_BASE_DIR=/data/workspace/articles
@@ -435,9 +436,8 @@ services:
     volumes:
       - ../../logs:/logs:rw
       - ../../docs:/docs:ro
-      - ../../article_agent:/app/article_agent:rw
-
       - ../../article_agent/workspace:/data/workspace:rw
+      - ../../article_agent:/app/article_agent:rw
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8130/ || exit 1"]
       interval: 30s
@@ -502,6 +502,46 @@ services:
     ports:
       - "18210:80"
 
+  # ============================================================================
+  # vLLM 推理服务 (OpenAI 兼容 API)
+  # ============================================================================
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    ports:
+      - "18000:8000"
+    volumes:
+      - ../../models:/data/models:ro
+    environment:
+      - VLLM_USE_MODELSCOPE=true
+    ipc: host
+    command:
+      - "--model"
+      - "/data/models/qwen3-vl-8b-instruct-awq"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "32768"
+      - "--gpu-memory-utilization"
+      - "0.90"
+      - "--trust-remote-code"
+      - "--limit-mm-per-prompt"
+      - "{\"image\": 4}"
+      - "--enable-prefix-caching"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser"
+      - "hermes"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    profiles:
+      - vllm
+
 networks:
   default:
     name: cv-net
@@ -514,3 +554,4 @@ volumes:
   agent-checkpoints:
   neo4j-data:
   rag-model-cache:
+  ollama-vl-data:

@@ -27,8 +27,24 @@ def get_current_article_id(arg_id: str = "") -> str:
     """获取当前文章 ID。优先使用参数，其次使用环境变量，最后生成新的。
     
     Side Effect: 如果环境变量未设置，会同时设置 ARTICLE_CURRENT_ID。
+    Note: 返回的 ID 不包含 'article_' 前缀（例如 '958c41db' 而非 'article_958c41db'）。
+          get_article_dir() 会自动添加前缀。
     """
-    article_id = arg_id or os.environ.get("ARTICLE_CURRENT_ID", "")
+    article_id = arg_id
+    env_id = os.environ.get("ARTICLE_CURRENT_ID", "")
+    
+    # Robustness: If arg_id is a common placeholder ("001") but we have a real ID in env, use env
+    if env_id and article_id in ["001", "1", "default", "placeholder"]:
+        _LOGGER.warning(f"Override suspicious article_id '{article_id}' with cached '{env_id}'")
+        article_id = env_id
+    
+    article_id = article_id or env_id
+    
+    # 规范化：始终去掉 'article_' 前缀，确保后续处理一致
+    if article_id.startswith("article_"):
+        article_id = article_id[len("article_"):]
+        _LOGGER.debug(f"Normalized article_id by stripping 'article_' prefix: {article_id}")
+    
     if not article_id:
          # 如果完全没有 ID，生成一个新的 (通常 Planner 会做这步)
          article_id = str(uuid.uuid4())[:8]

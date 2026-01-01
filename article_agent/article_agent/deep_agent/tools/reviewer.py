@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ...config.llm_runtime import build_chat_llm
+from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response
 from ..utils.artifacts import get_current_article_id, load_article_artifact, save_article_artifact, get_drafts_dir
 from .prompts import REVIEWER_DRAFT_SYSTEM_PROMPT, REVIEWER_DRAFT_USER_PROMPT
@@ -124,7 +124,7 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
         _LOGGER.info("review_draft_tool: Messages prepared. Invoking LLM (this might take a while)...")
         response = llm.invoke(messages)
         _LOGGER.info("review_draft_tool: LLM invoke returned!")
-        content = response.content.strip()
+        content = extract_text_content(response)
         
         # 提取 JSON
         json_match = re.search(r'\{[\s\S]*\}', content)

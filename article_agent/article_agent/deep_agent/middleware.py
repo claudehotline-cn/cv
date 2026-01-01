@@ -153,28 +153,14 @@ class AssemblerStateMiddleware(AgentMiddleware):
                     _LOGGER.warning(f"AssemblerStateMiddleware: Using structured_response path (may be hallucinated): {md_path}")
         
         if md_path:
-            _LOGGER.info(f"AssemblerStateMiddleware: Writing to Store: md_path={md_path}, article_id={article_id}")
-            
-            # 写入跨线程共享的 Store (通过 /_shared/ 路径)
-            try:
-                shared_data = {
-                    "md_path": md_path,
-                    "article_id": article_id,
-                    "title": title,
-                    "article_content": article_content
-                }
-                # 使用 runtime.backend 写入 /_shared/ 路径
-                runtime.backend.write("/_shared/assembler_meta.json", json.dumps(shared_data, ensure_ascii=False))
-                _LOGGER.info("AssemblerStateMiddleware: Successfully wrote to Store at /_shared/assembler_meta.json")
-            except Exception as e:
-                _LOGGER.warning(f"AssemblerStateMiddleware: Failed to write to Store: {e}")
-            
-            # 同时写入 State (向后兼容)
+            _LOGGER.info(f"AssemblerStateMiddleware: Found md_path={md_path}. Updating State.")
+            # 直接写入 State，回退 Store 写入（因为 runtime.backend 可能不可用）
             return {
                 "_assembler_meta": {
                     "md_path": md_path,
                     "article_id": article_id,
-                    "title": title
+                    "title": title,
+                    "article_content": article_content # 尝试传递 content
                 }
             }
         else:
@@ -221,48 +207,88 @@ class ArticleContentMiddleware(AgentMiddleware):
             if not current_content or len(current_content) < 100:
                 _LOGGER.info("Middleware: article_content missing in final response. Checking sources...")
                 
-                # ========== 优先层级 0: 从 Store 读取 /_shared/assembler_meta.json (跨线程共享) ==========
-                try:
-                    shared_data_str = runtime.backend.read("/_shared/assembler_meta.json")
-                    if shared_data_str:
-                        shared_data = json.loads(shared_data_str)
-                        store_md_path = shared_data.get("md_path")
-                        store_content = shared_data.get("article_content")
-                        _LOGGER.info(f"Middleware: Found data in Store! md_path={store_md_path}, content_len={len(store_content) if store_content else 0}")
-                        
-                        # 优先使用 Store 中的 article_content
-                        if store_content and len(store_content) > 100:
-                            _LOGGER.info(f"Middleware: Successfully loaded content from Store! Length: {len(store_content)}")
+                # ========== 优先层级 0: 从 State 获取 _assembler_meta (最快，最可靠) ==========
+                assembler_meta = state.get("_assembler_meta")
+                if assembler_meta:
+                    meta_md_path = assembler_meta.get("md_path")
+                    meta_content = assembler_meta.get("article_content")
+                    _LOGGER.info(f"Middleware: Found _assembler_meta in State! md_path={meta_md_path}, content_len={len(meta_content) if meta_content else 0}")
+                    
+                    if meta_content and len(meta_content) > 100:
+                        if hasattr(resp, "model_copy"):
+                            new_resp = resp.model_copy(update={
+                                "article_content": meta_content,
+                                "md_path": meta_md_path
+                            })
+                            return {"structured_response": new_resp}
+                        elif isinstance(resp, dict):
+                            resp["article_content"] = meta_content
+                            resp["md_path"] = meta_md_path
+                            return {"structured_response": resp}
+                    
+                    # 尝试从文件读取 (如果 State 中只有路径)
+                    if meta_md_path and os.path.exists(meta_md_path):
+                        try:
+                            with open(meta_md_path, 'r', encoding='utf-8') as f:
+                                real_content = f.read()
+                            _LOGGER.info(f"Middleware: Loaded content from file (State path)! Length: {len(real_content)}")
                             if hasattr(resp, "model_copy"):
                                 new_resp = resp.model_copy(update={
-                                    "article_content": store_content,
-                                    "md_path": store_md_path
+                                    "article_content": real_content,
+                                    "md_path": meta_md_path
                                 })
                                 return {"structured_response": new_resp}
                             elif isinstance(resp, dict):
-                                resp["article_content"] = store_content
-                                resp["md_path"] = store_md_path
+                                resp["article_content"] = real_content
+                                resp["md_path"] = meta_md_path
                                 return {"structured_response": resp}
-                        
-                        # 如果 Store 中没有 content，尝试从文件读取
-                        elif store_md_path and os.path.exists(store_md_path):
-                            with open(store_md_path, 'r', encoding='utf-8') as f:
-                                real_content = f.read()
-                            if len(real_content) > 100:
-                                _LOGGER.info(f"Middleware: Loaded content from Store path! Length: {len(real_content)}")
-                                if hasattr(resp, "model_copy"):
-                                    new_resp = resp.model_copy(update={
-                                        "article_content": real_content,
-                                        "md_path": store_md_path
-                                    })
-                                    return {"structured_response": new_resp}
-                                elif isinstance(resp, dict):
-                                    resp["article_content"] = real_content
-                                    resp["md_path"] = store_md_path
-                                    return {"structured_response": resp}
+                        except Exception as e:
+                            _LOGGER.warning(f"Middleware: Failed to read file from State path: {e}")
+
+                # ========== 优先层级 0.5: 从 Store 读取 /_shared/assembler_meta.json (跨线程共享) ==========
+                try:
+                    # 注意：runtime.backend 可能不可用，加 try-catch
+                    if hasattr(runtime, "backend"):
+                         shared_data_str = runtime.backend.read("/_shared/assembler_meta.json")
+                         if shared_data_str:
+                             shared_data = json.loads(shared_data_str)
+                             store_md_path = shared_data.get("md_path")
+                             store_content = shared_data.get("article_content")
+                             _LOGGER.info(f"Middleware: Found data in Store! md_path={store_md_path}, content_len={len(store_content) if store_content else 0}")
+                             
+                             # 优先使用 Store 中的 article_content
+                             if store_content and len(store_content) > 100:
+                                 _LOGGER.info(f"Middleware: Successfully loaded content from Store! Length: {len(store_content)}")
+                                 if hasattr(resp, "model_copy"):
+                                     new_resp = resp.model_copy(update={
+                                         "article_content": store_content,
+                                         "md_path": store_md_path
+                                     })
+                                     return {"structured_response": new_resp}
+                                 elif isinstance(resp, dict):
+                                     resp["article_content"] = store_content
+                                     resp["md_path"] = store_md_path
+                                     return {"structured_response": resp}
+                             
+                             # 如果 Store 中没有 content，尝试从文件读取
+                             elif store_md_path and os.path.exists(store_md_path):
+                                 with open(store_md_path, 'r', encoding='utf-8') as f:
+                                     real_content = f.read()
+                                 _LOGGER.info(f"Middleware: Loaded content from file (Store path)! Length: {len(real_content)}")
+                                 if hasattr(resp, "model_copy"):
+                                     new_resp = resp.model_copy(update={
+                                         "article_content": real_content,
+                                         "md_path": store_md_path
+                                     })
+                                     return {"structured_response": new_resp}
+                                 elif isinstance(resp, dict):
+                                     resp["article_content"] = real_content
+                                     resp["md_path"] = store_md_path
+                                     return {"structured_response": resp}
                 except Exception as e:
                     _LOGGER.info(f"Middleware: Store read failed or empty: {e}")
                 # ============================================================================
+
                 
                 # ========== 优先层级 1: 从消息历史扫描 assemble_article_tool 的返回值 ==========
                 _LOGGER.info("Middleware: Trying ToolMessage scanning as fallback...")

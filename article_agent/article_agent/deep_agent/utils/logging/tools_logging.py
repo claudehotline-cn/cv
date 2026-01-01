@@ -32,6 +32,24 @@ def log_performance(operation: str, **extra_info):
 def log_llm_response(operation: str, response, input_chars: int = 0):
     """记录 LLM 响应的详细信息，包括思维链。"""
     output_content = response.content if hasattr(response, 'content') else str(response)
+    
+    # Handle list content (LangChain v1 content_blocks)
+    if isinstance(output_content, list):
+        try:
+            parts = []
+            for b in output_content:
+                if isinstance(b, dict) and b.get("type") == "text":
+                    parts.append(str(b.get("text", "")))
+                elif isinstance(b, str):
+                    parts.append(b)
+                else: 
+                    parts.append(str(b))
+            output_content = "\n".join(parts)
+        except:
+            output_content = str(output_content)
+            
+    if not isinstance(output_content, str):
+        output_content = str(output_content)
     output_chars = len(output_content)
     
     # 提取思维链内容

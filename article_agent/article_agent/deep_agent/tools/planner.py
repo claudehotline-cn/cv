@@ -10,12 +10,34 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ...config.llm_runtime import build_chat_llm
+from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response, log_tool_output, _LOGGER as COMMON_LOGGER
 from ..utils.artifacts import get_current_article_id, save_article_artifact, load_article_artifact
 from .prompts import PLANNER_OUTLINE_SYSTEM_PROMPT, PLANNER_OUTLINE_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.planner")
+
+print("DEBUG: PLANNER MODULE LOADED - V2 HARDCODED FIX")
+
+def local_extract_text_content(response) -> str:
+    try:
+        content = response.content
+        if isinstance(content, str): return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "text":
+                    parts.append(str(b.get("text", "")))
+                elif isinstance(b, str):
+                    parts.append(b)
+                elif hasattr(b, "text"): # Pydantic object
+                    parts.append(str(b.text))
+                else:
+                    parts.append(str(b))
+            return "\n".join(parts).strip()
+        return str(content).strip()
+    except:
+        return str(response.content).strip()
 
 # ============================================================================
 # Collector Tools (Merged from collector.py)
@@ -244,6 +266,7 @@ def read_sources_tool(sources_file: str = "") -> Dict[str, Any]:
         if article_id:
             from ...config import get_article_dir
             article_dir = get_article_dir(article_id)
+            _LOGGER.info(f"[DEBUG] read_sources_tool: article_id='{article_id}', article_dir='{article_dir}'")
             sources_file = os.path.join(article_dir, "sources.json")
     
     if not sources_file or not os.path.exists(sources_file):
@@ -309,7 +332,7 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
             # 记录 LLM 响应详情
             log_llm_response("generate_outline", response, input_chars=input_chars)
             
-            content = response.content.strip()
+            content = local_extract_text_content(response)
             
             if not content:
                 _LOGGER.error(f"generate_outline_tool: LLM returned empty content. Metadata: {response.response_metadata}")
@@ -360,7 +383,7 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
             _LOGGER.info(f"generate_outline_tool success: {len(result.get('sections', []))} sections")
             # 只返回文件路径，不返回内存对象
             return {
-                "article_id": article_id,
+                "article_id": save_article_id,
                 "outline_path": outline_file,
                 "sections_count": len(result.get("sections", [])),
                 "title": result.get("title", ""),

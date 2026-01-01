@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from ...config.llm_runtime import build_chat_llm
+from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response
 from ..utils.artifacts import get_current_article_id, load_article_artifact, save_article_artifact
 from .prompts import RESEARCHER_SECTION_SYSTEM_PROMPT, RESEARCHER_SECTION_USER_PROMPT
@@ -43,7 +43,7 @@ def research_section_tool(
     keywords_str = ', '.join(keywords) if keywords else '无特定关键词'
     system_prompt = RESEARCHER_SECTION_SYSTEM_PROMPT.format(section_title=section_title, keywords_str=keywords_str)
 
-    user_prompt = RESEARCHER_SECTION_USER_PROMPT.format(sources_text_preview=sources_text[:8000], section_title=section_title)
+    user_prompt = RESEARCHER_SECTION_USER_PROMPT.format(sources_text_preview=sources_text[:32000], section_title=section_title)
 
     try:
         with log_performance("research_section", section_id=section_id):
@@ -52,13 +52,16 @@ def research_section_tool(
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ]
+            
+            _LOGGER.info(f"[DEBUG_CTX] research_section prompt size: system_len={len(system_prompt)}, user_len={len(user_prompt)}")
+            
             input_chars = len(system_prompt) + len(user_prompt)
             response = llm.invoke(messages)
             
             # 记录 LLM 响应详情
             log_llm_response("research_section", response, input_chars=input_chars)
             
-            notes = response.content.strip()
+            notes = extract_text_content(response)
         
         # 匹配相关图片
         relevant_images = []
