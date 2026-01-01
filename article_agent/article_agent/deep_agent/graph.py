@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from deepagents import create_deep_agent, SubAgent
-from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
 from langgraph.store.memory import InMemoryStore
 
 # 进程级别共享 Store 实例，用于跨线程数据共享
@@ -158,7 +158,10 @@ def get_article_deep_agent_graph() -> Any:
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[thinking_middleware, ArticleContentMiddleware()],  # 添加思维链日志和内容填充 middleware
         backend=lambda rt: CompositeBackend(
-            default=StateBackend(rt),  # 默认：单线程临时存储
+            default=FilesystemBackend(
+                root_dir="/data/workspace",
+                virtual_mode=False
+            ),
             routes={
                 "/_shared/": StoreBackend(rt),  # 跨线程共享路径
             }
