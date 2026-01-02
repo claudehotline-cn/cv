@@ -92,6 +92,70 @@ def fetch_url_tool(url: str, max_images: int = 30, max_text_chars: int = 60000) 
 
 
 @tool
+def process_pdf_attachment_tool(
+    pdf_base64: str,
+    filename: str = "uploaded.pdf",
+) -> Dict[str, Any]:
+    """处理上传的 PDF 附件（base64 格式）。
+    
+    Args:
+        pdf_base64: PDF 文件的 base64 编码内容
+        filename: 原始文件名
+        
+    Returns:
+        包含提取的文本、图片和元信息的字典
+    """
+    import base64
+    import tempfile
+    from ..utils.files import load_text_from_file
+    
+    _LOGGER.info(f"process_pdf_attachment_tool called with filename: {filename}, base64_len: {len(pdf_base64)}")
+    
+    try:
+        # 解码 base64 并保存到临时文件
+        pdf_bytes = base64.b64decode(pdf_base64)
+        
+        # 创建临时文件
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"uploaded_{uuid.uuid4().hex[:8]}_{filename}")
+        
+        with open(temp_path, 'wb') as f:
+            f.write(pdf_bytes)
+        
+        _LOGGER.info(f"Saved PDF to temp file: {temp_path}")
+        
+        # 使用 load_text_from_file 处理 PDF（已支持 pymupdf4llm）
+        data = load_text_from_file(temp_path, max_text_chars=100000)
+        text = data.get("text") or ""
+        images = data.get("images") or []
+        
+        _LOGGER.info(f"PDF processed: {len(text)} chars, {len(images)} images")
+        
+        # 清理临时文件
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+        
+        return {
+            "title": filename,
+            "text": text,
+            "images": images,
+            "success": True,
+            "temp_path": temp_path,
+        }
+    except Exception as exc:
+        _LOGGER.error(f"process_pdf_attachment_tool failed: {exc}")
+        return {
+            "title": filename,
+            "text": "",
+            "images": [],
+            "success": False,
+            "error": str(exc),
+        }
+
+
+@tool
 def load_file_tool(file_path: str, max_text_chars: int = 60000) -> Dict[str, Any]:
     """加载本地文件内容。
     
@@ -142,7 +206,8 @@ def collect_all_sources_tool(
     from ..utils.files import fetch_url_with_images, load_text_from_file
     
     # 固定参数，不允许 LLM 覆盖
-    max_text_chars = 5000  # 限制每个源的最大读取字符数，避免 Context 过长
+    # 存文件不影响 LLM 上下文，可以保留更多内容（包括数学公式等）
+    max_text_chars = 100000  # 保留完整内容，Researcher 从文件读取时自行控制
     max_overview_chars = 2000
     max_images_per_source = 30
     

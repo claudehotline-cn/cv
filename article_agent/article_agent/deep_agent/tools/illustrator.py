@@ -39,23 +39,35 @@ def _encode_image(path_or_url: str) -> Optional[str]:
         
         # 1. Handle URL
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
-            try:
-                # Set timeout to avoid hanging, add User-Agent to avoid 403
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-                }
-                response = requests.get(path_or_url, timeout=10, headers=headers)
-                response.raise_for_status()
-                image_data = response.content
-                # Try to guess mime type from header or url
-                content_type = response.headers.get('Content-Type')
-                if content_type:
-                    mime_type = content_type
-                else:
-                    mime_type, _ = mimetypes.guess_type(path_or_url)
-            except Exception as e:
-                _LOGGER.warning(f"Failed to download image: {path_or_url}, error: {e}")
-                return None
+            # Retry logic with exponential backoff
+            max_retries = 3
+            retry_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    # Set timeout to avoid hanging, add User-Agent to avoid 403
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                    }
+                    response = requests.get(path_or_url, timeout=15, headers=headers)
+                    response.raise_for_status()
+                    image_data = response.content
+                    # Try to guess mime type from header or url
+                    content_type = response.headers.get('Content-Type')
+                    if content_type:
+                        mime_type = content_type
+                    else:
+                        mime_type, _ = mimetypes.guess_type(path_or_url)
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        _LOGGER.warning(f"Image download attempt {attempt+1}/{max_retries} failed: {path_or_url}, retrying in {retry_delay}s...")
+                        import time
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        _LOGGER.warning(f"Failed to download image after {max_retries} attempts: {path_or_url}, error: {e}")
+                        return None
                 
         # 2. Handle Local File
         elif os.path.exists(path_or_url):
@@ -72,6 +84,21 @@ def _encode_image(path_or_url: str) -> Optional[str]:
 
         if not mime_type:
             mime_type = "image/jpeg" # Default fallback
+        
+        # 处理 SVG：转换为 PNG（VLM 不支持矢量格式）
+        if mime_type == "image/svg+xml" or path_or_url.lower().endswith('.svg'):
+            try:
+                import cairosvg
+                png_data = cairosvg.svg2png(bytestring=image_data)
+                image_data = png_data
+                mime_type = "image/png"
+                _LOGGER.info(f"Converted SVG to PNG: {path_or_url}")
+            except ImportError:
+                _LOGGER.warning(f"cairosvg not installed, cannot convert SVG: {path_or_url}")
+                return None
+            except Exception as e:
+                _LOGGER.warning(f"Failed to convert SVG to PNG: {path_or_url}, error: {e}")
+                return None
             
         base64_data = base64.b64encode(image_data).decode('utf-8')
         return f"data:{mime_type};base64,{base64_data}"
@@ -169,13 +196,28 @@ def match_images_tool(
     vlm = build_vlm_client(task_name="illustrator_vlm")
     images_with_desc = []
     
-    for i, img in enumerate(available_images[:10]):  # 限制前10张
+    for i, img in enumerate(available_images):  # 分析所有图片
         img_url = img.get("path_or_url", "")
         alt = img.get("alt", "")
+        
+        # 将 Wikipedia 缩略图 URL 转换为原图 URL
+        # 例如: .../thumb/5/5f/Image.png/250px-Image.png → .../5/5f/Image.png
+        if "/thumb/" in img_url and "px-" in img_url:
+            import re
+            # 移除 /thumb/ 路径段和最后的 /XXXpx-filename 部分
+            img_url = re.sub(r'/thumb/', '/', img_url)
+            img_url = re.sub(r'/\d+px-[^/]+$', '', img_url)
+            _LOGGER.info(f"Converted thumbnail to full-size: {img_url}")
+        
         description = alt  # 默认使用 alt
         
         if vlm and img_url:
             try:
+                # 速率限制：每张图片下载间隔 0.5 秒，避免 Wikipedia 429 错误
+                import time
+                if i > 0:
+                    time.sleep(0.5)
+                
                 # 转换图片为 Base64
                 # HumanMessage 已在文件顶部导入
                 
@@ -257,6 +299,14 @@ def match_images_tool(
                     
                     img_url = img.get("path_or_url") or img.get("url") or ""
                     alt = img.get("alt", "")
+                    
+                    # 将 Wikipedia 缩略图 URL 转换为原图 URL
+                    if "/thumb/" in img_url and "px-" in img_url:
+                        import re
+                        img_url = re.sub(r'/thumb/', '/', img_url)
+                        img_url = re.sub(r'/\d+px-[^/]+$', '', img_url)
+                        _LOGGER.info(f"Image {img_idx}: Converted to full-size URL: {img_url}")
+                    
                     caption = p.get("caption", "") or alt
                     after_heading = p.get("after_heading", "")
                     insert_after_text = p.get("insert_after_text", "").strip()
@@ -266,7 +316,14 @@ def match_images_tool(
                     else:
                         _LOGGER.info(f"Preparing to insert Image {img_idx}: url='{img_url}'")
 
-                    img_md = f"\n\n![{caption}]({img_url})\n*{caption}*\n"
+                    # 使用 HTML figure 格式，确保居中、合适尺寸和带说明文字
+                    img_md = f'''
+
+<figure style="text-align: center; margin: 20px 0;">
+  <img src="{img_url}" alt="{caption}" style="display: block; margin: 0 auto; width: 80%; max-width: 600px;">
+  <figcaption style="margin-top: 8px; color: #666; font-size: 0.9em;">{caption}</figcaption>
+</figure>
+'''
                     
                     # 1. 找到 Heading 行
                     heading_line_idx = -1

@@ -1,6 +1,7 @@
 from .planner import (
     fetch_url_tool, 
-    load_file_tool, 
+    load_file_tool,
+    process_pdf_attachment_tool,
     collect_all_sources_tool, 
     read_sources_tool,
     generate_outline_tool
@@ -15,6 +16,7 @@ __all__ = [
     # Planner (Collection + Planning)
     "fetch_url_tool",
     "load_file_tool",
+    "process_pdf_attachment_tool",
     "collect_all_sources_tool",
     "read_sources_tool",
     "generate_outline_tool",

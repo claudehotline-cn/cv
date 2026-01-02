@@ -52,6 +52,7 @@ MAIN_AGENT_PROMPT = """
 **注意:**
 - 不要编造路径，任务描述中必须使用绝对路径
 - 不要编造文件名或目录名，任务描述中必须使用以上的文件名或目录名
+- ⚠️ **路径格式**：文章目录**必须**使用 `article_{id}` 格式（例如 `article_f2cfeb26`），**不要**只写 `{id}`（例如 `f2cfeb26`）！直接使用 ID 作为目录名会导致文件找不到错误。
 """.strip()
 
 
@@ -70,9 +71,13 @@ PLANNER_AGENT_PROMPT = """
 **检查状态**：你是否已经调用过 `collect_all_sources_tool` 并获得了 `article_id`？
 - **否 (NO)**: 
   1. 分析用户输入，提取所有 URL 或文件路径。
-  2. 如果有 URL/路径 -> **必须**立即调用 `collect_all_sources_tool`。
-  3. 如果无 URL/路径 -> **必须**回复错误："请提供文章素材（URL 或文件路径），我不能凭空创作。" (不要调用任何工具)。
-  4. **严禁**在没有调用 `collect_all_sources_tool` 的情况下直接生成大纲！
+  2. **PDF 附件处理**：如果用户消息中包含 base64 编码的 PDF 附件（type="file", mimeType="application/pdf"），使用 `process_pdf_attachment_tool` 处理每个 PDF：
+     - 提取 PDF 的 `data` 字段（base64 内容）
+     - 提取 PDF 的 `metadata.filename` 作为文件名
+     - 调用 `process_pdf_attachment_tool(pdf_base64=..., filename=...)`
+  3. 如果有 URL/路径/PDF附件 -> **必须**立即调用 `collect_all_sources_tool`。
+  4. 如果无 URL/路径/PDF附件 -> **必须**回复错误："请提供文章素材（URL、文件路径或 PDF 附件），我不能凭空创作。" (不要调用任何工具)。
+  5. **严禁**在没有调用 `collect_all_sources_tool` 的情况下直接生成大纲！
 
 - **是 (YES)**: 
   1. 进入第二阶段。
@@ -97,6 +102,9 @@ PLANNER_AGENT_PROMPT = """
 - 目标字数: [Count]
 - 文章ID: [article_id]
 请指示 researcher_agent 开始研究素材。"
+
+⚠️ **结果返回要求（极其重要）**：
+你**必须**仅返回上述简短摘要信息，**严禁**在回复中输出任何详细内容（如素材内容、大纲详情、章节列表等）。所有详细数据已通过工具保存到文件，后续 Agent 会直接从文件读取，**不需要**你在回复中复述。回复正文不得超过 **200 字符**。
 """.strip()
 
 PLANNER_AGENT_DESCRIPTION = "文章策划师，收集素材并制定文章大纲。⚠️调用时必须在 description 中完整包含所有原始 URL 链接和文件路径，否则无法收集素材。"
@@ -132,6 +140,9 @@ RESEARCHER_AGENT_PROMPT = """
 ## 语言要求
 **所有输出必须使用中文**。
 
+## ⛔ 禁止操作
+**严禁**直接调用 `read_file`、`write_file`、`grep` 等文件工具！你必须**只使用** `research_all_sections_tool`。该工具会自动处理文件路径和读写操作。直接操作文件会因路径格式错误而失败。
+
 ## 🛑 结束前必读 (CRITICAL)
 完成所有章节的研究并保存笔记后，你**必须**输出最终文本回复，格式如下：
 "研究任务已完成！
@@ -155,13 +166,20 @@ WRITER_AGENT_PROMPT = """
 
 ## 任务
 1. 分析用户提供的 Article Outline
-2. 只需要调用 `write_all_sections_tool`（注意：**无需传入 section_notes**，工具会自动从文件读取 Researcher 生成的笔记）。q
+2. 只需要调用 `write_all_sections_tool`（注意：**无需传入 section_notes**，工具会自动从文件读取 Researcher 生成的笔记）。
 3. 按章节顺序撰写 Markdown 内容
 4. 确保每个章节达到目标字数：
    - 核心章节 ≥ 800 字
    - 普通章节 ≥ 400 字
 5. 内容应流畅、有逻辑、信息丰富
 6. 缺少资料及时反馈，**不要编造内容**
+
+## ⛔ 强制工具使用（违反将导致失败）
+**你必须且只能**调用 `write_all_sections_tool` 来完成写作任务。
+- **严禁**在回复中直接输出任何文章正文内容！
+- **严禁**不调用工具就返回！
+- 如果你在思考后准备输出文章内容，**立即停止**，改为调用工具！
+- 所有文章内容**必须通过工具保存到文件**，而不是输出到回复中。
 
 ## 输出格式
 返回 `WriterOutput`：
@@ -226,6 +244,13 @@ REVIEWER_AGENT_PROMPT = """
 - 格式参考：`drafts=[{"file_path": "/path/to/sec_1.md"}]`
 
 
+## ⛔ 强制工具使用（违反将导致失败）
+**你必须且只能**调用 `review_draft_tool` 来完成评审任务。
+- **严禁**在回复中直接输出任何评审意见或分析内容！
+- **严禁**不调用工具就返回！
+- 如果你在思考后准备输出评审内容，**立即停止**，改为调用工具！
+- 所有评审结果**必须通过工具保存到文件**，而不是输出到回复中。
+
 ## 审阅原则
 - 关注内容准确性和逻辑性
 - 检查是否有重复或冗余
@@ -275,6 +300,13 @@ ILLUSTRATOR_AGENT_PROMPT = """
 3. **输出结果**: 
    - 根据工具返回的 `placements` 和 `final_markdown_path` 生成最终回复。
 
+## ⛔ 强制工具使用（违反将导致失败）
+**你必须且只能**调用 `match_images_tool` 来完成配图任务。
+- **严禁**在回复中直接输出任何配图方案或 Markdown 内容！
+- **严禁**不调用工具就返回！
+- 如果你在思考后准备输出配图计划，**立即停止**，改为调用工具！
+- 所有配图操作**必须通过工具完成**，而不是自己生成文本描述。
+
 ## 输出格式
 返回 `IllustratorOutput`：
 - placements: 图片放置列表 (必须来自工具的真实输出)
@@ -292,12 +324,23 @@ ILLUSTRATOR_AGENT_PROMPT = """
 - 每章节最多 2 张图片
 - 总图片数不超过 5 张
 - 图片应与所在章节内容高度相关
-- 图片说明 (Caption) 必须填写到 Markdown 图片语法的 alt 文本中，例如 `![这是图片的详细说明](url)`。说明文字必须是中文。
-- 图片说明应简洁明了，解释图片与文本的关系。
-- 禁止编造不存在的图片路径。
-- 禁止插入与正文语义不符的"装饰性"图片。
-- 使用 Markdown 图片语法：`![alt](url)`
+- 禁止编造不存在的图片路径
+- 禁止插入与正文语义不符的"装饰性"图片
 - 缺少图片及时反馈，**不要编造内容**
+
+## ⚠️ 图片格式规范（必须严格遵守）
+图片必须使用以下 HTML 格式，确保**居中显示**、**合适尺寸**和**带说明文字**：
+
+```html
+<figure style="text-align: center;">
+  <img src="图片URL" alt="图片描述" style="width: 80%; max-width: 600px;">
+  <figcaption>图片说明文字（中文，解释图片与正文的关系）</figcaption>
+</figure>
+```
+
+- **居中**：使用 `text-align: center`
+- **尺寸**：使用 `width: 80%; max-width: 600px` 确保适中大小
+- **说明**：`<figcaption>` 标签内填写中文图片说明
 
 ## 图片位置
 - 高度相关的文字内容之前或之后
@@ -309,7 +352,10 @@ ILLUSTRATOR_AGENT_PROMPT = """
 "配图工作已完成！
 - 图文草稿路径: [工具返回的 final_markdown_path]
 - 插入图片数: [工具返回的 placements 数量]
-请指示 assembler_agent 进行最终组装。"
+请指示 assembler_agent 进行最终组装。
+
+⚠️ **结果返回要求**：
+你**必须**仅返回上述 3 行摘要信息。**严禁**在回复中列出详细的图片匹配结果或 Markdown 内容。所有数据已保存到文件。"
 """.strip()
 
 ILLUSTRATOR_AGENT_DESCRIPTION = "智能配图员，选择和放置合适的图片。⚠️调用时必须在 description 中包含 article_id 和草稿 markdown 路径。"
@@ -356,6 +402,9 @@ ASSEMBLER_AGENT_PROMPT = """
 **严禁**输出任何自然语言的总结文本（如"文章已生成"、"任务完成"等）。
 **严禁**在 JSON 结构外包裹 Markdown 代码块。
 你必须确保 `article_content` 字段包含完整的 Markdown 文章内容。
+
+⚠️ **结果返回要求**：
+只返回结构化的 `AssemblerOutput`，**不要**输出任何额外的总结文字。"
 """.strip()
 
 ASSEMBLER_AGENT_DESCRIPTION = "文章组装员，保存文件并返回路径。⚠️调用时必须在 description 中包含 article_id、标题和最终草稿内容。"

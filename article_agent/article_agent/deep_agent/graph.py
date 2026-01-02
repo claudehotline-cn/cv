@@ -34,6 +34,7 @@ from .tools import (
     # Collector tools
     fetch_url_tool,
     load_file_tool,
+    process_pdf_attachment_tool,
     collect_all_sources_tool,
     # Planner tools
     generate_outline_tool,
@@ -80,7 +81,7 @@ def get_article_deep_agent_graph() -> Any:
         name="planner_agent",
         description=PLANNER_AGENT_DESCRIPTION,
         system_prompt=PLANNER_AGENT_PROMPT,
-        tools=[fetch_url_tool, load_file_tool, collect_all_sources_tool, generate_outline_tool],
+        tools=[fetch_url_tool, load_file_tool, process_pdf_attachment_tool, collect_all_sources_tool, generate_outline_tool],
     )
     
     # 2. Researcher Agent - 资料整理
@@ -160,7 +161,7 @@ def get_article_deep_agent_graph() -> Any:
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(
                 root_dir="/data/workspace",
-                virtual_mode=False
+                virtual_mode=True  # 沙箱模式：限制文件操作在 root_dir 内，防止访问 /proc 等系统路径
             ),
             routes={
                 "/_shared/": StoreBackend(rt),  # 跨线程共享路径

@@ -74,6 +74,7 @@ def _extract_content(html: str, url: str, max_images: int, max_text_chars: int, 
     优先使用 trafilatura 统一提取文本和图片（确保来自同一"主内容区域"），
     若 trafilatura 失败或图片为空，则用 BeautifulSoup 兜底。
     """
+    from urllib.parse import urlparse
 
     soup = BeautifulSoup(html, "html.parser")
 
@@ -83,6 +84,15 @@ def _extract_content(html: str, url: str, max_images: int, max_text_chars: int, 
 
     text = ""
     images: List[Dict[str, Any]] = []
+    extracted_formulas = []  # 存储提取的数学公式
+    
+    # 预处理：将 Wikipedia 数学公式转换为 LaTeX 格式
+    # 这样 trafilatura 也能保留公式
+    domain = urlparse(url).netloc.lower()
+    if "wikipedia.org" in domain:
+        original_len = len(html)
+        html, extracted_formulas = _preprocess_wikipedia_math(html)
+        _LOGGER.info(f"Wikipedia math preprocessing: url={url}, formulas_found={len(extracted_formulas)}, html_len_change={len(html)-original_len}")
 
     # Step A: 尝试使用 trafilatura 统一提取正文和图片
     if settings.use_trafilatura:
@@ -95,12 +105,138 @@ def _extract_content(html: str, url: str, max_images: int, max_text_chars: int, 
     # Step C: 图片回退到 BeautifulSoup（若 trafilatura 没抓到图片）
     if not images:
         images = _extract_images_from_soup(soup, url, max_images)
+    
+    # Step D: 恢复数学公式（将占位符替换为实际公式）
+    if extracted_formulas:
+        import re
+        restored_count = 0
+        for i, (formula, is_block) in enumerate(extracted_formulas):
+            placeholder = f'MATHFORMULA{i}ENDMATH'
+            # 检查占位符是否在文本中（可能被 trafilatura 保留或丢弃）
+            if placeholder in text:
+                # 使用 Wikipedia 的 display 属性判断，或回退到启发式规则
+                use_block = is_block or len(formula) > 60 or '\\sum' in formula or '\\frac' in formula or '\\int' in formula
+                if use_block:
+                    text = text.replace(placeholder, f'\n\n$${formula}$$\n\n')
+                else:
+                    text = text.replace(placeholder, f'${formula}$')
+                restored_count += 1
+        
+        if restored_count > 0:
+            _LOGGER.info(f"Restored {restored_count} formulas inline with text")
+        
+        # 如果公式全被丢弃，在文开头追加重要公式（确保 Researcher 能看到）
+        if '$$' not in text and '$' not in text and extracted_formulas:
+            important_formulas = [(f, b) for f, b in extracted_formulas if len(f) > 20]
+            if important_formulas:
+                formula_section = "## 核心数学公式\n\n" + "\n\n".join([f'$${f}$$' for f, _ in important_formulas[:10]]) + "\n\n---\n\n"
+                text = formula_section + text  # 放到开头而不是末尾
+                _LOGGER.info(f"Prepended {min(len(important_formulas), 10)} important formulas to text")
 
-    if len(text) > max_text_chars:
-        text = text[:max_text_chars]
+    # 不再截断：数据存到文件，不直接传给 LLM
+    # Researcher 读取时自行控制传给 LLM 的长度
 
     return {"url": url, "title": title, "text": text, "images": images}
 
+
+def _preprocess_wikipedia_math(html: str) -> Tuple[str, List[Tuple[str, bool]]]:
+    """预处理 Wikipedia HTML，将 <math> 标签中的 LaTeX 公式提取出来。
+    
+    Wikipedia 使用 MathML 格式，LaTeX 源码存储在 <annotation encoding="application/x-tex"> 中。
+    将 <math> 标签替换为占位符格式，同时收集所有公式以便后续使用。
+    
+    Returns:
+        Tuple[str, List[Tuple[str, bool]]]: (处理后的HTML, [(公式, 是否块级)]列表)
+    """
+    import re
+    
+    extracted_formulas = []  # [(latex_str, is_block), ...]
+    
+    # 匹配 <math>...</math> 标签，提取 annotation 中的 LaTeX
+    def replace_math(match):
+        math_content = match.group(0)
+        
+        # 检查 display 属性判断是 inline 还是 block
+        display_match = re.search(r'display="([^"]+)"', math_content, re.IGNORECASE)
+        is_block = display_match and display_match.group(1).lower() == 'block'
+        
+        # 尝试提取 annotation encoding="application/x-tex" 内容
+        annotation_match = re.search(
+            r'<annotation[^>]*encoding="application/x-tex"[^>]*>([^<]+)</annotation>',
+            math_content
+        )
+        if annotation_match:
+            latex = annotation_match.group(1).strip()
+            extracted_formulas.append((latex, is_block))
+            # 使用文本格式占位符，trafilatura 不会过滤
+            return f' MATHFORMULA{len(extracted_formulas)-1}ENDMATH '
+        # 回退：尝试 alttext 属性
+        alttext_match = re.search(r'alttext="([^"]+)"', math_content)
+        if alttext_match:
+            latex = alttext_match.group(1).strip()
+            extracted_formulas.append((latex, is_block))
+            return f' MATHFORMULA{len(extracted_formulas)-1}ENDMATH '
+        return ''
+    
+    # 替换所有 <math>...</math> 标签
+    html = re.sub(r'<math[^>]*>.*?</math>', replace_math, html, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 同时处理代码块 <pre><code>...</code></pre> -> ```...```
+    html = _preprocess_code_blocks(html)
+    
+    return html, extracted_formulas
+
+
+def _preprocess_code_blocks(html: str) -> str:
+    """预处理 HTML，将 <pre><code> 代码块转换为 Markdown 代码块格式。
+    
+    支持的格式：
+    - <pre><code class="language-python">...</code></pre>
+    - <pre class="code">...</pre>
+    - <code>...</code>（内联代码）
+    """
+    import re
+    from html import unescape
+    
+    # 1. 处理 <pre><code>...</code></pre> 块
+    def replace_pre_code(match):
+        full_match = match.group(0)
+        # 尝试提取语言
+        lang_match = re.search(r'class="[^"]*(?:language-|lang-)(\w+)', full_match, re.IGNORECASE)
+        lang = lang_match.group(1) if lang_match else ''
+        
+        # 提取 <code> 内容
+        code_match = re.search(r'<code[^>]*>(.*?)</code>', full_match, re.DOTALL | re.IGNORECASE)
+        if code_match:
+            code_content = code_match.group(1)
+        else:
+            # 直接从 <pre> 提取
+            pre_match = re.search(r'<pre[^>]*>(.*?)</pre>', full_match, re.DOTALL | re.IGNORECASE)
+            code_content = pre_match.group(1) if pre_match else ''
+        
+        # 移除内部 HTML 标签，保留文本
+        code_content = re.sub(r'<[^>]+>', '', code_content)
+        code_content = unescape(code_content).strip()
+        
+        if code_content:
+            return f'\n\n```{lang}\n{code_content}\n```\n\n'
+        return ''
+    
+    # 匹配 <pre>...</pre>（可能包含 <code>）
+    html = re.sub(r'<pre[^>]*>.*?</pre>', replace_pre_code, html, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 2. 处理内联 <code>...</code>（保留为 `...`）
+    def replace_inline_code(match):
+        code_content = match.group(1)
+        code_content = re.sub(r'<[^>]+>', '', code_content)
+        code_content = unescape(code_content).strip()
+        if code_content and '\n' not in code_content:  # 确保是内联的
+            return f'`{code_content}`'
+        return code_content
+    
+    html = re.sub(r'<code[^>]*>(.*?)</code>', replace_inline_code, html, flags=re.DOTALL | re.IGNORECASE)
+    
+    return html
 
 def _extract_surrounding_text(full_text: str, img_position: int, context_chars: int = 200) -> str:
     """提取图片周围的文本作为上下文。
@@ -132,14 +268,18 @@ def _extract_with_trafilatura(html: str, url: str, max_images: int) -> Tuple[str
         import re
 
         # 使用 trafilatura 提取，开启图片以便解析
+        # include_images: 公式作为 img alt 存在，必须开启
+        # include_formatting: 保留代码块等格式结构
+        # favor_recall: 更贪心地保留内容（而非 favor_precision）
         result = trafilatura.extract(
             html,
             url=url,
             include_tables=True,
-            include_images=True,  # 开启图片提取
+            include_images=True,        # 关键：公式作为 <img alt="TeX"> 存在
+            include_formatting=True,    # 关键：保留代码块等格式结构
             include_links=False,
             output_format="markdown",
-            favor_precision=True,
+            favor_recall=True,          # 关键：更贪心保留内容
         )
 
         if not result:
@@ -172,6 +312,11 @@ def _extract_with_trafilatura(html: str, url: str, max_images: int) -> Tuple[str
             })
             if len(images) >= max_images:
                 break
+        
+        # 后处理：将 Wikipedia 数学公式图片转换为 LaTeX 格式
+        # Wikipedia 公式渲染为 <img alt="LaTeX"> 形式
+        text = _restore_wiki_math_images(text)
+        text = _restore_inline_code(text)
 
         return text, images
 
@@ -181,6 +326,52 @@ def _extract_with_trafilatura(html: str, url: str, max_images: int) -> Tuple[str
     except Exception as exc:
         _LOGGER.warning("trafilatura_extract_failed url=%s error=%s", url, exc)
         return "", []
+
+
+def _restore_wiki_math_images(markdown: str) -> str:
+    """将 Wikipedia 数学公式图片还原为 LaTeX 格式。
+    
+    Wikipedia 公式渲染后会变成 ![{\\displaystyle ...}](url) 形式，
+    URL 中通常包含 /math/，alt 文本就是原始 LaTeX。
+    """
+    import re
+    
+    # 匹配 markdown 图片：![alt](url "title")
+    img_pattern = re.compile(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+    
+    def replace_math_img(match):
+        alt = match.group(1).strip()
+        url = match.group(2)
+        
+        # Wikipedia 的公式图片 URL 常含 /math/，alt 常含 TeX
+        # 也可能是 {\displaystyle ...} 或其他 LaTeX 语法
+        is_math_url = "/math/" in url or "wikimedia.org/api/rest_v1/media/math" in url
+        is_math_alt = alt and (
+            alt.startswith("{\\displaystyle") or 
+            alt.startswith("\\") or
+            "{" in alt and "\\" in alt
+        )
+        
+        if is_math_url or is_math_alt:
+            if alt:
+                # 判断是行内公式还是块级公式
+                if len(alt) > 50 or "\\sum" in alt or "\\frac" in alt or "\\int" in alt:
+                    return f"\n\n$${alt}$$\n\n"  # 块级公式
+                else:
+                    return f"${alt}$"  # 行内公式
+        
+        return match.group(0)  # 保持原样
+    
+    return img_pattern.sub(replace_math_img, markdown)
+
+
+def _restore_inline_code(markdown: str) -> str:
+    """确保内联代码格式正确。
+    
+    有时候 <code> 被转换为普通文本，需要恢复反引号。
+    """
+    # 这个函数主要作为占位符，实际代码块应该已经被 include_formatting 保留
+    return markdown
 
 
 def _extract_with_beautifulsoup(soup: BeautifulSoup, url: str) -> str:
@@ -194,6 +385,20 @@ def _extract_with_beautifulsoup(soup: BeautifulSoup, url: str) -> str:
     # 针对 Wikipedia 的特化清理
     domain = urlparse(url).netloc.lower()
     if "wikipedia.org" in domain:
+        # 先提取并替换数学公式，将 <math> 标签替换为 LaTeX 文本
+        for math_tag in soup.find_all("math"):
+            annotation = math_tag.find("annotation", attrs={"encoding": "application/x-tex"})
+            if annotation and annotation.string:
+                # 将 LaTeX 公式转换为 Markdown 格式 $$...$$
+                latex_text = annotation.string.strip()
+                # 替换 math 标签为可读的 LaTeX
+                math_tag.replace_with(f" $${latex_text}$$ ")
+            else:
+                # 如果没有 annotation，尝试直接获取 alttext
+                alttext = math_tag.get("alttext", "")
+                if alttext:
+                    math_tag.replace_with(f" $${alttext}$$ ")
+        
         for selector in ["#mw-panel", ".mw-editsection", ".reference", ".reflist", ".navbox", ".sistersitebox"]:
             for el in soup.select(selector):
                 el.decompose()
@@ -447,7 +652,7 @@ def load_text_from_file(path: str, max_text_chars: int = 60000) -> Dict[str, Any
 
     当前支持：
       - .txt / .md：按 UTF-8 文本读取；
-      - .pdf：使用 PyPDF2 读取所有页面文本；
+      - .pdf：使用 pymupdf4llm 转换为 Markdown（支持表格、公式、图片）；
     其它复杂格式暂不处理，返回空文本占位。
     """
 
@@ -457,24 +662,81 @@ def load_text_from_file(path: str, max_text_chars: int = 60000) -> Dict[str, Any
 
     suffix = p.suffix.lower()
     text = ""
+    images = []
+    
     if suffix in {".txt", ".md"}:
         text = p.read_text(encoding="utf-8", errors="ignore")
     elif suffix == ".pdf":
-        reader = PdfReader(str(p))
-        parts: List[str] = []
-        for page in reader.pages:
+        # 使用 pymupdf4llm 进行高质量 PDF 转 Markdown
+        try:
+            import pymupdf4llm
+            import pymupdf
+            
+            # 转换 PDF 为 Markdown（包含表格、公式、代码等）
+            md_text = pymupdf4llm.to_markdown(
+                str(p),
+                write_images=False,  # 不保存图片到文件
+                show_progress=False,
+            )
+            text = md_text
+            _LOGGER.info(f"PDF converted to Markdown using pymupdf4llm: {len(text)} chars")
+            
+            # 提取图片
             try:
-                parts.append(page.extract_text() or "")
-            except Exception:
-                continue
-        text = "\n".join(parts)
+                doc = pymupdf.open(str(p))
+                for page_num, page in enumerate(doc):
+                    for img_index, img in enumerate(page.get_images(full=True)):
+                        try:
+                            xref = img[0]
+                            base_image = doc.extract_image(xref)
+                            if base_image:
+                                image_ext = base_image.get("ext", "png")
+                                image_data = base_image.get("image")
+                                if image_data:
+                                    # 转换为 base64 data URI
+                                    import base64
+                                    b64_data = base64.b64encode(image_data).decode('utf-8')
+                                    images.append({
+                                        "src": f"data:image/{image_ext};base64,{b64_data}",
+                                        "alt": f"PDF Page {page_num+1} Image {img_index+1}",
+                                        "page": page_num + 1,
+                                    })
+                        except Exception as e:
+                            _LOGGER.warning(f"Failed to extract image from PDF: {e}")
+                doc.close()
+                _LOGGER.info(f"Extracted {len(images)} images from PDF")
+            except Exception as e:
+                _LOGGER.warning(f"Failed to extract PDF images: {e}")
+                
+        except ImportError:
+            _LOGGER.warning("pymupdf4llm not installed, falling back to PyPDF2")
+            # 回退到 PyPDF2
+            reader = PdfReader(str(p))
+            parts: List[str] = []
+            for page in reader.pages:
+                try:
+                    parts.append(page.extract_text() or "")
+                except Exception:
+                    continue
+            text = "\n".join(parts)
+        except Exception as e:
+            _LOGGER.error(f"PDF extraction failed: {e}")
+            # 回退到 PyPDF2
+            reader = PdfReader(str(p))
+            parts: List[str] = []
+            for page in reader.pages:
+                try:
+                    parts.append(page.extract_text() or "")
+                except Exception:
+                    continue
+            text = "\n".join(parts)
     else:
         text = ""
 
     if len(text) > max_text_chars:
         text = text[:max_text_chars]
 
-    return {"path": str(p), "text": text, "images": []}
+    return {"path": str(p), "text": text, "images": images}
 
 
 def load_uploaded_file_text(path: str, max_text_chars: int = 60000) -> str:

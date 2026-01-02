@@ -43,7 +43,7 @@ def research_section_tool(
     keywords_str = ', '.join(keywords) if keywords else '无特定关键词'
     system_prompt = RESEARCHER_SECTION_SYSTEM_PROMPT.format(section_title=section_title, keywords_str=keywords_str)
 
-    user_prompt = RESEARCHER_SECTION_USER_PROMPT.format(sources_text_preview=sources_text[:32000], section_title=section_title)
+    user_prompt = RESEARCHER_SECTION_USER_PROMPT.format(sources_text_preview=sources_text[:80000], section_title=section_title)
 
     try:
         with log_performance("research_section", section_id=section_id):
