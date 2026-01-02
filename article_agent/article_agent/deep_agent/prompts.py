@@ -30,6 +30,7 @@ MAIN_AGENT_PROMPT = """
 - **质量审阅**：初稿完成后**必须**进行质量审阅，**最多2次**质量审阅，如果2次都未通过，跳过质量审阅，继续执行下一步
 - **完成检查**：只有 assembler_agent 返回结果后任务才算完成
 - **异常处理**：如果助手反馈缺少必要信息（如URL、文件、权限等）或明确表示无法继续，你**必须**立即停止任务并将该反馈直接报告给用户，**禁止**反复调用同一个助手进行重试。
+- **禁止循环调用**：如果你发现自己**连续两次**调用**同一个助手**且**参数完全相同**，这表明你陷入了死循环。你必须**立即停止**，分析问题原因，并向用户报告。
 - **核心数据**：确保 `md_path` 准确无误（必须与 assembler_agent 返回的一致）。`article_content` 字段由系统 Middleware 自动从 `md_path` 读取填充，因此你在 JSON 中**不需要**输出正文内容（留空或写"由Middleware填充"即可），以节省输出长度。
 
 ## 📁 工作区路径说明
@@ -142,7 +143,7 @@ RESEARCHER_AGENT_PROMPT = """
 你**必须**仅返回上述摘要信息。**严禁**在回复中直接输出笔记内容或研究细节。所有详细的研究内容必须通过工具保存到文件中。"
 """.strip()
 
-RESEARCHER_AGENT_DESCRIPTION = "资料研究员，读取素材并按大纲整理"
+RESEARCHER_AGENT_DESCRIPTION = "资料研究员，读取素材并按大纲整理。⚠️调用时必须在 description 中包含 article_id，否则无法读取素材和大纲。"
 
 
 # ============================================================================
@@ -188,7 +189,7 @@ WRITER_AGENT_PROMPT = """
 你**必须**仅返回上述摘要信息。**严禁**在回复中直接输出文章正文内容。所有文章内容必须通过工具保存到文件中。"
 """.strip()
 
-WRITER_AGENT_DESCRIPTION = "内容撰写员，按章节撰写 Markdown 内容"
+WRITER_AGENT_DESCRIPTION = "内容撰写员，按章节撰写 Markdown 内容。⚠️调用时必须在 description 中包含 article_id，否则无法读取研究笔记。"
 
 
 # ============================================================================
@@ -246,7 +247,7 @@ REVIEWER_AGENT_PROMPT = """
 你**必须**仅返回上述摘要信息。**严禁**在回复中直接输出详细的审阅意见。所有意见必须通过工具保存到文件中。"
 """.strip()
 
-REVIEWER_AGENT_DESCRIPTION = "质量审阅员，从读者视角审阅文章"
+REVIEWER_AGENT_DESCRIPTION = "质量审阅员，从读者视角审阅文章。⚠️调用时必须在 description 中包含 article_id 和待审阅的草稿内容摘要。"
 
 
 # ============================================================================
@@ -311,7 +312,7 @@ ILLUSTRATOR_AGENT_PROMPT = """
 请指示 assembler_agent 进行最终组装。"
 """.strip()
 
-ILLUSTRATOR_AGENT_DESCRIPTION = "智能配图员，选择和放置合适的图片"
+ILLUSTRATOR_AGENT_DESCRIPTION = "智能配图员，选择和放置合适的图片。⚠️调用时必须在 description 中包含 article_id 和草稿 markdown 路径。"
 
 
 # ============================================================================
@@ -357,7 +358,7 @@ ASSEMBLER_AGENT_PROMPT = """
 你必须确保 `article_content` 字段包含完整的 Markdown 文章内容。
 """.strip()
 
-ASSEMBLER_AGENT_DESCRIPTION = "文章组装员，保存文件并返回路径"
+ASSEMBLER_AGENT_DESCRIPTION = "文章组装员，保存文件并返回路径。⚠️调用时必须在 description 中包含 article_id、标题和最终草稿内容。"
 
 
 __all__ = [

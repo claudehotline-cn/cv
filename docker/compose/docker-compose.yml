@@ -409,6 +409,8 @@ services:
     container_name: article-agent
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    cap_add:
+      - SYS_PTRACE
     environment:
       # LLM 提供方：gemini | ollama | openai | siliconflow | vllm
       - ARTICLE_AGENT_LLM_PROVIDER=vllm
@@ -523,9 +525,15 @@ services:
       - "--port"
       - "8000"
       - "--max-model-len"
-      - "32768"
+      - "16384"
       - "--gpu-memory-utilization"
-      - "0.90"
+      - "0.80"
+      - "--max-num-seqs"
+      - "16"
+      - "--max-num-batched-tokens"
+      - "8192"
+      - "--kv-cache-dtype"
+      - "fp8"
       - "--trust-remote-code"
       - "--limit-mm-per-prompt"
       - "{\"image\": 4}"
