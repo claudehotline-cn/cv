@@ -647,14 +647,74 @@ import logging
 _LOGGER = logging.getLogger("article_agent.tools_files")
 
 
-def load_text_from_file(path: str, max_text_chars: int = 60000) -> Dict[str, Any]:
-    """从本地文件加载文本内容。
+def _download_from_minio(minio_path: str) -> str:
+    """从 MinIO 下载文件到本地临时目录。
+    
+    Args:
+        minio_path: MinIO 对象路径 (如 article/uploads/xxx.pdf)
+        
+    Returns:
+        本地临时文件路径
+    """
+    import os
+    import tempfile
+    import uuid
+    
+    try:
+        from minio import Minio
+    except ImportError:
+        _LOGGER.error("minio package not installed, cannot download from MinIO")
+        raise ImportError("minio package required for MinIO downloads")
+    
+    # 从环境变量读取 MinIO 配置
+    minio_endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
+    minio_access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+    minio_secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+    minio_bucket = os.environ.get("MINIO_BUCKET", "cv-bucket")
+    minio_secure = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+    
+    _LOGGER.info(f"Downloading from MinIO: {minio_path} (endpoint={minio_endpoint}, bucket={minio_bucket})")
+    
+    client = Minio(
+        minio_endpoint,
+        access_key=minio_access_key,
+        secret_key=minio_secret_key,
+        secure=minio_secure
+    )
+    
+    # 创建临时文件
+    temp_dir = "/data/workspace/tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    filename = os.path.basename(minio_path)
+    local_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{filename}")
+    
+    # 下载文件
+    client.fget_object(minio_bucket, minio_path, local_path)
+    _LOGGER.info(f"Downloaded MinIO file to: {local_path}")
+    
+    return local_path
+
+
+def load_text_from_file_sync(path: str, max_text_chars: int = 60000) -> Dict[str, Any]:
+    """从本地文件加载文本内容 (同步版本)。
 
     当前支持：
       - .txt / .md：按 UTF-8 文本读取；
       - .pdf：使用 pymupdf4llm 转换为 Markdown（支持表格、公式、图片）；
+      - MinIO 路径 (article/uploads/...)：先下载到本地再处理；
     其它复杂格式暂不处理，返回空文本占位。
     """
+    
+    # 检查是否是 MinIO 路径
+    if path.startswith("article/") or path.startswith("minio://"):
+        try:
+            clean_path = path.replace("minio://", "")
+            local_path = _download_from_minio(clean_path)
+            path = local_path
+        except Exception as e:
+            _LOGGER.error(f"Failed to download from MinIO: {e}")
+            return {"path": path, "text": f"[MinIO下载失败: {e}]", "images": []}
 
     p = Path(path)
     if not p.exists():
@@ -663,21 +723,14 @@ def load_text_from_file(path: str, max_text_chars: int = 60000) -> Dict[str, Any
     suffix = p.suffix.lower()
     text = ""
     images = []
-    
-    if suffix in {".txt", ".md"}:
-        text = p.read_text(encoding="utf-8", errors="ignore")
-    elif suffix == ".pdf":
-        # 使用 pymupdf4llm 进行高质量 PDF 转 Markdown
+
+    if suffix == ".pdf":
         try:
             import pymupdf4llm
             import pymupdf
             
-            # 转换 PDF 为 Markdown（包含表格、公式、代码等）
-            md_text = pymupdf4llm.to_markdown(
-                str(p),
-                write_images=False,  # 不保存图片到文件
-                show_progress=False,
-            )
+            # 提取文本 (Markdown格式)
+            md_text = pymupdf4llm.to_markdown(str(p))
             text = md_text
             _LOGGER.info(f"PDF converted to Markdown using pymupdf4llm: {len(text)} chars")
             
@@ -719,34 +772,44 @@ def load_text_from_file(path: str, max_text_chars: int = 60000) -> Dict[str, Any
                 except Exception:
                     continue
             text = "\n".join(parts)
+            
+    elif suffix in (".txt", ".md", ".markdown"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                text = f.read()
+            if len(text) > max_text_chars:
+                text = text[:max_text_chars] + "\n...(truncated)"
         except Exception as e:
-            _LOGGER.error(f"PDF extraction failed: {e}")
-            # 回退到 PyPDF2
-            reader = PdfReader(str(p))
-            parts: List[str] = []
-            for page in reader.pages:
-                try:
-                    parts.append(page.extract_text() or "")
-                except Exception:
-                    continue
-            text = "\n".join(parts)
+            _LOGGER.warning(f"Failed to read text file {path}: {e}")
+            
     else:
-        text = ""
+        # 其他格式暂不支持
+        pass
 
-    if len(text) > max_text_chars:
-        text = text[:max_text_chars]
+    return {
+        "path": str(path),
+        "text": text,
+        "images": images,
+        "title": p.name
+    }
 
-    return {"path": str(p), "text": text, "images": images}
 
+async def load_text_from_file(path: str, max_text_chars: int = 60000) -> Dict[str, Any]:
+    """从本地文件加载文本内容 (异步版本)。
+    
+    内部使用 asyncio.to_thread 调用同步版本，避免阻塞事件循环。
+    """
+    import asyncio
+    return await asyncio.to_thread(load_text_from_file_sync, path, max_text_chars)
+    
 
-def load_uploaded_file_text(path: str, max_text_chars: int = 60000) -> str:
-    """符合提示词约定的文件文本读取工具封装。
+async def load_uploaded_file_text(path: str, max_text_chars: int = 60000) -> str:
+    """符合提示词约定的文件文本读取工具封装 (Async Wrapper)。
 
     返回文件文本字符串，用于 Deep Agent 的 load_uploaded_file_text 工具。
     """
-
-    info = load_text_from_file(path=path, max_text_chars=max_text_chars)
-    return info.get("text", "")
+    data = await load_text_from_file(path, max_text_chars)
+    return data.get("text", "")
 
 
 def extract_images_from_pdf(file_path: str, article_id: str) -> List[Dict[str, Any]]:

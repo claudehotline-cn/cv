@@ -71,6 +71,14 @@ export const multimodalApi = {
             headers: { 'Content-Type': 'multipart/form-data' }
         })
     },
+    // 通用文件上传 (PDF, DOC 等)
+    uploadFile: (file: File) => {
+        const formData = new FormData()
+        formData.append('file', file)
+        return api.post('/upload-file', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        })
+    },
     // 多模态查询 (支持文本+图片)
     multimodalQuery: (query: string, imageDesc: string) => {
         return api.post('/multimodal-query', {

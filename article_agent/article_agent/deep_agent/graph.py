@@ -28,13 +28,13 @@ from .prompts import (
     ASSEMBLER_AGENT_PROMPT,
     ASSEMBLER_AGENT_DESCRIPTION,
 )
-from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, IllustratorValidationMiddleware, AssemblerStateMiddleware
+from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, IllustratorValidationMiddleware, AssemblerStateMiddleware, PDFAttachmentMiddleware
 from .schemas import ArticleAgentOutput, AssemblerOutput
 from .tools import (
     # Collector tools
     fetch_url_tool,
     load_file_tool,
-    process_pdf_attachment_tool,
+    # process_pdf_attachment_tool,
     collect_all_sources_tool,
     # Planner tools
     generate_outline_tool,
@@ -81,7 +81,7 @@ def get_article_deep_agent_graph() -> Any:
         name="planner_agent",
         description=PLANNER_AGENT_DESCRIPTION,
         system_prompt=PLANNER_AGENT_PROMPT,
-        tools=[fetch_url_tool, load_file_tool, process_pdf_attachment_tool, collect_all_sources_tool, generate_outline_tool],
+        tools=[fetch_url_tool, load_file_tool, collect_all_sources_tool, generate_outline_tool],
     )
     
     # 2. Researcher Agent - 资料整理
@@ -157,7 +157,7 @@ def get_article_deep_agent_graph() -> Any:
         ],
         tools=[],  # Main Agent 不直接使用工具，通过 SubAgents 执行
         system_prompt=MAIN_AGENT_PROMPT,
-        middleware=[thinking_middleware, ArticleContentMiddleware()],  # 添加思维链日志和内容填充 middleware
+        middleware=[thinking_middleware, ArticleContentMiddleware()],  # 思维链日志、内容填充
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(
                 root_dir="/data/workspace",

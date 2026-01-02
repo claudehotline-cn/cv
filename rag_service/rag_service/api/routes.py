@@ -1235,6 +1235,46 @@ async def upload_image_generic(
         logger.error(f"Image upload failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/upload-file")
+async def upload_file_generic(
+    file: UploadFile = File(...)
+):
+    """
+    通用文件上传接口 (用于 Article Agent)
+    
+    支持: PDF, DOC, DOCX, TXT, MD
+    返回: MinIO 路径供 Article Agent 下载处理
+    """
+    from ..services.minio_service import minio_service
+    import uuid
+    
+    # 验证文件格式
+    allowed_extensions = ['.pdf', '.doc', '.docx', '.txt', '.md', '.html', '.htm']
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Allowed: {', '.join(allowed_extensions)}")
+    
+    content = await file.read()
+    
+    try:
+        # 上传到 MinIO
+        object_name = f"article/uploads/{uuid.uuid4().hex}_{file.filename}"
+        content_type = file.content_type or "application/octet-stream"
+        minio_service.upload_file(content, object_name, content_type)
+        
+        logger.info(f"File uploaded to MinIO: {object_name}")
+        
+        return {
+            "filename": file.filename,
+            "minio_path": object_name,
+            "size": len(content),
+            "content_type": content_type
+        }
+    except Exception as e:
+        logger.error(f"File upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 async def upload_image(
     kb_id: int,
     background_tasks: BackgroundTasks,

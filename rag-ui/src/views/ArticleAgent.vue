@@ -6,7 +6,7 @@ import MarkdownIt from 'markdown-it'
 import texmath from 'markdown-it-texmath'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { knowledgeBaseApi } from '../api'
+import { knowledgeBaseApi, multimodalApi } from '../api'
 
 // 配置带公式渲染的 Markdown 解析器
 const md = new MarkdownIt({
@@ -44,6 +44,8 @@ md.renderer.rules.image = (tokens, idx) => {
 // 状态
 const urls = ref<string[]>([''])
 const files = ref<File[]>([])
+const uploadedFilePaths = ref<string[]>([])  // 已上传到 MinIO 的文件路径
+const isUploading = ref(false)  // 上传中状态
 const instruction = ref('')
 const title = ref('')
 const loading = ref(false)
@@ -93,15 +95,37 @@ const triggerFileUpload = () => {
   fileInput.value?.click()
 }
 
-const handleFileSelect = (event: Event) => {
+const handleFileSelect = async (event: Event) => {
   const target = event.target as HTMLInputElement
-  if (target.files) {
-    files.value = [...files.value, ...Array.from(target.files)]
+  if (!target.files || target.files.length === 0) return
+  
+  const newFiles = Array.from(target.files)
+  isUploading.value = true
+  
+  for (const file of newFiles) {
+    try {
+      // 上传到 MinIO
+      const res = await multimodalApi.uploadFile(file)
+      const minioPath = res.data.minio_path
+      
+      // 保存文件和对应的 MinIO 路径
+      files.value.push(file)
+      uploadedFilePaths.value.push(minioPath)
+      
+      ElMessage.success(`文件 ${file.name} 上传成功`)
+    } catch (err: any) {
+      ElMessage.error(`文件 ${file.name} 上传失败: ${err.message || err}`)
+    }
   }
+  
+  isUploading.value = false
+  // 重置 input，允许重复选择同一文件
+  target.value = ''
 }
 
 const removeFile = (index: number) => {
   files.value.splice(index, 1)
+  uploadedFilePaths.value.splice(index, 1)  // 同时移除对应的 MinIO 路径
 }
 
 // 添加思维事件
@@ -138,14 +162,14 @@ const generateArticle = async () => {
     // 构建请求参数
     const validUrlsList = validUrls  // 用于后续引用
     
-    // 不显示技术性事件，只显示来自后端的有意义步骤
+    // 文件已在选择时上传到 MinIO，直接使用 uploadedFilePaths.value
     
     // 如果开启知识库，先用 RAG 获取相关内容（不显示给用户）
     if (useKnowledgeBase.value && selectedKb.value) {
       // 知识库检索技术细节不显示
     }
     
-    // 调用 Article Agent（不显示技术细节）
+    // 调用 Article Agent
     currentStep.value = '准备中...'
     
     const response = await fetch('/api/agents/article/threads', {
@@ -176,6 +200,7 @@ const generateArticle = async () => {
             role: 'human',
             content: `请根据以下素材生成文章：
 URLs: ${validUrlsList.join(', ')}
+${uploadedFilePaths.value.length > 0 ? `MinIO文件: ${uploadedFilePaths.value.join(', ')}` : ''}
 标题: ${title.value || '自动生成'}
 写作指令: ${instruction.value}`
           }]

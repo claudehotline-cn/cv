@@ -91,73 +91,12 @@ def fetch_url_tool(url: str, max_images: int = 30, max_text_chars: int = 60000) 
         }
 
 
-@tool
-def process_pdf_attachment_tool(
-    pdf_base64: str,
-    filename: str = "uploaded.pdf",
-) -> Dict[str, Any]:
-    """处理上传的 PDF 附件（base64 格式）。
-    
-    Args:
-        pdf_base64: PDF 文件的 base64 编码内容
-        filename: 原始文件名
-        
-    Returns:
-        包含提取的文本、图片和元信息的字典
-    """
-    import base64
-    import tempfile
-    from ..utils.files import load_text_from_file
-    
-    _LOGGER.info(f"process_pdf_attachment_tool called with filename: {filename}, base64_len: {len(pdf_base64)}")
-    
-    try:
-        # 解码 base64 并保存到临时文件
-        pdf_bytes = base64.b64decode(pdf_base64)
-        
-        # 创建临时文件
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"uploaded_{uuid.uuid4().hex[:8]}_{filename}")
-        
-        with open(temp_path, 'wb') as f:
-            f.write(pdf_bytes)
-        
-        _LOGGER.info(f"Saved PDF to temp file: {temp_path}")
-        
-        # 使用 load_text_from_file 处理 PDF（已支持 pymupdf4llm）
-        data = load_text_from_file(temp_path, max_text_chars=100000)
-        text = data.get("text") or ""
-        images = data.get("images") or []
-        
-        _LOGGER.info(f"PDF processed: {len(text)} chars, {len(images)} images")
-        
-        # 清理临时文件
-        try:
-            os.remove(temp_path)
-        except Exception:
-            pass
-        
-        return {
-            "title": filename,
-            "text": text,
-            "images": images,
-            "success": True,
-            "temp_path": temp_path,
-        }
-    except Exception as exc:
-        _LOGGER.error(f"process_pdf_attachment_tool failed: {exc}")
-        return {
-            "title": filename,
-            "text": "",
-            "images": [],
-            "success": False,
-            "error": str(exc),
-        }
+
 
 
 @tool
-def load_file_tool(file_path: str, max_text_chars: int = 60000) -> Dict[str, Any]:
-    """加载本地文件内容。
+async def load_file_tool(file_path: str, max_text_chars: int = 60000) -> Dict[str, Any]:
+    """加载本地文件内容 (Async)。
     
     Args:
         file_path: 本地文件路径
@@ -170,7 +109,7 @@ def load_file_tool(file_path: str, max_text_chars: int = 60000) -> Dict[str, Any
     
     _LOGGER.info(f"load_file_tool called with file_path: {file_path}")
     try:
-        data = load_text_from_file(file_path, max_text_chars=max_text_chars)
+        data = await load_text_from_file(file_path, max_text_chars=max_text_chars)
         text = data.get("text") or ""
         
         _LOGGER.info(f"load_file_tool success: {len(text)} chars")
@@ -190,7 +129,7 @@ def load_file_tool(file_path: str, max_text_chars: int = 60000) -> Dict[str, Any
 
 
 @tool
-def collect_all_sources_tool(
+async def collect_all_sources_tool(
     urls: List[str],
     file_paths: List[str],
 ) -> Dict[str, Any]:
@@ -221,7 +160,11 @@ def collect_all_sources_tool(
     # 处理 URLs
     for idx, url in enumerate(urls or []):
         try:
-            data = fetch_url_with_images(url, max_images=max_images_per_source, max_text_chars=max_text_chars)
+            import asyncio
+            data = await asyncio.to_thread(
+                fetch_url_with_images, url,
+                max_images_per_source, max_text_chars
+            )
             text = data.get("text") or ""
             snippet = text[:max_overview_chars] if isinstance(text, str) else ""
             images = data.get("images") or []
@@ -255,7 +198,7 @@ def collect_all_sources_tool(
     # 处理文件
     for idx, path in enumerate(file_paths or []):
         try:
-            data = load_text_from_file(path, max_text_chars=max_text_chars)
+            data = await load_text_from_file(path, max_text_chars=max_text_chars)
             text = data.get("text") or ""
             snippet = text[:max_overview_chars] if isinstance(text, str) else ""
             
@@ -280,14 +223,14 @@ def collect_all_sources_tool(
     # 落盘：保存素材到文件供其他 SubAgent 读取
     
     # 落盘：保存素材到文件供其他 SubAgent 读取
-    article_id = get_current_article_id()
+    article_id = await asyncio.to_thread(get_current_article_id)
     
     # 保存完整素材到 JSON 文件 (包含 full_text)
     sources_data = {
         "sources": sources,
         "overview": overview
     }
-    sources_file = save_article_artifact(article_id, "sources.json", sources_data)
+    sources_file = await asyncio.to_thread(save_article_artifact, article_id, "sources.json", sources_data)
         
     _LOGGER.info(f"Sources saved to: {sources_file}")
     

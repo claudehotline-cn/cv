@@ -2,14 +2,124 @@ import logging
 import json
 import re
 import os
-from typing import Any, Dict, Optional
+import base64
+import uuid
+import tempfile
+from typing import Any, Dict, Optional, List
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import AgentState
-from langchain_core.messages import AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import AIMessage, ToolMessage, BaseMessage, HumanMessage
 from langgraph.runtime import Runtime
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class PDFAttachmentMiddleware(AgentMiddleware):
+    """Middleware to extract PDF attachments from user messages and save to files.
+    
+    When user uploads PDF via frontend, it comes as a ContentBlock with:
+    - type: "file"
+    - mimeType: "application/pdf"
+    - data: base64-encoded PDF content
+    - metadata.filename: original filename
+    
+    This middleware extracts the PDF, saves to a temp file, and adds the path
+    to the message text so the Planner can process it.
+    """
+    
+    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> Dict[str, Any] | None:
+        """Process input messages to extract PDF attachments."""
+        _LOGGER.info("[PDFAttachmentMiddleware] before_agent called")
+        
+        messages = state.get("messages", [])
+        if not messages:
+            _LOGGER.info("[PDFAttachmentMiddleware] No messages in state")
+            return None
+        
+        _LOGGER.info(f"[PDFAttachmentMiddleware] Found {len(messages)} messages")
+        
+        # Find the last human message
+        last_human_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
+                last_human_idx = i
+                break
+        
+        if last_human_idx is None:
+            _LOGGER.info("[PDFAttachmentMiddleware] No human message found")
+            return None
+        
+        last_msg = messages[last_human_idx]
+        content = getattr(last_msg, 'content', None)
+        
+        _LOGGER.info(f"[PDFAttachmentMiddleware] Last human message content type: {type(content)}")
+        if isinstance(content, list):
+            _LOGGER.info(f"[PDFAttachmentMiddleware] Content blocks: {len(content)}, types: {[type(b).__name__ for b in content[:5]]}")
+        elif isinstance(content, str):
+            # 打印前500字符看看内容是什么
+            _LOGGER.info(f"[PDFAttachmentMiddleware] String content preview: {content[:500]}")
+        # Check if content is a list (multimodal message)
+        if not isinstance(content, list):
+            return None
+        
+        pdf_paths = []
+        text_parts = []
+        
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            
+            block_type = block.get('type', '')
+            mime_type = block.get('mimeType', '')
+            
+            # Extract text parts
+            if block_type == 'text':
+                text_parts.append(block.get('text', ''))
+            
+            # Extract PDF attachments
+            elif block_type == 'file' and mime_type == 'application/pdf':
+                pdf_data = block.get('data', '')
+                filename = block.get('metadata', {}).get('filename', 'uploaded.pdf')
+                
+                if pdf_data:
+                    try:
+                        # Decode and save PDF
+                        pdf_bytes = base64.b64decode(pdf_data)
+                        temp_dir = '/data/workspace/uploads'
+                        os.makedirs(temp_dir, exist_ok=True)
+                        
+                        safe_filename = re.sub(r'[^\w\-_\.]', '_', filename)
+                        temp_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{safe_filename}")
+                        
+                        with open(temp_path, 'wb') as f:
+                            f.write(pdf_bytes)
+                        
+                        pdf_paths.append(temp_path)
+                        _LOGGER.info(f"PDFAttachmentMiddleware: Saved PDF to {temp_path}")
+                    except Exception as e:
+                        _LOGGER.error(f"PDFAttachmentMiddleware: Failed to save PDF: {e}")
+        
+        # If we found PDFs, update the message
+        if pdf_paths:
+            original_text = '\n'.join(text_parts)
+            pdf_info = "\n\n[系统提示] 用户上传了以下 PDF 文件，请使用 load_file_tool 或 collect_all_sources_tool 处理：\n"
+            pdf_info += "\n".join([f"- {path}" for path in pdf_paths])
+            
+            new_text = original_text + pdf_info
+            
+            # Create new message with updated content
+            new_msg = HumanMessage(content=new_text)
+            
+            # Update messages list
+            new_messages = list(messages)
+            new_messages[last_human_idx] = new_msg
+            
+            _LOGGER.info(f"PDFAttachmentMiddleware: Processed {len(pdf_paths)} PDF attachments")
+            return {"messages": new_messages}
+        
+        return None
 
 class ThinkingLoggerMiddleware(AgentMiddleware):
     """自定义 middleware 用于记录 Main Agent 的思维链内容。"""

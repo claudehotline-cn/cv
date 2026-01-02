@@ -428,6 +428,8 @@ services:
       - LANGSMITH_PROJECT=article-agent
       # 禁用代码热重载（避免任务执行中断）
       - LANGGRAPH_RELOAD=false
+      # 解决 BlockingError: Blocking call to os.mkdir
+      - BG_JOB_ISOLATED_LOOPS=true
     depends_on:
       agent-langchain:
         condition: service_started
@@ -485,6 +487,7 @@ services:
     ports:
       - "18200:8200"
     volumes:
+      - ../../rag_service/rag_service:/app/rag_service
       - ../../logs:/logs:rw
       - rag-model-cache:/root/.cache/huggingface
 
