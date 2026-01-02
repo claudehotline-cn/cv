@@ -9,8 +9,9 @@ from .planner import (
 from .researcher import research_section_tool, research_all_sections_tool, research_audit_tool
 from .writer import write_section_tool, write_all_sections_tool, writer_audit_tool
 from .reviewer import review_draft_tool
-from .illustrator import match_images_tool
+from .illustrator import match_images_tool, generate_illustration_plan_tool
 from .assembler import assemble_article_tool
+from .ingest import ingest_documents_tool
 
 __all__ = [
     # Planner (Collection + Planning)
@@ -32,6 +33,9 @@ __all__ = [
     "review_draft_tool",
     # Illustrator
     "match_images_tool",
+    "generate_illustration_plan_tool",
     # Assembler
     "assemble_article_tool",
+    # Ingest
+    "ingest_documents_tool",
 ]

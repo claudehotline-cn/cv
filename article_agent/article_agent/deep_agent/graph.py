@@ -27,15 +27,18 @@ from .prompts import (
     ILLUSTRATOR_AGENT_DESCRIPTION,
     ASSEMBLER_AGENT_PROMPT,
     ASSEMBLER_AGENT_DESCRIPTION,
+    INGEST_AGENT_PROMPT,
+    INGEST_AGENT_DESCRIPTION,
 )
 from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, IllustratorValidationMiddleware, AssemblerStateMiddleware, PDFAttachmentMiddleware
 from .schemas import ArticleAgentOutput, AssemblerOutput
 from .tools import (
     # Collector tools
-    fetch_url_tool,
+    # Collector tools
+    # fetch_url_tool,
     load_file_tool,
-    # process_pdf_attachment_tool,
-    collect_all_sources_tool,
+    # collect_all_sources_tool,
+    ingest_documents_tool,
     # Planner tools
     generate_outline_tool,
     # Researcher tools
@@ -76,12 +79,20 @@ def get_article_deep_agent_graph() -> Any:
     # 定义子 Agent (Sub-Agents)
     # ============================================================================
     
-    # 1. Planner Agent - 素材收集 + 大纲规划（合并 collector 功能）
+    # 0. Ingest Agent - 素材采集
+    ingest_agent = SubAgent(
+        name="ingest_agent",
+        description=INGEST_AGENT_DESCRIPTION,
+        system_prompt=INGEST_AGENT_PROMPT,
+        tools=[ingest_documents_tool],
+    )
+
+    # 1. Planner Agent - 大纲规划 (不再负责收集)
     planner_agent = SubAgent(
         name="planner_agent",
         description=PLANNER_AGENT_DESCRIPTION,
         system_prompt=PLANNER_AGENT_PROMPT,
-        tools=[fetch_url_tool, load_file_tool, collect_all_sources_tool, generate_outline_tool],
+        tools=[generate_outline_tool, load_file_tool],
     )
     
     # 2. Researcher Agent - 资料整理
@@ -148,7 +159,8 @@ def get_article_deep_agent_graph() -> Any:
     graph = create_deep_agent(
         model=main_llm,
         subagents=[
-            planner_agent,  # 包含素材收集 + 大纲规划
+            ingest_agent,
+            planner_agent,
             researcher_agent,
             writer_agent,
             reviewer_agent,

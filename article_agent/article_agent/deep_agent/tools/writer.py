@@ -163,7 +163,7 @@ def write_all_sections_tool(
     # 加载审阅反馈（如果存在）- 用于修改稿件
     review_feedback = {}
     if article_id:
-        review_feedback = load_article_artifact(article_id, "review.json")
+        review_feedback = load_article_artifact(article_id, "review_report.json")
         if review_feedback:
              _LOGGER.info(f"Loaded review feedback from artifacts, approved={review_feedback.get('approved')}")
     
@@ -234,6 +234,44 @@ def write_all_sections_tool(
     
     _LOGGER.info(f"[Parallel] All {len(drafts)} sections written, total_chars={total_chars}")
     
+    # ========== 新增：生成 citations_map.json ==========
+    # 从草稿中提取引用锚点 [^doc_xxx_c3] 格式
+    import re
+    citations_anchors = []
+    
+    for draft in drafts:
+        file_path = draft.get("file_path", "")
+        if file_path and os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                # 提取 [^chunk_id] 格式的引用
+                refs = re.findall(r'\[\^(doc_[a-z0-9_]+_c\d+)\]', content)
+                for ref in refs:
+                    citations_anchors.append({
+                        "anchor": f"cite:{ref}",
+                        "refs": [{"chunk_id": ref}],
+                        "section_id": draft.get("section_id", "")
+                    })
+            except Exception as e:
+                _LOGGER.warning(f"Failed to extract citations from {file_path}: {e}")
+    
+    # 保存 citations_map.json
+    citations_map = {
+        "article_id": article_id,
+        "anchors": citations_anchors,
+        "total_citations": len(citations_anchors)
+    }
+    
+    citations_map_path = ""
+    if article_id:
+        try:
+            from ..utils.artifacts import save_article_artifact
+            citations_map_path = save_article_artifact(article_id, "citations_map.json", citations_map)
+            _LOGGER.info(f"Citations map saved to: {citations_map_path}, {len(citations_anchors)} anchors")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to save citations_map: {e}")
+    
     # 强制不返回 drafts 内容，确保下游 Reviewer 必须从文件系统读取
     # 但必须返回足够的 Metadata 告知 LLM 任务已完成，否则会导致 infinite retry loop
     return {
@@ -241,7 +279,9 @@ def write_all_sections_tool(
         "message": f"Successfully wrote {len(drafts)} sections to file system.",
         "drafts": [], # Empty list kept for Zero-Memory compliance
         "total_char_count": total_chars,
-        "saved_files": [d["file_path"] for d in drafts] # Minimal references
+        "saved_files": [d["file_path"] for d in drafts], # Minimal references
+        "citations_map_path": citations_map_path,
+        "total_citations": len(citations_anchors)
     }
 
 

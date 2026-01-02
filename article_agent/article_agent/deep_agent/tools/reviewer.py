@@ -138,7 +138,7 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
             # 保存审阅结果到文件，供 Writer 读取
             try:
                 if article_id:
-                    review_file = save_article_artifact(article_id, "review.json", result)
+                    review_file = save_article_artifact(article_id, "review_report.json", result)
                     _LOGGER.info(f"Review saved to: {review_file}")
                     result["review_file"] = review_file
             except Exception as e:

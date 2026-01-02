@@ -5,6 +5,7 @@ import logging
 import os
 import json
 import re
+import glob
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -13,6 +14,7 @@ from langchain_core.runnables import RunnableConfig
 from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response
 from ..utils.artifacts import get_current_article_id, load_article_artifact, save_article_artifact
+from ...config.config import get_article_dir, settings
 from .prompts import RESEARCHER_SECTION_SYSTEM_PROMPT, RESEARCHER_SECTION_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.researcher")
@@ -24,8 +26,9 @@ def research_section_tool(
     keywords: List[str],
     sources_text: str,
     available_images: List[Dict[str, Any]] = None,
+    required_evidence: List[Dict[str, Any]] = None,  # 新增：从 section_plan 获取
 ) -> Dict[str, Any]:
-    """为指定章节整理资料笔记。
+    """为指定章节整理资料笔记（结构化 JSON 输出）。
     
     Args:
         section_id: 章节 ID
@@ -33,17 +36,34 @@ def research_section_tool(
         keywords: 关键词列表
         sources_text: 素材文本（已合并）
         available_images: 可用图片列表
+        required_evidence: 所需证据类型列表 (来自 section_plan.json)
         
     Returns:
-        SectionNotes 字典
+        结构化的 SectionNotes 字典，包含 evidence 证据链
     """
     
     _LOGGER.info(f"research_section_tool called for section: {section_id}")
     
     keywords_str = ', '.join(keywords) if keywords else '无特定关键词'
-    system_prompt = RESEARCHER_SECTION_SYSTEM_PROMPT.format(section_title=section_title, keywords_str=keywords_str)
+    
+    # 格式化 required_evidence 为字符串
+    if required_evidence:
+        evidence_str = ", ".join([f"{e.get('type', 'fact')}(最少{e.get('min', 1)}条)" for e in required_evidence])
+    else:
+        evidence_str = "fact(最少2条), quote(最少1条)"  # 默认值
+    
+    system_prompt = RESEARCHER_SECTION_SYSTEM_PROMPT.format(
+        section_title=section_title, 
+        keywords_str=keywords_str,
+        section_id=section_id,
+        required_evidence=evidence_str
+    )
 
-    user_prompt = RESEARCHER_SECTION_USER_PROMPT.format(sources_text_preview=sources_text[:80000], section_title=section_title)
+    user_prompt = RESEARCHER_SECTION_USER_PROMPT.format(
+        sources_text_preview=sources_text[:80000], 
+        section_title=section_title,
+        section_id=section_id
+    )
 
     try:
         with log_performance("research_section", section_id=section_id):
@@ -61,7 +81,31 @@ def research_section_tool(
             # 记录 LLM 响应详情
             log_llm_response("research_section", response, input_chars=input_chars)
             
-            notes = extract_text_content(response)
+            raw_content = extract_text_content(response)
+        
+        # 尝试解析 JSON
+        structured_note = None
+        try:
+            # 提取 JSON 块（处理可能的 markdown 代码块包裹）
+            import re
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', raw_content)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # 尝试直接解析
+                json_str = raw_content.strip()
+            
+            structured_note = json.loads(json_str)
+            _LOGGER.info(f"Parsed structured note for {section_id}: {len(structured_note.get('evidence', []))} evidence items")
+        except json.JSONDecodeError as je:
+            _LOGGER.warning(f"Failed to parse JSON for {section_id}, falling back to text: {je}")
+            # Fallback: 保留原始文本作为 notes
+            structured_note = {
+                "section_id": section_id,
+                "bullet_points": [],
+                "evidence": [],
+                "notes": raw_content  # 兼容旧格式
+            }
         
         # 匹配相关图片
         relevant_images = []
@@ -71,16 +115,24 @@ def research_section_tool(
                 if any(kw.lower() in alt.lower() for kw in keywords):
                     relevant_images.append(img)
         
-        _LOGGER.info(f"research_section_tool success: {len(notes)} chars, {len(relevant_images)} images")
-        return {
+        # 合并结果
+        result = {
             "section_id": section_id,
-            "notes": notes,
+            "bullet_points": structured_note.get("bullet_points", []),
+            "evidence": structured_note.get("evidence", []),
+            "notes": structured_note.get("notes", ""),  # 兼容旧格式
             "relevant_images": relevant_images,
         }
+        
+        _LOGGER.info(f"research_section_tool success: {len(result.get('evidence', []))} evidence, {len(relevant_images)} images")
+        return result
+        
     except Exception as exc:
         _LOGGER.error(f"research_section_tool failed: {exc}")
         return {
             "section_id": section_id,
+            "bullet_points": [],
+            "evidence": [],
             "notes": f"资料整理失败: {exc}",
             "relevant_images": [],
         }
@@ -119,61 +171,89 @@ def research_all_sections_tool(
         _LOGGER.warning("No outline provided and no outline file found!")
         return {"section_notes": [], "error": "Missing outline"}
     
+    # NEW: 加载 section_plan.json 以获取 required_evidence
+    section_plan = load_article_artifact(article_id, "section_plan.json")
+    section_plan_map = {}
+    if section_plan and section_plan.get("sections"):
+        for sp in section_plan.get("sections", []):
+            section_plan_map[sp.get("section_id", "")] = sp
+        _LOGGER.info(f"Loaded section_plan with {len(section_plan_map)} sections")
+    else:
+        _LOGGER.info("No section_plan.json found, proceeding without evidence requirements")
+    
     _LOGGER.info(f"research_all_sections_tool called. Outline sections: {len(outline.get('sections', []))}")
-    
-    # 重新使用 get_article_dir (已在上面加载 outline 时导入)
-    # article_id 已在上面获取
-    
-    loaded_sources_data = load_article_artifact(article_id, "sources.json")
-    loaded_sources = loaded_sources_data.get("sources", [])
-    if loaded_sources:
-        _LOGGER.info(f"Loaded {len(loaded_sources)} sources from artifacts")
 
-    if not loaded_sources:
-        _LOGGER.warning("No sources found in file! Researcher will likely fail.")
-        return {
-            "section_notes": [],
-            "error": "Sources file not found or empty. Please run Planner to collect sources first."
-        }
-        
-    # 使用加载的素材
-    sources = loaded_sources
+    # NEW: Try loading Chunks (Docling artifact)
+    article_dir = get_article_dir(article_id)
+    corpus_pattern = os.path.join(article_dir, "corpus", "*", "chunks.jsonl")
+    chunk_files = glob.glob(corpus_pattern)
     
-    # 合并所有素材文本 (优先使用 full_text)
-    all_text = "\n\n".join([
-        f"【来源: {s.get('title', s.get('url', 'unknown'))}】\n{s.get('full_text', s.get('text_preview', ''))}"
-        for s in sources
-    ])
-    
-    # 收集所有图片
+    all_text = ""
     all_images = []
-    for s in sources:
-        all_images.extend(s.get("images", []))
     
+    if chunk_files:
+        _LOGGER.info(f"Found {len(chunk_files)} chunk files in corpus.")
+        chunks_text_list = []
+        for cf in chunk_files:
+            try:
+                with open(cf, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip(): continue
+                        try:
+                            c = json.loads(line)
+                            cid = c.get("chunk_id", "unknown")
+                            content = c.get("content", "")
+                            # Format: [Chunk ID: doc_x_c1] content...
+                            chunks_text_list.append(f"[Chunk ID: {cid}]\n{content}")
+                        except: pass
+            except Exception as e:
+                _LOGGER.warning(f"Error reading chunks {cf}: {e}")
+        all_text = "\n\n".join(chunks_text_list)
+        _LOGGER.info(f"Loaded {len(chunks_text_list)} chunks from corpus.")
+    else:
+        # Fallback: strict legacy mode
+        _LOGGER.info("No chunks.jsonl found, trying sources.json")
+        loaded_sources_data = load_article_artifact(article_id, "sources.json")
+        loaded_sources = loaded_sources_data.get("sources", []) if loaded_sources_data else []
+        
+        if loaded_sources:
+             all_text = "\n\n".join([
+                f"【来源: {s.get('title', s.get('url', 'unknown'))}】\n{s.get('full_text', s.get('text_preview', ''))}"
+                for s in loaded_sources
+            ])
+             for s in loaded_sources:
+                 all_images.extend(s.get("images", []))
+        else:
+            _LOGGER.warning("No chunks AND no sources.json found!")
+            return {"error": "No content found/ingested."}
+
     section_notes = []
     
-    # 并行处理所有章节 (Parallel Execution)
+    # Parallel processing
     sections = outline.get("sections", [])
-    max_workers = 1  # 强制串行执行 (Sequential Execution)
+    max_workers = 1  # Standard sequential
     
     _LOGGER.info(f"[Parallel] Starting Native LangChain batch research with max_concurrency={max_workers} for {len(sections)} sections")
     
-    # 构造 batch 输入
     batch_inputs = []
     for idx, sec in enumerate(sections):
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
+        
+        # 从 section_plan_map 获取 required_evidence
+        plan_info = section_plan_map.get(section_id, {})
+        required_evidence = plan_info.get("required_evidence", [])
+        
         batch_inputs.append({
             "section_id": section_id,
             "section_title": section_title,
-            "keywords": sec.get("keywords", []),
+            "keywords": sec.get("keywords", []) or plan_info.get("keywords", []),
             "sources_text": all_text,
             "available_images": all_images,
+            "required_evidence": required_evidence,
         })
     
     try:
-        # return_exceptions=True 允许部分失败（取决于 LangChain 版本，标准 batch 可能抛出错误）
-        # 这里我们就让它抛错，因为 research_section_tool 内部已有 catch-all
         section_notes = research_section_tool.batch(
             batch_inputs,
             config=RunnableConfig(max_concurrency=max_workers)
@@ -190,13 +270,12 @@ def research_all_sections_tool(
     
     _LOGGER.info(f"[Parallel] All {len(section_notes)} sections researched")
     
-    # 构造完整结果 (保存到文件)
     full_output = {
+        "article_id": article_id,
         "section_notes": section_notes,
-        "source_summaries": {s.get("url", f"source_{i}"): s.get("text_preview", "")[:500] for i, s in enumerate(sources)},
+        "source_summaries": {}, 
     }
     
-    # 落盘保存
     try:
         if article_id:
             notes_file = save_article_artifact(article_id, "research_notes.json", full_output)
@@ -205,8 +284,6 @@ def research_all_sections_tool(
     except Exception as exc:
         _LOGGER.warning(f"Failed to save research notes: {exc}")
     
-    # 只返回文件路径和状态，不返回笔记内容
-    # Main Agent 如需查看笔记可以读取文件
     notes_file_path = full_output.get("notes_file", "")
     
     return {

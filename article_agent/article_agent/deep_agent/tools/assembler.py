@@ -31,15 +31,10 @@ def assemble_article_tool(
     
     # 初始化变量
     final_markdown = ""
+    article_id = get_current_article_id(article_id)
     
     # 自动发现逻辑：如果没有传入路径，尝试自动查找
     if not final_markdown_path or not os.path.exists(final_markdown_path):
-        # from ...config import get_settings, get_article_dir, get_drafts_dir # Removed local import
-        # settings = get_settings() # localized import removed
-        article_id = get_current_article_id(article_id)
-        
-        # 优先查找 drafts 目录下的 draft_with_images.md (由 Illustrator 生成)
-        # 修正逻辑：draft_with_images.md 现在位于 drafts 目录中 (artifacts/article_{id}/drafts)
         drafts_dir = get_drafts_dir(article_id)
         candidate_path = os.path.join(drafts_dir, "draft_with_images.md") # Illustrator's output
         
@@ -83,6 +78,67 @@ def assemble_article_tool(
             _LOGGER.error(f"Final markdown file not found: {final_markdown_path}")
             return {"error": "Final markdown file not found"}
 
+    # ========== NEW: 消费 illustration_plan.json ==========
+    import json
+    from ..utils.artifacts import load_article_artifact
+    
+    illustration_plan = None
+    # 尝试从 assets 目录读取
+    assets_dir = os.path.join(get_article_dir(article_id), "assets")
+    plan_path = os.path.join(assets_dir, "illustration_plan.json")
+    
+    if os.path.exists(plan_path):
+        try:
+            with open(plan_path, "r", encoding="utf-8") as f:
+                illustration_plan = json.load(f)
+            _LOGGER.info(f"Loaded illustration_plan.json with {len(illustration_plan.get('figures', []))} figures")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to load illustration_plan: {e}")
+    
+    # 如果有 illustration_plan 且 draft 中还没有插图，则应用
+    if illustration_plan and "figures" in illustration_plan:
+        figures = illustration_plan.get("figures", [])
+        if figures and "<figure" not in final_markdown:
+            _LOGGER.info(f"Applying {len(figures)} figures from illustration_plan")
+            lines = final_markdown.split('\n')
+            
+            # 倒序插入以避免索引偏移
+            insertion_ops = []
+            for fig in figures:
+                anchor = fig.get("insert_after_anchor", "")
+                caption = fig.get("caption", "")
+                figure_id = fig.get("figure_id", "")
+                
+                if not anchor:
+                    continue
+                
+                # 找到锚点位置
+                for i, line in enumerate(lines):
+                    if anchor in line or line.strip() == anchor:
+                        # 构建图片 HTML（使用占位符，因为没有实际图片 URL）
+                        fig_html = f'''
+<figure style="text-align: center; margin: 20px 0;">
+  <figcaption style="color: #666; font-size: 0.9em;">[{figure_id}] {caption}</figcaption>
+</figure>
+'''
+                        insertion_ops.append((i + 1, fig_html))
+                        break
+            
+            # 倒序插入
+            insertion_ops.sort(key=lambda x: x[0], reverse=True)
+            for idx, content in insertion_ops:
+                lines.insert(idx, content)
+            
+            final_markdown = '\n'.join(lines)
+            _LOGGER.info(f"Inserted {len(insertion_ops)} figures into draft")
+    
+    # ========== 消费 citations_map.json ==========
+    citations_map = load_article_artifact(article_id, "citations_map.json")
+    if citations_map and citations_map.get("anchors"):
+        _LOGGER.info(f"Found {len(citations_map.get('anchors', []))} citations in citations_map")
+        # 可以在这里添加脚注处理逻辑
+
+
     
     # 清理 Markdown
     cleaned_md = final_markdown
@@ -113,6 +169,38 @@ def assemble_article_tool(
             f.write(cleaned_md)
         _LOGGER.info(f"Article exported to: {output_path}")
         
+        # ========== 新增：生成 build_log.json ==========
+        import datetime
+        import json
+        
+        build_log = {
+            "article_id": article_id,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "status": "success",
+            "source_path": final_markdown_path or "merged_sections",
+            "output_path": output_path,
+            "stats": {
+                "total_chars": len(cleaned_md),
+                "total_lines": cleaned_md.count("\n"),
+                "has_title": cleaned_md.strip().startswith("#"),
+            },
+            "steps": [
+                {"step": "read_source", "status": "success"},
+                {"step": "clean_markdown", "status": "success"},
+                {"step": "add_title", "status": "success" if not final_markdown.strip().startswith("#") else "skipped"},
+                {"step": "save_output", "status": "success"},
+            ],
+            "errors": []
+        }
+        
+        build_log_path = os.path.join(article_dir, "build_log.json")
+        try:
+            with open(build_log_path, "w", encoding="utf-8") as f:
+                json.dump(build_log, f, ensure_ascii=False, indent=2)
+            _LOGGER.info(f"Build log saved to: {build_log_path}")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to save build_log: {e}")
+        
         # 注意：md_path 和 article_id 由 AssemblerStateMiddleware 自动写入 State
         # 无需在这里手动写入文件
         
@@ -124,6 +212,7 @@ def assemble_article_tool(
             "article_id": article_id,
             "md_path": output_path,
             "md_url": md_url,
+            "build_log_path": build_log_path,
             "article_content": cleaned_md,  # 前端期望的字段名
         }
     except Exception as exc:

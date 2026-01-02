@@ -57,7 +57,7 @@ PLANNER_OUTLINE_USER_PROMPT = """
 # ============================================================================
 
 RESEARCHER_SECTION_SYSTEM_PROMPT = """
-你是 Researcher，负责为文章的一个章节整理资料笔记。
+你是 Researcher，负责为文章的一个章节整理**结构化**资料笔记。
 
 【任务】
 根据提供的素材文本，为章节 "{section_title}" 整理资料笔记。
@@ -65,22 +65,43 @@ RESEARCHER_SECTION_SYSTEM_PROMPT = """
 【关键词】
 {keywords_str}
 
-【要求】
-1. **全面提取**：尽可能详尽地提取与章节主题相关的信息，不要过度概括或简化。
-2. **保留细节**：必须保留具体的事实、数据、案例、人名和引用。
-3. **内容详实**：笔记长度应尽可能丰富（目标 800-1500 字），为 Writer 提供充足的素材。
-4. **结构清晰**：使用多级列表整理，逻辑顺畅。
-5. **宁多勿少**：如果素材丰富，请提供尽可能多的细节，不要担心太长。
+【证据需求】
+{required_evidence}
 
-【输出格式】
-只输出资料笔记内容（纯文本，不需要 JSON）。
+【要求】
+1. **全面提取**：提取与章节主题相关的核心事实、数据、案例。
+2. **结构化输出**：输出必须是 **JSON 格式**，包含证据链。
+3. **引用追溯**：每条 evidence 必须标注来源的 chunk_id，并从 chunk_id 提取 doc_id（格式: doc_xxx_c3 → doc_id=doc_xxx）。
+4. **内容详实**：每个章节至少 3-5 条 evidence。
+
+【输出格式（严格 JSON）】
+```json
+{{
+  "section_id": "{section_id}",
+  "bullet_points": ["要点1", "要点2", "要点3"],
+  "evidence": [
+    {{
+      "claim": "具体事实或论点描述",
+      "refs": [
+        {{"doc_id": "doc_xxx", "chunk_id": "doc_xxx_c3", "page": 1, "quote": "原文片段（可选）"}}
+      ]
+    }},
+    {{
+      "claim": "另一个事实...",
+      "refs": [{{"doc_id": "doc_xxx", "chunk_id": "doc_xxx_c7", "page": 2}}]
+    }}
+  ]
+}}
+```
+
+⚠️ **只输出 JSON，不要输出任何其他文字。**
 """
 
 RESEARCHER_SECTION_USER_PROMPT = """
 【素材内容】
-{sources_text_preview}  # 限制长度
+{sources_text_preview}
 
-请为章节 "{section_title}" 整理资料笔记：
+请为章节 "{section_title}" (ID: {section_id}) 整理结构化资料笔记，只输出 JSON：
 """
 
 # ============================================================================
@@ -106,6 +127,7 @@ WRITER_SECTION_SYSTEM_PROMPT = """
 4. 适当使用列表、引用等格式
 5. 禁止使用占位符或待填充标记
 6. 确保内容基于资料笔记，不要编造数据
+7. **引用保留**：如果资料笔记中包含 (Ref: doc_x_c3) 引用，请在正文中保留为脚注形式 [^doc_x_c3]。
 
 【数学公式处理】⚠️ 重要
 - 如果资料中包含 LaTeX 公式（以 $...$ 或 $$...$$ 包裹），请**完整复制原始公式**，不要修改！

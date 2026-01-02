@@ -389,10 +389,71 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
                 _LOGGER.warning(f"Failed to get outline path: {e}")
             
             _LOGGER.info(f"generate_outline_tool success: {len(result.get('sections', []))} sections")
+            
+            # ========== 新增：生成 section_plan.json ==========
+            section_plan = {
+                "article_id": save_article_id,
+                "sections": []
+            }
+            for sec in sections:
+                section_plan["sections"].append({
+                    "section_id": sec.get("id", ""),
+                    "title": sec.get("title", ""),
+                    "required_evidence": [
+                        {"type": "fact", "min": 2},
+                        {"type": "quote", "min": 1}
+                    ],
+                    "preferred_sources": [],  # 可从 manifest 读取后填充
+                    "keywords": sec.get("keywords", [])
+                })
+            
+            # 保存 section_plan.json
+            section_plan_file = ""
+            try:
+                if save_article_id:
+                    section_plan_file = save_article_artifact(save_article_id, "section_plan.json", section_plan)
+                    _LOGGER.info(f"Section plan saved to: {section_plan_file}")
+            except Exception as e:
+                _LOGGER.warning(f"Failed to save section_plan: {e}")
+            
+            # ========== 新增：生成 open_questions.json ==========
+            # 从大纲中提取 key_questions（如果有）
+            open_questions = {
+                "article_id": save_article_id,
+                "questions": [],
+                "gaps": []
+            }
+            for sec in sections:
+                key_qs = sec.get("key_questions", [])
+                for q in key_qs:
+                    open_questions["questions"].append({
+                        "section_id": sec.get("id", ""),
+                        "question": q,
+                        "status": "pending"
+                    })
+                # 如果章节没有关键词，标记为 gap
+                if not sec.get("keywords"):
+                    open_questions["gaps"].append({
+                        "section_id": sec.get("id", ""),
+                        "issue": "Missing keywords",
+                        "severity": "low"
+                    })
+            
+            # 保存 open_questions.json
+            open_questions_file = ""
+            try:
+                if save_article_id:
+                    open_questions_file = save_article_artifact(save_article_id, "open_questions.json", open_questions)
+                    _LOGGER.info(f"Open questions saved to: {open_questions_file}")
+            except Exception as e:
+                _LOGGER.warning(f"Failed to save open_questions: {e}")
+            
             # 只返回文件路径，不返回内存对象
             return {
                 "article_id": save_article_id,
                 "outline_path": outline_file,
+                "section_plan_path": section_plan_file,
+                "open_questions_path": open_questions_file,
                 "sections_count": len(result.get("sections", [])),
                 "title": result.get("title", ""),
             }

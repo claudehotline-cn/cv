@@ -456,3 +456,135 @@ def match_images_tool(
             "final_markdown_path": "",
             "error": str(exc),
         }
+
+
+@tool
+def generate_illustration_plan_tool(article_id: str = "") -> Dict[str, Any]:
+    """读取 corpus 中的 elements.jsonl，生成 illustration_plan.json。
+    
+    Args:
+        article_id: 文章 ID
+        
+    Returns:
+        illustration_plan 路径和统计信息
+    """
+    import glob
+    from ...config.config import get_article_dir
+    
+    article_id = get_current_article_id(article_id)
+    _LOGGER.info(f"generate_illustration_plan_tool: article_id={article_id}")
+    
+    if not article_id:
+        return {"error": "Missing article_id"}
+    
+    # 1. 查找所有 elements.jsonl 文件
+    article_dir = get_article_dir(article_id)
+    elements_pattern = os.path.join(article_dir, "corpus", "*", "parsed", "elements.jsonl")
+    elements_files = glob.glob(elements_pattern)
+    
+    _LOGGER.info(f"Found {len(elements_files)} elements.jsonl files")
+    
+    # 2. 读取所有图片/表格元素
+    all_elements = []
+    for ef in elements_files:
+        doc_id = os.path.basename(os.path.dirname(os.path.dirname(ef)))
+        try:
+            with open(ef, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        elem = json.loads(line)
+                        elem["doc_id"] = doc_id
+                        all_elements.append(elem)
+                    except:
+                        pass
+        except Exception as e:
+            _LOGGER.warning(f"Error reading {ef}: {e}")
+    
+    _LOGGER.info(f"Loaded {len(all_elements)} elements from corpus")
+    
+    # 3. 筛选图片和表格元素
+    image_elements = [e for e in all_elements if e.get("type") in ["image", "figure"]]
+    table_elements = [e for e in all_elements if e.get("type") == "table"]
+    
+    # 4. 读取 draft 以确定插入位置 (简化：按章节标题匹配)
+    drafts_dir = get_drafts_dir(article_id)
+    draft_files = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+    
+    headings = []
+    for df in sorted(draft_files):
+        try:
+            with open(df, "r", encoding="utf-8") as f:
+                content = f.read()
+            # 提取标题
+            import re
+            for match in re.finditer(r'^(#{1,3})\s+(.+)$', content, re.MULTILINE):
+                headings.append(match.group(2).strip())
+        except:
+            pass
+    
+    # 5. 生成 illustration_plan.json
+    figures = []
+    for idx, img in enumerate(image_elements[:10]):  # 最多 10 张图
+        figure_id = f"fig_{idx + 1}"
+        # 简单匹配：第 N 张图放在第 N 个标题后（如果存在）
+        insert_after = headings[idx] if idx < len(headings) else headings[-1] if headings else ""
+        
+        figures.append({
+            "figure_id": figure_id,
+            "source": {
+                "doc_id": img.get("doc_id", ""),
+                "element_id": img.get("element_id", ""),
+            },
+            "caption": img.get("content", "")[:100] or f"图{idx + 1}",
+            "insert_after_anchor": f"## {insert_after}" if insert_after else "",
+            "layout": {"width": "70%", "align": "center"}
+        })
+    
+    # 添加表格
+    for idx, tbl in enumerate(table_elements[:5]):  # 最多 5 个表格
+        figure_id = f"tbl_{idx + 1}"
+        insert_after = headings[idx + len(image_elements)] if (idx + len(image_elements)) < len(headings) else ""
+        
+        figures.append({
+            "figure_id": figure_id,
+            "source": {
+                "doc_id": tbl.get("doc_id", ""),
+                "element_id": tbl.get("element_id", ""),
+            },
+            "type": "table",
+            "caption": f"表{idx + 1}",
+            "insert_after_anchor": f"## {insert_after}" if insert_after else "",
+        })
+    
+    illustration_plan = {
+        "article_id": article_id,
+        "figures": figures,
+        "stats": {
+            "total_images": len(image_elements),
+            "total_tables": len(table_elements),
+            "planned_figures": len(figures)
+        }
+    }
+    
+    # 6. 保存 illustration_plan.json
+    # 保存到 assets 目录
+    assets_dir = os.path.join(article_dir, "assets")
+    os.makedirs(assets_dir, exist_ok=True)
+    
+    plan_path = os.path.join(assets_dir, "illustration_plan.json")
+    try:
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(illustration_plan, f, ensure_ascii=False, indent=2)
+        _LOGGER.info(f"Illustration plan saved to: {plan_path}")
+    except Exception as e:
+        _LOGGER.error(f"Failed to save illustration_plan: {e}")
+        return {"error": str(e)}
+    
+    return {
+        "illustration_plan_path": plan_path,
+        "total_figures": len(figures),
+        "image_elements": len(image_elements),
+        "table_elements": len(table_elements),
+    }

@@ -53,13 +53,43 @@ def get_current_article_id(arg_id: str = "") -> str:
     os.environ["ARTICLE_CURRENT_ID"] = article_id
     return article_id
 
+# 架构文档要求的子目录映射
+ARTIFACT_SUBDIRS = {
+    # plans/
+    "outline.json": "plans",
+    "section_plan.json": "plans",
+    "open_questions.json": "plans",
+    # research/
+    "research_notes.json": "research",
+    # draft/ (citations_map 属于 draft)
+    "citations_map.json": "draft",
+    # review/
+    "review_report.json": "review",
+}
+
+def _get_artifact_path(article_dir: str, artifact_name: str) -> str:
+    """根据 artifact 名称确定子目录路径。"""
+    subdir = ARTIFACT_SUBDIRS.get(artifact_name, "")
+    if subdir:
+        return os.path.join(article_dir, subdir, artifact_name)
+    return os.path.join(article_dir, artifact_name)
+
 def load_article_artifact(article_id: str, artifact_name: str) -> Dict[str, Any]:
     """从文章目录加载 JSON artifact (e.g., outline.json, sources.json)。"""
     if not article_id:
         return {}
         
     article_dir = get_article_dir(article_id)
-    file_path = os.path.join(article_dir, artifact_name)
+    
+    # 优先使用子目录路径
+    file_path = _get_artifact_path(article_dir, artifact_name)
+    
+    # 兼容旧路径（根目录）
+    if not os.path.exists(file_path):
+        file_path_legacy = os.path.join(article_dir, artifact_name)
+        if os.path.exists(file_path_legacy):
+            file_path = file_path_legacy
+            _LOGGER.debug(f"Using legacy path for {artifact_name}")
     
     if os.path.exists(file_path):
         try:
@@ -73,15 +103,17 @@ def load_article_artifact(article_id: str, artifact_name: str) -> Dict[str, Any]
     return {}
 
 def save_article_artifact(article_id: str, artifact_name: str, data: Dict[str, Any]) -> str:
-    """保存 JSON artifact 到文章目录。返回保存的文件路径。"""
+    """保存 JSON artifact 到文章目录（按架构子目录）。返回保存的文件路径。"""
     if not article_id:
         _LOGGER.warning(f"Cannot save artifact {artifact_name}: Empty article_id")
         return ""
         
     article_dir = get_article_dir(article_id)
-    os.makedirs(article_dir, exist_ok=True)
+    file_path = _get_artifact_path(article_dir, artifact_name)
     
-    file_path = os.path.join(article_dir, artifact_name)
+    # 确保子目录存在
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
