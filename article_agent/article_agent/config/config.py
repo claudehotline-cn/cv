@@ -213,6 +213,33 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_USE_TRAFILATURA",
     )
 
+    # MinIO 配置
+    minio_endpoint: str = Field(
+        default="minio:9000",
+        description="MinIO 服务器地址（host:port）。",
+        alias="MINIO_ENDPOINT",
+    )
+    minio_access_key: str = Field(
+        default="minioadmin",
+        description="MinIO 访问密钥。",
+        alias="MINIO_ACCESS_KEY",
+    )
+    minio_secret_key: str = Field(
+        default="minioadmin123",
+        description="MinIO 私密密钥。",
+        alias="MINIO_SECRET_KEY",
+    )
+    minio_bucket: str = Field(
+        default="article",
+        description="MinIO 存储桶名称。",
+        alias="MINIO_BUCKET",
+    )
+    minio_secure: bool = Field(
+        default=False,
+        description="是否使用 HTTPS 连接 MinIO。",
+        alias="MINIO_SECURE",
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

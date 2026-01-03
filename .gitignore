@@ -57,3 +57,4 @@ video-analyzer/build-ninja/
 article_agent/outputs/
 article_agent/workspace/
 models/
+.hf_cache/

@@ -7,22 +7,38 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from minio import Minio
-from docling.datamodel.base_models import DocumentStream
-from docling.document_converter import DocumentConverter
-from docling.datamodel.document_conversion_input import DocumentConversionInput
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from ...config.config import settings
+from ...config.config import get_settings
 
 _LOGGER = logging.getLogger(__name__)
 
 # Global converter instance to avoid reloading models
 _DOCLING_CONVERTER = None
+_DOCLING_AVAILABLE = None
 
 def get_docling_converter():
-    global _DOCLING_CONVERTER
+    """Lazy-load docling converter to avoid startup failures."""
+    global _DOCLING_CONVERTER, _DOCLING_AVAILABLE
+    
+    if _DOCLING_AVAILABLE is None:
+        try:
+            from docling.document_converter import DocumentConverter
+            _DOCLING_AVAILABLE = True
+        except ImportError:
+            _LOGGER.warning("Docling not available - will use PyMuPDF fallback")
+            _DOCLING_AVAILABLE = False
+    
+    if not _DOCLING_AVAILABLE:
+        return None
+    
     if _DOCLING_CONVERTER is None:
-        _LOGGER.info("Initializing Docling converter...")
+        import os
+        # Ensure HF mirror is set before Docling loads models
+        if not os.environ.get("HF_ENDPOINT"):
+            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+        from docling.document_converter import DocumentConverter
+        _LOGGER.info(f"Initializing Docling converter (HF_ENDPOINT={os.environ.get('HF_ENDPOINT')})...")
         _DOCLING_CONVERTER = DocumentConverter()
     return _DOCLING_CONVERTER
 
@@ -47,13 +63,19 @@ def load_bytes_from_minio(path: str) -> bytes:
         parts = path[8:].split("/", 1)
         bucket, key = parts[0], parts[1] if len(parts) > 1 else ""
     elif "/" in path:
-        # article/uploads/xxx.pdf -> default bucket
+        # article/uploads/xxx.pdf or uploads/xxx.pdf
+        settings = get_settings()
         bucket = settings.minio_bucket
-        key = path
+        # 如果路径以 bucket 名开头，去掉它（避免重复）
+        if path.startswith(f"{bucket}/"):
+            key = path[len(bucket) + 1:]  # 去掉 "article/"
+        else:
+            key = path
     else:
         raise ValueError(f"Invalid MinIO path: {path}")
     
     # Create client
+    settings = get_settings()
     client = Minio(
         endpoint=settings.minio_endpoint,
         access_key=settings.minio_access_key,
@@ -78,15 +100,25 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
     Parse PDF bytes using Docling (memory stream).
     
     Returns:
-        Dict with 'markdown', 'elements' (list of tables/images/formulas), 'headings'
+        Dict with 'markdown', 'elements' (list of tables/images/formulas), 'headings', 'pages'
     """
-    _LOGGER.info(f"parse_pdf_bytes_docling: {filename}, {len(pdf_bytes)} bytes")
+    import os
+    # Ensure HF mirror is available for any model downloads during parsing
+    if not os.environ.get("HF_ENDPOINT"):
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    
+    _LOGGER.info(f"parse_pdf_bytes_docling: {filename}, {len(pdf_bytes)} bytes (HF_ENDPOINT={os.environ.get('HF_ENDPOINT')})")
+    
+    converter = get_docling_converter()
+    if converter is None:
+        raise ImportError("Docling not available")
     
     try:
+        from docling.datamodel.base_models import DocumentStream
+        
         stream = BytesIO(pdf_bytes)
         source = DocumentStream(name=filename, stream=stream)
         
-        converter = get_docling_converter()
         result = converter.convert(source) 
         doc = result.document
         
@@ -221,6 +253,7 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
             pdf_bytes = await asyncio.to_thread(load_bytes_from_minio, source_path)
             
             # 架构要求：doc_id = sha256(bucket:key:etag:size)
+            settings = get_settings()
             etag = hashlib.md5(pdf_bytes).hexdigest()
             doc_id_seed = f"{settings.minio_bucket}:{source_path}:{etag}:{len(pdf_bytes)}"
             doc_id = "doc_" + hashlib.sha256(doc_id_seed.encode()).hexdigest()[:16]
@@ -251,11 +284,11 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
             }
             
         elif source_type == "url":
-            # Use existing fetch logic (simplified here or import from files.py)
-            from ..utils.files import fetch_url_content
-            # This returns markdown usually
-            content = await asyncio.to_thread(fetch_url_content, source_path)
-            full_text = content.get("content", "")
+            # Use existing fetch logic
+            from ..utils.files import fetch_url_with_images
+            # This returns {"text": ..., "images": [...]}
+            content = await asyncio.to_thread(fetch_url_with_images, source_path)
+            full_text = content.get("text", "") or ""
             
             # 架构要求：URL 的 doc_id = sha256(url + content_hash)
             content_hash = hashlib.sha256(full_text.encode()).hexdigest()[:16]
@@ -276,10 +309,9 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
         _LOGGER.error(f"Ingest failed: {e}")
         return f"Error ingesting {source_path}: {str(e)}"
 
-    # 4. 创建目录 (doc_id 现在已生成)
-    corpus_dir = os.path.join(article_dir, "corpus", doc_id)
-    parsed_dir = os.path.join(corpus_dir, "parsed")
-    os.makedirs(parsed_dir, exist_ok=True)
+    # 4. 创建目录 (doc_id 现在已生成) - 使用 artifacts.py 的异步函数
+    from ..utils.artifacts import ensure_corpus_dir
+    corpus_dir, parsed_dir = await ensure_corpus_dir(article_id, doc_id)
 
     # 5. Chunking
     chunks = chunk_text(full_text)

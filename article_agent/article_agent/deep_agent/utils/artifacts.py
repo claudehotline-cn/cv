@@ -6,7 +6,8 @@ import os
 import json
 import uuid
 import glob
-from typing import Any, Dict, List, Optional
+import asyncio
+from typing import Any, Dict, List, Optional, Tuple
 
 from ...config import get_article_dir, get_drafts_dir, get_final_article_dir
 
@@ -21,6 +22,8 @@ __all__ = [
     "get_article_dir",
     "get_drafts_dir",
     "get_final_article_dir",
+    "get_corpus_dir",
+    "ensure_corpus_dir",
 ]
 
 def get_current_article_id(arg_id: str = "") -> str:
@@ -52,6 +55,25 @@ def get_current_article_id(arg_id: str = "") -> str:
     # 确保环境变量同步，供后续步骤使用
     os.environ["ARTICLE_CURRENT_ID"] = article_id
     return article_id
+
+def get_corpus_dir(article_id: str, doc_id: str) -> str:
+    """获取指定文档的 corpus 目录 (artifacts/article_{id}/corpus/{doc_id})。"""
+    article_dir = get_article_dir(article_id)
+    return os.path.join(article_dir, "corpus", doc_id)
+
+async def ensure_corpus_dir(article_id: str, doc_id: str) -> Tuple[str, str]:
+    """确保 corpus 目录结构存在，返回 (corpus_dir, parsed_dir)。
+    
+    创建目录结构（异步，不阻塞事件循环）：
+    - artifacts/article_{id}/corpus/{doc_id}/
+    - artifacts/article_{id}/corpus/{doc_id}/parsed/
+    """
+    corpus_dir = get_corpus_dir(article_id, doc_id)
+    parsed_dir = os.path.join(corpus_dir, "parsed")
+    # 使用 asyncio.to_thread 避免阻塞事件循环
+    await asyncio.to_thread(os.makedirs, parsed_dir, exist_ok=True)
+    _LOGGER.info(f"Ensured corpus directory: {parsed_dir}")
+    return corpus_dir, parsed_dir
 
 # 架构文档要求的子目录映射
 ARTIFACT_SUBDIRS = {

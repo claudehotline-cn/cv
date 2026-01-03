@@ -21,4 +21,4 @@ Pillow>=10.0.0
 cairosvg>=2.7.0
 pymupdf4llm>=0.0.17
 minio>=7.2.0
-docling>=1.0.0
+# docling is installed separately in Dockerfile with CPU-only PyTorch

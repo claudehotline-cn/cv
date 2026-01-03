@@ -1259,7 +1259,7 @@ async def upload_file_generic(
     
     try:
         # 上传到 MinIO
-        object_name = f"article/uploads/{uuid.uuid4().hex}_{file.filename}"
+        object_name = f"uploads/{uuid.uuid4().hex}_{file.filename}"
         content_type = file.content_type or "application/octet-stream"
         minio_service.upload_file(content, object_name, content_type)
         

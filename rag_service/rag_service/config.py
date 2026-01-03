@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     minio_endpoint: str = Field(default="minio:9000", description="MinIO端点")
     minio_access_key: str = Field(default="minioadmin", description="MinIO访问密钥")
     minio_secret_key: str = Field(default="minioadmin123", description="MinIO密钥")
-    minio_bucket: str = Field(default="rag-documents", description="文档存储桶")
+    minio_bucket: str = Field(default="article", description="文档存储桶")
     minio_secure: bool = Field(default=False, description="是否使用HTTPS")
 
     # Neo4j配置（图数据库）

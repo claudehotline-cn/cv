@@ -308,12 +308,11 @@ def read_sources_tool(sources_file: str = "") -> Dict[str, Any]:
 # ============================================================================
 
 @tool
-def generate_outline_tool(instruction: str, overview: str, target_word_count: int = 3000, article_id: str = "") -> Dict[str, Any]:
-    """根据用户指令和素材概览生成文章大纲。
+def generate_outline_tool(instruction: str, target_word_count: int = 3000, article_id: str = "") -> Dict[str, Any]:
+    """根据用户指令和素材内容生成文章大纲。素材概览会自动从 manifest.json 文件读取。
     
     Args:
         instruction: 用户写作指令
-        overview: 素材概览
         target_word_count: 目标总字数
         article_id: 文章 ID (必须与 collect_all_sources_tool 返回的一致)
         
@@ -322,6 +321,86 @@ def generate_outline_tool(instruction: str, overview: str, target_word_count: in
     """
     
     _LOGGER.info(f"generate_outline_tool called with target_word_count: {target_word_count}")
+    
+    # ========== 始终从 manifest.json 自动读取素材概览 ==========
+    # 素材概览直接从实际的 manifest.json 文件读取，确保使用真实的文档内容
+    _LOGGER.info("Auto-reading overview from manifest files...")
+    
+    # 获取 article_id
+    save_article_id = get_current_article_id(article_id)
+    if not save_article_id:
+        _LOGGER.error("Cannot auto-read manifest: no article_id provided")
+        return {
+            "title": "错误",
+            "sections": [],
+            "estimated_total_chars": 0,
+            "error": "无法自动读取 manifest：缺少 article_id",
+        }
+    
+    # 读取 corpus 目录下所有 manifest.json
+    from ...config.config import get_settings
+    settings = get_settings()
+    corpus_dir = os.path.join(settings.artifacts_dir, f"article_{save_article_id}", "corpus")
+    
+    overview_parts = []
+    overview = ""  # 初始化 overview 变量
+    if os.path.exists(corpus_dir):
+        for doc_dir in os.listdir(corpus_dir):
+            manifest_path = os.path.join(corpus_dir, doc_dir, "manifest.json")
+            if os.path.exists(manifest_path):
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                    
+                    # 提取关键信息
+                    source_type = manifest.get("source_ref", {}).get("type", "unknown")
+                    source_url = manifest.get("source_ref", {}).get("url", "")
+                    headings = manifest.get("headings", [])
+                    stats = manifest.get("stats", {})
+                    
+                    # 构建概览
+                    overview_parts.append(f"### 文档: {doc_dir}")
+                    overview_parts.append(f"- 来源类型: {source_type}")
+                    if source_url:
+                        overview_parts.append(f"- URL: {source_url}")
+                    overview_parts.append(f"- 字符数: {stats.get('chars', 0)}")
+                    overview_parts.append(f"- 分块数: {stats.get('chunks', 0)}")
+                    if headings:
+                        overview_parts.append(f"- 主要标题: {', '.join(headings[:10])}")
+                    
+                    # 读取 chunks 获取实际内容摘要
+                    chunks_path = os.path.join(corpus_dir, doc_dir, "chunks.jsonl")
+                    if os.path.exists(chunks_path):
+                        first_chunks_text = []
+                        with open(chunks_path, "r", encoding="utf-8") as f:
+                            for i, line in enumerate(f):
+                                if i >= 5:  # 只读取前 5 个 chunk
+                                    break
+                                chunk = json.loads(line)
+                                text = chunk.get("text", "")[:500]  # 每个 chunk 截取 500 字符
+                                if text:
+                                    first_chunks_text.append(text)
+                        if first_chunks_text:
+                            overview_parts.append(f"- 内容摘要:\n{chr(10).join(first_chunks_text[:3])}")
+                    
+                    overview_parts.append("")  # 空行分隔
+                    
+                    _LOGGER.info(f"Read manifest: {manifest_path}, headings={headings[:5]}")
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to read manifest {manifest_path}: {e}")
+    
+    if overview_parts:
+        overview = "\n".join(overview_parts)
+        _LOGGER.info(f"Auto-generated overview: {len(overview)} chars from {len([p for p in overview_parts if p.startswith('### 文档')])} documents")
+    else:
+        _LOGGER.error(f"No manifest files found in {corpus_dir}")
+        return {
+            "title": "错误",
+            "sections": [],
+            "estimated_total_chars": 0,
+            "error": f"在 {corpus_dir} 中未找到 manifest 文件",
+        }
+    # ========== 结束自动读取逻辑 ==========
     
     system_prompt = PLANNER_OUTLINE_SYSTEM_PROMPT.format(target_word_count=target_word_count)
 
