@@ -213,12 +213,30 @@ def match_images_tool(
             "final_markdown": "", # Return empty markdown if failed
         }
     
-    # 2. 使用 VLM 分析图片内容（如果启用）
+    # 2. 图片去重与预处理
+    # elements.jsonl 可能包含重复条目（如有无 src 的版本），需要去重并保留有 src 的版本
+    unique_images_map = {}
+    for img in available_images:
+        eid = img.get("element_id")
+        if not eid:
+            continue
+        
+        has_src = bool(img.get("src") or img.get("path_or_url"))
+        
+        # 如果 ID 不存在，或者新条目有 src 而旧条目没有，则更新
+        if eid not in unique_images_map:
+            unique_images_map[eid] = img
+        elif has_src and not (unique_images_map[eid].get("src") or unique_images_map[eid].get("path_or_url")):
+            unique_images_map[eid] = img
+            
+    # 使用去重后的列表
+    deduplicated_images = list(unique_images_map.values())
+    _LOGGER.info(f"Deduplicated images: {len(available_images)} -> {len(deduplicated_images)}")
     
     vlm = build_vlm_client(task_name="illustrator_vlm")
     images_with_desc = []
     
-    for i, img in enumerate(available_images):  # 分析所有图片
+    for i, img in enumerate(deduplicated_images):  # 分析去重后的图片
         # 优先使用 src (统一格式)，兼容 path_or_url
         img_url = img.get("src") or img.get("path_or_url") or ""
         alt = img.get("alt", "")
@@ -262,19 +280,33 @@ def match_images_tool(
                 _LOGGER.info(f"VLM analyzed image {i+1}: {description[:50]}...")
             except Exception as e:
                 _LOGGER.warning(f"VLM analysis failed for image {i+1}: {e}")
-                description = alt or f"图片{i+1}"
+                description = "无法分析图片内容" # Don't just fallback to alt, keep distinct
         
+        # Merge descriptions: VLM provides visual content
+        # User request: Only use VLM description to avoid noise from bad captions
+        combined_description = ""
+        if description: 
+             combined_description += f"{description}\n"
+        
+        if not combined_description:
+            combined_description = "无描述信息"
+
         images_with_desc.append({
             "index": i,
+            "element_id": img.get("element_id", f"img_{i}"),
             "url": img_url,
-            "description": description
+            "description": combined_description.strip()
         })
     
-    # 准备图片信息供 LLM 匹配
+    # 准备图片信息供 LLM 匹配 - 使用唯一 element_id 而非顺序索引
     images_info = "\n".join([
-        f"- 图片{d['index']+1}: {d['description']}"
+        f"- 图片[{d['element_id']}]: {d['description']}"
         for d in images_with_desc
     ])
+    
+    # 构建 element_id -> image 的查找表
+    images_by_id = {d["element_id"]: d for d in images_with_desc}
+    available_images_by_id = {img.get("element_id", f"img_{i}"): img for i, img in enumerate(deduplicated_images)}
     
     # 3. 提取文章标题
     headings = re.findall(r'^(#{1,3}\s+.+)$', full_content, re.MULTILINE)
@@ -329,127 +361,153 @@ def match_images_tool(
             insertion_ops = [] # (line_index, img_md)
             
             for p in placements:
-                img_idx = p.get("image_index", 0)
-                if img_idx < len(available_images):
-                    img = available_images[img_idx]
-                    # Log image object for debugging
-                    _LOGGER.info(f"Image {img_idx} raw object: {img}")
-                    
-                    # 优先检查 'src' (PDF assets) 和 'content' (URL images), 然后才是 'url'/'path_or_url'
-                    img_url = img.get("src") or img.get("content") or img.get("path_or_url") or img.get("url") or ""
-                    alt = img.get("alt", "")
-                    
-                    # 将 Wikipedia 缩略图 URL 转换为原图 URL
-                    if "/thumb/" in img_url and "px-" in img_url:
-                        import re
-                        img_url = re.sub(r'/thumb/', '/', img_url)
-                        img_url = re.sub(r'/\d+px-[^/]+$', '', img_url)
-                        _LOGGER.info(f"Image {img_idx}: Converted to full-size URL: {img_url}")
-                    
-                    # 强制转换为相对路径 (Fix for host/web viewing)
-                    # 将 /data/workspace/artifacts/.../corpus/... 转换为 ../corpus/...
-                    if "/corpus/" in img_url and img_url.startswith("/"):
-                        import re
-                        new_url = re.sub(r'^.*/corpus/', '../corpus/', img_url)
-                        _LOGGER.info(f"Image {img_idx}: Converted absolute path '{img_url}' to relative '{new_url}'")
-                        img_url = new_url
-                    
-                    caption = p.get("caption", "") or alt
-                    after_heading = p.get("after_heading", "")
-                    insert_after_text = p.get("insert_after_text", "").strip()
-                    
-                    if not img_url:
-                        _LOGGER.warning(f"Image {img_idx} has EMPTY URL! Skipping insertion or inserting placeholder. Source: {img}")
+                # 优先使用 image_id (element_id)，兼容旧版 image_index
+                img_id = p.get("image_id") or p.get("element_id")
+                img = None
+                
+                if img_id and img_id in available_images_by_id:
+                    img = available_images_by_id[img_id]
+                    _LOGGER.info(f"Image [{img_id}] found via ID lookup: {img}")
+                else:
+                    # Fallback: 旧版 image_index 兼容
+                    img_idx = p.get("image_index", 0)
+                    if isinstance(img_idx, int) and 0 <= img_idx < len(deduplicated_images):
+                        img = deduplicated_images[img_idx]
+                        img_id = img.get("element_id", f"img_{img_idx}")
+                        _LOGGER.warning(f"Fallback to image_index {img_idx}: {img_id}")
                     else:
-                        _LOGGER.info(f"Preparing to insert Image {img_idx}: url='{img_url}' under heading '{after_heading}'")
+                        _LOGGER.warning(f"Image not found: id={img_id}, index={p.get('image_index')}")
+                        continue
+                
+                if not img:
+                    continue
+                    
+                # Log image object for debugging
+                _LOGGER.info(f"Image [{img_id}] raw object: {img}")
+                    
+                # 优先检查 'src' (PDF assets) 和 'content' (URL images), 然后才是 'url'/'path_or_url'
+                img_url = img.get("src") or img.get("content") or img.get("path_or_url") or img.get("url") or ""
+                alt = img.get("alt", "")
+                
+                # 将 Wikipedia 缩略图 URL 转换为原图 URL
+                if "/thumb/" in img_url and "px-" in img_url:
+                    import re
+                    img_url = re.sub(r'/thumb/', '/', img_url)
+                    img_url = re.sub(r'/\d+px-[^/]+$', '', img_url)
+                    _LOGGER.info(f"Image [{img_id}]: Converted to full-size URL: {img_url}")
+                
+                # 强制转换为相对路径 (Fix for host/web viewing)
+                # 将 /data/workspace/artifacts/.../corpus/... 转换为 ../corpus/...
+                if "/corpus/" in img_url and img_url.startswith("/"):
+                    # Transform local container path to Web API path
+                    # /data/workspace/artifacts/article_id/corpus/... -> /api/artifacts/article_id/corpus/...
+                    # This enables the browser to load images via the rag-service static mount
+                    if "/artifacts/" in img_url:
+                            new_url = "/api/artifacts/" + img_url.split("/artifacts/")[1]
+                    else:
+                            # Fallback: try to construct using article_id
+                            import re
+                            new_url = re.sub(r'^.*/corpus/', f'/api/artifacts/{article_id}/corpus/', img_url)
+                    
+                    _LOGGER.info(f"Image [{img_id}]: Converted path '{img_url}' to Web URL '{new_url}'")
+                    img_url = new_url
+                
+                caption = p.get("caption", "") or alt
+                after_heading = p.get("after_heading", "")
+                insert_after_text = p.get("insert_after_text", "").strip()
+                
+                if not img_url:
+                    _LOGGER.warning(f"Image [{img_id}] has EMPTY URL! Skipping insertion or inserting placeholder. Source: {img}")
+                else:
+                    _LOGGER.info(f"Preparing to insert Image [{img_id}]: url='{img_url}' under heading '{after_heading}'")
 
-                    # 使用 HTML figure 格式，确保居中、合适尺寸和带说明文字
-                    img_md = f'''
+                # 使用 HTML figure 格式，确保居中、合适尺寸和带说明文字
+                img_md = f'''
 
 <figure style="text-align: center; margin: 20px 0;">
   <img src="{img_url}" alt="{caption}" style="display: block; margin: 0 auto; width: 80%; max-width: 600px;">
   <figcaption style="margin-top: 8px; color: #666; font-size: 0.9em;">{caption}</figcaption>
 </figure>
 '''
+                
+                # 1. 找到 Heading 行
+                heading_line_idx = -1
+                for i, line in enumerate(lines):
+                    # 宽松匹配：精确相等 OR以此结尾 OR 以此开头 (处理 LLM 只返回 "## 标题" 而忽略冒号后内容的情况)
+                    clean_line = line.strip()
+                    clean_target = after_heading.lstrip('#').strip()
+                    if clean_line == after_heading or clean_line.endswith(clean_target) or (clean_target and clean_line.startswith(after_heading)):
+                        heading_line_idx = i
+                        break
+                
+                if heading_line_idx == -1:
+                    _LOGGER.warning(f"Heading NOT found: '{after_heading}', skipping image [{img_id}]. Available headings: {[l for l in lines if l.strip().startswith('#')][:5]}...")
+                    continue
+                else:
+                    _LOGGER.info(f"Heading found at line {heading_line_idx}: '{lines[heading_line_idx]}'")
                     
-                    # 1. 找到 Heading 行
-                    heading_line_idx = -1
-                    for i, line in enumerate(lines):
-                        # 宽松匹配：精确相等 OR以此结尾 OR 以此开头 (处理 LLM 只返回 "## 标题" 而忽略冒号后内容的情况)
-                        clean_line = line.strip()
-                        clean_target = after_heading.lstrip('#').strip()
-                        if clean_line == after_heading or clean_line.endswith(clean_target) or (clean_target and clean_line.startswith(after_heading)):
-                            heading_line_idx = i
-                            break
+                # 2. 在 Heading 后查找插入点
+                insert_line_idx = heading_line_idx + 1 # 默认插在标题后
+                
+                # 确定查找范围：直到下一个标题
+                search_end_idx = len(lines)
+                for i in range(heading_line_idx + 1, len(lines)):
+                    if lines[i].strip().startswith("#"):
+                        search_end_idx = i
+                        break
+                
+                # 如果有具体文本锚点，尝试定位
+                if insert_after_text:
+                    import difflib
                     
-                    if heading_line_idx == -1:
-                        _LOGGER.warning(f"Heading NOT found: '{after_heading}', skipping image {img_idx}. Available headings: {[l for l in lines if l.strip().startswith('#')][:5]}...")
-                        continue
-                    else:
-                        _LOGGER.info(f"Heading found at line {heading_line_idx}: '{lines[heading_line_idx]}'")
-                        
-                    # 2. 在 Heading 后查找插入点
-                    insert_line_idx = heading_line_idx + 1 # 默认插在标题后
+                    found_anchor = False
+                    best_score = 0.0
+                    best_idx = -1
                     
-                    # 确定查找范围：直到下一个标题
-                    search_end_idx = len(lines)
-                    for i in range(heading_line_idx + 1, len(lines)):
-                        if lines[i].strip().startswith("#"):
-                            search_end_idx = i
-                            break
+                    # 归一化文本（移除空格和标点）
+                    def normalize(s):
+                        return "".join(c.lower() for c in s if c.isalnum())
                     
-                    # 如果有具体文本锚点，尝试定位
-                    if insert_after_text:
-                        import difflib
-                        
-                        found_anchor = False
-                        best_score = 0.0
-                        best_idx = -1
-                        
-                        # 归一化文本（移除空格和标点）
-                        def normalize(s):
-                            return "".join(c.lower() for c in s if c.isalnum())
-                        
-                        norm_target = normalize(insert_after_text)
-                        
-                        # 第一轮：尝试精确子串匹配（忽略大小写和标点）
-                        if len(norm_target) > 5:
-                           for i in range(heading_line_idx + 1, search_end_idx):
-                               line_norm = normalize(lines[i])
-                               # 如果锚点文本足够具体，且能在行中找到
-                               if norm_target in line_norm:
-                                   insert_line_idx = i + 1
-                                   found_anchor = True
-                                   _LOGGER.info(f"Image {img_idx}: Text match (Normalized substring) found at line {i+1}")
-                                   break
-                        
-                        # 第二轮：如果没找到，尝试模糊相似度匹配 (Levenshtein)
-                        if not found_anchor and len(norm_target) > 10:
-                            for i in range(heading_line_idx + 1, search_end_idx):
-                                line_norm = normalize(lines[i])
-                                if len(line_norm) < 5: continue
-                                
-                                # 计算相似度 ratio
-                                matcher = difflib.SequenceMatcher(None, norm_target, line_norm)
-                                ratio = matcher.ratio()
-                                # 或者检查包含关系的相似度
-                                if len(line_norm) > len(norm_target):
-                                     # 如果行比目标长，检查是否包含目标（即寻找最佳子序列匹配）
-                                     # 这里简化为直接比较 ratio，或者用 RealQuickRatio
-                                     pass
-                                
-                                if ratio > best_score:
-                                    best_score = ratio
-                                    best_idx = i
-                            
-                            # 阈值判定 (0.7 比较宽松，因为 LLM 经常改写)
-                            if best_score > 0.6: 
-                                insert_line_idx = best_idx + 1
+                    norm_target = normalize(insert_after_text)
+                    
+                    # 第一轮：尝试精确子串匹配（忽略大小写和标点）
+                    if len(norm_target) > 5:
+                        for i in range(heading_line_idx + 1, search_end_idx):
+                            line_norm = normalize(lines[i])
+                            # 如果锚点文本足够具体，且能在行中找到
+                            if norm_target in line_norm:
+                                insert_line_idx = i + 1
                                 found_anchor = True
-                                _LOGGER.info(f"Image {img_idx}: Fuzzy match found at line {best_idx+1} (score={best_score:.2f})")
+                                _LOGGER.info(f"Image [{img_id}]: Text match (Normalized substring) found at line {i+1}")
+                                break
+                    
+                    # 第二轮：如果没找到，尝试模糊相似度匹配 (Levenshtein)
+                    if not found_anchor and len(norm_target) > 10:
+                        for i in range(heading_line_idx + 1, search_end_idx):
+                            line_norm = normalize(lines[i])
+                            if len(line_norm) < 5: continue
+                            
+                            # 计算相似度 ratio
+                            matcher = difflib.SequenceMatcher(None, norm_target, line_norm)
+                            ratio = matcher.ratio()
+                            # 或者检查包含关系的相似度
+                            if len(line_norm) > len(norm_target):
+                                    # 如果行比目标长，检查是否包含目标（即寻找最佳子序列匹配）
+                                    # 这里简化为直接比较 ratio，或者用 RealQuickRatio
+                                    pass
+                            
+                            if ratio > best_score:
+                                best_score = ratio
+                                best_idx = i
                         
-                        if not found_anchor:
-                            _LOGGER.info(f"Image {img_idx}: Anchor text '{insert_after_text[:20]}...' not found (best score {best_score:.2f}) under {after_heading}, placing after heading")
+                        # 阈值判定 (0.7 比较宽松，因为 LLM 经常改写)
+                        if best_score > 0.4: 
+                            insert_line_idx = best_idx + 1
+                            found_anchor = True
+                            _LOGGER.info(f"Image [{img_id}]: Fuzzy match found at line {best_idx+1} (score={best_score:.2f})")
+                    
+                    if not found_anchor:
+                        _LOGGER.info(f"Image [{img_id}]: Anchor text '{insert_after_text[:20]}...' not found (best score {best_score:.2f}) under {after_heading}, placing after heading")
                     
                     insertion_ops.append((insert_line_idx, img_md))
 

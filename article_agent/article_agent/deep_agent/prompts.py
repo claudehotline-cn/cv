@@ -80,7 +80,7 @@ INGEST_AGENT_PROMPT = """
 ## 核心任务
 1. **生成 article_id**: 
    - 如果用户提供了 `article_id`，直接使用。
-   - 如果没有提供，**必须自动生成**一个随机 8 位 UUID（使用 Python uuid.uuid4().hex[:8]，例如 `f7c31e9a`）。**严禁使用示例值**。
+   - 如果没有提供，**必须自动生成**一个全新的**随机 8 位 UUID**。必须每次都不同。
    - 这个 `article_id` 将用于整个文章生成流程。
 2. **分析输入**: 提取所有素材来源（URL 或 MinIO 路径）。
 3. **执行采集**: 
@@ -160,9 +160,9 @@ RESEARCHER_AGENT_PROMPT = """
 ## 任务流程
 
 **第一步：整理素材**
-1. 从任务描述中提取 `article_id` (例如 "4dba5581")。
-2. 调用 `research_all_sections_tool`：
-   - `article_id`: 必须传入提取到的 ID (严禁使用 "001" 或生成新 ID)。
+1. 从任务描述中提取 `article_id`。
+2. **必须**调用 `research_all_sections_tool`：
+   - `article_id`: 必须传入提取到的 ID (严禁使用 "001" 或伪造 ID)。
    - `sources`: 留空 (工具会自动从 artifacts 读取)。
 
 **第二步：按章节整理资料**

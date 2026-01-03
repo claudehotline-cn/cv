@@ -57,6 +57,18 @@ app.add_middleware(
 # 注册路由
 app.include_router(router, prefix=settings.api_prefix)
 
+# 挂载静态文件目录 (用于 Article Agent 图片)
+# 映射 /data/workspace/artifacts 到 /api/artifacts
+# 例如: /api/artifacts/article_123/corpus/pic.png -> /data/workspace/artifacts/article_123/corpus/pic.png
+from fastapi.staticfiles import StaticFiles
+import os
+
+artifacts_dir = "/data/workspace/artifacts"
+if not os.path.exists(artifacts_dir):
+    os.makedirs(artifacts_dir, exist_ok=True)
+
+app.mount("/api/artifacts", StaticFiles(directory=artifacts_dir), name="artifacts")
+
 
 @app.get("/health")
 def health_check():
