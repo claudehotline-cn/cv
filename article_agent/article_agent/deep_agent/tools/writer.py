@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import os
 import json
+import glob
+import re
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -11,10 +13,75 @@ from langchain_core.runnables import RunnableConfig
 
 from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response, log_tool_output
-from ..utils.artifacts import get_current_article_id, load_article_artifact, save_draft_file
+from ..utils.artifacts import get_current_article_id, load_article_artifact, save_draft_file, get_drafts_dir
 from .prompts import WRITER_SECTION_REVIEW_FEEDBACK, WRITER_SECTION_SYSTEM_PROMPT, WRITER_SECTION_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.writer")
+
+
+def _merge_drafts_to_single_file(article_id: str, outline: Optional[Dict[str, Any]] = None) -> str:
+    """
+    将所有章节草稿合并为单一 draft.md 文件。
+    
+    Args:
+        article_id: 文章 ID
+        outline: 大纲（用于确定章节顺序），可选
+        
+    Returns:
+        合并后的 draft.md 路径
+    """
+    from ...config.config import get_article_dir
+    
+    drafts_dir = get_drafts_dir(article_id)
+    article_dir = get_article_dir(article_id)
+    draft_output_dir = os.path.join(article_dir, "draft")
+    os.makedirs(draft_output_dir, exist_ok=True)
+    merged_draft_path = os.path.join(draft_output_dir, "draft.md")
+    
+    # 查找所有章节文件
+    section_files = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+    
+    if not section_files:
+        _LOGGER.warning(f"No section files found in {drafts_dir}")
+        return ""
+    
+    # 确定排序顺序
+    def extract_section_num(path: str) -> int:
+        match = re.search(r'section_sec_(\d+)', path)
+        return int(match.group(1)) if match else 999
+    
+    # 如果有大纲，按大纲顺序；否则按文件名数字顺序
+    if outline and outline.get("sections"):
+        section_order = {s.get("id", ""): i for i, s in enumerate(outline.get("sections", []))}
+        def sort_key(path: str) -> int:
+            # 从文件名提取 section_id: section_sec_1.md -> sec_1
+            basename = os.path.basename(path)
+            match = re.search(r'section_(sec_\d+)', basename)
+            if match:
+                return section_order.get(match.group(1), 999)
+            return 999
+        section_files.sort(key=sort_key)
+    else:
+        section_files.sort(key=extract_section_num)
+    
+    # 合并内容
+    full_content_parts = []
+    for sf in section_files:
+        try:
+            with open(sf, "r", encoding="utf-8") as f:
+                content = f.read()
+                full_content_parts.append(content)
+        except Exception as e:
+            _LOGGER.warning(f"Failed to read {sf}: {e}")
+    
+    full_draft_content = "\n\n".join(full_content_parts)
+    
+    # 写入合并文件
+    with open(merged_draft_path, "w", encoding="utf-8") as f:
+        f.write(full_draft_content)
+    
+    _LOGGER.info(f"Merged {len(section_files)} sections to {merged_draft_path} ({len(full_draft_content)} chars)")
+    return merged_draft_path
 
 @tool
 def write_section_tool(
@@ -96,6 +163,17 @@ def write_section_tool(
             "char_count": char_count,
             "preview": markdown[:200] + "..." if len(markdown) > 200 else markdown,  # 只返回预览
         }
+        
+        # 如果是修改稿件（有审阅反馈），自动重新合并 draft.md
+        if review_feedback and article_id:
+            try:
+                outline = load_article_artifact(article_id, "outline.json")
+                merged_path = _merge_drafts_to_single_file(article_id, outline)
+                if merged_path:
+                    result["merged_draft"] = merged_path
+                    _LOGGER.info(f"Re-merged draft after revision: {merged_path}")
+            except Exception as merge_err:
+                _LOGGER.warning(f"Failed to re-merge draft after revision: {merge_err}")
         
         # 记录详细输出
         log_tool_output("write_section_tool", result, preview_fields=["preview"])
@@ -272,14 +350,51 @@ def write_all_sections_tool(
         except Exception as e:
             _LOGGER.warning(f"Failed to save citations_map: {e}")
     
+    
     # 强制不返回 drafts 内容，确保下游 Reviewer 必须从文件系统读取
     # 但必须返回足够的 Metadata 告知 LLM 任务已完成，否则会导致 infinite retry loop
+    
+    # ========== 新增：合并 Draft (Hybrid Draft Strategy) ==========
+    # 用户需求：既要保留分章节文件（drafts/section_*.md），也要生成单一文件（draft/draft.md）
+    merged_draft_path = ""
+    try:
+        from ...config import get_article_dir
+        article_dir = get_article_dir(article_id)
+        draft_dir = os.path.join(article_dir, "draft") # 单数 draft 目录
+        os.makedirs(draft_dir, exist_ok=True)
+        merged_draft_path = os.path.join(draft_dir, "draft.md")
+        
+        full_content_parts = []
+        # 按大纲顺序合并
+        section_order = {s.get("id", ""): i for i, s in enumerate(outline.get("sections", []))}
+        
+        # 排序 drafts
+        sorted_drafts = sorted(drafts, key=lambda x: section_order.get(x.get("section_id", ""), 999))
+        
+        for draft in sorted_drafts:
+            file_path = draft.get("file_path", "")
+            if file_path and os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    full_content_parts.append(content)
+        
+        full_draft_content = "\n\n".join(full_content_parts)
+        
+        with open(merged_draft_path, "w", encoding="utf-8") as f:
+            f.write(full_draft_content)
+            
+        _LOGGER.info(f"Merged draft saved to: {merged_draft_path} ({len(full_draft_content)} chars)")
+        
+    except Exception as e:
+        _LOGGER.warning(f"Failed to merge draft: {e}")
+
     return {
         "status": "success",
-        "message": f"Successfully wrote {len(drafts)} sections to file system.",
+        "message": f"Successfully wrote {len(drafts)} sections to file system and merged to draft.md",
         "drafts": [], # Empty list kept for Zero-Memory compliance
         "total_char_count": total_chars,
         "saved_files": [d["file_path"] for d in drafts], # Minimal references
+        "merged_draft": merged_draft_path,
         "citations_map_path": citations_map_path,
         "total_citations": len(citations_anchors)
     }
@@ -344,3 +459,51 @@ def writer_audit_tool(drafts: List[Dict[str, Any]], outline: Dict[str, Any]) -> 
         "all_passed": len(sections_to_rewrite) == 0,
         "sections_to_rewrite": sections_to_rewrite,
     }
+
+
+@tool
+def merge_draft_tool(article_id: str = "") -> Dict[str, Any]:
+    """将所有章节草稿合并为单一 draft.md 文件。
+    
+    在审阅不通过、修改章节后调用此工具，重新生成合并的草稿文件。
+    
+    Args:
+        article_id: 文章 ID（可选，默认使用当前上下文）
+        
+    Returns:
+        合并结果，包含 merged_draft 路径
+    """
+    _LOGGER.info(f"merge_draft_tool called for article_id={article_id}")
+    
+    article_id = get_current_article_id(article_id)
+    if not article_id:
+        return {"error": "Missing article_id"}
+    
+    try:
+        # 加载大纲以确保正确顺序
+        outline = load_article_artifact(article_id, "outline.json")
+        
+        merged_path = _merge_drafts_to_single_file(article_id, outline)
+        
+        if merged_path:
+            # 读取合并后的内容统计
+            char_count = 0
+            try:
+                with open(merged_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    char_count = len(content)
+            except:
+                pass
+            
+            return {
+                "status": "success",
+                "merged_draft": merged_path,
+                "char_count": char_count,
+                "message": f"Successfully merged all sections to {merged_path}"
+            }
+        else:
+            return {"error": "No section files found to merge"}
+            
+    except Exception as e:
+        _LOGGER.error(f"merge_draft_tool failed: {e}")
+        return {"error": str(e)}

@@ -125,18 +125,40 @@ def match_images_tool(
     
     _LOGGER.info(f"match_images_tool called")
     
-    # 如果 available_images 为空，尝试从 sources.json 加载
-    # 强制从 sources.json 加载，防止 LLM 幻觉传递错误的 available_images
+    # 从 corpus 目录下的 elements.jsonl 加载图片
+    # (Ingest Agent 将图片保存到 corpus/{doc_id}/parsed/elements.jsonl)
     article_id = get_current_article_id()
     if article_id:
-        sources_data = load_article_artifact(article_id, "sources.json")
-        for source in sources_data.get("sources", []):
-            available_images.extend(source.get("images", []))
-            
-    if available_images:
-        _LOGGER.info(f"Loaded {len(available_images)} images from artifacts")
-    else:
-        _LOGGER.warning("No images loaded from sources.json!")
+        from ...config.config import get_article_dir
+        import glob
+        import json
+        
+        article_dir = get_article_dir(article_id)
+        corpus_dir = os.path.join(article_dir, "corpus")
+        
+        # 查找所有 elements.jsonl 文件
+        elements_files = glob.glob(os.path.join(corpus_dir, "*/parsed/elements.jsonl"))
+        
+        for elements_file in elements_files:
+            try:
+                with open(elements_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            elem = json.loads(line)
+                            if elem.get("type") == "image" and elem.get("src"):
+                                available_images.append({
+                                    "src": elem.get("src"),
+                                    "alt": elem.get("content", ""),
+                                    "element_id": elem.get("element_id", ""),
+                                    "page": elem.get("page", 0)
+                                })
+            except Exception as e:
+                _LOGGER.warning(f"Failed to load images from {elements_file}: {e}")
+        
+        _LOGGER.info(f"Loaded {len(available_images)} images from {len(elements_files)} elements.jsonl files")
+        
+    if not available_images:
+        _LOGGER.warning("No images loaded from elements.jsonl!")
     
     _LOGGER.info(f"match_images_tool: article_id={article_id}, input drafts count={len(drafts) if drafts else 0}")
     
@@ -197,7 +219,8 @@ def match_images_tool(
     images_with_desc = []
     
     for i, img in enumerate(available_images):  # 分析所有图片
-        img_url = img.get("path_or_url", "")
+        # 优先使用 src (统一格式)，兼容 path_or_url
+        img_url = img.get("src") or img.get("path_or_url") or ""
         alt = img.get("alt", "")
         
         # 将 Wikipedia 缩略图 URL 转换为原图 URL
@@ -278,7 +301,22 @@ def match_images_tool(
         # 提取 JSON
         json_match = re.search(r'\{[\s\S]*\}', content)
         if json_match:
-            result = json.loads(json_match.group())
+            json_str = json_match.group()
+            # 修复常见的 JSON 转义错误 (如 LaTeX 公式中的反斜杠)
+            # 将所有未跟随合法转义字符的反斜杠双写
+            json_str = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', json_str)
+            
+            try:
+                result = json.loads(json_str)
+            except json.JSONDecodeError as je:
+                _LOGGER.warning(f"JSON parse error: {je}. Trying to recover...")
+                # 尝试更激进的修复：移除所有反斜杠 (除了转义引号的)
+                json_str_fixed = re.sub(r'\\(?!")', '', json_str)
+                try:
+                    result = json.loads(json_str_fixed)
+                except:
+                    # 如果仍然失败，抛出原始错误
+                    raise je
             placements = result.get("placements", [])
             
             # 构建最终 Markdown（插入图片）
@@ -297,7 +335,8 @@ def match_images_tool(
                     # Log image object for debugging
                     _LOGGER.info(f"Image {img_idx} raw object: {img}")
                     
-                    img_url = img.get("path_or_url") or img.get("url") or ""
+                    # 优先检查 'src' (PDF assets) 和 'content' (URL images), 然后才是 'url'/'path_or_url'
+                    img_url = img.get("src") or img.get("content") or img.get("path_or_url") or img.get("url") or ""
                     alt = img.get("alt", "")
                     
                     # 将 Wikipedia 缩略图 URL 转换为原图 URL
@@ -307,6 +346,14 @@ def match_images_tool(
                         img_url = re.sub(r'/\d+px-[^/]+$', '', img_url)
                         _LOGGER.info(f"Image {img_idx}: Converted to full-size URL: {img_url}")
                     
+                    # 强制转换为相对路径 (Fix for host/web viewing)
+                    # 将 /data/workspace/artifacts/.../corpus/... 转换为 ../corpus/...
+                    if "/corpus/" in img_url and img_url.startswith("/"):
+                        import re
+                        new_url = re.sub(r'^.*/corpus/', '../corpus/', img_url)
+                        _LOGGER.info(f"Image {img_idx}: Converted absolute path '{img_url}' to relative '{new_url}'")
+                        img_url = new_url
+                    
                     caption = p.get("caption", "") or alt
                     after_heading = p.get("after_heading", "")
                     insert_after_text = p.get("insert_after_text", "").strip()
@@ -314,7 +361,7 @@ def match_images_tool(
                     if not img_url:
                         _LOGGER.warning(f"Image {img_idx} has EMPTY URL! Skipping insertion or inserting placeholder. Source: {img}")
                     else:
-                        _LOGGER.info(f"Preparing to insert Image {img_idx}: url='{img_url}'")
+                        _LOGGER.info(f"Preparing to insert Image {img_idx}: url='{img_url}' under heading '{after_heading}'")
 
                     # 使用 HTML figure 格式，确保居中、合适尺寸和带说明文字
                     img_md = f'''
@@ -328,13 +375,18 @@ def match_images_tool(
                     # 1. 找到 Heading 行
                     heading_line_idx = -1
                     for i, line in enumerate(lines):
-                        if line.strip() == after_heading or line.strip().endswith(after_heading.lstrip('#').strip()):
+                        # 宽松匹配：精确相等 OR以此结尾 OR 以此开头 (处理 LLM 只返回 "## 标题" 而忽略冒号后内容的情况)
+                        clean_line = line.strip()
+                        clean_target = after_heading.lstrip('#').strip()
+                        if clean_line == after_heading or clean_line.endswith(clean_target) or (clean_target and clean_line.startswith(after_heading)):
                             heading_line_idx = i
                             break
                     
                     if heading_line_idx == -1:
-                        _LOGGER.warning(f"Heading not found: {after_heading}, skipping image {img_idx}")
+                        _LOGGER.warning(f"Heading NOT found: '{after_heading}', skipping image {img_idx}. Available headings: {[l for l in lines if l.strip().startswith('#')][:5]}...")
                         continue
+                    else:
+                        _LOGGER.info(f"Heading found at line {heading_line_idx}: '{lines[heading_line_idx]}'")
                         
                     # 2. 在 Heading 后查找插入点
                     insert_line_idx = heading_line_idx + 1 # 默认插在标题后
@@ -537,6 +589,7 @@ def generate_illustration_plan_tool(article_id: str = "") -> Dict[str, Any]:
                 "doc_id": img.get("doc_id", ""),
                 "element_id": img.get("element_id", ""),
             },
+            "src": img.get("src", ""), # Ensure src is passed to plan
             "caption": img.get("content", "")[:100] or f"图{idx + 1}",
             "insert_after_anchor": f"## {insert_after}" if insert_after else "",
             "layout": {"width": "70%", "align": "center"}

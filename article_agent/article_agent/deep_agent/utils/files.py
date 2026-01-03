@@ -642,6 +642,51 @@ def _fetch_html_with_playwright(url: str, timeout_sec: int) -> str:
         return ""
 
 
+
+def extract_images_from_pdf_bytes(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """从 PDF 字节流中以高保真度提取图片。
+    
+    Returns:
+        List of dicts: [{"src": "data:image/png;base64,...", "alt": "...", "page": 1, "ext": "png"}]
+    """
+    images = []
+    try:
+        import pymupdf  # fitz
+        import base64
+        
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+            for page_num, page in enumerate(doc):
+                # get_images returns (xref, smask, width, height, bpc, colorspace, alt. colorspace, name, filter, referencer)
+                for img_index, img in enumerate(page.get_images(full=True)):
+                    try:
+                        xref = img[0]
+                        base_image = doc.extract_image(xref)
+                        if base_image:
+                            image_ext = base_image.get("ext", "png")
+                            image_data = base_image.get("image")
+                            if image_data:
+                                # 转换为 base64 data URI (用于前端展示或 Ingest 处理)
+                                b64_data = base64.b64encode(image_data).decode('utf-8')
+                                images.append({
+                                    "src": f"data:image/{image_ext};base64,{b64_data}",
+                                    "data": image_data, # Raw bytes
+                                    "ext": image_ext,
+                                    "alt": f"PDF Page {page_num+1} Image {img_index+1}",
+                                    "page": page_num + 1,
+                                    "element_id": f"img_p{page_num+1}_{img_index+1}"
+                                })
+                    except Exception as e:
+                        _LOGGER.warning(f"Failed to extract image {img_index} from page {page_num}: {e}")
+        
+        _LOGGER.info(f"Extracted {len(images)} images from PDF bytes")
+        return images
+    except ImportError:
+        _LOGGER.warning("pymupdf not installed, cannot extract images")
+        return []
+    except Exception as e:
+        _LOGGER.warning(f"extract_images_from_pdf_bytes failed: {e}")
+        return []
+
 # 日志记录器
 import logging
 _LOGGER = logging.getLogger("article_agent.tools_files")

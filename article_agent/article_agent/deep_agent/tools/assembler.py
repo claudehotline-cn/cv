@@ -115,10 +115,17 @@ def assemble_article_tool(
                 # 找到锚点位置
                 for i, line in enumerate(lines):
                     if anchor in line or line.strip() == anchor:
-                        # 构建图片 HTML（使用占位符，因为没有实际图片 URL）
+                        # 构建图片 HTML
+                        src = fig.get("src", "")
+                        # 尝试将绝对路径转换为相对路径 (如果可能)
+                        # 这里简单处理，如果 src 是绝对路径且存在，保持原样；如果是相对路径，假设在 assets
+                        
+                        img_tag = f'<img src="{src}" alt="{caption}" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">' if src else f"<!-- Missing image src for {figure_id} -->"
+                        
                         fig_html = f'''
 <figure style="text-align: center; margin: 20px 0;">
-  <figcaption style="color: #666; font-size: 0.9em;">[{figure_id}] {caption}</figcaption>
+  {img_tag}
+  <figcaption style="color: #666; font-size: 0.9em; margin-top: 8px;"><strong>{figure_id}</strong> {caption}</figcaption>
 </figure>
 '''
                         insertion_ops.append((i + 1, fig_html))

@@ -129,7 +129,22 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
         # 提取 JSON
         json_match = re.search(r'\{[\s\S]*\}', content)
         if json_match:
-            result = json.loads(json_match.group())
+            json_str = json_match.group()
+            # 修复常见的 JSON 转义错误 (如 LaTeX 公式中的反斜杠)
+            # 将所有未跟随合法转义字符的反斜杠双写
+            json_str = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', json_str)
+            
+            try:
+                result = json.loads(json_str)
+            except json.JSONDecodeError as je:
+                _LOGGER.warning(f"JSON parse error: {je}. Trying to recover...")
+                # 尝试更激进的修复：移除所有反斜杠 (除了转义引号的)
+                json_str_fixed = re.sub(r'\\(?!")', '', json_str)
+                try:
+                    result = json.loads(json_str_fixed)
+                except:
+                    # 如果仍然失败，抛出原始错误
+                    raise je
             # 确保 approved 字段
             if "approved" not in result:
                 result["approved"] = result.get("overall_quality", 0) >= 7

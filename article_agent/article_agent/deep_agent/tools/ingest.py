@@ -18,7 +18,7 @@ _DOCLING_CONVERTER = None
 _DOCLING_AVAILABLE = None
 
 def get_docling_converter():
-    """Lazy-load docling converter to avoid startup failures."""
+    """Lazy-load docling converter with picture extraction enabled."""
     global _DOCLING_CONVERTER, _DOCLING_AVAILABLE
     
     if _DOCLING_AVAILABLE is None:
@@ -37,9 +37,22 @@ def get_docling_converter():
         # Ensure HF mirror is set before Docling loads models
         if not os.environ.get("HF_ENDPOINT"):
             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-        from docling.document_converter import DocumentConverter
-        _LOGGER.info(f"Initializing Docling converter (HF_ENDPOINT={os.environ.get('HF_ENDPOINT')})...")
-        _DOCLING_CONVERTER = DocumentConverter()
+        
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.datamodel.base_models import InputFormat
+        
+        # Configure pipeline to extract pictures
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.generate_picture_images = True  # Enable image extraction
+        pipeline_options.images_scale = 2.0  # Higher quality images
+        
+        _LOGGER.info(f"Initializing Docling converter with picture extraction (HF_ENDPOINT={os.environ.get('HF_ENDPOINT')})...")
+        _DOCLING_CONVERTER = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
     return _DOCLING_CONVERTER
 
 def load_bytes_from_minio(path: str) -> bytes:
@@ -100,7 +113,7 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
     Parse PDF bytes using Docling (memory stream).
     
     Returns:
-        Dict with 'markdown', 'elements' (list of tables/images/formulas), 'headings', 'pages'
+        Dict with 'markdown', 'elements' (list of tables/images/formulas), 'headings', 'pages', 'pictures'
     """
     import os
     # Ensure HF mirror is available for any model downloads during parsing
@@ -128,44 +141,96 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
         # 提取 elements (表格/图片/公式)
         elements = []
         headings = []
+        pictures = []  # 新增：存储提取的图片数据
         
-        # Docling document structure varies by version
-        # Try to extract structured elements if available
+        # ========== 提取图片 (纯 Docling 方式) ==========
         try:
-            # Iterate document items if available
-            if hasattr(doc, 'items') or hasattr(doc, 'body'):
-                items = getattr(doc, 'items', None) or getattr(doc, 'body', [])
-                for idx, item in enumerate(items if items else []):
-                    item_type = getattr(item, 'type', None) or type(item).__name__
-                    
-                    # Tables
-                    if 'table' in str(item_type).lower():
-                        elements.append({
-                            "element_id": f"tbl_{idx}",
-                            "type": "table",
-                            "content": str(item)[:500],  # Preview
-                            "index": idx
-                        })
-                    # Images
-                    elif 'image' in str(item_type).lower() or 'figure' in str(item_type).lower():
-                        elements.append({
-                            "element_id": f"img_{idx}",
-                            "type": "image",
-                            "content": getattr(item, 'caption', '') or '',
-                            "index": idx
-                        })
-                    # Headings
-                    elif 'heading' in str(item_type).lower() or 'title' in str(item_type).lower():
+            if hasattr(doc, 'pictures') and doc.pictures:
+                _LOGGER.info(f"Docling found {len(doc.pictures)} pictures")
+                # Docling v2.66: doc.pictures is a LIST, PictureItem uses get_image() method
+                for pic_idx, pic_item in enumerate(doc.pictures):
+                    try:
+                        # 使用 get_image() 方法获取 PIL Image - 需要传入 doc 参数
+                        pil_image = None
+                        if hasattr(pic_item, 'get_image'):
+                            try:
+                                pil_image = pic_item.get_image(doc)
+                            except Exception as img_err:
+                                _LOGGER.debug(f"get_image() failed for pic {pic_idx}: {img_err}")
+                        
+                        if pil_image:
+                            # 转换为 bytes
+                            from PIL import Image
+                            import io
+                            img_buffer = io.BytesIO()
+                            img_format = getattr(pil_image, 'format', None) or "PNG"
+                            pil_image.save(img_buffer, format=img_format)
+                            img_bytes = img_buffer.getvalue()
+                            
+                            # 获取页码 (如果有)
+                            page_no = 0
+                            if hasattr(pic_item, 'prov') and pic_item.prov:
+                                prov_list = pic_item.prov if isinstance(pic_item.prov, list) else [pic_item.prov]
+                                for prov in prov_list:
+                                    if hasattr(prov, 'page_no'):
+                                        page_no = prov.page_no
+                                        break
+                            
+                            # 获取 caption
+                            caption = ""
+                            if hasattr(pic_item, 'caption_text'):
+                                try:
+                                    caption = pic_item.caption_text(doc) or ""
+                                except:
+                                    pass
+                            
+                            pictures.append({
+                                "element_id": f"pic_{pic_idx}",
+                                "data": img_bytes,
+                                "ext": img_format.lower(),
+                                "alt": caption or f"Picture {pic_idx+1}",
+                                "page": page_no,
+                                "width": pil_image.width,
+                                "height": pil_image.height
+                            })
+                            
+                            # 同时添加到 elements 用于 elements.jsonl
+                            elements.append({
+                                "element_id": f"pic_{pic_idx}",
+                                "type": "image",
+                                "content": caption,
+                                "index": len(elements),
+                                "page": page_no
+                            })
+                        else:
+                            _LOGGER.debug(f"No image data for picture {pic_idx}")
+                    except Exception as pic_err:
+                        _LOGGER.warning(f"Failed to extract picture {pic_idx}: {pic_err}")
+                        
+            _LOGGER.info(f"Extracted {len(pictures)} pictures from Docling")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to extract pictures from Docling doc: {e}")
+        
+        # ========== 提取表格/标题/公式 ==========
+        try:
+            # 从 tables - 可能也是 list
+            if hasattr(doc, 'tables') and doc.tables:
+                tables_iter = enumerate(doc.tables) if isinstance(doc.tables, list) else doc.tables.items()
+                for tbl_id, tbl_item in (tables_iter if not isinstance(doc.tables, list) else [(i, t) for i, t in enumerate(doc.tables)]):
+                    elements.append({
+                        "element_id": f"tbl_{tbl_id}",
+                        "type": "table",
+                        "content": str(tbl_item)[:500],
+                        "index": len(elements)
+                    })
+            
+            # 从 body 提取标题
+            if hasattr(doc, 'body') and doc.body:
+                for idx, item in enumerate(doc.body):
+                    item_type = getattr(item, 'label', None) or type(item).__name__
+                    if 'heading' in str(item_type).lower() or 'title' in str(item_type).lower():
                         heading_text = getattr(item, 'text', '') or str(item)[:100]
                         headings.append(heading_text)
-                    # Formulas/equations
-                    elif 'formula' in str(item_type).lower() or 'equation' in str(item_type).lower():
-                        elements.append({
-                            "element_id": f"eq_{idx}",
-                            "type": "formula",
-                            "content": str(item)[:200],
-                            "index": idx
-                        })
         except Exception as e:
             _LOGGER.warning(f"Failed to extract elements from Docling doc: {e}")
         
@@ -177,12 +242,10 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
         # 提取页数
         pages = 0
         try:
-            if hasattr(result, 'pages'):
-                pages = len(result.pages)
-            elif hasattr(doc, 'pages'):
+            if hasattr(doc, 'pages') and doc.pages:
                 pages = len(doc.pages)
-            elif hasattr(result, 'metadata') and result.metadata:
-                pages = result.metadata.get('page_count', 0)
+            elif hasattr(result, 'pages'):
+                pages = len(result.pages)
         except:
             pass
         
@@ -199,7 +262,8 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
             "markdown": md_text,
             "elements": elements,
             "headings": headings,
-            "pages": pages
+            "pages": pages,
+            "pictures": pictures  # 新增：返回图片数据
         }
 
     except Exception as e:
@@ -247,6 +311,7 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     elements = []
     headings = []
     source_meta = {}
+    extracted_images = []  # List of dicts: {data (bytes), ext, alt, page/index, element_id, src (if URL)}
     
     try:
         if source_type == "minio":
@@ -262,17 +327,35 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
             try:
                 parse_result = await asyncio.to_thread(parse_pdf_bytes_docling, pdf_bytes, source_path.split("/")[-1])
                 full_text = parse_result.get("markdown", "")
-                elements = parse_result.get("elements", [])
+                # Docling extracted elements (tables, images, etc.)
+                docling_elements = parse_result.get("elements", [])
                 headings = parse_result.get("headings", [])
                 pages = parse_result.get("pages", 0)
+                
+                # 使用 Docling 提取的图片 (纯 Docling 方式)
+                docling_pictures = parse_result.get("pictures", [])
+                if docling_pictures:
+                    extracted_images.extend(docling_pictures)
+                    _LOGGER.info(f"Collected {len(docling_pictures)} images from Docling")
+                
+                # 合并所有 elements
+                elements.extend(docling_elements)
+                        
             except Exception as e:
                 _LOGGER.warning(f"Docling failed for {source_path}, falling back to PyMuPDF: {e}")
-                # Fallback: PyMuPDF
+                # Fallback: PyMuPDF for text
                 import fitz
                 import pymupdf4llm
                 with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
                     full_text = pymupdf4llm.to_markdown(doc)
                     pages = len(doc)
+                
+                # Fallback: PyMuPDF for images (only when Docling fails)
+                from ..utils.files import extract_images_from_pdf_bytes
+                pdf_images = await asyncio.to_thread(extract_images_from_pdf_bytes, pdf_bytes)
+                if pdf_images:
+                    extracted_images.extend(pdf_images)
+                    _LOGGER.info(f"Collected {len(pdf_images)} images from PyMuPDF fallback")
             
             source_meta = {
                 "type": "minio",
@@ -298,6 +381,28 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
             # Extract headings from markdown for URLs
             import re
             headings = re.findall(r'^#{1,3}\s+(.+)$', full_text, re.MULTILINE)[:10]
+            
+            # Process URL images
+            url_images = content.get("images", [])
+            _LOGGER.info(f"URL fetch returned {len(url_images)} images from {source_path}")
+            
+            for i, img in enumerate(url_images):
+                img_src = img.get("src")
+                if img_src:
+                   # Store image info (we don't download URL images to disk yet to save time, unless needed)
+                   # But for consistency, let's treat them as elements. 
+                   # Since Illustrator works with local files or accessible URLs, we keep URL.
+                   extracted_images.append({
+                       "src": img_src,
+                       "alt": img.get("alt") or img.get("caption") or "",
+                       "ext": img_src.split(".")[-1] if "." in img_src else "jpg",
+                       "element_id": f"img_url_{i}",
+                       "caption": img.get("context", "")
+                   })
+            
+            if extracted_images:
+                _LOGGER.info(f"Collected {len(extracted_images)} URL images")
+            
             source_meta = {
                 "type": "url",
                 "url": source_path
@@ -312,38 +417,83 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     # 4. 创建目录 (doc_id 现在已生成) - 使用 artifacts.py 的异步函数
     from ..utils.artifacts import ensure_corpus_dir
     corpus_dir, parsed_dir = await ensure_corpus_dir(article_id, doc_id)
+    assets_dir = os.path.join(corpus_dir, "assets")
+    await asyncio.to_thread(os.makedirs, assets_dir, exist_ok=True)
+
+    # 4.1 Save Images to Assets (async file writes)
+    async def save_image(img_data: dict, save_path: str):
+        def _write():
+            with open(save_path, "wb") as f:
+                f.write(img_data["data"])
+        await asyncio.to_thread(_write)
+    
+    for img in extracted_images:
+        # For PDF images (which have 'data' bytes)
+        if "data" in img:
+            img_filename = f"{img['element_id']}.{img.get('ext', 'png')}"
+            img_path = os.path.join(assets_dir, img_filename)
+            await save_image(img, img_path)
+            
+            # Update element with local path
+            elements.append({
+                "element_id": img["element_id"],
+                "type": "image",
+                "content": img.get("alt", ""),
+                "src": img_path, # Local absolute path
+                "index": img.get("page", 0)
+            })
+        
+        # For URL images (already have URL src)
+        elif "src" in img:
+             elements.append({
+                "element_id": img["element_id"],
+                "type": "image",
+                "content": img.get("caption", "") or img.get("alt", ""),
+                "src": img["src"], # Remote URL
+                "index": 0
+            })
 
     # 5. Chunking
     chunks = chunk_text(full_text)
     
-    # 5. Persist
+    # 5. Persist (使用异步文件写入避免 BlockingError)
+    
+    def _write_text_file(path: str, content: str):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    
+    def _write_json_file(path: str, data: dict):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    
+    def _write_jsonl_file(path: str, items: list):
+        with open(path, "w", encoding="utf-8") as f:
+            for item in items:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
     
     # 5.1 full.md
     full_md_path = os.path.join(parsed_dir, "full.md")
-    with open(full_md_path, "w", encoding="utf-8") as f:
-        f.write(full_text)
+    await asyncio.to_thread(_write_text_file, full_md_path, full_text)
     
     # 5.2 elements.jsonl (新增)
     elements_jsonl_path = os.path.join(parsed_dir, "elements.jsonl")
-    with open(elements_jsonl_path, "w", encoding="utf-8") as f:
-        for elem in elements:
-            f.write(json.dumps(elem, ensure_ascii=False) + "\n")
-    _LOGGER.info(f"Saved {len(elements)} elements to {elements_jsonl_path}")
+    await asyncio.to_thread(_write_jsonl_file, elements_jsonl_path, elements)
+    _LOGGER.info(f"Saved {len(elements)} elements to {elements_jsonl_path} (including {len(extracted_images)} images)")
         
     # 5.3 chunks.jsonl
     chunks_jsonl_path = os.path.join(corpus_dir, "chunks.jsonl")
-    with open(chunks_jsonl_path, "w", encoding="utf-8") as f:
-        for idx, chunk in enumerate(chunks):
-            chunk_data = {
-                "chunk_id": f"{doc_id}_c{idx}",
-                "content": chunk,
-                "metadata": {
-                    "source": source_path,
-                    "doc_id": doc_id,
-                    "chunk_index": idx
-                }
+    chunk_items = []
+    for idx, chunk in enumerate(chunks):
+        chunk_items.append({
+            "chunk_id": f"{doc_id}_c{idx}",
+            "content": chunk,
+            "metadata": {
+                "source": source_path,
+                "doc_id": doc_id,
+                "chunk_index": idx
             }
-            f.write(json.dumps(chunk_data, ensure_ascii=False) + "\n")
+        })
+    await asyncio.to_thread(_write_jsonl_file, chunks_jsonl_path, chunk_items)
             
     # 5.4 Manifest (更新：包含 elements 和 headings)
     manifest = {
@@ -368,8 +518,7 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     }
     
     manifest_path = os.path.join(corpus_dir, "manifest.json")
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    await asyncio.to_thread(_write_json_file, manifest_path, manifest)
     
     # 5.5 Ingest Report (新增 - 采集报告)
     import datetime
@@ -388,8 +537,7 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     }
     
     ingest_report_path = os.path.join(corpus_dir, "ingest_report.json")
-    with open(ingest_report_path, "w", encoding="utf-8") as f:
-        json.dump(ingest_report, f, ensure_ascii=False, indent=2)
+    await asyncio.to_thread(_write_json_file, ingest_report_path, ingest_report)
     
     _LOGGER.info(f"Manifest saved: {manifest_path}, {len(chunks)} chunks, {len(elements)} elements")
     _LOGGER.info(f"Ingest report saved: {ingest_report_path}")

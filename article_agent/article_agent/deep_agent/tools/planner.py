@@ -442,6 +442,8 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
                 _LOGGER.info(f"[DEBUG] generate_outline_tool: save_article_id = '{save_article_id}'")
                 
                 if save_article_id:
+                    # 添加 article_id 到大纲（符合架构设计规范）
+                    result["article_id"] = save_article_id
                     outline_file = save_article_artifact(save_article_id, "outline.json", result)
                     _LOGGER.info(f"Outline saved to: {outline_file}")
                 else:

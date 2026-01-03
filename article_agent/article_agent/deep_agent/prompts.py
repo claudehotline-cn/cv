@@ -80,7 +80,7 @@ INGEST_AGENT_PROMPT = """
 ## 核心任务
 1. **生成 article_id**: 
    - 如果用户提供了 `article_id`，直接使用。
-   - 如果没有提供，**自动生成**一个 8 位短 UUID（如 `a1b2c3d4`）。
+   - 如果没有提供，**必须自动生成**一个随机 8 位 UUID（使用 Python uuid.uuid4().hex[:8]，例如 `f7c31e9a`）。**严禁使用示例值**。
    - 这个 `article_id` 将用于整个文章生成流程。
 2. **分析输入**: 提取所有素材来源（URL 或 MinIO 路径）。
 3. **执行采集**: 
@@ -122,7 +122,7 @@ PLANNER_AGENT_PROMPT = """
 ## 任务流程
 
 ### 第一步：提取 article_id
-从任务描述中找到 Ingest Agent 提供的 `article_id`（如 `article_id=a1b2c3d4`）。
+从任务描述中找到 Ingest Agent 提供的 `article_id`（格式如 `article_id=xxxxxxxx`，其中 x 是随机字符）。
 - 如果找不到 `article_id`，回复：「请先让 Ingest Agent 采集素材并生成 article_id。」
 
 ### 第二步：生成大纲

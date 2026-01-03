@@ -21,6 +21,8 @@ PLANNER_OUTLINE_SYSTEM_PROMPT = """
    - id：唯一字符串，如 "sec_1", "sec_2"
    - title：章节标题
    - keywords：关键词列表
+   - goals：该章节的写作目标（1-3条）
+   - key_questions：该章节需要回答的关键问题（1-3条）
    - target_chars：该章节的目标字数
    - is_core：是否为核心章节
 
@@ -35,8 +37,8 @@ PLANNER_OUTLINE_SYSTEM_PROMPT = """
 {{
   "title": "文章标题",
   "sections": [
-    {{"id": "sec_1", "title": "引言", "keywords": ["关键词1"], "target_chars": 400, "is_core": false}},
-    {{"id": "sec_2", "title": "核心内容", "keywords": ["关键词2"], "target_chars": 800, "is_core": true}}
+    {{"id": "sec_1", "title": "引言", "keywords": ["关键词1"], "goals": ["介绍主题背景"], "key_questions": ["本文要解决什么问题？"], "target_chars": 400, "is_core": false}},
+    {{"id": "sec_2", "title": "核心内容", "keywords": ["关键词2"], "goals": ["详细阐述核心概念"], "key_questions": ["核心技术如何运作？"], "target_chars": 800, "is_core": true}}
   ],
   "estimated_total_chars": {target_word_count}
 }}
