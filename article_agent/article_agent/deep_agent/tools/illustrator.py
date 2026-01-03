@@ -308,21 +308,20 @@ def match_images_tool(
     images_by_id = {d["element_id"]: d for d in images_with_desc}
     available_images_by_id = {img.get("element_id", f"img_{i}"): img for i, img in enumerate(deduplicated_images)}
     
-    # 3. 提取文章标题
-    headings = re.findall(r'^(#{1,3}\s+.+)$', full_content, re.MULTILINE)
-    if not headings:
-        headings = ["无标题"]
+    # 3. 为文章内容添加行号标记
+    lines = full_content.split('\n')
+    numbered_lines = [f"[L{i+1}] {line}" for i, line in enumerate(lines)]
+    numbered_content = '\n'.join(numbered_lines)
     
     system_prompt = ILLUSTRATOR_MATCH_SYSTEM_PROMPT.format(
-        images_info=images_info,
-        headings_preview=chr(10).join(headings[:10])
+        images_info=images_info
     )
 
-    user_prompt = ILLUSTRATOR_MATCH_USER_PROMPT.format(content_preview=full_content[:5000])
+    user_prompt = ILLUSTRATOR_MATCH_USER_PROMPT.format(content_preview=numbered_content[:30000])
 
     try:
         # Illustrator 需要更大的上下文窗口来处理图片描述 + 文章内容
-        llm = build_chat_llm(task_name="illustrator", num_ctx_override=16384)
+        llm = build_chat_llm(task_name="illustrator", num_ctx_override=32768)
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
@@ -350,6 +349,8 @@ def match_images_tool(
                     # 如果仍然失败，抛出原始错误
                     raise je
             placements = result.get("placements", [])
+            _LOGGER.info(f"LLM Raw Placements: {json.dumps(placements, ensure_ascii=False)}")
+            _LOGGER.info(f"Available Image IDs: {list(available_images_by_id.keys())}")
             
             # 构建最终 Markdown（插入图片）
             lines = full_content.split('\n')
@@ -413,13 +414,17 @@ def match_images_tool(
                     img_url = new_url
                 
                 caption = p.get("caption", "") or alt
-                after_heading = p.get("after_heading", "")
-                insert_after_text = p.get("insert_after_text", "").strip()
+                insert_after_line = p.get("insert_after_line")
                 
                 if not img_url:
-                    _LOGGER.warning(f"Image [{img_id}] has EMPTY URL! Skipping insertion or inserting placeholder. Source: {img}")
-                else:
-                    _LOGGER.info(f"Preparing to insert Image [{img_id}]: url='{img_url}' under heading '{after_heading}'")
+                    _LOGGER.warning(f"Image [{img_id}] has EMPTY URL! Skipping insertion. Source: {img}")
+                    continue
+
+                if insert_after_line is None:
+                     _LOGGER.warning(f"Image [{img_id}] missing insert_after_line. Skipping.")
+                     continue
+                    
+                _LOGGER.info(f"Preparing to insert Image [{img_id}]: url='{img_url}' after line {insert_after_line}")
 
                 # 使用 HTML figure 格式，确保居中、合适尺寸和带说明文字
                 img_md = f'''
@@ -430,86 +435,15 @@ def match_images_tool(
 </figure>
 '''
                 
-                # 1. 找到 Heading 行
-                heading_line_idx = -1
-                for i, line in enumerate(lines):
-                    # 宽松匹配：精确相等 OR以此结尾 OR 以此开头 (处理 LLM 只返回 "## 标题" 而忽略冒号后内容的情况)
-                    clean_line = line.strip()
-                    clean_target = after_heading.lstrip('#').strip()
-                    if clean_line == after_heading or clean_line.endswith(clean_target) or (clean_target and clean_line.startswith(after_heading)):
-                        heading_line_idx = i
-                        break
-                
-                if heading_line_idx == -1:
-                    _LOGGER.warning(f"Heading NOT found: '{after_heading}', skipping image [{img_id}]. Available headings: {[l for l in lines if l.strip().startswith('#')][:5]}...")
-                    continue
+                # 直接按行号插入
+                # LLM 返回的行号是 1-based (例如 [L15])
+                # 插入位置索引 = 行号 (因为是在该行之后插入)
+                if isinstance(insert_after_line, int) and 0 < insert_after_line <= len(lines):
+                     insertion_idx = insert_after_line
+                     insertion_ops.append((insertion_idx, img_md))
+                     _LOGGER.info(f"Image [{img_id}]: Placed successfully after line {insert_after_line}")
                 else:
-                    _LOGGER.info(f"Heading found at line {heading_line_idx}: '{lines[heading_line_idx]}'")
-                    
-                # 2. 在 Heading 后查找插入点
-                insert_line_idx = heading_line_idx + 1 # 默认插在标题后
-                
-                # 确定查找范围：直到下一个标题
-                search_end_idx = len(lines)
-                for i in range(heading_line_idx + 1, len(lines)):
-                    if lines[i].strip().startswith("#"):
-                        search_end_idx = i
-                        break
-                
-                # 如果有具体文本锚点，尝试定位
-                if insert_after_text:
-                    import difflib
-                    
-                    found_anchor = False
-                    best_score = 0.0
-                    best_idx = -1
-                    
-                    # 归一化文本（移除空格和标点）
-                    def normalize(s):
-                        return "".join(c.lower() for c in s if c.isalnum())
-                    
-                    norm_target = normalize(insert_after_text)
-                    
-                    # 第一轮：尝试精确子串匹配（忽略大小写和标点）
-                    if len(norm_target) > 5:
-                        for i in range(heading_line_idx + 1, search_end_idx):
-                            line_norm = normalize(lines[i])
-                            # 如果锚点文本足够具体，且能在行中找到
-                            if norm_target in line_norm:
-                                insert_line_idx = i + 1
-                                found_anchor = True
-                                _LOGGER.info(f"Image [{img_id}]: Text match (Normalized substring) found at line {i+1}")
-                                break
-                    
-                    # 第二轮：如果没找到，尝试模糊相似度匹配 (Levenshtein)
-                    if not found_anchor and len(norm_target) > 10:
-                        for i in range(heading_line_idx + 1, search_end_idx):
-                            line_norm = normalize(lines[i])
-                            if len(line_norm) < 5: continue
-                            
-                            # 计算相似度 ratio
-                            matcher = difflib.SequenceMatcher(None, norm_target, line_norm)
-                            ratio = matcher.ratio()
-                            # 或者检查包含关系的相似度
-                            if len(line_norm) > len(norm_target):
-                                    # 如果行比目标长，检查是否包含目标（即寻找最佳子序列匹配）
-                                    # 这里简化为直接比较 ratio，或者用 RealQuickRatio
-                                    pass
-                            
-                            if ratio > best_score:
-                                best_score = ratio
-                                best_idx = i
-                        
-                        # 阈值判定 (0.7 比较宽松，因为 LLM 经常改写)
-                        if best_score > 0.4: 
-                            insert_line_idx = best_idx + 1
-                            found_anchor = True
-                            _LOGGER.info(f"Image [{img_id}]: Fuzzy match found at line {best_idx+1} (score={best_score:.2f})")
-                    
-                    if not found_anchor:
-                        _LOGGER.info(f"Image [{img_id}]: Anchor text '{insert_after_text[:20]}...' not found (best score {best_score:.2f}) under {after_heading}, placing after heading")
-                    
-                    insertion_ops.append((insert_line_idx, img_md))
+                     _LOGGER.warning(f"Image [{img_id}]: Invalid insert_after_line {insert_after_line}. Total lines: {len(lines)}")
 
             # 执行插入 (倒序)
             insertion_ops.sort(key=lambda x: x[0], reverse=True)
@@ -529,8 +463,6 @@ def match_images_tool(
                 for p in placements if p.get("image_index", 0) < len(available_images)
             ]
             
-            # 保存到文件
-            final_path = ""
             # 保存到文件
             final_path = ""
             try:
