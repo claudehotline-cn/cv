@@ -430,6 +430,16 @@ services:
       - LANGGRAPH_RELOAD=false
       # 解决 BlockingError: Blocking call to os.mkdir
       - BG_JOB_ISOLATED_LOOPS=true
+    command:
+      - "langgraph"
+      - "dev"
+      - "--config"
+      - "article_agent/langgraph.json"
+      - "--allow-blocking"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8130"
     depends_on:
       agent-langchain:
         condition: service_started
@@ -519,7 +529,7 @@ services:
     ports:
       - "18000:8000"
     volumes:
-      - ../../models:/data/models:ro
+      - ../../models:/data/models:rw
     environment:
       - VLLM_USE_MODELSCOPE=true
     ipc: host

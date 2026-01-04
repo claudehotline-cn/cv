@@ -59,10 +59,23 @@ def research_section_tool(
         required_evidence=evidence_str
     )
 
+    # Format Available Images
+    images_str = "无可用图片"
+    if available_images:
+        img_lines = []
+        for img in available_images:
+            # Prefer visual_description, fallback to content/alt
+            desc = img.get("visual_description") or img.get("content") or "无描述"
+            # Truncate description to avoid context bloat
+            desc_short = desc[:300] + "..." if len(desc) > 300 else desc
+            img_lines.append(f"- ID: {img.get('element_id')} | 描述: {desc_short}")
+        images_str = "\n".join(img_lines)
+
     user_prompt = RESEARCHER_SECTION_USER_PROMPT.format(
         sources_text_preview=sources_text[:80000], 
         section_title=section_title,
-        section_id=section_id
+        section_id=section_id,
+        available_images=images_str
     )
 
     try:
@@ -107,13 +120,17 @@ def research_section_tool(
                 "notes": raw_content  # 兼容旧格式
             }
         
-        # 匹配相关图片
-        relevant_images = []
-        if available_images:
-            for img in available_images[:5]:  # 最多 5 张
-                alt = img.get("alt", "")
+        # Use LLM's assigned_images from structured output (preferred)
+        assigned_images = structured_note.get("assigned_images", [])
+        
+        # Fallback: keyword matching if LLM didn't provide assigned_images
+        if not assigned_images and available_images:
+            for img in available_images[:5]:
+                alt = img.get("alt", "") or img.get("content", "")
                 if any(kw.lower() in alt.lower() for kw in keywords):
-                    relevant_images.append(img)
+                    assigned_images.append({"id": img.get("element_id"), "desc": alt[:100]})
+        
+        _LOGGER.info(f"Section {section_id} assigned {len(assigned_images)} images from LLM")
         
         # 合并结果
         result = {
@@ -121,10 +138,10 @@ def research_section_tool(
             "bullet_points": structured_note.get("bullet_points", []),
             "evidence": structured_note.get("evidence", []),
             "notes": structured_note.get("notes", ""),  # 兼容旧格式
-            "relevant_images": relevant_images,
+            "assigned_images": assigned_images,  # Use assigned_images from LLM
         }
         
-        _LOGGER.info(f"research_section_tool success: {len(result.get('evidence', []))} evidence, {len(relevant_images)} images")
+        _LOGGER.info(f"research_section_tool success: {len(result.get('evidence', []))} evidence, {len(assigned_images)} images")
         return result
         
     except Exception as exc:
@@ -210,6 +227,23 @@ def research_all_sections_tool(
                 _LOGGER.warning(f"Error reading chunks {cf}: {e}")
         all_text = "\n\n".join(chunks_text_list)
         _LOGGER.info(f"Loaded {len(chunks_text_list)} chunks from corpus.")
+        
+        # NEW: Load images from elements.jsonl (contains VLM descriptions)
+        elements_pattern = os.path.join(article_dir, "corpus", "*", "parsed", "elements.jsonl")
+        elements_files = glob.glob(elements_pattern)
+        for ef in elements_files:
+            try:
+                with open(ef, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip(): continue
+                        try:
+                            elem = json.loads(line)
+                            if elem.get("type") == "image":
+                                all_images.append(elem)
+                        except: pass
+            except Exception as e:
+                _LOGGER.warning(f"Error reading elements {ef}: {e}")
+        _LOGGER.info(f"Loaded {len(all_images)} images from elements.jsonl")
     else:
         # Fallback: strict legacy mode
         _LOGGER.info("No chunks.jsonl found, trying sources.json")
@@ -229,13 +263,11 @@ def research_all_sections_tool(
 
     section_notes = []
     
-    # Parallel processing
+    # Phase 1: Research all sections for content (without images first)
     sections = outline.get("sections", [])
-    max_workers = 1  # Standard sequential
     
-    _LOGGER.info(f"[Parallel] Starting Native LangChain batch research with max_concurrency={max_workers} for {len(sections)} sections")
+    _LOGGER.info(f"[Phase 1] Starting content research for {len(sections)} sections")
     
-    batch_inputs = []
     for idx, sec in enumerate(sections):
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
@@ -244,31 +276,59 @@ def research_all_sections_tool(
         plan_info = section_plan_map.get(section_id, {})
         required_evidence = plan_info.get("required_evidence", [])
         
-        batch_inputs.append({
-            "section_id": section_id,
-            "section_title": section_title,
-            "keywords": sec.get("keywords", []) or plan_info.get("keywords", []),
-            "sources_text": all_text,
-            "available_images": all_images,
-            "required_evidence": required_evidence,
-        })
+        try:
+            note = research_section_tool.invoke({
+                "section_id": section_id,
+                "section_title": section_title,
+                "keywords": sec.get("keywords", []) or plan_info.get("keywords", []),
+                "sources_text": all_text,
+                "available_images": [],  # No images in first pass - we'll assign later
+                "required_evidence": required_evidence,
+            })
+            section_notes.append(note)
+        except Exception as e:
+            _LOGGER.error(f"Research failed for {section_id}: {e}")
+            section_notes.append({
+                "section_id": section_id, 
+                "notes": f"资料整理失败: {e}", 
+                "bullet_points": [],
+                "evidence": [],
+                "assigned_images": []
+            })
+    
+    # Phase 2: Optimal image allocation across all sections
+    _LOGGER.info(f"[Phase 2] Starting optimal image allocation for {len(all_images)} images")
     
     try:
-        section_notes = research_section_tool.batch(
-            batch_inputs,
-            config=RunnableConfig(max_concurrency=max_workers)
+        from .image_allocator import allocate_images_for_article
+        
+        # Prepare sections with keywords for allocation
+        sections_for_allocation = []
+        for note, sec in zip(section_notes, sections):
+            sections_for_allocation.append({
+                "id": note.get("section_id"),
+                "title": sec.get("title") or sec.get("heading") or "",
+                "keywords": sec.get("keywords", []),
+            })
+        
+        # Run optimal allocation
+        allocation = allocate_images_for_article(
+            sections=sections_for_allocation,
+            images=all_images,
+            max_images_per_section=2,
+            max_uses_per_image=2
         )
-    except Exception as e:
-        _LOGGER.error(f"[Parallel] Batch research failed: {e}")
-        section_notes = []
-        for inp in batch_inputs:
-             section_notes.append({
-                 "section_id": inp["section_id"], 
-                 "notes": f"批量研究失败: {e}", 
-                 "relevant_images": []
-             })
+        
+        # Merge allocation results into section_notes
+        for note in section_notes:
+            sec_id = note.get("section_id")
+            note["assigned_images"] = allocation.get(sec_id, [])
+            _LOGGER.info(f"Section {sec_id} allocated {len(note['assigned_images'])} images")
+            
+    except Exception as alloc_err:
+        _LOGGER.error(f"Image allocation failed: {alloc_err}")
     
-    _LOGGER.info(f"[Parallel] All {len(section_notes)} sections researched")
+    _LOGGER.info(f"[Complete] All {len(section_notes)} sections researched with images allocated")
     
     full_output = {
         "article_id": article_id,

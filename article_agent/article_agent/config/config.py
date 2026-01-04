@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     )
     vllm_model: str = Field(
         default="/data/models/qwen3-vl-8b-instruct-awq",
-        description="vLLM 统一模型名称（8B VL AWQ，同时支持文本和视觉）。",
+        description="vLLM 统一模型名称（30B VL AWQ，同时支持文本和视觉）。",
         alias="ARTICLE_AGENT_VLLM_MODEL",
     )
     ollama_num_ctx: int = Field(
@@ -65,7 +65,7 @@ class Settings(BaseSettings):
         alias="ARTICLE_AGENT_VLM_ENABLED",
     )
     vlm_model: str = Field(
-        default="/data/models/qwen3-vl-8b-thinking-awq",
+        default="/data/models/qwen3-vl-8b-instruct-awq",
         description="VLM 模型名称（与 LLM 统一使用同一模型）。",
         alias="ARTICLE_AGENT_VLM_MODEL",
     )

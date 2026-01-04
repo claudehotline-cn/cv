@@ -65,6 +65,52 @@ def assemble_article_tool(
              
     final_markdown = merged_content
 
+    # ========== Image Placeholder Resolution (Image-First Workflow) ==========
+    # 查找并替换Writer生成的占位符 [[IMAGE: img_id]] 为实际 Markdown 图片链接
+    
+    # 1. Build Global Image Map from all manifests/elements
+    image_map = {}
+    try:
+        from ...config.config import get_settings
+        settings = get_settings()
+        corpus_dir = os.path.join(settings.artifacts_dir, f"article_{article_id}", "corpus")
+        if os.path.exists(corpus_dir):
+            for doc_name in os.listdir(corpus_dir):
+                doc_path = os.path.join(corpus_dir, doc_name)
+                # Try elements.jsonl (located in parsed/ subdirectory)
+                elements_path = os.path.join(doc_path, "parsed", "elements.jsonl")
+                if os.path.exists(elements_path):
+                    with open(elements_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            try:
+                                el = None
+                                import json
+                                el = json.loads(line)
+                                if el.get("type") == "image" and el.get("element_id"):
+                                    image_map[el["element_id"]] = el
+                            except:
+                                pass
+    except Exception as img_map_err:
+        _LOGGER.warning(f"Failed to build image map: {img_map_err}")
+
+    # 2. Replace placeholders
+    def replace_image_placeholder(match):
+        img_id = match.group(1).strip()
+        img_info = image_map.get(img_id)
+        if img_info:
+            src = img_info.get("src", "")
+            alt = img_info.get("visual_description") or img_info.get("content") or "Image"
+            # Cleaning alt text for markdown safe
+            alt = alt.replace("\n", " ").replace("]", "").replace("[", "")[:100]
+            if src:
+                return f"![{alt}]({src})"
+        return f"> [Image {img_id} Not Found]"
+    
+    # Pattern: [[IMAGE: img_123]]
+    final_markdown = re.sub(r'\[\[IMAGE:\s*([a-zA-Z0-9_]+)\]\]', replace_image_placeholder, final_markdown)
+    _LOGGER.info(f"Resolved image placeholders using map with {len(image_map)} images")
+
+
 
     
     # ========== 消费 citations_map.json ==========

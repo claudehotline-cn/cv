@@ -87,21 +87,28 @@ RESEARCHER_SECTION_SYSTEM_PROMPT = """
       "refs": [
         {{"doc_id": "doc_xxx", "chunk_id": "doc_xxx_c3", "page": 1, "quote": "原文片段（可选）"}}
       ]
-    }},
-    {{
-      "claim": "另一个事实...",
-      "refs": [{{"doc_id": "doc_xxx", "chunk_id": "doc_xxx_c7", "page": 2}}]
     }}
+  ],
+  "assigned_images": [
+      {{"id": "img_id_1", "desc": "Brief description"}}
   ]
 }}
 ```
 
-⚠️ **只输出 JSON，不要输出任何其他文字。**
+⚠️ **关键规则**：
+1. **只输出 JSON**，不要输出任何其他文字。
+2. **图片选择**：从提供的【可用图片列表】中，选择与**本章节主题高度相关**的图片：
+   - ✅ 选择能说明或补充章节内容的图片
+   - ❌ 不要选择与章节主题无关的装饰图、Logo 等
+   - 每个章节最多选择 2 张图片
 """
 
 RESEARCHER_SECTION_USER_PROMPT = """
 【素材内容】
 {sources_text_preview}
+
+【可用图片列表】
+{available_images}
 
 请为章节 "{section_title}" (ID: {section_id}) 整理结构化资料笔记，只输出 JSON：
 """
@@ -127,7 +134,12 @@ WRITER_SECTION_SYSTEM_PROMPT = """
 2. 使用 Markdown 格式，以 "## {section_title}" 开头
 3. 内容应流畅、有逻辑、信息丰富
 4. 适当使用列表、引用等格式
-5. 禁止使用占位符或待填充标记
+5. **图片插入**：如果收到【分配的图片】，**必须**在内容最相关的段落之间插入图片占位符。
+   - 格式：`[[IMAGE: 完整的图片ID]]`
+   - 例如列表中有 `ID: doc_abc123_img_0`，则写 `[[IMAGE: doc_abc123_img_0]]`
+   - ⚠️ **必须完整复制分配列表中的 ID**，包括所有前缀和下划线
+   - ❌ 禁止简化 ID（如写成 img_0、img_001 等）
+   - ❌ 禁止编造 ID，只使用分配列表中给出的 ID
 6. 确保内容基于资料笔记，不要编造数据
 7. **引用保留**：如果资料笔记中包含 (Ref: doc_x_c3) 引用，请在正文中保留为脚注形式 [^doc_x_c3]。
 
@@ -144,6 +156,9 @@ WRITER_SECTION_SYSTEM_PROMPT = """
 WRITER_SECTION_USER_PROMPT = """
 【资料笔记】
 {notes_preview}
+
+【分配的图片】
+{assigned_images}
 
 请撰写章节内容（目标 {target_chars} 字符）：
 """

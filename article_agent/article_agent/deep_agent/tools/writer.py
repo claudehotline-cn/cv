@@ -89,6 +89,7 @@ def write_section_tool(
     section_title: str,
     target_chars: int,
     notes: str,
+    assigned_images_str: str = "无",
     is_core: bool = False,
     review_feedback: str = "",
 ) -> Dict[str, Any]:
@@ -123,7 +124,11 @@ def write_section_tool(
         min_chars=min_chars
     )
 
-    user_prompt = WRITER_SECTION_USER_PROMPT.format(notes_preview=notes[:6000], target_chars=target_chars)
+    user_prompt = WRITER_SECTION_USER_PROMPT.format(
+        notes_preview=notes[:6000], 
+        target_chars=target_chars,
+        assigned_images=assigned_images_str # Add formatting
+    )
 
     try:
         with log_performance("write_section", section_id=section_id, target_chars=target_chars):
@@ -248,8 +253,8 @@ def write_all_sections_tool(
     # 使用加载的笔记
     section_notes = loaded_notes
     
-    # 构建笔记映射
-    notes_map = {n.get("section_id", ""): n.get("notes", "") for n in section_notes}
+    # 构建笔记映射 (Store full object to access assigned_images)
+    notes_map = {n.get("section_id", ""): n for n in section_notes}
     _LOGGER.info(f"Built notes map with {len(notes_map)} entries. Keys: {list(notes_map.keys())[:5]}")
     
     drafts = []
@@ -268,7 +273,26 @@ def write_all_sections_tool(
     for idx, sec in enumerate(sections):
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
         section_title = sec.get("title") or sec.get("heading") or f"章节 {idx + 1}"
-        notes = notes_map.get(section_id, "")
+        
+        # Get note object
+        note_obj = notes_map.get(section_id, {})
+        notes_text = note_obj.get("notes", "") if isinstance(note_obj, dict) else ""
+        
+        # Format assigned images for this section
+        assigned_imgs = note_obj.get("assigned_images", []) if isinstance(note_obj, dict) else []
+        assigned_images_str = "无"
+        if assigned_imgs:
+            lines = []
+            for img in assigned_imgs:
+                # Handle both dict (new format) and str (legacy)
+                if isinstance(img, dict):
+                    img_id = img.get("id", "unknown")
+                    img_desc = img.get("desc", "无描述")
+                    lines.append(f"- ID: {img_id} | 描述: {img_desc}")
+                else:
+                    lines.append(f"- ID: {str(img)}") # Legacy fallback
+            assigned_images_str = "\n".join(lines)
+
         
         # 查找该章节的审阅反馈
         section_review = ""
@@ -285,7 +309,8 @@ def write_all_sections_tool(
             "section_id": section_id,
             "section_title": section_title,
             "target_chars": sec.get("target_chars", 500),
-            "notes": notes,
+            "notes": notes_text,
+            "assigned_images_str": assigned_images_str,
             "is_core": sec.get("is_core", False),
             "review_feedback": section_review,
         })

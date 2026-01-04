@@ -7,9 +7,108 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from minio import Minio
+import hashlib
+import base64
+from langchain_core.messages import HumanMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ...config.config import get_settings
+
+async def _describe_image_with_vlm(image_bytes: bytes, document_context: str = "") -> str:
+    """Use VLM to generate a detailed description of the image.
+    
+    Args:
+        image_bytes: Raw image bytes
+        document_context: Optional context about the document (title, headings, topic)
+                         to help VLM better understand the image
+    """
+    try:
+        # Validate and convert image format if needed
+        processed_bytes = image_bytes
+        mime_type = "image/jpeg"
+        
+        # Check if it's SVG (text-based format)
+        if image_bytes[:100].lower().find(b'<svg') >= 0 or image_bytes[:100].lower().find(b'<?xml') >= 0:
+            _LOGGER.info("Detected SVG format, converting to PNG...")
+            try:
+                import cairosvg
+                # Run cairosvg in a thread to avoid blocking the event loop
+                processed_bytes = await asyncio.to_thread(cairosvg.svg2png, bytestring=image_bytes)
+                mime_type = "image/png"
+                _LOGGER.info("Successfully converted SVG to PNG")
+            except ImportError:
+                _LOGGER.warning("cairosvg not installed, skipping SVG...")
+                return "SVG image (无法转换为位图)"
+            except Exception as svg_err:
+                _LOGGER.warning(f"SVG conversion failed: {svg_err}")
+                return "SVG image (转换失败)"
+        
+        # Validate it's a valid image using Pillow and re-encode to PNG
+        # Run in a thread to avoid blocking CPU
+        def _process_image_sync(data: bytes) -> bytes:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(data))
+            img.verify()  # Verify it's a valid image
+            
+            # Re-open after verify as verify confirms content but consumes the fp
+            img = Image.open(io.BytesIO(data))
+            
+            # Handle transparency/palette explicitly
+            if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                # Defines a white background
+                img = img.convert('RGBA')
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3]) # 3 is alpha channel
+                img = background
+            else:
+                img = img.convert("RGB")
+            
+            output = io.BytesIO()
+            img.save(output, format="PNG")
+            return output.getvalue()
+
+        try:
+            processed_bytes = await asyncio.to_thread(_process_image_sync, processed_bytes)
+            mime_type = "image/png"
+        except Exception as img_err:
+            _LOGGER.warning(f"Invalid image format: {img_err}")
+            return ""
+        
+        # Build LLM (Settings will determine provider, e.g. Gemini/OpenAI)
+        llm = build_chat_llm(task_name="ingest_vlm")
+        
+        # Prepare content
+        image_b64 = base64.b64encode(processed_bytes).decode("utf-8")
+        
+        # Build context-aware prompt
+        if document_context:
+            prompt_text = f"""这张图片来自以下文档：
+【文档上下文】{document_context}
+
+请根据文档上下文，详细描述这张图片的内容。识别其中的关键元素、专业术语、图表结构或技术概念。如果图片是某种技术架构图、流程图、可视化图表，请明确指出其类型和用途。请用中文回答。"""
+        else:
+            prompt_text = "请详细描述这张图片的内容。识别其中的关键元素、文字、图表或人物。请用中文回答。"
+        
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt_text},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},
+                },
+            ]
+        )
+        
+        # Invoke
+        response = await llm.ainvoke([message])
+        return extract_text_content(response)
+        
+    except Exception as e:
+        _LOGGER.warning(f"Error in VLM call: {e}")
+        return ""
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -185,7 +284,7 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
                                     pass
                             
                             pictures.append({
-                                "element_id": f"pic_{pic_idx}",
+                                "element_id": f"{doc_id}_pic_{pic_idx}",  # Use doc_id prefix for global uniqueness
                                 "data": img_bytes,
                                 "ext": img_format.lower(),
                                 "alt": caption or f"Picture {pic_idx+1}",
@@ -196,7 +295,7 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
                             
                             # 同时添加到 elements 用于 elements.jsonl
                             elements.append({
-                                "element_id": f"pic_{pic_idx}",
+                                "element_id": f"{doc_id}_pic_{pic_idx}",  # Use doc_id prefix for global uniqueness
                                 "type": "image",
                                 "content": caption,
                                 "index": len(elements),
@@ -389,14 +488,22 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
             for i, img in enumerate(url_images):
                 img_src = img.get("src")
                 if img_src:
-                   # Store image info (we don't download URL images to disk yet to save time, unless needed)
-                   # But for consistency, let's treat them as elements. 
-                   # Since Illustrator works with local files or accessible URLs, we keep URL.
+                   # Convert Wikipedia thumbnail URLs to full-size URLs
+                   # Pattern: .../thumb/X/YZ/Filename/XXXpx-Filename -> .../X/YZ/Filename
+                   if "upload.wikimedia.org" in img_src and "/thumb/" in img_src:
+                       import re
+                       # Remove /thumb/ and the size suffix (e.g., /250px-...)
+                       full_url = re.sub(r'/thumb(/[^/]+/[^/]+/[^/]+)/\d+px-[^/]+$', r'\1', img_src)
+                       if full_url != img_src:
+                           _LOGGER.info(f"Converted thumbnail URL to full-size: {img_src[:50]}... -> {full_url[:50]}...")
+                           img_src = full_url
+                   
+                   # Store image info
                    extracted_images.append({
                        "src": img_src,
                        "alt": img.get("alt") or img.get("caption") or "",
                        "ext": img_src.split(".")[-1] if "." in img_src else "jpg",
-                       "element_id": f"img_url_{i}",
+                       "element_id": f"{doc_id}_img_{i}",  # Use doc_id prefix for global uniqueness
                        "caption": img.get("context", "")
                    })
             
@@ -427,6 +534,7 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
                 f.write(img_data["data"])
         await asyncio.to_thread(_write)
     
+    seen_hashes = set()
     for img in extracted_images:
         # For PDF images (which have 'data' bytes)
         if "data" in img:
@@ -435,20 +543,85 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
             await save_image(img, img_path)
             
             # Update element with local path
+            
+            # ========== 核心变更: VLM Description + Dedup ==========
+            visual_desc = ""
+            
+            # Deduplication Check
+            img_hash = ""
+            if "data" in img:
+                 img_hash = hashlib.md5(img["data"]).hexdigest()
+            elif "src" in img:
+                 img_hash = hashlib.md5(img["src"].encode()).hexdigest()
+                 # Try to fetch bytes for VLM if not present
+                 from ..utils.files import fetch_image_bytes
+                 try:
+                     fetched_bytes = await asyncio.to_thread(fetch_image_bytes, img["src"])
+                     if fetched_bytes:
+                         img["data"] = fetched_bytes
+                         # Update hash based on content if possible, or keep URL hash
+                         # Better to keep URL hash for consistency with existing dedup
+                         pass
+                 except Exception as e:
+                     _LOGGER.warning(f"Failed to fetch bytes for URL image {img['src']}: {e}")
+            
+            if img_hash:
+                if img_hash in seen_hashes:
+                    _LOGGER.info(f"Skipping duplicate image {img['element_id']} (hash={img_hash[:8]})")
+                    continue
+                seen_hashes.add(img_hash)
+            
+            # Reuse logic if already seen
+            # We can't easily reuse across *different* pdfs unless we have a global store, 
+            # but for now we dedup within this run or via simpler means.
+            # Actually, let's generate description for ALL unique images.
+            
+            try:
+                # 只有 PDF 提取的图片 (有二进制数据) 或者是有效的 URL 图片才进行识别
+                # URL 图片暂不下载，跳过 VLM (或者如果必须，需要先下载)
+                # 用户要求 "ingest 阶段识别"，通常指 PDF 里的图。URL 图如果有 alt 也可以，但最好也识别。
+                # 这里为了性能，暂只对 PDF 提取的 img['data'] 做识别
+                if "data" in img:
+                     _LOGGER.info(f"Generating VLM description for image {img['element_id']}...")
+                     # Build document context for better recognition
+                     doc_context = ", ".join(headings[:5]) if headings else ""
+                     visual_desc = await _describe_image_with_vlm(img["data"], document_context=doc_context)
+                     if visual_desc:
+                         _LOGGER.info(f"VLM Description for {img['element_id']}: {visual_desc[:50]}...")
+            except Exception as vlm_err:
+                _LOGGER.error(f"VLM generation failed for {img['element_id']}: {vlm_err}")
+            
             elements.append({
                 "element_id": img["element_id"],
                 "type": "image",
                 "content": img.get("alt", ""),
+                "visual_description": visual_desc, # 新增字段
                 "src": img_path, # Local absolute path
                 "index": img.get("page", 0)
             })
         
         # For URL images (already have URL src)
         elif "src" in img:
+             visual_desc = ""
+             # Try to fetch bytes for VLM
+             from ..utils.files import fetch_image_bytes
+             try:
+                 fetched_bytes = await asyncio.to_thread(fetch_image_bytes, img["src"])
+                 if fetched_bytes:
+                      _LOGGER.info(f"Generating VLM description for URL image {img['element_id']}...")
+                      # Build document context for better recognition
+                      doc_context = ", ".join(headings[:5]) if headings else ""
+                      visual_desc = await _describe_image_with_vlm(fetched_bytes, document_context=doc_context)
+                      if visual_desc:
+                          _LOGGER.info(f"VLM Description for {img['element_id']}: {visual_desc[:50]}...")
+             except Exception as e:
+                 _LOGGER.warning(f"Failed to process URL image {img['src']} for VLM: {e}")
+
              elements.append({
                 "element_id": img["element_id"],
                 "type": "image",
                 "content": img.get("caption", "") or img.get("alt", ""),
+                "visual_description": visual_desc,
                 "src": img["src"], # Remote URL
                 "index": 0
             })

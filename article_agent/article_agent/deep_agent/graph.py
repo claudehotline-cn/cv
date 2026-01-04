@@ -23,14 +23,12 @@ from .prompts import (
     WRITER_AGENT_DESCRIPTION,
     REVIEWER_AGENT_PROMPT,
     REVIEWER_AGENT_DESCRIPTION,
-    ILLUSTRATOR_AGENT_PROMPT,
-    ILLUSTRATOR_AGENT_DESCRIPTION,
     ASSEMBLER_AGENT_PROMPT,
     ASSEMBLER_AGENT_DESCRIPTION,
     INGEST_AGENT_PROMPT,
     INGEST_AGENT_DESCRIPTION,
 )
-from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, IllustratorValidationMiddleware, AssemblerStateMiddleware, PDFAttachmentMiddleware
+from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, AssemblerStateMiddleware, PDFAttachmentMiddleware
 from .schemas import ArticleAgentOutput, AssemblerOutput
 from .tools import (
     # Collector tools
@@ -52,8 +50,8 @@ from .tools import (
     writer_audit_tool,
     # Reviewer tools
     review_draft_tool,
-    # Illustrator tools
-    match_images_tool,
+    # Reviewer tools
+    review_draft_tool,
     # Assembler tools
     assemble_article_tool,
 )
@@ -119,14 +117,7 @@ def get_article_deep_agent_graph() -> Any:
         tools=[review_draft_tool],
     )
     
-    # 6. Illustrator Agent - 智能配图
-    illustrator_agent = SubAgent(
-        name="illustrator_agent",
-        description=ILLUSTRATOR_AGENT_DESCRIPTION,
-        system_prompt=ILLUSTRATOR_AGENT_PROMPT,
-        tools=[match_images_tool],
-        middleware=[IllustratorValidationMiddleware()], # Validate image paths
-    )
+
     
     # 配置 Assembler 的结构化输出
     try:
@@ -164,7 +155,6 @@ def get_article_deep_agent_graph() -> Any:
             researcher_agent,
             writer_agent,
             reviewer_agent,
-            illustrator_agent,
             assembler_agent,
         ],
         tools=[],  # Main Agent 不直接使用工具，通过 SubAgents 执行

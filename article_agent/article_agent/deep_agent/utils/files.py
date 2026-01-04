@@ -918,3 +918,35 @@ __all__ = [
     "extract_images_from_pptx",
     "export_markdown",
 ]
+
+def fetch_image_bytes(url: str, timeout: int = 15) -> bytes:
+    """Fetch image bytes from a URL.
+    
+    Args:
+        url: Image URL
+        timeout: Timeout in seconds
+        
+    Returns:
+        Image bytes or empty bytes if failed
+    """
+    try:
+        import requests
+        settings = get_settings()
+        headers = {
+            "User-Agent": settings.http_user_agent,
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8"
+        }
+        
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        
+        content_type = resp.headers.get("Content-Type", "").lower()
+        if not content_type.startswith("image/"):
+            _LOGGER.warning(f"URL did not return an image: {url} ({content_type})")
+            return b""
+            
+        return resp.content
+        
+    except Exception as e:
+        _LOGGER.warning(f"Failed to fetch image from {url}: {e}")
+        return b""
