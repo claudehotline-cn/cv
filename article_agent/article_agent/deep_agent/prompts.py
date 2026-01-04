@@ -41,6 +41,7 @@ description: "请采集以下URL的内容：https://en.wikipedia.org/wiki/Exampl
 - **完成检查**：只有 assembler_agent 返回结果后任务才算完成
 - **异常处理**：如果助手反馈缺少必要信息（如URL、文件、权限等）或明确表示无法继续，你**必须**立即停止任务并将该反馈直接报告给用户，**禁止**反复调用同一个助手进行重试。
 - **禁止循环调用**：如果你发现自己**连续两次**调用**同一个助手**且**参数完全相同**，这表明你陷入了死循环。你必须**立即停止**，分析问题原因，并向用户报告。
+- **禁止读取中间文件**：你**不需要**也**禁止**读取 `manifest.json`、`sources.json` 或 `drafts/*.md` 的具体内容。你只需要将**文件路径**传递给下一个助手即可。例如：收到 `ingest_agent` 返回的 `manifest.json` 路径后，**直接**将该路径作为参数调用 `planner_agent`，**不要**调用 `read_file` 去读取它！
 - **核心数据**：确保 `md_path` 准确无误（必须与 assembler_agent 返回的一致）。`article_content` 字段由系统 Middleware 自动从 `md_path` 读取填充，因此你在 JSON 中**不需要**输出正文内容（留空或写"由Middleware填充"即可），以节省输出长度。
 
 ## 📁 工作区路径说明
@@ -63,6 +64,12 @@ description: "请采集以下URL的内容：https://en.wikipedia.org/wiki/Exampl
 - 不要编造路径，任务描述中必须使用绝对路径
 - 不要编造文件名或目录名，任务描述中必须使用以上的文件名或目录名
 - ⚠️ **路径格式**：文章目录**必须**使用 `article_{id}` 格式（例如 `article_f2cfeb26`），**不要**只写 `{id}`（例如 `f2cfeb26`）！直接使用 ID 作为目录名会导致文件找不到错误。
+
+### 📌 传达用户需求（必读）
+- **提取限制条件**：仔细阅读用户指令，提取 **字数要求**（target_word_count）、**受众**（audience）、**语气**（tone）等关键约束。
+- **传递给 Planner**：在调用 `planner_agent` 时，**必须**将提取出的 `target_word_count`（整数）显式传递给它。
+  - 例如：用户说“写8000字”，你必须在 `description` 中写明 "target_word_count=8000" 或者确保 planner_agent 的工具调用包含此参数。
+- **传递给 Writer**：虽然 Writer 根据大纲写作，但你需要在 description 中重申语气和风格要求。
 """.strip()
 
 

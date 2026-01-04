@@ -121,7 +121,7 @@ class ReviewerOutput(BaseModel):
 
 # ============ Illustrator Output ============
 class ImagePlacement(BaseModel):
-    """图片放置位置"""
+    """图片放置位置 (Legacy for full draft)"""
     image_url: str = Field(description="图片 URL")
     alt_text: str = Field(description="图片替代文本")
     after_heading: str = Field(description="放置在哪个标题后，如 '## 1.1 背景介绍'")
@@ -129,9 +129,23 @@ class ImagePlacement(BaseModel):
 
 
 class IllustratorOutput(BaseModel):
-    """Illustrator Agent 输出"""
+    """Illustrator Agent 输出 (Legacy)"""
     placements: List[ImagePlacement] = Field(description="图片放置列表")
     final_markdown: str = Field(description="插入图片后的完整 Markdown")
+
+
+# ============ New Per-Section Output ============
+class SectionImagePlacement(BaseModel):
+    """单章节内的图片放置位置"""
+    image_id: str = Field(description="图片 ID (element_id)")
+    insert_after_line: int = Field(description="插入在哪一行之后 (Line Number)")
+    caption: str = Field(description="图片说明")
+
+
+class SectionIllustrationPlan(BaseModel):
+    """Illustrator Agent 对单章节的配图方案"""
+    placements: List[SectionImagePlacement] = Field(description="本章节的配图列表")
+
 
 
 # ============ Assembler Output ============
@@ -171,6 +185,8 @@ __all__ = [
     "ReviewerOutput",
     "ImagePlacement",
     "IllustratorOutput",
+    "SectionImagePlacement",
+    "SectionIllustrationPlan",
     "AssemblerOutput",
     "ArticleAgentOutput",
 ]

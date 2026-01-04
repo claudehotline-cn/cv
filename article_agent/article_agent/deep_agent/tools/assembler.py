@@ -6,7 +6,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
-from ..utils.artifacts import get_current_article_id, get_drafts_dir, get_article_dir, get_final_article_dir
+from ..utils.artifacts import get_current_article_id, get_drafts_dir, get_article_dir, get_final_article_dir, load_article_artifact
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.assembler")
 
@@ -34,110 +34,38 @@ def assemble_article_tool(
     article_id = get_current_article_id(article_id)
     
     # 自动发现逻辑：如果没有传入路径，尝试自动查找
-    if not final_markdown_path or not os.path.exists(final_markdown_path):
-        drafts_dir = get_drafts_dir(article_id)
-        candidate_path = os.path.join(drafts_dir, "draft_with_images.md") # Illustrator's output
-        
-        if os.path.exists(candidate_path):
-            final_markdown_path = candidate_path
-            _LOGGER.info(f"Auto-discovered final markdown in drafts: {final_markdown_path}")
-        else:
-            # 其次查找 artifacts 根目录 (兼容旧数据)
-            artifacts_dir = get_article_dir(article_id)
-            candidate_path_old = os.path.join(artifacts_dir, "draft_with_images.md")
-            if os.path.exists(candidate_path_old):
-                final_markdown_path = candidate_path_old
-                _LOGGER.info(f"Auto-discovered final markdown in artifacts (legacy): {final_markdown_path}")
-            else:
-                # 如果没有 draft_with_images.md，尝试合并所有 section_*.md
-                import glob
-                section_files = glob.glob(os.path.join(drafts_dir, "section_*.md"))
-                # 按章节号数字排序：section_sec_1.md, section_sec_2.md, ...
-                def extract_section_num(path):
-                    match = re.search(r'section_sec_(\d+)', path)
-                    return int(match.group(1)) if match else 999
-                section_files.sort(key=extract_section_num)
-                if section_files:
-                    _LOGGER.info(f"No draft_with_images.md found, merging {len(section_files)} section files (sorted)")
-                    merged_content = ""
-                    for sf in section_files:
-                        with open(sf, "r", encoding="utf-8") as f:
-                            merged_content += f.read() + "\n\n"
-                    # 直接使用合并内容，跳过文件读取
-                    final_markdown = merged_content
+    # 自动发现逻辑：强制从 drafts 目录发现并合并 section_*.md
+    drafts_dir = get_drafts_dir(article_id)
     
-    if not final_markdown:
-        if final_markdown_path and os.path.exists(final_markdown_path):
-            try:
-                with open(final_markdown_path, "r", encoding="utf-8") as f:
-                    final_markdown = f.read()
-            except Exception as e:
-                _LOGGER.error(f"Failed to read final markdown from {final_markdown_path}: {e}")
-                return {"error": f"Failed to read file: {e}"}
-        else:
-            _LOGGER.error(f"Final markdown file not found: {final_markdown_path}")
-            return {"error": "Final markdown file not found"}
+    # 尝试合并所有 section_*.md
+    import glob
+    section_files = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+    
+    if not section_files:
+         _LOGGER.error(f"No section files found in {drafts_dir}")
+         return {"error": "No section files found to assemble"}
 
-    # ========== NEW: 消费 illustration_plan.json ==========
-    import json
-    from ..utils.artifacts import load_article_artifact
+    # 按章节号数字排序：section_sec_1.md, section_sec_2.md, ...
+    def extract_section_num(path):
+        match = re.search(r'section_sec_(\d+)', path)
+        return int(match.group(1)) if match else 999
     
-    illustration_plan = None
-    # 尝试从 assets 目录读取
-    assets_dir = os.path.join(get_article_dir(article_id), "assets")
-    plan_path = os.path.join(assets_dir, "illustration_plan.json")
+    section_files.sort(key=extract_section_num)
     
-    if os.path.exists(plan_path):
+    _LOGGER.info(f"Merging {len(section_files)} section files (sorted) from {drafts_dir}")
+    merged_content = ""
+    for sf in section_files:
         try:
-            with open(plan_path, "r", encoding="utf-8") as f:
-                illustration_plan = json.load(f)
-            _LOGGER.info(f"Loaded illustration_plan.json with {len(illustration_plan.get('figures', []))} figures")
-        except Exception as e:
-            _LOGGER.warning(f"Failed to load illustration_plan: {e}")
-    
-    # 如果有 illustration_plan 且 draft 中还没有插图，则应用
-    if illustration_plan and "figures" in illustration_plan:
-        figures = illustration_plan.get("figures", [])
-        if figures and "<figure" not in final_markdown:
-            _LOGGER.info(f"Applying {len(figures)} figures from illustration_plan")
-            lines = final_markdown.split('\n')
-            
-            # 倒序插入以避免索引偏移
-            insertion_ops = []
-            for fig in figures:
-                anchor = fig.get("insert_after_anchor", "")
-                caption = fig.get("caption", "")
-                figure_id = fig.get("figure_id", "")
-                
-                if not anchor:
-                    continue
-                
-                # 找到锚点位置
-                for i, line in enumerate(lines):
-                    if anchor in line or line.strip() == anchor:
-                        # 构建图片 HTML
-                        src = fig.get("src", "")
-                        # 尝试将绝对路径转换为相对路径 (如果可能)
-                        # 这里简单处理，如果 src 是绝对路径且存在，保持原样；如果是相对路径，假设在 assets
-                        
-                        img_tag = f'<img src="{src}" alt="{caption}" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">' if src else f"<!-- Missing image src for {figure_id} -->"
-                        
-                        fig_html = f'''
-<figure style="text-align: center; margin: 20px 0;">
-  {img_tag}
-  <figcaption style="color: #666; font-size: 0.9em; margin-top: 8px;"><strong>{figure_id}</strong> {caption}</figcaption>
-</figure>
-'''
-                        insertion_ops.append((i + 1, fig_html))
-                        break
-            
-            # 倒序插入
-            insertion_ops.sort(key=lambda x: x[0], reverse=True)
-            for idx, content in insertion_ops:
-                lines.insert(idx, content)
-            
-            final_markdown = '\n'.join(lines)
-            _LOGGER.info(f"Inserted {len(insertion_ops)} figures into draft")
+            with open(sf, "r", encoding="utf-8") as f:
+                content = f.read()
+                # 简单清洗：确保章节之间有足够空行
+                merged_content += content.strip() + "\n\n"
+        except Exception as read_err:
+             _LOGGER.error(f"Failed to read section file {sf}: {read_err}")
+             
+    final_markdown = merged_content
+
+
     
     # ========== 消费 citations_map.json ==========
     citations_map = load_article_artifact(article_id, "citations_map.json")

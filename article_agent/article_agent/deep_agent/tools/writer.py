@@ -354,50 +354,21 @@ def write_all_sections_tool(
     # 强制不返回 drafts 内容，确保下游 Reviewer 必须从文件系统读取
     # 但必须返回足够的 Metadata 告知 LLM 任务已完成，否则会导致 infinite retry loop
     
-    # ========== 新增：合并 Draft (Hybrid Draft Strategy) ==========
-    # 用户需求：既要保留分章节文件（drafts/section_*.md），也要生成单一文件（draft/draft.md）
+    # 由 Downstream (Illustrator/Assembler) 负责合并
     merged_draft_path = ""
-    try:
-        from ...config import get_article_dir
-        article_dir = get_article_dir(article_id)
-        draft_dir = os.path.join(article_dir, "draft") # 单数 draft 目录
-        os.makedirs(draft_dir, exist_ok=True)
-        merged_draft_path = os.path.join(draft_dir, "draft.md")
-        
-        full_content_parts = []
-        # 按大纲顺序合并
-        section_order = {s.get("id", ""): i for i, s in enumerate(outline.get("sections", []))}
-        
-        # 排序 drafts
-        sorted_drafts = sorted(drafts, key=lambda x: section_order.get(x.get("section_id", ""), 999))
-        
-        for draft in sorted_drafts:
-            file_path = draft.get("file_path", "")
-            if file_path and os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    full_content_parts.append(content)
-        
-        full_draft_content = "\n\n".join(full_content_parts)
-        
-        with open(merged_draft_path, "w", encoding="utf-8") as f:
-            f.write(full_draft_content)
-            
-        _LOGGER.info(f"Merged draft saved to: {merged_draft_path} ({len(full_draft_content)} chars)")
-        
-    except Exception as e:
-        _LOGGER.warning(f"Failed to merge draft: {e}")
+    # _LOGGER.info("Skipping merge in Writer, delegating to Assembler/Illustrator")
 
     return {
         "status": "success",
-        "message": f"Successfully wrote {len(drafts)} sections to file system and merged to draft.md",
+        "message": f"Successfully wrote {len(drafts)} sections to file system",
         "drafts": [], # Empty list kept for Zero-Memory compliance
         "total_char_count": total_chars,
         "saved_files": [d["file_path"] for d in drafts], # Minimal references
-        "merged_draft": merged_draft_path,
+        # "merged_draft": merged_draft_path,  # Removed to force downstream handling
         "citations_map_path": citations_map_path,
         "total_citations": len(citations_anchors)
     }
+
 
 
 @tool

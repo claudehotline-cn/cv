@@ -66,6 +66,34 @@ def extract_text_content(response) -> str:
         return str(response.content if hasattr(response, 'content') else "").strip()
 
 
+def extract_json_from_response(response: Any) -> Dict[str, Any]:
+    """Helper to safely extract JSON from LLM response."""
+    import json
+    import re
+    
+    content = extract_text_content(response)
+    
+    # Try to find JSON block
+    match = re.search(r'\{[\s\S]*\}', content)
+    if match:
+        json_str = match.group()
+        # Fix common escape issues
+        json_str = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', json_str)
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+             # Aggressive fix: remove backslashes except before quotes
+            json_str_fixed = re.sub(r'\\(?!")', '', json_str)
+            return json.loads(json_str_fixed)
+            
+    # Fallback: try parsing the whole string if it looks like JSON
+    try:
+        return json.loads(content)
+    except:
+        pass
+        
+    return {}
+
 
 def build_chat_llm(task_name: str = "article", num_ctx_override: int = None) -> Any:
     """根据全局 Settings 构造用于内容整理的 Chat LLM 客户端。
@@ -443,6 +471,8 @@ async def astream_llm_with_thinking(
 __all__ = [
     "build_chat_llm",
     "build_vlm_client",
+    "extract_text_content",
+    "extract_json_from_response",
     "build_structured_chat_llm",
     "invoke_llm_with_timeout",
     "invoke_with_structured_thinking",

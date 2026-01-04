@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ...config.llm_runtime import build_chat_llm, build_vlm_client, extract_text_content
+from ...config.llm_runtime import build_chat_llm, build_vlm_client, extract_text_content, build_structured_chat_llm
 from ..utils.logging.tools_logging import log_performance, log_llm_response
 from ..utils.artifacts import (
     get_current_article_id, 
@@ -21,6 +21,7 @@ from ..utils.artifacts import (
     save_article_artifact # though illustrator saves raw md, we might need path helpers
 )
 from .prompts import ILLUSTRATOR_MATCH_SYSTEM_PROMPT, ILLUSTRATOR_MATCH_USER_PROMPT
+from ..schemas import SectionIllustrationPlan, SectionImagePlacement
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.illustrator")
 
@@ -308,196 +309,144 @@ def match_images_tool(
     images_by_id = {d["element_id"]: d for d in images_with_desc}
     available_images_by_id = {img.get("element_id", f"img_{i}"): img for i, img in enumerate(deduplicated_images)}
     
-    # 3. 为文章内容添加行号标记
-    lines = full_content.split('\n')
-    numbered_lines = [f"[L{i+1}] {line}" for i, line in enumerate(lines)]
-    numbered_content = '\n'.join(numbered_lines)
+    # 3. 逐个章节处理图片插入
+    final_files = []
+    used_image_ids = set()
     
-    system_prompt = ILLUSTRATOR_MATCH_SYSTEM_PROMPT.format(
-        images_info=images_info
-    )
-
-    user_prompt = ILLUSTRATOR_MATCH_USER_PROMPT.format(content_preview=numbered_content[:30000])
-
-    try:
-        # Illustrator 需要更大的上下文窗口来处理图片描述 + 文章内容
-        llm = build_chat_llm(task_name="illustrator", num_ctx_override=32768)
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
-        response = llm.invoke(messages)
-        content = extract_text_content(response)
+    # 过滤掉无法访问的图片
+    valid_images_with_desc = [img for img in images_with_desc if img.get("element_id")]
+    
+    for section_file in draft_files:
+        if not section_file or not os.path.exists(section_file):
+            continue
+            
+        _LOGGER.info(f"Processing section file: {section_file}")
         
-        # 提取 JSON
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            json_str = json_match.group()
-            # 修复常见的 JSON 转义错误 (如 LaTeX 公式中的反斜杠)
-            # 将所有未跟随合法转义字符的反斜杠双写
-            json_str = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', json_str)
+        try:
+            with open(section_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # 为该章节添加行号
+            lines = content.split('\n')
+            numbered_lines = [f"[L{i+1}] {line}" for i, line in enumerate(lines)]
+            numbered_content = '\n'.join(numbered_lines)
+            
+            # 准备可用图片（排除已使用的）
+            current_available_images = [
+                img for img in valid_images_with_desc 
+                if img["element_id"] not in used_image_ids
+            ]
+            
+            if not current_available_images:
+                _LOGGER.info(f"No more images available for {os.path.basename(section_file)}")
+                final_files.append(section_file)
+                continue
+                
+            # 准备 Prompt
+            images_info = "\n".join([
+                f"- 图片[{d['element_id']}]: {d['description']}"
+                for d in current_available_images
+            ])
+            
+            system_prompt = ILLUSTRATOR_MATCH_SYSTEM_PROMPT.format(images_info=images_info)
+            
+            # 使用结构化输出 LLM
+            llm = build_structured_chat_llm(SectionIllustrationPlan, task_name="illustrator_match")
             
             try:
-                result = json.loads(json_str)
-            except json.JSONDecodeError as je:
-                _LOGGER.warning(f"JSON parse error: {je}. Trying to recover...")
-                # 尝试更激进的修复：移除所有反斜杠 (除了转义引号的)
-                json_str_fixed = re.sub(r'\\(?!")', '', json_str)
-                try:
-                    result = json.loads(json_str_fixed)
-                except:
-                    # 如果仍然失败，抛出原始错误
-                    raise je
-            placements = result.get("placements", [])
-            _LOGGER.info(f"LLM Raw Placements: {json.dumps(placements, ensure_ascii=False)}")
-            _LOGGER.info(f"Available Image IDs: {list(available_images_by_id.keys())}")
-            
-            # 构建最终 Markdown（插入图片）
-            lines = full_content.split('\n')
-            
-            # 预处理：按行索引插入，需要处理偏移，或者倒序处理
-            # 这里采用倒序插入，这样前面的索引不会受影响
-            
-            # 为了倒序处理，我们需要先计算出所有图片的插入行号
-            insertion_ops = [] # (line_index, img_md)
-            
-            for p in placements:
-                # 优先使用 image_id (element_id)，兼容旧版 image_index
-                img_id = p.get("image_id") or p.get("element_id")
-                img = None
+                # Invoke LLM
+                response: SectionIllustrationPlan = llm.invoke([
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=f"请为以下章节内容插入图片 (Line Numbers 1-{len(lines)}):\n\n{numbered_content}")
+                ])
                 
-                if img_id and img_id in available_images_by_id:
-                    img = available_images_by_id[img_id]
-                    _LOGGER.info(f"Image [{img_id}] found via ID lookup: {img}")
-                else:
-                    # Fallback: 旧版 image_index 兼容
-                    img_idx = p.get("image_index", 0)
-                    if isinstance(img_idx, int) and 0 <= img_idx < len(deduplicated_images):
-                        img = deduplicated_images[img_idx]
-                        img_id = img.get("element_id", f"img_{img_idx}")
-                        _LOGGER.warning(f"Fallback to image_index {img_idx}: {img_id}")
-                    else:
-                        _LOGGER.warning(f"Image not found: id={img_id}, index={p.get('image_index')}")
+                # 直接使用 Pydantic 对象
+                placements = response.placements
+                _LOGGER.info(f"LLM Structured Placements for {os.path.basename(section_file)}: {placements}")
+                
+                insertion_ops = []
+                for p in placements:
+                    img_id = p.image_id
+                    
+                    if img_id in used_image_ids:
                         continue
-                
-                if not img:
-                    continue
+                        
+                    # 查找 image object 以获取元数据
+                    img_obj = images_by_id.get(img_id) or {}
                     
-                # Log image object for debugging
-                _LOGGER.info(f"Image [{img_id}] raw object: {img}")
+                    # LOGGING: 关键调试信息
+                    orig_desc = img_obj.get("description", "N/A")
+                    _LOGGER.info(f"[Illustrator] Selected {img_id} | OrigDesc: '{orig_desc}' | NewCaption: '{p.caption}'")
+                    if not img_obj:
+                         # 尝试模糊匹配或 fallback? 暂时严格匹配
+                         _LOGGER.warning(f"Image ID {img_id} returned by LLM not found in available images.")
+                         continue
+                        
+                    # 获取真实 URL
+                    real_img = available_images_by_id.get(img_id)
+                    if not real_img:
+                         # 尝试模糊匹配或 fallback? 暂时严格匹配
+                         _LOGGER.warning(f"Image ID {img_id} returned by LLM not found in available images.")
+                         continue
+                         
+                    img_url = real_img.get("src") or real_img.get("path_or_url") or real_img.get("url")
                     
-                # 优先检查 'src' (PDF assets) 和 'content' (URL images), 然后才是 'url'/'path_or_url'
-                img_url = img.get("src") or img.get("content") or img.get("path_or_url") or img.get("url") or ""
-                alt = img.get("alt", "")
-                
-                # 将 Wikipedia 缩略图 URL 转换为原图 URL
-                if "/thumb/" in img_url and "px-" in img_url:
-                    import re
-                    img_url = re.sub(r'/thumb/', '/', img_url)
-                    img_url = re.sub(r'/\d+px-[^/]+$', '', img_url)
-                    _LOGGER.info(f"Image [{img_id}]: Converted to full-size URL: {img_url}")
-                
-                # 强制转换为相对路径 (Fix for host/web viewing)
-                # 将 /data/workspace/artifacts/.../corpus/... 转换为 ../corpus/...
-                if "/corpus/" in img_url and img_url.startswith("/"):
-                    # Transform local container path to Web API path
-                    # /data/workspace/artifacts/article_id/corpus/... -> /api/artifacts/article_id/corpus/...
-                    # This enables the browser to load images via the rag-service static mount
-                    if "/artifacts/" in img_url:
-                            new_url = "/api/artifacts/" + img_url.split("/artifacts/")[1]
-                    else:
-                            # Fallback: try to construct using article_id
-                            import re
-                            new_url = re.sub(r'^.*/corpus/', f'/api/artifacts/{article_id}/corpus/', img_url)
+                    # URL 处理 (Thumbnails, Relative Paths)
+                    if img_url and "/thumb/" in img_url and "px-" in img_url:
+                        import re
+                        img_url = re.sub(r'/thumb/', '/', img_url)
+                        img_url = re.sub(r'/\d+px-[^/]+$', '', img_url)
+                        
+                    # 路径转 Web URL
+                    if img_url and img_url.startswith("/") and "/corpus/" in img_url:
+                        if "/artifacts/" in img_url:
+                             img_url = "/api/artifacts/" + img_url.split("/artifacts/")[1]
+                        
+                    caption = p.caption or img_obj.get("description", "")
+                    insert_after_line = p.insert_after_line
                     
-                    _LOGGER.info(f"Image [{img_id}]: Converted path '{img_url}' to Web URL '{new_url}'")
-                    img_url = new_url
-                
-                caption = p.get("caption", "") or alt
-                insert_after_line = p.get("insert_after_line")
-                
-                if not img_url:
-                    _LOGGER.warning(f"Image [{img_id}] has EMPTY URL! Skipping insertion. Source: {img}")
-                    continue
+                    if not img_url: 
+                        continue
 
-                if insert_after_line is None:
-                     _LOGGER.warning(f"Image [{img_id}] missing insert_after_line. Skipping.")
-                     continue
-                    
-                _LOGGER.info(f"Preparing to insert Image [{img_id}]: url='{img_url}' after line {insert_after_line}")
-
-                # 使用 HTML figure 格式，确保居中、合适尺寸和带说明文字
-                img_md = f'''
-
+                    # 生成 HTML
+                    img_md = f'''
 <figure style="text-align: center; margin: 20px 0;">
   <img src="{img_url}" alt="{caption}" style="display: block; margin: 0 auto; width: 80%; max-width: 600px;">
   <figcaption style="margin-top: 8px; color: #666; font-size: 0.9em;">{caption}</figcaption>
 </figure>
 '''
+                    if isinstance(insert_after_line, int) and 0 < insert_after_line <= len(lines):
+                        insertion_ops.append((insert_after_line, img_md))
+                        used_image_ids.add(img_id)
+                        
+                # 执行插入
+                insertion_ops.sort(key=lambda x: x[0], reverse=True)
+                for line_idx, md in insertion_ops:
+                    lines.insert(line_idx, md)
+                    
+                # 保存回写
+                new_content = "\n".join(lines)
+                with open(section_file, "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                    
+            except Exception as llm_err:
+                _LOGGER.error(f"LLM/JSON error in section {section_file}: {llm_err}")
                 
-                # 直接按行号插入
-                # LLM 返回的行号是 1-based (例如 [L15])
-                # 插入位置索引 = 行号 (因为是在该行之后插入)
-                if isinstance(insert_after_line, int) and 0 < insert_after_line <= len(lines):
-                     insertion_idx = insert_after_line
-                     insertion_ops.append((insertion_idx, img_md))
-                     _LOGGER.info(f"Image [{img_id}]: Placed successfully after line {insert_after_line}")
-                else:
-                     _LOGGER.warning(f"Image [{img_id}]: Invalid insert_after_line {insert_after_line}. Total lines: {len(lines)}")
+        except Exception as e:
+             _LOGGER.error(f"Failed to process section file {section_file}: {e}")
+             
+        final_files.append(section_file)
 
-            # 执行插入 (倒序)
-            insertion_ops.sort(key=lambda x: x[0], reverse=True)
-            
-            for line_idx, content in insertion_ops:
-                lines.insert(line_idx, content)
-            
-            final_markdown = "\n".join(lines)
-            
-            formatted_placements = [
-                {
-                    "image_url": available_images[p.get("image_index", 0)].get("path_or_url", ""),
-                    "alt_text": available_images[p.get("image_index", 0)].get("alt", ""),
-                    "after_heading": p.get("after_heading", ""),
-                    "caption": p.get("caption", ""),
-                }
-                for p in placements if p.get("image_index", 0) < len(available_images)
-            ]
-            
-            # 保存到文件
-            final_path = ""
-            try:
-                if article_id:
-                    save_dir = get_drafts_dir(article_id)  # drafts 目录
-                    os.makedirs(save_dir, exist_ok=True)
-                    final_path = os.path.join(save_dir, "draft_with_images.md")
-                    with open(final_path, "w", encoding="utf-8") as f:
-                        f.write(final_markdown)
-                    _LOGGER.info(f"Saved draft with images to {final_path}")
-            except Exception as e:
-                _LOGGER.warning(f"Failed to save draft with images: {e}")
+    return {
+        "status": "success", 
+        "message": f"Processed {len(final_files)} sections, placed {len(used_image_ids)} images",
+        "processed_files": final_files
+    }
+    
+    # Legacy code block removed (lines 319-500)
 
-            _LOGGER.info(f"match_images_tool success: {len(formatted_placements)} images placed")
-            
-            # 返回路径而不是内容，减少 Context
-            return {
-                "placements": formatted_placements,
-                "final_markdown_path": final_path,
-                "preview": final_markdown[:200] + "..."
-            }
-        else:
-            _LOGGER.warning(f"match_images_tool: no JSON found. Raw content:\n{content}")
-            return {
-                "placements": [],
-                "final_markdown_path": "",
-                "preview": full_content[:200] + "..."
-            }
-    except Exception as exc:
-        _LOGGER.error(f"match_images_tool failed: {exc}")
-        return {
-            "placements": [],
-            "final_markdown_path": "",
-            "error": str(exc),
-        }
+
+
 
 
 @tool
