@@ -326,8 +326,9 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
     # 素材概览直接从实际的 manifest.json 文件读取，确保使用真实的文档内容
     _LOGGER.info("Auto-reading overview from manifest files...")
     
-    # 获取 article_id
-    save_article_id = get_current_article_id(article_id)
+    # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
+    save_article_id = article_id
+        
     if not save_article_id:
         _LOGGER.error("Cannot auto-read manifest: no article_id provided")
         return {

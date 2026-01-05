@@ -9,9 +9,11 @@ from deepagents import create_deep_agent, SubAgent, CompiledSubAgent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
 from langchain.agents import create_agent
 from langgraph.store.memory import InMemoryStore
+from langchain_core.runnables import RunnableLambda
 
 # 进程级别共享 Store 实例，用于跨线程数据共享
 _shared_store = InMemoryStore()
+
 
 from ..config.llm_runtime import build_chat_llm
 from .prompts import (
@@ -29,8 +31,8 @@ from .prompts import (
     INGEST_AGENT_PROMPT,
     INGEST_AGENT_DESCRIPTION,
 )
-from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, AssemblerStateMiddleware, PDFAttachmentMiddleware
-from .schemas import ArticleAgentOutput, AssemblerOutput
+from .middleware import ArticleContentMiddleware, ThinkingLoggerMiddleware, AssemblerStateMiddleware, PDFAttachmentMiddleware, ArticleIDMiddleware
+from .schemas import ArticleAgentOutput, AssemblerOutput, IngestOutput
 from .tools import (
     # Collector tools
     # Collector tools
@@ -78,12 +80,28 @@ def get_article_deep_agent_graph() -> Any:
     # 定义子 Agent (Sub-Agents)
     # ============================================================================
     
-    # 0. Ingest Agent - 素材采集
-    ingest_agent = SubAgent(
+    # 0. Ingest Agent - 素材采集 (Structured Output + Required Tool Calling)
+    ingest_llm = build_chat_llm(task_name="ingest")
+    ingest_tools = [ingest_documents_tool]
+    
+    # 强制必须调用工具 (required)，但不锁定具体哪个工具
+    # 这样 LLM 可以先调用 ingest_documents_tool（干活），再调用 IngestOutput（交差）
+    ingest_llm_forced = ingest_llm.bind_tools(
+        ingest_tools,
+        tool_choice="required"  # 必须调用工具，但可以选择哪个
+    )
+    
+    ingest_runnable = create_agent(
+        model=ingest_llm_forced,
+        tools=ingest_tools,
+        system_prompt=INGEST_AGENT_PROMPT,
+        response_format=IngestOutput, # 启用 Pydantic 结构化输出
+    )
+
+    ingest_agent = CompiledSubAgent(
         name="ingest_agent",
         description=INGEST_AGENT_DESCRIPTION,
-        system_prompt=INGEST_AGENT_PROMPT,
-        tools=[ingest_documents_tool],
+        runnable=ingest_runnable,
     )
 
     # 1. Planner Agent - 大纲规划 (使用 CompiledSubAgent 强制调用工具)
@@ -218,7 +236,7 @@ def get_article_deep_agent_graph() -> Any:
         ],
         tools=[],  # Main Agent 不直接使用工具，通过 SubAgents 执行
         system_prompt=MAIN_AGENT_PROMPT,
-        middleware=[thinking_middleware, ArticleContentMiddleware()],  # 思维链日志、内容填充
+        middleware=[thinking_middleware, PDFAttachmentMiddleware(), ArticleIDMiddleware(), ArticleContentMiddleware()],  # 中间件链执行顺序
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(
                 root_dir="/data/workspace",

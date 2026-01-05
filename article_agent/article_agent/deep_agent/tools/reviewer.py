@@ -17,10 +17,11 @@ from .prompts import REVIEWER_DRAFT_SYSTEM_PROMPT, REVIEWER_DRAFT_USER_PROMPT
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.reviewer")
 
 @tool
-def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[str, Any]:
+def review_draft_tool(article_id: str, drafts: List[Dict[str, Any]], instruction: str) -> Dict[str, Any]:
     """审阅草稿，返回反馈和是否通过。
     
     Args:
+        article_id: 文章 ID，由 Main Agent 从用户消息提取并传递
         drafts: 各章节草稿（包含 file_path）
         instruction: 用户写作指令
         
@@ -28,12 +29,10 @@ def review_draft_tool(drafts: List[Dict[str, Any]], instruction: str) -> Dict[st
         ReviewerOutput 字典
     """
     
-    _LOGGER.info(f"review_draft_tool called with {len(drafts)} sections")
+    _LOGGER.info(f"review_draft_tool called with {len(drafts)} sections, article_id='{article_id}'")
     
     # 1. 第一步：获取"藏宝图" (加载 Persistent Outline)
-    # 我们必须先加载 Outline，因为它是唯一包含 Section ID 的地方。
-    # 只有知道了 Section ID (例如 "sec_1")，我们由于 Writer 的命名规则 (sec_1.md)，才知道去磁盘的哪里寻找 Draft 文件。
-    article_id = get_current_article_id()
+    # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
     _LOGGER.info(f"review_draft_tool: Starting execution (article_id={article_id})")
     
     loaded_outline = load_article_artifact(article_id, "outline.json")

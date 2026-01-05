@@ -199,6 +199,7 @@ const generateArticle = async () => {
           messages: [{
             role: 'human',
             content: `请根据以下素材生成文章：
+article_id: ${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}
 URLs: ${validUrlsList.join(', ')}
 ${uploadedFilePaths.value.length > 0 ? `MinIO文件: ${uploadedFilePaths.value.join(', ')}` : ''}
 标题: ${title.value || '自动生成'}

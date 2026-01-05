@@ -31,7 +31,8 @@ def assemble_article_tool(
     
     # 初始化变量
     final_markdown = ""
-    article_id = get_current_article_id(article_id)
+    # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
+    _LOGGER.info(f"Using passed article_id: '{article_id}'")
     
     # 自动发现逻辑：如果没有传入路径，尝试自动查找
     # 自动发现逻辑：强制从 drafts 目录发现并合并 section_*.md

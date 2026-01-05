@@ -23,6 +23,15 @@ class OutlineOutput(BaseModel):
     estimated_total_chars: int = Field(description="预估总字数")
 
 
+# ============ Ingest Output ============
+class IngestOutput(BaseModel):
+    """Ingest Agent 输出"""
+    article_id: str = Field(description="文章 ID (必须与 ingest_documents_tool 返回的一致)")
+    status: str = Field(description="任务状态 (success/error)")
+    manifest_paths: List[str] = Field(description="生成的 manifest.json 文件路径列表")
+    message: str = Field(default="", description="附加信息或摘要")
+
+
 # ============ Researcher Output ============
 class SectionNotes(BaseModel):
     """章节资料笔记"""

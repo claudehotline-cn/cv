@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import json
+import contextvars
 import uuid
 import glob
 import asyncio
@@ -15,6 +16,7 @@ _LOGGER = logging.getLogger("article_agent.deep_agent.utils.artifacts")
 
 __all__ = [
     "get_current_article_id",
+    "set_current_article_id",
     "load_article_artifact",
     "save_article_artifact",
     "save_draft_file",
@@ -26,35 +28,41 @@ __all__ = [
     "ensure_corpus_dir",
 ]
 
+# ContextVar to store article_id for the current request context
+_ARTICLE_ID_CTX = contextvars.ContextVar("article_id", default="")
+
 def get_current_article_id(arg_id: str = "") -> str:
-    """获取当前文章 ID。优先使用参数，其次使用环境变量，最后生成新的。
-    
-    Side Effect: 如果环境变量未设置，会同时设置 ARTICLE_CURRENT_ID。
-    Note: 返回的 ID 不包含 'article_' 前缀（例如 '958c41db' 而非 'article_958c41db'）。
-          get_article_dir() 会自动添加前缀。
+    """获取当前文章 ID。优先使用参数，其次使用 ContextVar，最后尝试环境变量。
     """
     article_id = arg_id
+    
+    # 1. 尝试从 ContextVar 获取
+    ctx_id = _ARTICLE_ID_CTX.get()
+    
+    # 2. 尝试从环境变量获取 (Legacy fallback)
     env_id = os.environ.get("ARTICLE_CURRENT_ID", "")
     
-    # Robustness: If arg_id is a common placeholder ("001") but we have a real ID in env, use env
+    # Robustness strategy
     if env_id and article_id in ["001", "1", "default", "placeholder"]:
-        _LOGGER.warning(f"Override suspicious article_id '{article_id}' with cached '{env_id}'")
         article_id = env_id
     
-    article_id = article_id or env_id
+    article_id = article_id or ctx_id or env_id
     
-    # 规范化：始终去掉 'article_' 前缀，确保后续处理一致
+    if article_id and article_id.startswith("article_"):
+        article_id = article_id[len("article_"):]
+    
+    # 注意：这里不再自动生成 ID，逻辑上应由 Middleware 显式调用 set 生成
+    
+    return article_id
+
+def set_current_article_id(article_id: str):
+    """设置当前 Context 的 Article ID。"""
     if article_id.startswith("article_"):
         article_id = article_id[len("article_"):]
-        _LOGGER.debug(f"Normalized article_id by stripping 'article_' prefix: {article_id}")
-    
-    if not article_id:
-         # 如果完全没有 ID，生成一个新的 (通常 Planner 会做这步)
-         article_id = str(uuid.uuid4())[:8]
-    
-    # 确保环境变量同步，供后续步骤使用
+    _ARTICLE_ID_CTX.set(article_id)
+    # 保持环境变量同步以兼容旧代码
     os.environ["ARTICLE_CURRENT_ID"] = article_id
-    return article_id
+
 
 def get_corpus_dir(article_id: str, doc_id: str) -> str:
     """获取指定文档的 corpus 目录 (artifacts/article_{id}/corpus/{doc_id})。"""

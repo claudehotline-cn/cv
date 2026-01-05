@@ -381,16 +381,12 @@ def chunk_text(text: str, chunk_size: int = 1200, chunk_overlap: int = 200) -> L
     return splitter.split_text(text)
 
 async def ingest_documents_tool(article_id: str, source_type: str, source_path: str) -> str:
-    """
-    Ingest a document: fetch -> parse -> chunk -> persist -> manifest.
+    """Ingest a document: fetch -> parse -> chunk -> persist -> manifest.
     
     Args:
-        article_id: The ID of the article being written.
-        source_type: 'minio' or 'url'.
-        source_path: MinIO path or HTTP URL.
-        
-    Returns:
-        Path to the generated manifest.json.
+        article_id: 文章 ID，由系统自动注入，不需要手动填写
+        source_type: 来源类型，'minio' 或 'url'
+        source_path: MinIO 路径或 HTTP URL
     """
     import hashlib
     import json
@@ -401,8 +397,10 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     doc_id = ""
     pages = 0
     
-    # 2. Get article_dir (corpus paths will be set after doc_id is generated)
+    # 2. Get article_dir - 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
     from ...config.config import get_article_dir
+    
+    _LOGGER.info(f"Using passed article_id: '{article_id}'")
     article_dir = get_article_dir(article_id)
     
     # 3. Fetch & Parse

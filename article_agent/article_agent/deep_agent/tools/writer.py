@@ -197,22 +197,21 @@ def write_section_tool(
 
 @tool
 def write_all_sections_tool(
-    outline: Dict[str, Any],
-    section_notes: List[Dict[str, Any]] = None,
+    article_id: str = "",
+    outline: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """撰写所有章节内容。
     
     Args:
-        outline: 文章大纲
-        section_notes: (可选) 即使传入也会被忽略，工具会自动从 research_notes.json 读取。
+        article_id: 文章 ID，由 Main Agent 从用户消息提取并传递
+        outline: (可选) 文章大纲。如果未提供，将自动从 artifacts 加载。
         
     Returns:
         WriterOutput 字典
     """
-    _LOGGER.info(f"write_all_sections_tool called")
+    _LOGGER.info(f"write_all_sections_tool called with article_id: '{article_id}'")
     
-    # 优先加载 Persistent Outline
-    article_id = get_current_article_id()
+    # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
     _LOGGER.info(f"[DEBUG] write_all_sections_tool: article_id = '{article_id}'")
     
     loaded_outline = load_article_artifact(article_id, "outline.json")

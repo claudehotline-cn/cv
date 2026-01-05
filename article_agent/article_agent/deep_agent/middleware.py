@@ -9,10 +9,105 @@ from typing import Any, Dict, Optional, List
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import AgentState
-from langchain_core.messages import AIMessage, ToolMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, ToolMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class ArticleIDMiddleware(AgentMiddleware):
+    """Middleware to ensure article_id exists in the conversation."""
+    
+    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> Dict[str, Any] | None:
+        """Check for article_id in user message or context, generate if missing."""
+        messages = state.get("messages", [])
+        
+        from .utils.artifacts import get_current_article_id, set_current_article_id
+        import re
+        
+        # 1. Check if already set in context
+        current_id = get_current_article_id()
+        if current_id:
+            _LOGGER.info(f"[ArticleIDMiddleware] Found existing article_id in context: {current_id}")
+            return None
+        
+        # 2. Try to parse article_id from user message (sent by frontend)
+        parsed_id = None
+        for msg in reversed(messages):  # Start from most recent
+            content = getattr(msg, "content", "")
+            if isinstance(content, str):
+                # Match "article_id: xxx" or "article_id=xxx"
+                match = re.search(r'article_id[:\s=]+([a-zA-Z0-9]+)', content, re.IGNORECASE)
+                if match:
+                    parsed_id = match.group(1)
+                    _LOGGER.info(f"[ArticleIDMiddleware] Parsed article_id from user message: {parsed_id}")
+                    break
+        
+        # 3. Use parsed ID or generate new one
+        new_id = parsed_id or uuid.uuid4().hex[:8]
+        set_current_article_id(new_id)
+        
+        if parsed_id:
+            _LOGGER.info(f"[ArticleIDMiddleware] Using frontend-provided article_id: {new_id}")
+        else:
+            _LOGGER.info(f"[ArticleIDMiddleware] Generated new article_id: {new_id}")
+        
+        # 3. Inject into System Message or User Message?
+        # Injecting a System Message at the end of history (before new user msg) or beginning
+        # is tricky with state immutable list. 
+        # But we can return a modification to 'messages'.
+        
+        # Strategy: Prepend a System Message with the ID so all Agents see it.
+        # But modify 'messages' only if it's not already there.
+        
+        system_msg = SystemMessage(content=f"SYSTEM_INJECTED_CONTEXT: Current Article ID is '{new_id}'. ALL Agents must use this ID.")
+        
+        # We can prepend it to the list of messages passed to the model
+        # But the 'state' usually contains persistent history. 
+        # If we return {"messages": [system_msg] + messages}, it might append or replace?
+        # LangGraph behavior depends on reducer. 
+        
+        # A safer bet for this codebase's "deepagents" framework:
+        # Just set it in the context (done above via set_current_article_id).
+        # And let prompts use it if they have dynamic placeholders (they don't currently).
+        
+        # To make LLM *see* it, we must add it to messages.
+        return {"messages": [system_msg]}
+
+    def after_agent(self, state: AgentState, runtime: Runtime[Any]) -> Dict[str, Any] | None:
+        """Post-process agent output to enforce correct article_id in structured output."""
+        from .utils.artifacts import get_current_article_id
+        import json
+        
+        correct_id = get_current_article_id()
+        if not correct_id:
+            return None  # No ID to enforce
+        
+        messages = state.get("messages", [])
+        if not messages:
+            return None
+        
+        # Check the last message (agent's response)
+        last_msg = messages[-1]
+        content = getattr(last_msg, "content", "")
+        
+        if isinstance(content, str) and "article_id" in content:
+            # Try to find and replace article_id in JSON blocks
+            import re
+            
+            # Pattern to match article_id in JSON
+            pattern = r'"article_id"\s*:\s*"[^"]*"'
+            replacement = f'"article_id": "{correct_id}"'
+            
+            new_content = re.sub(pattern, replacement, content)
+            if new_content != content:
+                _LOGGER.info(f"[ArticleIDMiddleware] Overriding article_id in output to: {correct_id}")
+                # Return modified message
+                from langchain_core.messages import AIMessage
+                new_msg = AIMessage(content=new_content)
+                return {"messages": [new_msg]}
+        
+        return None
 
 
 class PDFAttachmentMiddleware(AgentMiddleware):

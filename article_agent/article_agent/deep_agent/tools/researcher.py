@@ -128,7 +128,13 @@ def research_section_tool(
             for img in available_images[:5]:
                 alt = img.get("alt", "") or img.get("content", "")
                 if any(kw.lower() in alt.lower() for kw in keywords):
-                    assigned_images.append({"id": img.get("element_id"), "desc": alt[:100]})
+                    # Fallback caption: use truncated alt or generic title
+                    caption = alt[:20] if alt else f"图：{keywords[0] if keywords else '参考图'}"
+                    assigned_images.append({
+                        "id": img.get("element_id"), 
+                        "desc": alt[:100],
+                        "caption": caption
+                    })
         
         _LOGGER.info(f"Section {section_id} assigned {len(assigned_images)} images from LLM")
         
@@ -172,8 +178,7 @@ def research_all_sections_tool(
         ResearcherOutput 字典
     """
     
-    # 优先加载 Persistent Outline (此时 outline 参数可能是空的)
-    article_id = get_current_article_id(article_id)
+    # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
     _LOGGER.info(f"[DEBUG] research_all_sections_tool: article_id = '{article_id}'")
     
     loaded_outline = load_article_artifact(article_id, "outline.json")
