@@ -388,37 +388,13 @@ ${uploadedFilePaths.value.length > 0 ? `MinIO文件: ${uploadedFilePaths.value.j
               }
             }
             
-            // === 处理 ArticleAgentOutput 格式 ===
-            console.log('[DEBUG] Checking ArticleAgentOutput - status:', data.status, 'article_content:', !!data.article_content, 'md_url:', data.md_url)
-            if (data.status === 'success') {
-              console.log('[DEBUG] status=success, article_content length:', data.article_content?.length)
-              // 优先使用直接返回的 article_content
-              if (data.article_content) {
-                 console.log('[DEBUG] Using article_content!')
-                 addThinkingEvent('step', `文章生成成功: ${data.title || ''}`)
-                 resultMarkdown.value = data.article_content
-                 currentStep.value = '完成'
-              } else if (data.md_url) {
-                // 回退：尝试从 md_url 获取 (虽然可能 404)
-                addThinkingEvent('step', `文章生成成功: ${data.title || ''}`)
-                currentStep.value = '正在加载文章...'
-                
-                try {
-                  const mdResponse = await fetch(`/api/agents/article${data.md_url}`)
-                  if (mdResponse.ok) {
-                    resultMarkdown.value = await mdResponse.text()
-                  } else {
-                    // 如果无法获取，显示摘要
-                    resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
-                  }
-                } catch {
-                   resultMarkdown.value = `# ${data.title || '文章'}\n\n${data.summary || ''}\n\n---\n\n**字数**: ${data.word_count || 0}\n\n**文件路径**: ${data.md_path || ''}`
-                }
-              }
-            } else if (data.status === 'error') {
-              // 错误输出
-              addThinkingEvent('step', `错误: ${data.error_message || '未知错误'}`)
-              throw new Error(data.error_message || '文章生成失败')
+            // === 处理 structured_response（最高优先级）===
+            // Middleware 填充的 article_content 应该优先于 messages 循环中的处理
+            if (data.structured_response && data.structured_response.status === 'success' && data.structured_response.article_content) {
+              console.log('[DEBUG] Using structured_response.article_content! Length:', data.structured_response.article_content.length)
+              addThinkingEvent('step', `文章生成成功: ${data.structured_response.title || ''}`)
+              resultMarkdown.value = data.structured_response.article_content
+              currentStep.value = '完成'
             }
             
             // === 兼容旧版 StateGraph 格式（step_events）===

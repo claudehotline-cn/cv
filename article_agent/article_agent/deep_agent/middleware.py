@@ -408,7 +408,16 @@ class ArticleContentMiddleware(AgentMiddleware):
                     # 检查是否是 assemble_article_tool 的输出（包含 md_path 和 article_content）
                     if "md_path" in content_str and "article_content" in content_str:
                         try:
-                            data = json.loads(content_str)
+                            # Strip markdown code fences if present
+                            clean_content = content_str.strip()
+                            if clean_content.startswith("```"):
+                                first_newline = clean_content.find("\n")
+                                if first_newline != -1:
+                                    clean_content = clean_content[first_newline + 1:]
+                                if clean_content.endswith("```"):
+                                    clean_content = clean_content[:-3].rstrip()
+                            
+                            data = json.loads(clean_content)
                             if isinstance(data, dict):
                                 tool_md_path = data.get("md_path")
                                 tool_content = data.get("article_content")
@@ -477,9 +486,12 @@ class ArticleContentMiddleware(AgentMiddleware):
                                  _LOGGER.info(f"Middleware: Found content in ToolMessage[-{i+1}] (Name: {tool_name})")
                                  # Update content only if path extraction failed
                                  if hasattr(resp, "model_copy"):
+                                     _LOGGER.info(f"Middleware: Updating via model_copy with {len(found_content)} chars")
                                      new_resp = resp.model_copy(update={"article_content": found_content})
+                                     _LOGGER.info(f"Middleware: new_resp.article_content length = {len(new_resp.article_content) if new_resp.article_content else 0}")
                                      return {"structured_response": new_resp}
                                  elif isinstance(resp, dict):
+                                     _LOGGER.info(f"Middleware: Updating dict with {len(found_content)} chars")
                                      resp["article_content"] = found_content
                                      return {"structured_response": resp}
                                  break
@@ -554,9 +566,20 @@ class ArticleContentMiddleware(AgentMiddleware):
         """Helper to extract article_content from a string (JSON or partial JSON)."""
         if not text: return None
         
-        # 1. Try strict JSON
+        # 0. Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+        clean_text = text.strip()
+        if clean_text.startswith("```"):
+            # Find first newline after opening fence
+            first_newline = clean_text.find("\n")
+            if first_newline != -1:
+                clean_text = clean_text[first_newline + 1:]
+            # Strip closing fence
+            if clean_text.endswith("```"):
+                clean_text = clean_text[:-3].rstrip()
+        
+        # 1. Try strict JSON on cleaned text
         try:
-            data = json.loads(text)
+            data = json.loads(clean_text)
             if isinstance(data, dict) and data.get("article_content"):
                 return data["article_content"]
         except:
