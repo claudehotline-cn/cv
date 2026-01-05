@@ -263,10 +263,42 @@ def research_all_sections_tool(
 
     section_notes = []
     
-    # Phase 1: Research all sections for content (without images first)
+    # ========== 合并的新流程：先分配图片，再研究内容 ==========
     sections = outline.get("sections", [])
     
-    _LOGGER.info(f"[Phase 1] Starting content research for {len(sections)} sections")
+    # Step 1: 预先运行图片分配算法（使用关键词匹配 + Hungarian 算法）
+    _LOGGER.info(f"[Step 1] Running optimal image allocation for {len(all_images)} images across {len(sections)} sections")
+    
+    image_allocation = {}
+    try:
+        from .image_allocator import allocate_images_for_article
+        
+        # 准备 sections 数据用于分配
+        sections_for_allocation = []
+        for idx, sec in enumerate(sections):
+            section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
+            sections_for_allocation.append({
+                "id": section_id,
+                "title": sec.get("title") or sec.get("heading") or "",
+                "keywords": sec.get("keywords", []),
+            })
+        
+        # 运行最优分配
+        image_allocation = allocate_images_for_article(
+            sections=sections_for_allocation,
+            images=all_images,
+            max_images_per_section=2,
+            max_uses_per_image=2
+        )
+        
+        for sec_id, imgs in image_allocation.items():
+            _LOGGER.info(f"Pre-allocated {len(imgs)} images to section {sec_id}")
+            
+    except Exception as alloc_err:
+        _LOGGER.error(f"Image pre-allocation failed: {alloc_err}")
+    
+    # Step 2: 为每个章节研究内容，传入预分配的图片
+    _LOGGER.info(f"[Step 2] Starting content research for {len(sections)} sections (with pre-allocated images)")
     
     for idx, sec in enumerate(sections):
         section_id = sec.get("id") or sec.get("section_id") or f"sec_{idx + 1}"
@@ -276,15 +308,32 @@ def research_all_sections_tool(
         plan_info = section_plan_map.get(section_id, {})
         required_evidence = plan_info.get("required_evidence", [])
         
+        # 获取预分配的图片（已经过 Hungarian 算法筛选）
+        pre_allocated_images = image_allocation.get(section_id, [])
+        # 转换为 research_section_tool 期望的格式
+        available_images_for_section = []
+        for img_info in pre_allocated_images:
+            # image_allocation 返回 {"id": "xxx", "desc": "xxx"}
+            # 需要转换为 research_section_tool 期望的格式
+            available_images_for_section.append({
+                "element_id": img_info.get("id"),
+                "visual_description": img_info.get("desc"),
+            })
+        
+        _LOGGER.info(f"Section {section_id} will see {len(available_images_for_section)} pre-allocated images")
+        
         try:
             note = research_section_tool.invoke({
                 "section_id": section_id,
                 "section_title": section_title,
                 "keywords": sec.get("keywords", []) or plan_info.get("keywords", []),
                 "sources_text": all_text,
-                "available_images": [],  # No images in first pass - we'll assign later
+                "available_images": available_images_for_section,  # 传入预分配的图片
                 "required_evidence": required_evidence,
             })
+            # 确保分配的图片被正确记录（即使 LLM 没有选择）
+            if not note.get("assigned_images"):
+                note["assigned_images"] = pre_allocated_images
             section_notes.append(note)
         except Exception as e:
             _LOGGER.error(f"Research failed for {section_id}: {e}")
@@ -293,40 +342,8 @@ def research_all_sections_tool(
                 "notes": f"资料整理失败: {e}", 
                 "bullet_points": [],
                 "evidence": [],
-                "assigned_images": []
+                "assigned_images": pre_allocated_images  # 保留预分配的图片
             })
-    
-    # Phase 2: Optimal image allocation across all sections
-    _LOGGER.info(f"[Phase 2] Starting optimal image allocation for {len(all_images)} images")
-    
-    try:
-        from .image_allocator import allocate_images_for_article
-        
-        # Prepare sections with keywords for allocation
-        sections_for_allocation = []
-        for note, sec in zip(section_notes, sections):
-            sections_for_allocation.append({
-                "id": note.get("section_id"),
-                "title": sec.get("title") or sec.get("heading") or "",
-                "keywords": sec.get("keywords", []),
-            })
-        
-        # Run optimal allocation
-        allocation = allocate_images_for_article(
-            sections=sections_for_allocation,
-            images=all_images,
-            max_images_per_section=2,
-            max_uses_per_image=2
-        )
-        
-        # Merge allocation results into section_notes
-        for note in section_notes:
-            sec_id = note.get("section_id")
-            note["assigned_images"] = allocation.get(sec_id, [])
-            _LOGGER.info(f"Section {sec_id} allocated {len(note['assigned_images'])} images")
-            
-    except Exception as alloc_err:
-        _LOGGER.error(f"Image allocation failed: {alloc_err}")
     
     _LOGGER.info(f"[Complete] All {len(section_notes)} sections researched with images allocated")
     

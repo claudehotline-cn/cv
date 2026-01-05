@@ -294,7 +294,7 @@ REVIEWER_AGENT_PROMPT = """
 - 总体评分: [工具返回的 overall_quality]
 - 评审结论: [通过/不通过]
 - 审阅意见保存路径: [工具返回的 review_file]
-（如果通过）请指示 illustrator_agent 开始配图。
+（如果通过）请指示 assembler_agent 开始组装最终文章。
 （如果不通过）请指示 writer_agent 修改，并告知审阅意见文件路径。
 
 ⚠️ **结果返回要求**：

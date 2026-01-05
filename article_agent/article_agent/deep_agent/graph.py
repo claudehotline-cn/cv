@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from deepagents import create_deep_agent, SubAgent
+from deepagents import create_deep_agent, SubAgent, CompiledSubAgent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
+from langchain.agents import create_agent
 from langgraph.store.memory import InMemoryStore
 
 # 进程级别共享 Store 实例，用于跨线程数据共享
@@ -85,55 +86,113 @@ def get_article_deep_agent_graph() -> Any:
         tools=[ingest_documents_tool],
     )
 
-    # 1. Planner Agent - 大纲规划 (不再负责收集)
-    planner_agent = SubAgent(
+    # 1. Planner Agent - 大纲规划 (使用 CompiledSubAgent 强制调用工具)
+    planner_llm = build_chat_llm(task_name="planner")
+    planner_tools = [generate_outline_tool]  # 只需要这一个工具，移除未使用的 load_file_tool
+    
+    planner_llm_forced = planner_llm.bind_tools(
+        planner_tools,
+        tool_choice={"type": "function", "function": {"name": "generate_outline_tool"}}
+    )
+    
+    planner_runnable = create_agent(
+        model=planner_llm_forced,
+        tools=planner_tools,
+        system_prompt=PLANNER_AGENT_PROMPT,
+    )
+    
+    planner_agent = CompiledSubAgent(
         name="planner_agent",
         description=PLANNER_AGENT_DESCRIPTION,
-        system_prompt=PLANNER_AGENT_PROMPT,
-        tools=[generate_outline_tool, load_file_tool],
+        runnable=planner_runnable,
     )
     
-    # 2. Researcher Agent - 资料整理
-    researcher_agent = SubAgent(
+    # 2. Researcher Agent - 资料整理 (使用 CompiledSubAgent 强制工具调用)
+    # 创建一个带 tool_choice='required' 的 LLM，确保必须调用工具
+    researcher_llm = build_chat_llm(task_name="researcher")
+    researcher_tools = [research_all_sections_tool]  # 只需要这一个入口工具
+    
+    # 强制调用指定工具（使用具体工具名，而非 "required"）
+    researcher_llm_forced = researcher_llm.bind_tools(
+        researcher_tools,
+        tool_choice={"type": "function", "function": {"name": "research_all_sections_tool"}}
+    )
+    
+    # 创建一个预编译的 agent runnable
+    researcher_runnable = create_agent(
+        model=researcher_llm_forced,
+        tools=researcher_tools,
+        system_prompt=RESEARCHER_AGENT_PROMPT,
+    )
+    
+    # 包装为 CompiledSubAgent
+    researcher_agent = CompiledSubAgent(
         name="researcher_agent",
         description=RESEARCHER_AGENT_DESCRIPTION,
-        system_prompt=RESEARCHER_AGENT_PROMPT,
-        tools=[read_sources_tool, research_section_tool, research_all_sections_tool, research_audit_tool],
+        runnable=researcher_runnable,
     )
     
-    # 4. Writer Agent - 内容撰写
-    writer_agent = SubAgent(
+    # 4. Writer Agent - 内容撰写 (使用 CompiledSubAgent 强制调用工具)
+    writer_llm = build_chat_llm(task_name="writer")
+    writer_tools = [write_all_sections_tool]  # 主入口工具，移除 write_section_tool 和 writer_audit_tool
+    
+    writer_llm_forced = writer_llm.bind_tools(
+        writer_tools,
+        tool_choice={"type": "function", "function": {"name": "write_all_sections_tool"}}
+    )
+    
+    writer_runnable = create_agent(
+        model=writer_llm_forced,
+        tools=writer_tools,
+        system_prompt=WRITER_AGENT_PROMPT,
+    )
+    
+    writer_agent = CompiledSubAgent(
         name="writer_agent",
         description=WRITER_AGENT_DESCRIPTION,
-        system_prompt=WRITER_AGENT_PROMPT,
-        tools=[write_section_tool, write_all_sections_tool, writer_audit_tool],
+        runnable=writer_runnable,
     )
     
-    # 5. Reviewer Agent - 质量审阅
-    reviewer_agent = SubAgent(
+    # 5. Reviewer Agent - 质量审阅 (使用 CompiledSubAgent 强制调用工具)
+    reviewer_llm = build_chat_llm(task_name="reviewer")
+    reviewer_tools = [review_draft_tool]
+    
+    reviewer_llm_forced = reviewer_llm.bind_tools(
+        reviewer_tools,
+        tool_choice={"type": "function", "function": {"name": "review_draft_tool"}}
+    )
+    
+    reviewer_runnable = create_agent(
+        model=reviewer_llm_forced,
+        tools=reviewer_tools,
+        system_prompt=REVIEWER_AGENT_PROMPT,
+    )
+    
+    reviewer_agent = CompiledSubAgent(
         name="reviewer_agent",
         description=REVIEWER_AGENT_DESCRIPTION,
-        system_prompt=REVIEWER_AGENT_PROMPT,
-        tools=[review_draft_tool],
+        runnable=reviewer_runnable,
+    )
+
+    # 7. Assembler Agent - 组装输出 (使用 CompiledSubAgent 强制调用工具)
+    assembler_llm = build_chat_llm(task_name="assembler")
+    assembler_tools = [assemble_article_tool]
+    
+    assembler_llm_forced = assembler_llm.bind_tools(
+        assembler_tools,
+        tool_choice={"type": "function", "function": {"name": "assemble_article_tool"}}
     )
     
-
+    assembler_runnable = create_agent(
+        model=assembler_llm_forced,
+        tools=assembler_tools,
+        system_prompt=ASSEMBLER_AGENT_PROMPT,
+    )
     
-    # 配置 Assembler 的结构化输出
-    try:
-        from langchain.agents.structured_output import ToolStrategy
-        assembler_response_format = ToolStrategy(AssemblerOutput)
-    except ImportError:
-        assembler_response_format = AssemblerOutput
-
-    # 7. Assembler Agent - 组装输出
-    assembler_agent = SubAgent(
+    assembler_agent = CompiledSubAgent(
         name="assembler_agent",
         description=ASSEMBLER_AGENT_DESCRIPTION,
-        system_prompt=ASSEMBLER_AGENT_PROMPT,
-        tools=[assemble_article_tool],
-        response_format=assembler_response_format,  # Enable structured output via ToolStrategy
-        middleware=[AssemblerStateMiddleware()], # Write md_path to State for Main Agent Middleware to read
+        runnable=assembler_runnable,
     )
 
     # ============================================================================
