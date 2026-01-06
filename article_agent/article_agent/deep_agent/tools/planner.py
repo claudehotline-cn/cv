@@ -375,10 +375,10 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
                         first_chunks_text = []
                         with open(chunks_path, "r", encoding="utf-8") as f:
                             for i, line in enumerate(f):
-                                if i >= 5:  # 只读取前 5 个 chunk
+                                if i >= 10:  # 读取前 10 个 chunk
                                     break
                                 chunk = json.loads(line)
-                                text = chunk.get("text", "")[:500]  # 每个 chunk 截取 500 字符
+                                text = chunk.get("content", "")[:800]  # 每个 chunk 截取 800 字符
                                 if text:
                                     first_chunks_text.append(text)
                         if first_chunks_text:

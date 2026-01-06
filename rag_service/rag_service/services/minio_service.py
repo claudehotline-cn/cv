@@ -82,6 +82,33 @@ class MinIOService:
         except Exception as e:
             logger.error(f"Upload error: {e}")
             return None
+
+    def upload_from_path(self, file_path: str, object_name: str, content_type: str = "application/octet-stream") -> Optional[str]:
+        """
+        从本地文件路径上传到 MinIO
+        
+        Args:
+            file_path: 本地文件路径
+            object_name: 对象名称
+            content_type: 文件类型
+        """
+        if not self.client:
+            self._init_client()
+            if not self.client:
+                return None
+        
+        try:
+            self.client.fput_object(
+                self.bucket,
+                object_name,
+                file_path,
+                content_type=content_type
+            )
+            logger.info(f"Uploaded to MinIO from path: {object_name}")
+            return object_name
+        except Exception as e:
+            logger.error(f"Upload from path error: {e}")
+            return None
     
     def download_file(self, object_name: str) -> Optional[str]:
         """

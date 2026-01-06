@@ -14,6 +14,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ...config.config import get_settings
+from .ingest_media_helper import _describe_media_file_with_vlm
 
 async def _describe_image_with_vlm(image_bytes: bytes, document_context: str = "") -> str:
     """Use VLM to generate a detailed description and short caption for the image.
@@ -502,8 +503,84 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     source_meta = {}
     extracted_images = []  # List of dicts: {data (bytes), ext, alt, page/index, element_id, src (if URL)}
     
+    # Get settings at function start to avoid UnboundLocalError in conditional branches
+    from ...config.config import get_settings
+    settings = get_settings()
+    
     try:
-        if source_type == "minio":
+        # Detect media type by extension
+        import os
+        _, ext = os.path.splitext(source_path)
+        ext = ext.lstrip(".").lower()
+        if ext in ["mp4", "mkv", "avi", "mov", "webm", "mp3", "wav", "aac", "flac", "m4a"]:
+            _LOGGER.info(f"Detected media file: {source_path} (ext={ext})")
+            
+            # 1. Fetch Bytes (MinIO or URL)
+            media_bytes = b""
+            if source_type == "minio":
+                media_bytes = await asyncio.to_thread(load_bytes_from_minio, source_path)
+            elif source_type == "url":
+                from ..utils.files import fetch_image_bytes 
+                media_bytes = await asyncio.to_thread(fetch_image_bytes, source_path)
+            
+            if not media_bytes:
+                 raise ValueError("Empty media file")
+
+            # 2. Generate Doc ID
+            etag = hashlib.md5(media_bytes).hexdigest()
+            doc_id_seed = f"{settings.minio_bucket if source_type=='minio' else 'url'}:{source_path}:{etag}:{len(media_bytes)}"
+            doc_id = "doc_" + hashlib.sha256(doc_id_seed.encode()).hexdigest()[:16]
+            
+            # 3. Persist File for Serving
+            doc_dir = os.path.join(article_dir, "corpus", doc_id)
+            os.makedirs(doc_dir, exist_ok=True)
+            filename = f"original.{ext}"
+            file_path = os.path.join(doc_dir, filename)
+            
+            # Write asynchronously
+            await asyncio.to_thread(lambda: open(file_path, "wb").write(media_bytes))
+            _LOGGER.info(f"Saved media file to {file_path}")
+            
+            # 4. Analyze with VLM
+            media_type = "video" if ext in ["mp4", "mkv", "avi", "mov", "webm"] else "audio"
+            vlm_json = await _describe_media_file_with_vlm(file_path, media_type, article_id, doc_id, filename)
+            _LOGGER.info(f"VLM Analysis Result for {filename}: {vlm_json}")
+            
+            # 5. Create Chunk from VLM Analysis
+            import json
+            vlm_data = {}
+            try:
+                vlm_data = json.loads(vlm_json)
+            except:
+                vlm_data = {"summary": vlm_json}
+                
+            summary = vlm_data.get("summary", "")
+            transcription = vlm_data.get("transcription", "")
+            details = vlm_data.get("technical_details", "")
+            
+            media_chunk_content = f"【多媒体素材：{source_path}】\n类型：{media_type}\n\n## 摘要\n{summary}\n\n## 详细转录/描述\n{transcription}\n\n## 技术细节\n{details}"
+            
+            # Use specific ID for this chunk
+            chunk_id = f"{doc_id}_summary"
+            chunks = [{"chunk_id": chunk_id, "content": media_chunk_content, "doc_id": doc_id, "page": 0}]
+            full_text = media_chunk_content
+            
+            # 6. Save Artifacts
+            with open(os.path.join(doc_dir, "chunks.jsonl"), "w", encoding="utf-8") as f:
+                 f.write(json.dumps(chunks[0], ensure_ascii=False) + "\n")
+            with open(os.path.join(doc_dir, "vlm_analysis.json"), "w", encoding="utf-8") as f:
+                 f.write(vlm_json)
+                 
+            source_meta = {
+                "type": source_type,
+                "bucket": settings.minio_bucket if source_type=="minio" else "",
+                "key": source_path,
+                "etag": etag,
+                "size": len(media_bytes),
+                "content_type": f"{media_type}/{ext}"
+            }
+            
+        elif source_type == "minio":
             pdf_bytes = await asyncio.to_thread(load_bytes_from_minio, source_path)
             
             # 架构要求：doc_id = sha256(bucket:key:etag:size)

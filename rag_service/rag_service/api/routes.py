@@ -1235,45 +1235,8 @@ async def upload_image_generic(
         logger.error(f"Image upload failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.post("/upload-file")
-async def upload_file_generic(
-    file: UploadFile = File(...)
-):
-    """
-    通用文件上传接口 (用于 Article Agent)
-    
-    支持: PDF, DOC, DOCX, TXT, MD
-    返回: MinIO 路径供 Article Agent 下载处理
-    """
-    from ..services.minio_service import minio_service
-    import uuid
-    
-    # 验证文件格式
-    allowed_extensions = ['.pdf', '.doc', '.docx', '.txt', '.md', '.html', '.htm']
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Allowed: {', '.join(allowed_extensions)}")
-    
-    content = await file.read()
-    
-    try:
-        # 上传到 MinIO
-        object_name = f"uploads/{uuid.uuid4().hex}_{file.filename}"
-        content_type = file.content_type or "application/octet-stream"
-        minio_service.upload_file(content, object_name, content_type)
-        
-        logger.info(f"File uploaded to MinIO: {object_name}")
-        
-        return {
-            "filename": file.filename,
-            "minio_path": object_name,
-            "size": len(content),
-            "content_type": content_type
-        }
-    except Exception as e:
-        logger.error(f"File upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Note: Generic /upload-file endpoint moved to end of file (line ~2086)
+# to support all file types including video/audio without validation
 
 async def upload_image(
     kb_id: int,
@@ -2080,4 +2043,85 @@ def add_chat_message(
     db.commit()
     db.refresh(message)
     
-    return message.to_dict()
+
+# ==================== Generic Upload API ====================
+
+@router.post("/upload-file")
+async def upload_generic_file(
+    file: UploadFile = File(...)
+):
+    """
+    通用文件上传接口 (用于 Article Agent 等临时文件上传)
+    
+    上传到 MinIO 的 uploads/ 目录
+    返回 minio_path
+    """
+    from ..services.minio_service import minio_service
+    import uuid
+    import os
+    
+    import shutil
+    
+    # Generate unique object name
+    ext = os.path.splitext(file.filename)[1]
+    object_name = f"uploads/{uuid.uuid4().hex}_{file.filename}"
+    
+    logger.info(f"Generic upload started: {file.filename} ({file.content_type})")
+    
+    # Stream to temporary file first (avoid OOM)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+        
+    file_size = os.path.getsize(tmp_path)
+    
+    logger.info(f"Streamed to temp file: {tmp_path}")
+    
+    try:
+        # Upload from path
+        minio_path = minio_service.upload_from_path(
+            tmp_path, 
+            object_name, 
+            file.content_type or "application/octet-stream"
+        )
+    finally:
+        # Cleanup temp file
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+            logger.info(f"Cleaned up temp file: {tmp_path}")
+    
+    if not minio_path:
+        raise HTTPException(status_code=500, detail="Failed to upload file")
+        
+    return {
+        "filename": file.filename,
+        "minio_path": minio_path,
+        "size": file_size,
+        "content_type": file.content_type
+    }
+
+
+# ==================== Artifacts Serving ====================
+
+@router.get("/artifacts/{path:path}")
+async def serve_artifact(path: str):
+    """
+    Serve artifacts from /data/workspace/artifacts
+    Used by vLLM to access media files ingested by Article Agent
+    """
+    from fastapi.responses import FileResponse
+    import os
+    
+    artifact_root = "/data/workspace/artifacts"
+    file_path = os.path.join(artifact_root, path)
+    
+    # Normalize path to prevent directory traversal
+    file_path = os.path.normpath(file_path)
+    
+    if not file_path.startswith(artifact_root):
+         raise HTTPException(status_code=403, detail="Access denied")
+        
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {path}")
+        
+    return FileResponse(file_path)

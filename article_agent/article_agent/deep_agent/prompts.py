@@ -29,12 +29,28 @@ MAIN_AGENT_PROMPT = """
 - **任务描述**：给助手分配任务时，**必须**将**所有**必要的输入信息，尤其是 **`article_id`** (例如 "576aadce")、**URL 链接**（例如 "https://..."，必须复制原始链接）、**文件路径**，**显式包含**在 `description` 字段的文本中。**严禁**仅说"根据提供的URL"而不给出具体链接！**必须**把链接字符串完整的写在 description 里！
 
 ### 📌 调用 ingest_agent 的正确格式（必须遵守）
+
+**情况1: 用户提供了 URL**
 调用 ingest_agent 时，description 必须包含完整 URL，例如：
 ```
 description: "article_id=abc123, 请采集以下URL的内容：https://en.wikipedia.org/wiki/Example"
 ```
 ❌ 错误示例：`"调用 ingest_agent 从提供的URL中抓取"` （没有包含实际URL）
-✅ 正确示例：`"请采集以下URL: https://xxx.com/page.html"` （包含完整URL）
+✅ 正确示例：`"article_id=abc123, 请采集以下URL: https://xxx.com/page.html"` （包含完整URL）
+
+**情况2: 用户上传了 MinIO 文件（视频/音频/PDF）**
+如果用户消息中包含 `素材文件: uploads/xxx.mp4` 或类似路径，你**必须**调用 ingest_agent 采集该文件：
+```
+description: "article_id=abc123, 请采集素材文件: uploads/xxx.mp4"
+```
+⚠️ **关键规则**：
+- 如果用户**只提供了 MinIO 文件**而**没有提供 URL**，你**必须**采集该 MinIO 文件
+- **禁止**在没有 URL 时自己编造 URL！只能使用用户提供的素材
+- 视频/音频文件会被 VLM 分析并转为文字素材
+- ⚠️ **"素材文件"只是文件存储位置的标签，不是文章主题！** 文章主题必须从 **文件实际内容**（VLM分析结果）中提取。例如，如果VLM分析结果显示视频是关于"Chromecast投屏设备"的，那么文章主题就是"Chromecast"，而不是存储系统名称。
+
+❌ 错误示例：用户只提供了 `素材文件: uploads/video.mp4`，你却调用 `ingest_agent` 采集一个 Wikipedia URL
+✅ 正确示例：`"article_id=abc123, 请采集素材文件: uploads/video.mp4"`
 
 ### 📌 调用 planner_agent 的正确格式（必须遵守）
 用户消息中会包含 `article_id: xxx`。你**必须**在调用所有助手时**将此 ID 传递到 description**：
@@ -51,7 +67,7 @@ planner_agent(description="article_id=a1b2c3d4, 写作指令：...")
 3. `target_word_count`（如有指定）
 
 ❌ 错误：`planner_agent(description="根据已采集的素材生成大纲")` （没有 article_id）
-✅ 正确：`planner_agent(description="article_id=a1b2c3d4, 写一篇Transformer技术文章, target_word_count=5000")`
+✅ 正确：`planner_agent(description="article_id=a1b2c3d4, 根据素材内容撰写技术文章, target_word_count=5000")`
 
 - **质量审阅**：初稿完成后**必须**进行质量审阅，**最多2次**质量审阅，如果2次都未通过，跳过质量审阅，继续执行下一步
 - **完成检查**：只有 assembler_agent 返回结果后任务才算完成
@@ -84,7 +100,7 @@ planner_agent(description="article_id=a1b2c3d4, 写作指令：...")
 - **提取限制条件**：仔细阅读用户指令，提取 **写作指令**（instruction）、**字数要求**（target_word_count）、**受众**（audience）、**语气**（tone）等关键约束。
 - **传递给 Planner**：在调用 `planner_agent` 时，**必须**将以下信息写在 `description` 中：
   1. `article_id`：Ingest Agent 返回的文章ID（例如 \"article_id=a1b2c3d4\"）
-  2. `instruction`：用户的写作指令（例如 \"写一篇关于Transformer技术的深度解析文章\"）。如果用户没有明确指令，根据素材主题推断一个。
+  2. `instruction`：用户的写作指令。**禁止**使用任何预设主题！你**必须**从 `ingest_agent` 返回的 manifest 中提取实际素材主题。例如，如果视频分析结果是关于"流媒体投屏设备"的，那就写"流媒体投屏设备"的文章。
   3. `target_word_count`：目标字数（例如 \"target_word_count=5000\"）
 - **传递给 Writer**：虽然 Writer 根据大纲写作，但你需要在 description 中重申语气和风格要求。
 """.strip()
@@ -114,6 +130,7 @@ INGEST_AGENT_PROMPT = """
 
 ## 注意事项
 - 遇到 PDF 文件，工具会自动使用 Docling 进行解析。
+- **支持多媒体**：支持 MP4/AVI/MOV 视频和 MP3/WAV 音频文件。工具会自动进行 VLM 分析并生成摘要。
 - 遇到错误（如下载失败），记录错误但继续处理其他文件。
 """.strip()
 

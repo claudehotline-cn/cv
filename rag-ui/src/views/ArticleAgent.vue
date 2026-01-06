@@ -201,7 +201,7 @@ const generateArticle = async () => {
             content: `请根据以下素材生成文章：
 article_id: ${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}
 URLs: ${validUrlsList.join(', ')}
-${uploadedFilePaths.value.length > 0 ? `MinIO文件: ${uploadedFilePaths.value.join(', ')}` : ''}
+${uploadedFilePaths.value.length > 0 ? `素材文件: ${uploadedFilePaths.value.join(', ')}` : ''}
 标题: ${title.value || '自动生成'}
 写作指令: ${instruction.value}`
           }]
@@ -556,7 +556,7 @@ const downloadMarkdown = () => {
           type="file"
           ref="fileInput"
           style="display: none"
-          accept=".pdf,.doc,.docx,.txt,.md"
+          accept=".pdf,.doc,.docx,.txt,.md,.mp4,.mkv,.avi,.mp3,.wav,.m4a"
           multiple
           @change="handleFileSelect"
         />
@@ -571,8 +571,13 @@ const downloadMarkdown = () => {
               @click="removeFile(index)"
             />
           </div>
-          <el-button type="primary" text @click="triggerFileUpload">
-            选择文件
+          <el-button 
+            type="primary" 
+            text 
+            @click="triggerFileUpload"
+            :loading="isUploading"
+          >
+            {{ isUploading ? '上传中...' : '选择文件' }}
           </el-button>
         </div>
 
