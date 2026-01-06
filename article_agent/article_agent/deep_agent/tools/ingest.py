@@ -16,12 +16,15 @@ from ...config.llm_runtime import build_chat_llm, extract_text_content
 from ...config.config import get_settings
 
 async def _describe_image_with_vlm(image_bytes: bytes, document_context: str = "") -> str:
-    """Use VLM to generate a detailed description of the image.
+    """Use VLM to generate a detailed description and short caption for the image.
     
     Args:
         image_bytes: Raw image bytes
         document_context: Optional context about the document (title, headings, topic)
                          to help VLM better understand the image
+    
+    Returns:
+        JSON string with format: {"description": "详细描述...", "caption": "图1：简短标题"}
     """
     try:
         # Validate and convert image format if needed
@@ -39,10 +42,10 @@ async def _describe_image_with_vlm(image_bytes: bytes, document_context: str = "
                 _LOGGER.info("Successfully converted SVG to PNG")
             except ImportError:
                 _LOGGER.warning("cairosvg not installed, skipping SVG...")
-                return "SVG image (无法转换为位图)"
+                return '{"description": "SVG image (无法转换为位图)", "caption": "SVG图片"}'
             except Exception as svg_err:
                 _LOGGER.warning(f"SVG conversion failed: {svg_err}")
-                return "SVG image (转换失败)"
+                return '{"description": "SVG image (转换失败)", "caption": "SVG图片"}'
         
         # Validate it's a valid image using Pillow and re-encode to PNG
         # Run in a thread to avoid blocking CPU
@@ -82,14 +85,29 @@ async def _describe_image_with_vlm(image_bytes: bytes, document_context: str = "
         # Prepare content
         image_b64 = base64.b64encode(processed_bytes).decode("utf-8")
         
-        # Build context-aware prompt
+        # Build context-aware prompt with structured output requirement
         if document_context:
             prompt_text = f"""这张图片来自以下文档：
 【文档上下文】{document_context}
 
-请根据文档上下文，详细描述这张图片的内容。识别其中的关键元素、专业术语、图表结构或技术概念。如果图片是某种技术架构图、流程图、可视化图表，请明确指出其类型和用途。请用中文回答。"""
+请分析这张图片并返回 JSON 格式：
+{{
+  "description": "详细描述（100-200字）：包含图片类型、关键元素、技术概念",
+  "caption": "简洁标题（10字以内），规则如下：
+    - 如果图片展示的是某技术特有结构（如Transformer的编解码器），保留技术名（如'Transformer编解码器'）
+    - 如果是通用概念（如普通的FFN模块），不加技术名前缀（直接写'FFN模块结构'而非'Transformer FFN模块'）
+    - 不要加'图1'等编号"
+}}
+
+仅返回 JSON，不要其他内容。"""
         else:
-            prompt_text = "请详细描述这张图片的内容。识别其中的关键元素、文字、图表或人物。请用中文回答。"
+            prompt_text = """请分析这张图片并返回 JSON 格式：
+{
+  "description": "详细描述（100-200字）：包含图片类型、关键元素、内容说明",
+  "caption": "简洁标题（10字以内），描述图片核心内容，不要加编号前缀"
+}
+
+仅返回 JSON，不要其他内容。"""
         
         message = HumanMessage(
             content=[
@@ -103,7 +121,81 @@ async def _describe_image_with_vlm(image_bytes: bytes, document_context: str = "
         
         # Invoke
         response = await llm.ainvoke([message])
-        return extract_text_content(response)
+        result = extract_text_content(response)
+        
+        # Try to parse as JSON
+        description = ""
+        caption = ""
+        
+        try:
+            import json
+            import re
+            
+            # First, try to extract JSON from markdown code blocks (```json ... ```)
+            code_block_pattern = r'```(?:json)?\s*(\{[\s\S]*?\})\s*```'
+            code_matches = re.findall(code_block_pattern, result)
+            
+            json_match = None
+            
+            # Try code block matches first
+            for m in code_matches:
+                try:
+                    parsed = json.loads(m)
+                    if "description" in parsed:
+                        json_match = parsed
+                        break
+                except:
+                    continue
+            
+            # Fallback: try to find raw JSON (handles { ... } spanning multiple lines)
+            if not json_match:
+                # Match JSON object with nested content
+                raw_json_pattern = r'\{[^{}]*(?:"[^"]*"[^{}]*)+\}'
+                raw_matches = re.findall(raw_json_pattern, result, re.DOTALL)
+                for m in raw_matches:
+                    try:
+                        parsed = json.loads(m)
+                        if "description" in parsed:
+                            json_match = parsed
+                            break
+                    except:
+                        continue
+            
+            if json_match:
+                description = json_match.get("description", "")
+                caption = json_match.get("caption", "")
+                _LOGGER.info(f"Successfully extracted VLM JSON. Caption: {caption}")
+        except Exception as parse_err:
+            _LOGGER.warning(f"Failed to parse VLM JSON: {parse_err}")
+            description = result[:300] if result else ""
+        
+        # If caption is missing or too long (>20 chars), generate one separately
+        if not caption or len(caption) > 20:
+            try:
+                caption_prompt = f"""请根据以下图片描述，生成一个15字以内的简短标题（如"图1：Transformer架构图"）。
+
+图片描述：{description[:200]}
+
+只返回标题本身，不要任何其他内容。"""
+                
+                caption_msg = HumanMessage(content=caption_prompt)
+                caption_response = await llm.ainvoke([caption_msg])
+                caption = extract_text_content(caption_response).strip()
+                
+                # Clean up: remove quotes, limit length
+                caption = caption.strip('"\'').strip()
+                if len(caption) > 20:
+                    caption = caption[:17] + "..."
+                    
+                _LOGGER.info(f"Generated caption via secondary call: {caption}")
+            except Exception as cap_err:
+                _LOGGER.warning(f"Failed to generate caption: {cap_err}")
+                caption = "参考图片"
+        
+        return json.dumps({
+            "description": description,
+            "caption": caption or "参考图片"
+        }, ensure_ascii=False)
         
     except Exception as e:
         _LOGGER.warning(f"Error in VLM call: {e}")
@@ -583,9 +675,18 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
                      _LOGGER.info(f"Generating VLM description for image {img['element_id']}...")
                      # Build document context for better recognition
                      doc_context = ", ".join(headings[:5]) if headings else ""
-                     visual_desc = await _describe_image_with_vlm(img["data"], document_context=doc_context)
-                     if visual_desc:
-                         _LOGGER.info(f"VLM Description for {img['element_id']}: {visual_desc[:50]}...")
+                     vlm_result = await _describe_image_with_vlm(img["data"], document_context=doc_context)
+                     
+                     # Parse VLM JSON to extract description and caption
+                     if vlm_result:
+                         try:
+                             vlm_data = json.loads(vlm_result)
+                             visual_desc = vlm_data.get("description", "")
+                             image_caption = vlm_data.get("caption", "参考图片")
+                         except:
+                             visual_desc = vlm_result  # Fallback: treat as plain description
+                             image_caption = "参考图片"
+                         _LOGGER.info(f"VLM Description for {img['element_id']}: {visual_desc[:50]}..., Caption: {image_caption}")
             except Exception as vlm_err:
                 _LOGGER.error(f"VLM generation failed for {img['element_id']}: {vlm_err}")
             
@@ -593,7 +694,8 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
                 "element_id": img["element_id"],
                 "type": "image",
                 "content": img.get("alt", ""),
-                "visual_description": visual_desc, # 新增字段
+                "visual_description": visual_desc,  # 详细描述
+                "caption": image_caption,  # 简短图注（新增）
                 "src": img_path, # Local absolute path
                 "index": img.get("page", 0)
             })
@@ -603,15 +705,25 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
              visual_desc = ""
              # Try to fetch bytes for VLM
              from ..utils.files import fetch_image_bytes
+             image_caption = ""
              try:
                  fetched_bytes = await asyncio.to_thread(fetch_image_bytes, img["src"])
                  if fetched_bytes:
                       _LOGGER.info(f"Generating VLM description for URL image {img['element_id']}...")
                       # Build document context for better recognition
                       doc_context = ", ".join(headings[:5]) if headings else ""
-                      visual_desc = await _describe_image_with_vlm(fetched_bytes, document_context=doc_context)
-                      if visual_desc:
-                          _LOGGER.info(f"VLM Description for {img['element_id']}: {visual_desc[:50]}...")
+                      vlm_result = await _describe_image_with_vlm(fetched_bytes, document_context=doc_context)
+                      
+                      # Parse VLM JSON to extract description and caption
+                      if vlm_result:
+                          try:
+                              vlm_data = json.loads(vlm_result)
+                              visual_desc = vlm_data.get("description", "")
+                              image_caption = vlm_data.get("caption", "参考图片")
+                          except:
+                              visual_desc = vlm_result  # Fallback: treat as plain description
+                              image_caption = "参考图片"
+                          _LOGGER.info(f"VLM Description for {img['element_id']}: {visual_desc[:50]}..., Caption: {image_caption}")
              except Exception as e:
                  _LOGGER.warning(f"Failed to process URL image {img['src']} for VLM: {e}")
 
@@ -619,7 +731,8 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
                 "element_id": img["element_id"],
                 "type": "image",
                 "content": img.get("caption", "") or img.get("alt", ""),
-                "visual_description": visual_desc,
+                "visual_description": visual_desc,  # 详细描述
+                "caption": image_caption or "参考图片",  # 简短图注（新增）
                 "src": img["src"], # Remote URL
                 "index": 0
             })

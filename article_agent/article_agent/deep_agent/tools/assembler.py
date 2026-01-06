@@ -33,6 +33,16 @@ def assemble_article_tool(
     final_markdown = ""
     # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
     _LOGGER.info(f"Using passed article_id: '{article_id}'")
+
+    # 修复：如果标题是占位符，尝试从 outline.json 加载真实标题
+    if title in ["最终文章标题", "Article Title", "文章标题", ""] and article_id:
+        try:
+            outline_data = load_article_artifact(article_id, "outline.json")
+            if outline_data and outline_data.get("title"):
+                title = outline_data.get("title")
+                _LOGGER.info(f"Recovered real title from outline: {title}")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to recover title from outline: {e}")
     
     # 自动发现逻辑：如果没有传入路径，尝试自动查找
     # 自动发现逻辑：强制从 drafts 目录发现并合并 section_*.md
@@ -94,22 +104,35 @@ def assemble_article_tool(
     except Exception as img_map_err:
         _LOGGER.warning(f"Failed to build image map: {img_map_err}")
 
-    # 2. Replace placeholders
+    # 2. Replace placeholders with sequential numbering
+    image_counter = [0]  # Use list for mutable closure
+    used_images = {}     # Map img_id -> number for deduplication
+    
     def replace_image_placeholder(match):
         img_id = match.group(1).strip()
+        
+        # Deduplication check
+        if img_id in used_images:
+            return f"*(见图{used_images[img_id]})*"
+            
         img_info = image_map.get(img_id)
         if img_info:
+            image_counter[0] += 1
+            used_images[img_id] = image_counter[0]
             src = img_info.get("src", "")
-            alt = img_info.get("visual_description") or img_info.get("content") or "Image"
+            # Use short caption first, fallback to visual_description
+            alt = img_info.get("caption") or img_info.get("visual_description") or img_info.get("content") or "图片"
             # Cleaning alt text for markdown safe
-            alt = alt.replace("\n", " ").replace("]", "").replace("[", "")[:100]
+            alt = alt.replace("\n", " ").replace("]", "").replace("[", "")[:50]
+            # Add sequential numbering prefix
+            numbered_alt = f"图{image_counter[0]}：{alt}"
             if src:
-                return f"![{alt}]({src})"
+                return f"![{numbered_alt}]({src})"
         return f"> [Image {img_id} Not Found]"
     
     # Pattern: [[IMAGE: img_123]]
     final_markdown = re.sub(r'\[\[IMAGE:\s*([a-zA-Z0-9_]+)\]\]', replace_image_placeholder, final_markdown)
-    _LOGGER.info(f"Resolved image placeholders using map with {len(image_map)} images")
+    _LOGGER.info(f"Resolved image placeholders using map with {len(image_map)} images, total {image_counter[0]} images numbered")
 
 
 
@@ -132,7 +155,7 @@ def assemble_article_tool(
     cleaned_md = re.sub(r'<think>[\s\S]*?</think>', '', cleaned_md)
     
     # 确保标题正确
-    if not cleaned_md.strip().startswith("#"):
+    if not cleaned_md.strip().startswith("# "):
         cleaned_md = f"# {title}\n\n{cleaned_md}"
     
     # 落盘：保存最终文章

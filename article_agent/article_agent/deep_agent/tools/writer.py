@@ -92,6 +92,7 @@ def write_section_tool(
     assigned_images_str: str = "无",
     is_core: bool = False,
     review_feedback: str = "",
+    article_id: str = "",  # 新增：并行执行时必须显式传入
 ) -> Dict[str, Any]:
     """撰写指定章节内容。
     
@@ -154,8 +155,9 @@ def write_section_tool(
         # 落盘：保存到临时文件
         import uuid
         
-        # 从 section_id 提取或生成 article_id
-        article_id = get_current_article_id()
+        # article_id 已作为参数传入，无需从 ContextVar 获取
+        if not article_id:
+            article_id = get_current_article_id()  # Fallback for non-batch calls
         
         file_path = save_draft_file(article_id, section_id, markdown)
         
@@ -262,8 +264,8 @@ def write_all_sections_tool(
     sections = outline.get("sections", [])
     _LOGGER.info(f"Processing {len(sections)} sections from outline")
     
-    # 并行处理所有章节 (Parallel Execution) - 现已改为串行
-    max_workers = 1  # 强制串行执行 (Sequential Execution)
+    # 并行处理所有章节 (Parallel Execution)
+    max_workers = 5  # 启用并行执行
     
     _LOGGER.info(f"[Parallel] Starting Native LangChain batch writing with max_concurrency={max_workers} for {len(sections)} sections")
     
@@ -286,8 +288,9 @@ def write_all_sections_tool(
                 # Handle both dict (new format) and str (legacy)
                 if isinstance(img, dict):
                     img_id = img.get("id", "unknown")
-                    img_desc = img.get("desc", "无描述")
-                    lines.append(f"- ID: {img_id} | 描述: {img_desc}")
+                    # Prefer caption (short title) over desc (long description)
+                    img_caption = img.get("caption") or img.get("desc", "")[:20] or "参考图片"
+                    lines.append(f"- ID: {img_id} | 图注: {img_caption}")
                 else:
                     lines.append(f"- ID: {str(img)}") # Legacy fallback
             assigned_images_str = "\n".join(lines)
@@ -312,6 +315,7 @@ def write_all_sections_tool(
             "assigned_images_str": assigned_images_str,
             "is_core": sec.get("is_core", False),
             "review_feedback": section_review,
+            "article_id": article_id,  # 显式传入 article_id 以支持并行执行
         })
 
     # 使用 LangChain 原生 batch

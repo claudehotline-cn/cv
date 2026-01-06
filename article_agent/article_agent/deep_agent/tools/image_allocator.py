@@ -69,7 +69,7 @@ def allocate_images_hungarian(
     images: List[Dict[str, Any]],
     relevance_matrix: Dict[Tuple[str, str], float],
     max_images_per_section: int = 2,
-    max_uses_per_image: int = 2
+    max_uses_per_image: int = 1
 ) -> Dict[str, List[str]]:
     """
     Phase 2: Optimal image allocation using Hungarian algorithm.
@@ -88,13 +88,8 @@ def allocate_images_hungarian(
     Returns:
         Dict mapping section_id -> List of assigned image_ids
     """
-    try:
-        import numpy as np
-        from scipy.optimize import linear_sum_assignment
-    except ImportError:
-        _LOGGER.warning("scipy not available, falling back to greedy allocation")
-        return _allocate_images_greedy(sections, images, relevance_matrix, 
-                                        max_images_per_section, max_uses_per_image)
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
     
     section_ids = [s.get("id") or s.get("section_id") for s in sections]
     image_ids = [img.get("element_id") for img in images]
@@ -174,40 +169,8 @@ def allocate_images_hungarian(
     return allocation
 
 
-def _allocate_images_greedy(
-    sections: List[Dict[str, Any]],
-    images: List[Dict[str, Any]],
-    relevance_matrix: Dict[Tuple[str, str], float],
-    max_images_per_section: int = 2,
-    max_uses_per_image: int = 2
-) -> Dict[str, List[str]]:
-    """Fallback greedy allocation when scipy is not available."""
-    from collections import defaultdict
-    
-    section_ids = [s.get("id") or s.get("section_id") for s in sections]
-    allocation = defaultdict(list)
-    image_usage = defaultdict(int)
-    section_count = defaultdict(int)
-    
-    # Sort pairs by relevance
-    pairs = [(score, sec_id, img_id) 
-             for (sec_id, img_id), score in relevance_matrix.items() 
-             if score > 0.1]
-    pairs.sort(reverse=True)
-    
-    for score, sec_id, img_id in pairs:
-        if section_count[sec_id] >= max_images_per_section:
-            continue
-        if image_usage[img_id] >= max_uses_per_image:
-            continue
-        if img_id in allocation[sec_id]:
-            continue
-        
-        allocation[sec_id].append(img_id)
-        section_count[sec_id] += 1
-        image_usage[img_id] += 1
-    
-    return dict(allocation)
+
+
 
 
 def allocate_images_for_article(
@@ -245,11 +208,14 @@ def allocate_images_for_article(
         for img_id in img_ids:
             img = image_map.get(img_id, {})
             desc = img.get("visual_description") or img.get("content") or "无描述"
+            # Get short caption from ingest VLM, fallback to truncated desc
+            caption = img.get("caption") or desc[:15]
             # Truncate description
             desc_short = desc[:100] + "..." if len(desc) > 100 else desc
             result[sec_id].append({
                 "id": img_id,
-                "desc": desc_short
+                "desc": desc_short,
+                "caption": caption  # Short title for markdown image alt text
             })
     
     return result
