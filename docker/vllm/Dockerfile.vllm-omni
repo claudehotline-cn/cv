@@ -29,6 +29,9 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 # Install pip for Python 3.12
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
+# Install setuptools first to provide distutils compatibility for Python 3.12
+RUN pip install --no-cache-dir setuptools
+
 # Install build dependencies
 RUN pip install --no-cache-dir \
     packaging \
@@ -42,12 +45,35 @@ WORKDIR /app
 
 # Clone vLLM-Omni
 RUN git clone ${VLLM_OMNI_REPO} vllm-omni
-WORKDIR /app/vllm-omni
+# Build PyTorch from source for CUDA 13.1 compatibility
+# Clone PyTorch
+RUN git clone --recursive --depth 1 https://github.com/pytorch/pytorch.git /tmp/pytorch
+WORKDIR /tmp/pytorch
 
-# Install Python dependencies (PyTorch Nightly for CUDA 13 compatibility if needed, 
-# but vLLM usually handles its own deps. However, for 5090 we often need nightly.)
-# Installing compatible torch first to be safe.
-RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+# Install PyTorch build dependencies
+RUN pip install --no-cache-dir cmake typing_extensions pyyaml numpy
+
+# Build PyTorch with Blackwell support
+ENV MAX_JOBS=2
+ENV USE_CUDA=1
+ENV TORCH_CUDA_ARCH_LIST="12.0"
+
+# Force reinstall setuptools to override system package (Python 3.12 needs this for distutils)
+RUN pip install --force-reinstall --no-cache-dir setuptools
+
+RUN python setup.py install
+
+# Build torchvision
+RUN git clone --depth 1 https://github.com/pytorch/vision.git /tmp/vision
+WORKDIR /tmp/vision
+RUN python setup.py install
+
+# Build torchaudio  
+RUN git clone --depth 1 https://github.com/pytorch/audio.git /tmp/audio
+WORKDIR /tmp/audio
+RUN python setup.py install
+
+WORKDIR /app/vllm-omni
 
 # Install vLLM-Omni from source
 # This will take a while as it compiles kernels
