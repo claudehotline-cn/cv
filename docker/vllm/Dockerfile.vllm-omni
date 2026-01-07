@@ -1,0 +1,64 @@
+# Dockerfile.vllm-omni
+# Target: NVIDIA RTX 5090 (Blackwell sm_120) with Omni Capability
+# Base Image: CUDA 13.1
+FROM nvidia/cuda:13.1.0-devel-ubuntu22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TORCH_CUDA_ARCH_LIST="12.0"
+ENV VLLM_OMNI_REPO="https://github.com/vllm-project/vllm-omni.git"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    python3.10-dev \
+    python3.10-venv \
+    git \
+    curl \
+    ffmpeg \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y python3.12 python3.12-dev python3.12-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up Python 3.12 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+# Install pip for Python 3.12
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# Install build dependencies
+RUN pip install --no-cache-dir \
+    packaging \
+    ninja \
+    setuptools \
+    wheel \
+    uv
+
+# Working directory
+WORKDIR /app
+
+# Clone vLLM-Omni
+RUN git clone ${VLLM_OMNI_REPO} vllm-omni
+WORKDIR /app/vllm-omni
+
+# Install Python dependencies (PyTorch Nightly for CUDA 13 compatibility if needed, 
+# but vLLM usually handles its own deps. However, for 5090 we often need nightly.)
+# Installing compatible torch first to be safe.
+RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# Install vLLM-Omni from source
+# This will take a while as it compiles kernels
+RUN pip install -e .
+
+# Expose port
+EXPOSE 8000
+
+# Install additional runtime deps (if any, e.g. for audio processing)
+RUN apt-get update && apt-get install -y libsndfile1
+
+# Entrypoint
+# Support standard vLLM arguments
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
