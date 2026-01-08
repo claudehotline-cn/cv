@@ -1,90 +1,49 @@
-# Dockerfile.vllm-omni
-# Target: NVIDIA RTX 5090 (Blackwell sm_120) with Omni Capability
-# Base Image: CUDA 13.1
-FROM nvidia/cuda:13.1.0-devel-ubuntu22.04
+# 1. 依然使用 NVIDIA 官方 CUDA 13 底包 (为了支持 5090D)
+FROM nvcr.io/nvidia/pytorch:25.12-py3
 
-# Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
+
+# 2. 环境变量：解决 Ultra 285K 不支持 AVX-512 的问题
 ENV TORCH_CUDA_ARCH_LIST="12.0"
-ENV VLLM_OMNI_REPO="https://github.com/vllm-project/vllm-omni.git"
+ENV VLLM_TARGET_DEVICE="cuda"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3-pip \
-    python3.10-dev \
-    python3.10-venv \
-    git \
-    curl \
     ffmpeg \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update \
-    && apt-get install -y python3.12 python3.12-dev python3.12-venv \
+    libsndfile1 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up Python 3.12 as default
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+# 3. 卸载旧版本 (Image might have pre-installed libs)
+RUN pip uninstall -y vllm vllm-omni
 
-# Install pip for Python 3.12
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+# 4. 关键：安装 vLLM 0.13.0 (CUDA 13.0 版)
+# 从 GitHub Releases 直接安装 cu130 编译包，避免 PyPI 拉取 cu12 依赖
+RUN pip install https://github.com/vllm-project/vllm/releases/download/v0.13.0/vllm-0.13.0+cu130-cp38-abi3-manylinux_2_35_x86_64.whl
 
-# Install setuptools first to provide distutils compatibility for Python 3.12
-RUN pip install --no-cache-dir setuptools
+# Install dependencies for Qwen3-Omni which might be missing
+RUN pip install modelscope>=1.18.1 ffmpeg-python librosa soundfile
 
-# Install build dependencies
-RUN pip install --no-cache-dir \
-    packaging \
-    ninja \
-    setuptools \
-    wheel \
-    uv
+# 5. 用户指定版本覆盖 (User requested specific Transformers version for clean support)
+RUN pip uninstall -y transformers && \
+    pip install transformers==4.57.3 accelerate
 
-# Working directory
+# 5. 安装适配的 vllm-omni (Source)
+# Cloning from source as it might track older version but we want to force usage with 0.13.0
 WORKDIR /app
+RUN git clone https://github.com/vllm-project/vllm-omni.git
+# Use --no-deps to prevent it from downgrading vLLM to 0.12.x
+RUN pip install ./vllm-omni --no-deps
 
-# Clone vLLM-Omni
-RUN git clone ${VLLM_OMNI_REPO} vllm-omni
-# Build PyTorch from source for CUDA 13.1 compatibility
-# Clone PyTorch
-RUN git clone --recursive --depth 1 https://github.com/pytorch/pytorch.git /tmp/pytorch
-WORKDIR /tmp/pytorch
+# 6. 移除不兼容的 flash_attn (ABI 与 CUDA 13 不匹配导致 ImportError)
+# vLLM 会自动回退到其他实现
+# Cache bust: change this value to force rebuild from this step
+ARG CACHEBUST=1
+RUN pip uninstall -y flash_attn flash-attn || true
 
-# Install PyTorch build dependencies
-RUN pip install --no-cache-dir cmake typing_extensions pyyaml numpy
+# Setup entrypoint
+# We use the explicitly mounted entrypoint.py from docker-compose
+CMD ["python3", "/app/entrypoint.py"]
 
-# Build PyTorch with Blackwell support
-ENV MAX_JOBS=2
-ENV USE_CUDA=1
-ENV TORCH_CUDA_ARCH_LIST="12.0"
-
-# Force reinstall setuptools to override system package (Python 3.12 needs this for distutils)
-RUN pip install --force-reinstall --no-cache-dir setuptools
-
-RUN python setup.py install
-
-# Build torchvision
-RUN git clone --depth 1 https://github.com/pytorch/vision.git /tmp/vision
-WORKDIR /tmp/vision
-RUN python setup.py install
-
-# Build torchaudio  
-RUN git clone --depth 1 https://github.com/pytorch/audio.git /tmp/audio
-WORKDIR /tmp/audio
-RUN python setup.py install
-
-WORKDIR /app/vllm-omni
-
-# Install vLLM-Omni from source
-# This will take a while as it compiles kernels
-RUN pip install -e .
-
-# Expose port
-EXPOSE 8000
-
-# Install additional runtime deps (if any, e.g. for audio processing)
-RUN apt-get update && apt-get install -y libsndfile1
-
-# Entrypoint
-# Support standard vLLM arguments
-ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+ENV PYTHONPATH=/app:$PYTHONPATH
+ENTRYPOINT ["python", "/app/entrypoint.py"]

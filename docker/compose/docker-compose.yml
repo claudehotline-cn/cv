@@ -527,17 +527,21 @@ services:
     build:
       context: ../vllm
       dockerfile: Dockerfile.vllm-omni
+    image: vllm-omni:v0.13.0-sm120
     container_name: vllm
     ports:
       - "18000:8000"
     volumes:
       - ../../models:/data/models:rw
+      - ../vllm/entrypoint.py:/app/entrypoint.py
     environment:
-      - VLLM_USE_MODELSCOPE=true
+      - VLLM_USE_MODELSCOPE=false
+      - VLLM_ATTENTION_BACKEND=FLASHINFER
     ipc: host
     command:
-      - "--omni"
       - "--model"
+      - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
+      - "--tokenizer"
       - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
       - "--host"
       - "0.0.0.0"
@@ -549,13 +553,11 @@ services:
       - "0.75"
       - "--max-num-seqs"
       - "16"
-      - "--max-num-batched-tokens"
-      - "8192"
       - "--kv-cache-dtype"
       - "fp8"
       - "--trust-remote-code"
       - "--limit-mm-per-prompt"
-      - "{\"image\": 4, \"video\": 2, \"audio\": 2}"
+      - "{\"image\": 4, \"video\": 2}"
       - "--enable-chunked-prefill"
       - "--enable-prefix-caching"
       - "--enable-auto-tool-choice"
