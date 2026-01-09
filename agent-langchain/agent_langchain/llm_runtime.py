@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Union
 
 from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
@@ -36,6 +36,30 @@ def build_chat_llm(task_name: str = "generic") -> Any:
         except Exception as exc:  # pragma: no cover
             _LOGGER.error("llm.init_failed provider=ollama task=%s error=%s", task_name, exc)
             raise RuntimeError(f"LLM 初始化失败（ollama, task={task_name}）") from exc
+
+    if provider == "vllm":
+        vllm_base_url = getattr(settings, "vllm_base_url", "http://vllm:8000/v1")
+        _LOGGER.info(
+            "llm.init provider=vllm task=%s model=%s base_url=%s",
+            task_name,
+            settings.llm_model,
+            vllm_base_url,
+        )
+        try:
+            return ChatOpenAI(
+                model=settings.llm_model,
+                base_url=vllm_base_url,
+                api_key="EMPTY",  # vLLM 不需要真正的 API key
+                temperature=0,
+                model_kwargs={"stop": ["<|im_end|>", "<|endoftext|>"]},
+                extra_body={
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "parallel_tool_calls": False,  # 🔴 强制禁用并发调用 (vLLM/OpenAI)
+                },
+            )
+        except Exception as exc:  # pragma: no cover
+            _LOGGER.error("llm.init_failed provider=vllm task=%s error=%s", task_name, exc)
+            raise RuntimeError(f"LLM 初始化失败（vllm, task={task_name}）") from exc
 
     # 默认使用 openai 兼容接口
     if not settings.openai_api_key:
@@ -75,6 +99,39 @@ def build_structured_llm(schema: Any, task_name: str = "structured") -> Any:
     except Exception as exc:
         _LOGGER.error("llm.structured_output_failed task=%s error=%s", task_name, exc)
         raise RuntimeError(f"结构化输出配置失败（task={task_name}）") from exc
+
+
+def extract_text_content(response: Any) -> str:
+    """从 LLM 响应中提取纯文本内容。
+    
+    支持 LangChain v1 的 content_blocks 列表格式和传统字符串格式。
+    
+    Args:
+        response: LLM 响应对象 (AIMessage) 或内容字符串/列表
+        
+    Returns:
+        提取的纯文本内容 (去除思维链和非文本块)
+    """
+    content = getattr(response, "content", response)
+    
+    # 1. Handle String
+    if isinstance(content, str):
+        return content.strip()
+    
+    # 2. Handle List (Content Blocks)
+    if isinstance(content, list):
+        text_parts = []
+        for block in content:
+            if isinstance(block, dict):
+                block_type = block.get("type", "unknown")
+                if block_type == "text":
+                    text_parts.append(str(block.get("text", "")))
+                # Ignore 'reasoning' or 'image' blocks for text extraction
+            elif isinstance(block, str):
+                text_parts.append(block)
+        return "\n".join(text_parts).strip()
+        
+    return str(content)
 
 
 def invoke_llm_with_timeout(

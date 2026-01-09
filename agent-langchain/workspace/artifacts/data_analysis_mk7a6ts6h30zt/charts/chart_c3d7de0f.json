@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "chart_type": "line",
+  "option": {
+    "title": {
+      "text": "各城市每月订单总金额趋势"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "legend": {
+      "top": "bottom"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": []
+    },
+    "yAxis": {
+      "type": "value"
+    },
+    "series": [
+      {
+        "type": "line",
+        "data": [],
+        "smooth": true
+      }
+    ]
+  }
+}

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # LLM / provider settings
     llm_provider: str = Field(
         default="openai",
-        description="LLM 提供方：openai 或 ollama",
+        description="LLM 提供方：openai | ollama | vllm",
         alias="AGENT_LLM_PROVIDER",
     )
     openai_api_key: Optional[str] = Field(
@@ -28,6 +28,11 @@ class Settings(BaseSettings):
         default="http://host.docker.internal:11434",
         description="Ollama 服务地址（用于 Chat LLM）",
         alias="AGENT_OLLAMA_BASE_URL",
+    )
+    vllm_base_url: str = Field(
+        default="http://vllm:8000/v1",
+        description="vLLM OpenAI-compatible API 地址",
+        alias="AGENT_VLLM_BASE_URL",
     )
 
     # 数据库（MySQL）分析相关配置

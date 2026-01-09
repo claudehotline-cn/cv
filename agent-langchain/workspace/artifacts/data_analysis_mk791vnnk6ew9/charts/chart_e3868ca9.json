@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "chart_type": "line",
+  "option": {
+    "title": {
+      "text": "折线图"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "legend": {
+      "top": "bottom"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": []
+    },
+    "yAxis": {
+      "type": "value"
+    },
+    "series": [
+      {
+        "type": "line",
+        "data": [],
+        "smooth": true
+      }
+    ]
+  }
+}
