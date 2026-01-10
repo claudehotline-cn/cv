@@ -26,10 +26,9 @@ from .prompts import (
     PYTHON_AGENT_DESCRIPTION, PYTHON_AGENT_PROMPT,
     REVIEWER_AGENT_DESCRIPTION, REVIEWER_AGENT_PROMPT,
     VISUALIZER_AGENT_DESCRIPTION, VISUALIZER_AGENT_PROMPT,
-    STATISTICS_AGENT_DESCRIPTION, STATISTICS_AGENT_PROMPT,
-    ML_AGENT_DESCRIPTION, ML_AGENT_PROMPT,
     REPORT_AGENT_DESCRIPTION, REPORT_AGENT_PROMPT,
 )
+from .skills.registry import SKILLS_REGISTRY
 
 _LOGGER = logging.getLogger("agent_langchain.data_deep_graph")
 
@@ -141,32 +140,37 @@ def get_data_deep_agent_graph() -> Any:
         task = state.get("task_description", "")
         df_info = state.get("df_profile_result", "")
         
-        prompt = f"""你是 Python Agent。根据以下信息生成数据处理代码。
-
-【重要】以下函数已在执行环境中预定义，直接使用，**禁止自己定义**：
-- `load_dataframe(name)` - 加载指定名称的 DataFrame，例如 `df = load_dataframe('sql_result')`
-- `list_dataframes()` - 列出所有可用的 DataFrame 名称
+        # 1. 提取 Skill (从 task_description 中解析 [skill=xxx])
+        import re
+        skill_match = re.search(r'\[skill[=:]?\s*([a-zA-Z0-9_]+)\]', task, re.IGNORECASE)
+        skill_name = skill_match.group(1).lower() if skill_match else "general"
+        
+        # 2. 获取 Skill 配置
+        skill_config = SKILLS_REGISTRY.get(skill_name, SKILLS_REGISTRY["general"])
+        skill_display_name = skill_config.get("name", "General")
+        skill_instruction = skill_config.get("instruction", "")
+        skill_examples = skill_config.get("examples", "")
+        
+        _LOGGER.info("[Python Agent] Active Skill: %s (%s)", skill_name, skill_display_name)
+        
+        # 3. 动态构建 Prompt
+        prompt = PYTHON_AGENT_PROMPT.format(
+            skill_name=skill_display_name,
+            skill_instruction=skill_instruction,
+            skill_examples=skill_examples
+        )
+        
+        # 4. 拼接具体任务和数据信息
+        final_prompt = f"""{prompt}
 
 【任务描述】
 {task}
 
 【数据结构】（来自 df_profile）
 {df_info}
-
-【代码要求】
-1. 使用 `df = load_dataframe('sql_result')` 加载数据
-2. 根据【数据结构】中的真实列名编写代码，**禁止猜测列名**
-3. **数值列转换**：将数值列转为 float 类型 `df['列名'] = df['列名'].astype(float)`
-4. **多维数据透视**：如果任务需要按多个维度（如城市+月份）生成图表，使用 `pivot_table` 转换：
-   ```python
-   # 示例：按城市和月份统计，为 Visualizer 准备数据
-   pivot_df = df.pivot_table(index='month', columns='city_name', values='total_amount', aggfunc='sum').reset_index()
-   result = pivot_df
-   ```
-5. 最终结果赋值给 `result` 变量
-6. 只输出代码，不要解释"""
+"""
         
-        response = subagent_llm.invoke([HumanMessage(content=prompt)])
+        response = subagent_llm.invoke([HumanMessage(content=final_prompt)])
         code = response.content
         # 提取代码块
         if "```python" in code:
@@ -459,23 +463,7 @@ print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "line", "optio
         runnable=visualizer_agent_runnable,
     )
     
-    # 6. Statistics Agent
-    statistics_agent = _compile_subagent(
-        name="statistics_agent",
-        description=STATISTICS_AGENT_DESCRIPTION,
-        system_prompt=STATISTICS_AGENT_PROMPT,
-        tools=[df_profile_tool, python_execute_tool],
-        model=subagent_llm,
-    )
-    
-    # 7. ML Agent
-    ml_agent = _compile_subagent(
-        name="ml_agent",
-        description=ML_AGENT_DESCRIPTION,
-        system_prompt=ML_AGENT_PROMPT,
-        tools=[df_profile_tool, python_execute_tool],
-        model=subagent_llm,
-    )
+    # (Statistics Agent 和 ML Agent 已移除，功能合并入 Python Agent)
     
     # 8. Report Agent - 使用 StateGraph 创建固化运行图：强制先 df_profile
     # =========================================================================
@@ -608,7 +596,7 @@ print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "line", "optio
         model=main_llm,
         subagents=[
             sql_agent, excel_agent, python_agent, reviewer_agent,
-            visualizer_agent, statistics_agent, ml_agent, report_agent
+            visualizer_agent, report_agent
         ],
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
