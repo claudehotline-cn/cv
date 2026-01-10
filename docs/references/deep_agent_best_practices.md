@@ -126,35 +126,54 @@ backend=lambda rt: CompositeBackend(
 2.  **统一工作区根目录**: 所有 Tool 的操作路径应基于此根目录。
 3.  **Artifact 目录结构**: 建议按 ID 隔离 Artifacts，例如 `/data/workspace/artifacts/{analysis_id}/`，避免不同任务间文件冲突。
 
-## 8. 总结架构图
+## 8. 技能模式 (Skills Pattern)
+
+当一个 Agent 需要处理多种类型的任务（如通用分析、统计分析、机器学习）时，推荐使用 **Skills 模式** 替代多个独立 Agent。
+
+### 核心设计
+```python
+# skills/registry.py
+SKILLS_REGISTRY = {
+    "general": "通用数据处理指令...",
+    "statistics": "统计分析专用指令（包含 scipy/statsmodels 示例）...",
+    "ml": "机器学习指令（包含 sklearn pipeline 示例）...",
+}
+```
+
+### 调用方式
+Main Agent 通过标签指定技能：
+```
+[skill=statistics] 对 result DataFrame 执行回归分析
+```
+
+Python Agent 的 `step2_llm_generate_code` 动态解析标签，将对应的技能指令注入到 System Prompt 中。
+
+### 优势
+| 对比项 | 多 Agent 模式 | Skills 模式 |
+| :--- | :--- | :--- |
+| 上下文共享 | 需显式传递 DataFrame 路径 | 同一 Python 环境，直接复用 `df` 变量 |
+| Graph 复杂度 | 节点多，路由复杂 | 单一 Agent，内部切换 Prompt |
+| 扩展性 | 新增 Agent 需改图 | 仅需更新 `SKILLS_REGISTRY` |
+
+## 9. 总结架构图
 
 ```mermaid
 graph TD
-    User["用户输入"] --> MiddlewareIn["Middleware (Context注入 / 安全过滤)"]
+    User["用户输入"] --> MiddlewareIn["Middleware (预处理)"]
     MiddlewareIn --> Orchestrator["Main Agent (编排器)"]
     
-    %% 分支 1: 灵活型子智能体 (ReAct Loop)
-    Orchestrator -->|Delegate Task| AgileAgent["Sub-Agent A (LLM驱动模式)"]
+    %% 模式 1: LLM 驱动模式
+    Orchestrator -->|Delegate| AgileAgent["Sub-Agent (ReAct)"]
+    AgileAgent -->|"Call"| Tools["Tools"]
+    Tools -->|"Result"| AgileAgent
     
-    subgraph ReAct["ReAct 循环"]
-        direction TB
-        AgileAgent --"Call"--> Tools["Tools (Function Calling)"]
-        Tools --"Result"--> AgileAgent
-    end
-    
-    %% 分支 2: 固化型子智能体 (StateGraph)
-    Orchestrator -->|Delegate Task| RobustAgent["Sub-Agent B (StateGraph模式)"]
-    
-    subgraph SG["StateGraph (确定性流程)"]
-        direction TB
-        RobustAgent --> Step1["Step 1: 强制数据加载/预处理"]
-        Step1 --> Step2["Step 2: LLM 生成核心逻辑"]
-        Step2 --> Step3["Step 3: 强制代码执行/验证"]
-    end
+    %% 模式 2: StateGraph + Skills
+    Orchestrator -->|"[skill=xxx]"| FixedAgent["Sub-Agent (StateGraph)"]
+    FixedAgent --> SkillRegistry["Skills Registry"]
+    SkillRegistry --> LLMStep["LLM 生成"]
     
     %% 结果汇聚
     AgileAgent --> MiddlewareOut
-    Step3 --> MiddlewareOut
-    
-    MiddlewareOut["Middleware (结果提取 / 格式化)"] -->|"Structured Output"| Frontend["前端 / 客户端"]
+    LLMStep --> MiddlewareOut
+    MiddlewareOut["Middleware (后处理)"] --> Frontend["输出"]
 ```

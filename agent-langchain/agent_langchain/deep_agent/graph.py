@@ -407,6 +407,7 @@ chart_option = {{
             "name": "系列名",
             "type": "pie",
             "radius": "50%",
+            "label": {{ "formatter": "{{b}}: {{c}} ({{d}}%)" }},  # 显示名称、数值和百分比
             "data": [
                 {{ "name": row['Category'], "value": row['Value'] }} 
                 for _, row in df.iterrows()
