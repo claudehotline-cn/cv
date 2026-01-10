@@ -34,6 +34,7 @@ class DbTablePreview:
     """单张表的预览信息。"""
     name: str
     columns: List[str]
+    foreign_keys: List[str]  # New field for FKs
     sample_rows: List[Dict[str, Any]]
 
 
@@ -214,6 +215,23 @@ def _get_table_samples(conn: pymysql.connections.Connection, table: str, max_row
     return [dict(row) for row in rows]
 
 
+def _get_foreign_keys(conn: pymysql.connections.Connection, db_name: str, table: str) -> List[str]:
+    """获取表的外键约束信息。"""
+    sql = """
+    SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+    FROM information_schema.key_column_usage
+    WHERE table_schema = %s AND table_name = %s AND REFERENCED_TABLE_NAME IS NOT NULL
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (db_name, table))
+        rows = cur.fetchall()
+    
+    fks = []
+    for r in rows:
+        fks.append(f"{r['COLUMN_NAME']} -> {r['REFERENCED_TABLE_NAME']}.{r['REFERENCED_COLUMN_NAME']}")
+    return fks
+
+
 def load_schema_preview(db_name: str, max_tables: int = 8, max_rows: int = 5) -> DbSchemaPreview:
     """加载数据库 schema 预览及样本数据。"""
     conn = _get_db_connection(db_name)
@@ -223,8 +241,9 @@ def load_schema_preview(db_name: str, max_tables: int = 8, max_rows: int = 5) ->
         for t in tables:
             try:
                 cols = _get_table_columns(conn, db_name, t)
+                fks = _get_foreign_keys(conn, db_name, t)
                 samples = _get_table_samples(conn, t, max_rows=max_rows)
-                preview = DbTablePreview(name=t, columns=cols, sample_rows=samples)
+                preview = DbTablePreview(name=t, columns=cols, foreign_keys=fks, sample_rows=samples)
                 previews.append(preview)
             except Exception as exc:
                 _LOGGER.warning("db_utils.table_preview_failed table=%s error=%s", t, exc)

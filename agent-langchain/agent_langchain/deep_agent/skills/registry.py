@@ -13,12 +13,22 @@ SKILLS_REGISTRY = {
 - 排序
 
 [Step 3.2] 核心变换
-场景 A (绘图准备): 许多图表需要宽表，请使用 pivot_table
+场景 A (绘图准备 - 关键！): 
+- 如果任务是**画多系列图表**（如"各城市销售趋势"），**必须使用 `pivot_table` 将数据转换为宽表**！
+  - Index = X轴 (如 month)
+  - Columns = 系列名 (如 city_name)
+  - Values = 数值 (如 sales)
+  - **最后必须 reset_index()** 保持扁平化，或者 Visualizer 能处理 Index 也可以。
+  - **示例**：`df = df.pivot_table(index='month', columns='city', values='sales', aggfunc='sum').reset_index()`
+
 场景 B (聚合计算): groupby sum/mean/count
 """,
         "examples": """
-# 示例：一般数据处理
-# result = df.groupby('month')['total_amount'].sum()
+# 示例：准备多系列图表数据 (Pivot)
+# df = load_dataframe('sql_result')
+# pivot_df = df.pivot_table(index='month', columns='city', values='amount', aggfunc='sum')
+# pivot_df = pivot_df.reset_index() # 让 month 变回普通列
+# result = pivot_df
 """
     },
     "statistics": {

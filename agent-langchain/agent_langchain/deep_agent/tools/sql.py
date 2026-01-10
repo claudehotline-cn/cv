@@ -111,7 +111,7 @@ def db_list_tables_tool() -> str:
     db_name = settings.db_extra_databases.get(raw_db_name, raw_db_name)
 
     schema = load_schema_preview(db_name=db_name, max_tables=16, max_rows=0)
-    tables_payload = [{"name": t.name, "columns": t.columns} for t in schema.tables]
+    tables_payload = [{"name": t.name, "columns": t.columns, "foreign_keys": t.foreign_keys} for t in schema.tables]
     return json.dumps({"db_name": db_name, "tables": tables_payload}, default=str, ensure_ascii=False)
 
 
@@ -136,6 +136,7 @@ def db_table_schema_tool(table: str) -> str:
         "db_name": db_name,
         "table": target.name,
         "columns": target.columns,
+        "foreign_keys": target.foreign_keys,
         "sample_rows": target.sample_rows,
     }, default=str, ensure_ascii=False)
 

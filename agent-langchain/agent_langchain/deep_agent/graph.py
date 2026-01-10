@@ -361,36 +361,63 @@ def get_data_deep_agent_graph() -> Any:
         
         prompt = f"""你是 Visualizer Agent。根据以下信息生成 ECharts 图表代码。
 
-【重要】以下模块和函数已在执行环境中预定义：
-- `json` 模块已导入
-- `load_dataframe(name)` - 加载 DataFrame，**必须使用 `load_dataframe('result')`**
-- `list_dataframes()` - 列出所有可用的 DataFrame 名称
+【🔴 核心规则 - 必须严格遵守】
+1. **代码的第一行必须是**：`df = load_dataframe('result')`
+2. **绝对禁止**只调用 `load_dataframe` 而不赋值（例如禁止写 `load_dataframe('result')`）
+3. 如果不赋值给 `df`，后续代码会报错 `NameError: name 'df' is not defined`。
 
-【任务描述】
-{task}
-
-【数据结构】（来自 df_profile）
-{df_info}
-
-【代码要求】
-1. **必须使用 `df = load_dataframe('result')` 加载数据**（这是 Python Agent 处理后的数据，已转换好类型）
-2. 用 Python **字典和列表**构建 chart_option，使用 Python 语法：`True`/`False`（大写！）
-3. 使用 `json.dumps()` 将字典转为 JSON 字符串
-4. 最后打印 `print("CHART_DATA:" + json.dumps(...))`
-5. 只输出代码，不要解释
+【常见错误检查】
+- ❌ 错误写法: `load_dataframe('result')` (忘记赋值变量！)
+- ✅ 正确写法: `df = load_dataframe('result')`
+- ❌ 错误写法: 使用了 `df` 变量但前面没有定义
 
 示例代码模板：
+375: ```python
+376: import json
+377: # 1. 必选：加载数据并赋值给 df
+378: df = load_dataframe('result')
+379: 
+380: # 2. 构建 chart_option (使用 df 数据)
+381: chart_option = {{
+382:     "title": {{"text": "标题"}},
+383:     # 注意：如果 Python Agent 已经 pivot 过，这里 columns 就是系列名
+384:     "xAxis": {{"type": "category", "data": df['月份列'].tolist()}},
+385:     "yAxis": {{"type": "value"}},
+386:     "series": [...]
+387: }}
+388: 
+389: # 3. 输出结果
+390: print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "line", "option": chart_option}}))
+391: ```
+
+【环境说明】
+- 预定义函数: `load_dataframe(name)`
+- 预定义模块: `json`
+
+【任务信息】
+任务描述: {task}
+数据概览:
+{df_info}
+
+【代码结构】
 ```python
+import json
+# 1. 必选：加载数据并赋值给 df
 df = load_dataframe('result')
+
+# 2. 构建 chart_option (使用 df 数据)
 chart_option = {{
     "title": {{"text": "标题"}},
-    "xAxis": {{"type": "category", "data": df['月份列'].tolist()}},
+    "xAxis": {{"type": "category", "data": df['月份列'].tolist()}},  # 务必使用 tolist()
     "yAxis": {{"type": "value"}},
-    "legend": {{"data": ["系列1"]}},
-    "series": [{{"name": "系列1", "type": "line", "data": df['数值列'].tolist()}}]
+    "series": [...]
 }}
+
+# 3. 输出结果
 print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "line", "option": chart_option}}))
-```"""
+```
+
+请直接生成代码："""
         
         response = subagent_llm.invoke([HumanMessage(content=prompt)])
         code = response.content
