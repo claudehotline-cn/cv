@@ -1,0 +1,47 @@
+{
+  "success": true,
+  "chart_type": "line",
+  "title": "按城市统计的每月订单总金额",
+  "option": {
+    "title": {
+      "text": "按城市统计的每月订单总金额"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "legend": {
+      "data": [
+        "上海",
+        "北京"
+      ]
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "2023-01",
+        "2023-02"
+      ]
+    },
+    "yAxis": {
+      "type": "value"
+    },
+    "series": [
+      {
+        "name": "上海",
+        "type": "line",
+        "data": [
+          15000,
+          18000
+        ]
+      },
+      {
+        "name": "北京",
+        "type": "line",
+        "data": [
+          10000,
+          12000
+        ]
+      }
+    ]
+  }
+}

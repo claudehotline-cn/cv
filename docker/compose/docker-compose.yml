@@ -355,10 +355,10 @@ services:
     container_name: agent-langchain
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      # LLM 配置，与 agent 服务保持一致（默认通过 Ollama 调 qwen3:14b）
-      - AGENT_LLM_PROVIDER=ollama
-      - AGENT_OPENAI_MODEL=qwen3:30b
-      - AGENT_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # LLM 配置：使用 vLLM
+      - AGENT_LLM_PROVIDER=vllm
+      - AGENT_OPENAI_MODEL=/data/models/qwen3-30b-a3b-nvfp4
+      - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       # 数据库配置：复用 mysql 服务
       - AGENT_DB_HOST=mysql
       - AGENT_DB_PORT=3306
@@ -382,6 +382,8 @@ services:
       # Excel 文件基础目录（可根据实际需要调整/新增挂载）
       - ../../docs/examples:/data/excel:ro
       - ../../agent-langchain:/app/agent-langchain
+      # 工作区目录：用于持久化分析结果（DataFrame、图表、报告）
+      - ../../agent-langchain/workspace:/data/workspace:rw
 
   agent-chat-ui:
     build:
@@ -412,7 +414,7 @@ services:
     environment:
       # LLM 提供方：gemini | ollama | openai | siliconflow | vllm
       - ARTICLE_AGENT_LLM_PROVIDER=vllm
-      - ARTICLE_AGENT_LLM_MODEL=/data/models/qwen3-omni-30b-a3b-instruct-awq
+      - ARTICLE_AGENT_LLM_MODEL=/data/models/qwen3-30b-a3b-nvfp4
       - ARTICLE_AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       # VLM 配置
       - ARTICLE_AGENT_VLM_ENABLED=true
@@ -540,9 +542,9 @@ services:
     ipc: host
     command:
       - "--model"
-      - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
+      - "/data/models/qwen3-30b-a3b-nvfp4"
       - "--tokenizer"
-      - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
+      - "/data/models/qwen3-30b-a3b-nvfp4"
       - "--host"
       - "0.0.0.0"
       - "--port"
@@ -550,14 +552,12 @@ services:
       - "--max-model-len"
       - "24576"
       - "--gpu-memory-utilization"
-      - "0.75"
+      - "0.6"
       - "--max-num-seqs"
       - "16"
       - "--kv-cache-dtype"
       - "fp8"
       - "--trust-remote-code"
-      - "--limit-mm-per-prompt"
-      - "{\"image\": 4, \"video\": 2}"
       - "--enable-chunked-prefill"
       - "--enable-prefix-caching"
       - "--enable-auto-tool-choice"

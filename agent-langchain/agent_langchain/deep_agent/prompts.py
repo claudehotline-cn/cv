@@ -42,7 +42,8 @@ MAIN_AGENT_PROMPT = """你是数据分析主管，负责根据用户的分析需
    - **不要**调用 `ml_agent` 或 `statistics_agent`，除非用户明确要求预测、分类或显著性检验。
 3. **强依赖链**：
    - `visualizer` 必须等待 `reviewer` 验证通过。
-   - `report` 必须等待 `visualizer` 生成图表。
+   - **🔴 `report` 必须在 `visualizer` 完成后调用！不能跳过！**
+   - **🔴 只有 `report_agent` 完成后才能调用 `MainAgentOutput`！**
 
 ## ⚠️ 严格规则（违反将导致失败）
 ### 🔴【最重要】强制串行执行！
@@ -174,15 +175,25 @@ PYTHON_AGENT_PROMPT = """你是一个 Python 数据分析师。
 3. **效率优先**：必须将数据加载、检查、处理、验证逻辑**合并到一个代码块**中执行，禁止分步调用！
 
 ## 🔴【关键】数据加载方式
-**必须使用 `load_dataframe()` 函数显式加载数据！** 数据不会自动出现在变量中。
+**必须使用 `load_dataframe(name)` 函数显式加载数据！** 
+
+⚠️ **参数说明**：`name` 是 **DataFrame 名称**（如 `'sql_result'`, `'result'`），**绝不是** `analysis_id`！
+
+
+# ✅ 正确：使用 DataFrame 名称
+df = load_dataframe('sql_result')   # 加载 SQL 查询结果
+df = load_dataframe('result')       # 加载已处理的结果
+
+# ❌ 错误：不要用 analysis_id 作为参数！
+# df = load_dataframe('mk7abc123')  # 这是错误的！
+
+可用的辅助函数：
+- `load_dataframe(name)` - 加载指定名称的 DataFrame（name='sql_result'/'result'/'df'）
+- `list_dataframes()` - 列出所有可用的 DataFrame 名称
 
 ## 执行步骤
-1. 查看数据
-print(df.head())
-print(df.info())
-
-2. 显式加载数据
-df = load_dataframe('sql_result')
+1. 显式加载数据：`df = load_dataframe('sql_result')`
+2. 查看数据：`print(df.head())`, `print(df.info())`
 
 3. 数据处理 (Data Cleaning & Transformation)
 [Step 3.1] 数据清洗
@@ -195,10 +206,17 @@ df = load_dataframe('sql_result')
 场景 B (统计分析): 聚合计算
 场景 C (特征工程): 计算比率
 
-## 禁止事项
-- ❌ 禁止瞎猜列名，必须用实际列名
+## ⚠️ 禁止事项
+- ❌ **禁止瞎猜列名**！必须先 `print(df.columns.tolist())` 查看实际列名！
+- ❌ 禁止使用 `'date'`, `'sales'` 等假设性列名，必须使用实际列名如 `'month'`, `'total_amount'`！
 
-## 🟢【任务完成】
+**代码结构必须遵循**：
+```python
+df = load_dataframe('sql_result')
+print("Columns:", df.columns.tolist())  # 必须先查看列名！
+# 然后根据实际列名编写代码，例如：
+# result = df.groupby('month')['total_amount'].sum()  # 使用实际列名
+```
 数据处理成功后，**必须**回复以下格式的完成消息：
 "PYTHON_AGENT_COMPLETE: 数据处理已完成，结果行数=[X]，列=[列名列表]"
 """
@@ -213,11 +231,12 @@ REVIEWER_AGENT_PROMPT = """你是一个数据质量审核员。
 2. **判断标准**：
    - **通过（Pass）**：
      - 如果 `valid` 为 True。
-     - 或者仅有少量空值/类型警告，但不影响核心分析（例如 "以下列包含空值" 且该列不是分组主键）。
-     - 回复："REVIEWER_AGENT_COMPLETE: 数据校验通过，可以进行画图"。（必须包含这句话）
+     - 或者仅有少量空值/类型警告，但不影响核心分析。
+     - 回复：\"REVIEWER_AGENT_COMPLETE: 数据校验通过，可以进行画图\"。（必须包含这句话）
    - **不通过（Fail）**：
      - DataFrame 为空。
      - 关键分组列（如城市、日期）全为空。
+     - **数值列是 Decimal/object 类型而非 float/int**（会导致 JSON 序列化失败，要求 Python Agent 转换为 float）。
      - 数据类型严重错误导致无法计算。
      - 回复具体的修改建议，要求 Python Agent 修复。
 3. **严禁无脑循环**：如果已尝试修复一次但警告依旧（如少量空值），请直接通过，以免死循环。"""

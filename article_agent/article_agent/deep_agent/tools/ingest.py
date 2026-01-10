@@ -377,7 +377,7 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
                                     pass
                             
                             pictures.append({
-                                "element_id": f"{doc_id}_pic_{pic_idx}",  # Use doc_id prefix for global uniqueness
+                                "element_id": f"pic_{pic_idx}",  # Local ID, will be prefixed with doc_id by caller
                                 "data": img_bytes,
                                 "ext": img_format.lower(),
                                 "alt": caption or f"Picture {pic_idx+1}",
@@ -386,9 +386,8 @@ def parse_pdf_bytes_docling(pdf_bytes: bytes, filename: str = "doc.pdf") -> Dict
                                 "height": pil_image.height
                             })
                             
-                            # 同时添加到 elements 用于 elements.jsonl
                             elements.append({
-                                "element_id": f"{doc_id}_pic_{pic_idx}",  # Use doc_id prefix for global uniqueness
+                                "element_id": f"pic_{pic_idx}",  # Local ID, will be prefixed with doc_id by caller
                                 "type": "image",
                                 "content": caption,
                                 "index": len(elements),
@@ -601,6 +600,9 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
                 # 使用 Docling 提取的图片 (纯 Docling 方式)
                 docling_pictures = parse_result.get("pictures", [])
                 if docling_pictures:
+                    # Prefix element_ids with doc_id for global uniqueness
+                    for pic in docling_pictures:
+                        pic["element_id"] = f"{doc_id}_{pic['element_id']}"
                     extracted_images.extend(docling_pictures)
                     _LOGGER.info(f"Collected {len(docling_pictures)} images from Docling")
                 

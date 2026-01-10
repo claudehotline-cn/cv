@@ -31,6 +31,8 @@ class PythonResultSchema(BaseModel):
     result_shape: Optional[str] = Field(default=None, description="Shape of result if DataFrame")
     result_columns: Optional[List[str]] = Field(default=None, description="Columns of result if DataFrame")
     result_preview: Optional[List[Dict[str, Any]]] = Field(default=None, description="Preview of result data (first rows)")
+    saved_chart: Optional[str] = Field(default=None, description="Path to saved chart JSON file")
+    saved_dataframes: Optional[List[str]] = Field(default=None, description="Paths to saved DataFrame files")
     error: Optional[str] = Field(default=None, description="Error message if execution failed")
     suggestion: Optional[str] = Field(default=None, description="Suggestion for fixing errors")
     note: Optional[str] = Field(default=None, description="Additional notes")

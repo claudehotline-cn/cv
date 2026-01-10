@@ -171,6 +171,11 @@ def python_execute_tool(
 
         stdout_out = stdout_capture.getvalue()
         stderr_out = stderr_capture.getvalue()
+        
+        # 打印执行结果到后端日志
+        _LOGGER.info(f"Python Execution Result:\n{'='*50}\nSTDOUT:\n{stdout_out}\n{'='*50}")
+        if stderr_out:
+            _LOGGER.warning(f"STDERR:\n{stderr_out}")
 
         # 处理图表输出
         saved_chart_path = ""
@@ -218,6 +223,7 @@ def python_execute_tool(
         return PythonResultSchema(**output_data).model_dump_json(exclude_none=True)
 
     except Exception as e:
+        _LOGGER.error(f"Python Execution FAILED:\n{'='*50}\nError: {e}\n{'='*50}")
         return PythonResultSchema(success=False, error=str(e)).model_dump_json()
 
 
@@ -244,35 +250,3 @@ def df_profile_tool(
         "sample": df.head(3).to_dict(orient="records")
     }
     return json.dumps(info, ensure_ascii=False, default=_json_default)
-
-
-@tool("data_validate_result")
-def validate_result_tool(
-    data_source: str = "result",
-    analysis_id: Optional[str] = None
-) -> str:
-    """验证分析结果的有效性。
-    
-    Args:
-        data_source: 数据源名称
-        analysis_id: 分析任务 ID
-    """
-    df = get_dataframe(data_source, analysis_id) if analysis_id else None
-    if df is None:
-        return json.dumps({"valid": False, "error": f"DataFrame '{data_source}' 不存在"})
-    
-    warnings = []
-    if df.empty:
-        warnings.append("DataFrame 为空")
-    
-    null_cols = df.columns[df.isnull().any()].tolist()
-    if null_cols:
-        warnings.append(f"以下列包含空值: {null_cols}")
-    
-    return json.dumps({
-        "valid": len(warnings) == 0,
-        "data_source": data_source,
-        "row_count": len(df),
-        "columns": list(df.columns),
-        "warnings": warnings
-    }, ensure_ascii=False, default=_json_default)
