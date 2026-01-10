@@ -58,3 +58,4 @@ article_agent/outputs/
 article_agent/workspace/
 models/
 .hf_cache/
+agent-langchain/workspace/
