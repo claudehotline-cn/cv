@@ -130,19 +130,31 @@ backend=lambda rt: CompositeBackend(
 
 ```mermaid
 graph TD
-    User[用户输入] --> Middleware[中间件层 (ID注入/日志)]
-    Middleware --> MainAgent[Main Agent (编排)]
+    User["用户输入"] --> MiddlewareIn["Middleware (Context注入 / 安全过滤)"]
+    MiddlewareIn --> Orchestrator["Main Agent (编排器)"]
     
-    MainAgent -->|Task| SQL[SQL Agent (Compiled)]
-    MainAgent -->|Task| Python[Python Agent (StateGraph)]
-    MainAgent -->|Task| Article[Article/Report Agent]
+    %% 分支 1: 灵活型子智能体 (ReAct Loop)
+    Orchestrator -->|Delegate Task| AgileAgent["Sub-Agent A (LLM驱动模式)"]
     
-    subgraph "StateGraph (固化流程)"
-        Python --> Step1[代码强制: 加载数据]
-        Step1 --> Step2[LLM: 生成代码]
-        Step2 --> Step3[代码强制: 执行代码]
+    subgraph ReAct["ReAct 循环"]
+        direction TB
+        AgileAgent --"Call"--> Tools["Tools (Function Calling)"]
+        Tools --"Result"--> AgileAgent
     end
     
-    SubAgents -->|Result| Middleware
-    Middleware -->|Structured Output| Frontend[前端展示]
+    %% 分支 2: 固化型子智能体 (StateGraph)
+    Orchestrator -->|Delegate Task| RobustAgent["Sub-Agent B (StateGraph模式)"]
+    
+    subgraph SG["StateGraph (确定性流程)"]
+        direction TB
+        RobustAgent --> Step1["Step 1: 强制数据加载/预处理"]
+        Step1 --> Step2["Step 2: LLM 生成核心逻辑"]
+        Step2 --> Step3["Step 3: 强制代码执行/验证"]
+    end
+    
+    %% 结果汇聚
+    AgileAgent --> MiddlewareOut
+    Step3 --> MiddlewareOut
+    
+    MiddlewareOut["Middleware (结果提取 / 格式化)"] -->|"Structured Output"| Frontend["前端 / 客户端"]
 ```
