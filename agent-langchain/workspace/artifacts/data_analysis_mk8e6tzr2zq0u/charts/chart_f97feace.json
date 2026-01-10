@@ -1,0 +1,38 @@
+{
+  "success": true,
+  "chart_type": "pie",
+  "option": {
+    "title": {
+      "text": "各城市订单总金额占比"
+    },
+    "tooltip": {
+      "trigger": "item"
+    },
+    "legend": {
+      "data": [
+        "各城市订单总金额"
+      ]
+    },
+    "series": [
+      {
+        "name": "各城市订单总金额",
+        "type": "pie",
+        "radius": "50%",
+        "data": [
+          {
+            "name": "北京",
+            "value": 33200.0
+          },
+          {
+            "name": "上海",
+            "value": 15710.0
+          },
+          {
+            "name": "深圳",
+            "value": 16430.0
+          }
+        ]
+      }
+    ]
+  }
+}

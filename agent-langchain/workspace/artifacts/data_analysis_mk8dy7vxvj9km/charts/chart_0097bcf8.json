@@ -1,0 +1,45 @@
+{
+  "success": true,
+  "chart_type": "pie",
+  "option": {
+    "title": {
+      "text": "用户金额分布"
+    },
+    "tooltip": {
+      "trigger": "item"
+    },
+    "legend": {
+      "data": [
+        "用户A",
+        "用户B",
+        "用户C",
+        "用户D"
+      ]
+    },
+    "series": [
+      {
+        "name": "金额",
+        "type": "pie",
+        "radius": "50%",
+        "data": [
+          {
+            "name": "用户A",
+            "value": 14610.0
+          },
+          {
+            "name": "用户B",
+            "value": 18590.0
+          },
+          {
+            "name": "用户C",
+            "value": 15710.0
+          },
+          {
+            "name": "用户D",
+            "value": 16430.0
+          }
+        ]
+      }
+    ]
+  }
+}

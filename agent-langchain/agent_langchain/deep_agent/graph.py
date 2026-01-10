@@ -363,32 +363,8 @@ def get_data_deep_agent_graph() -> Any:
 
 【🔴 核心规则 - 必须严格遵守】
 1. **代码的第一行必须是**：`df = load_dataframe('result')`
-2. **绝对禁止**只调用 `load_dataframe` 而不赋值（例如禁止写 `load_dataframe('result')`）
-3. 如果不赋值给 `df`，后续代码会报错 `NameError: name 'df' is not defined`。
-
-【常见错误检查】
-- ❌ 错误写法: `load_dataframe('result')` (忘记赋值变量！)
-- ✅ 正确写法: `df = load_dataframe('result')`
-- ❌ 错误写法: 使用了 `df` 变量但前面没有定义
-
-示例代码模板：
-375: ```python
-376: import json
-377: # 1. 必选：加载数据并赋值给 df
-378: df = load_dataframe('result')
-379: 
-380: # 2. 构建 chart_option (使用 df 数据)
-381: chart_option = {{
-382:     "title": {{"text": "标题"}},
-383:     # 注意：如果 Python Agent 已经 pivot 过，这里 columns 就是系列名
-384:     "xAxis": {{"type": "category", "data": df['月份列'].tolist()}},
-385:     "yAxis": {{"type": "value"}},
-386:     "series": [...]
-387: }}
-388: 
-389: # 3. 输出结果
-390: print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "line", "option": chart_option}}))
-391: ```
+2. **绝对禁止**只调用 `load_dataframe` 而不赋值。
+3. 如果不赋值给 `df`，后续代码会报错。
 
 【环境说明】
 - 预定义函数: `load_dataframe(name)`
@@ -406,15 +382,44 @@ import json
 df = load_dataframe('result')
 
 # 2. 构建 chart_option (使用 df 数据)
+# 务必包含 tooltip 和 legend 以显示提示和图例
 chart_option = {{
-    "title": {{"text": "标题"}},
-    "xAxis": {{"type": "category", "data": df['月份列'].tolist()}},  # 务必使用 tolist()
-    "yAxis": {{"type": "value"}},
-    "series": [...]
+    "title": {{ "text": "标题" }},
+    "tooltip": {{ "trigger": "axis" }},
+    "legend": {{ "data": ["系列1", "系列2"] }},
+    "xAxis": {{ "type": "category", "data": df['月份列'].tolist() }},
+    "yAxis": {{ "type": "value" }},
+    "series": [
+        {{
+            "name": "系列1", 
+            "type": "line|bar|...", 
+            "data": df['数值列1'].tolist()
+        }},
+        {{
+            "name": "系列2", 
+            "type": "line|bar|...", 
+            "data": df['数值列2'].tolist()
+        }},
+        # ⚠️ 【特殊规则】如果是饼图 (pie)：
+        # data 必须是字典列表: [{{"name": "北京", "value": 100}}, ...]
+        # 不需要 xAxis/yAxis
+        {{
+            "name": "系列名",
+            "type": "pie",
+            "radius": "50%",
+            "data": [
+                {{ "name": row['Category'], "value": row['Value'] }} 
+                for _, row in df.iterrows()
+            ]
+        }}
+        ...
+    ]
 }}
 
+
+
 # 3. 输出结果
-print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "line", "option": chart_option}}))
+print("CHART_DATA:" + json.dumps({{ "success": True, "chart_type": "line", "option": chart_option }}))
 ```
 
 请直接生成代码："""

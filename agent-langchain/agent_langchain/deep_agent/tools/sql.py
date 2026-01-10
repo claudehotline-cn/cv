@@ -15,7 +15,7 @@ from ...schemas import SQLResultSchema
 from ...llm_runtime import build_chat_llm
 
 _LOGGER = logging.getLogger("agent_langchain.tools.sql")
-_SQL_REVIEW_ENABLED = False
+_SQL_REVIEW_ENABLED = True
 
 
 def _get_schema_for_review() -> str:
@@ -38,9 +38,12 @@ def _get_schema_for_review() -> str:
         return "Schema 不可用"
 
 
-def _review_sql_logic(sql: str, schema_info: str) -> Dict[str, Any]:
+def _review_sql_logic(sql: str, schema_info: str, user_requirement: str = "") -> Dict[str, Any]:
     """使用 LLM 审核 SQL 逻辑是否正确。"""
-    review_prompt = f"""你是 SQL 审核专家。审核以下 SQL 是否存在逻辑错误。
+    review_prompt = f"""你是 SQL 审核专家。审核以下 SQL 是否存在逻辑错误，并判断是否符合用户需求。
+
+**用户需求**：
+{user_requirement if user_requirement else '（未提供）'}
 
 **数据库 Schema**：
 {schema_info}
@@ -51,15 +54,15 @@ def _review_sql_logic(sql: str, schema_info: str) -> Dict[str, Any]:
 ```
 
 **审核清单**：
-1. 是否存在无条件的 CROSS JOIN（笛卡尔积）？
-2. JOIN 条件是否通过正确的外键关联？
-3. 是否会产生重复数据或数据放大？
-4. **GROUP BY (宽松模式)**：
-   - 只要 SELECT 中的非聚合列在 GROUP BY 中出现了（无论是用原名还是别名）且包含关系正确，就通过。
-   - **不要**因为 GROUP BY 多了几个字段就报错。
-   - **不要**因为使用了别名就报错。
-   - **不要**因为 customer_id 等关联键出现在 GROUP BY 中而报错。
-   - **如果 SQL 看起来能运行，优先 Approved**。
+1. **JOIN 关联正确性**：JOIN 条件是否通过正确的外键关联？是否会产生笛卡尔积？
+2. **语义正确性**（最重要）：
+   - SELECT 的字段必须来自语义正确的表。根据 Schema 中的外键关系判断。
+   - 如果用户要查某个维度的统计（如城市、类别），SELECT 的名称字段必须来自该维度的最终表，不能来自中间关联表。
+   - SELECT 的别名应该反映其真实含义。
+3. **聚合粒度**：
+   - 如果用户需要"饼图/占比/分布"，SQL 应该只按一个维度聚合（如只 GROUP BY city_name）。
+   - 如果用户需要"趋势图/时序图"，SQL 应该包含时间维度聚合。
+4. **GROUP BY (宽松模式)**：只要 SELECT 中的非聚合列在 GROUP BY 中出现且逻辑正确，就通过。
 
 **回复格式**（必须是有效 JSON）：
 {{"approved": true, "issues": [], "suggestion": ""}}
@@ -144,13 +147,15 @@ def db_table_schema_tool(table: str) -> str:
 @tool("data_db_run_sql")
 def db_run_sql_tool(
     sql: str, 
-    analysis_id: Optional[str] = None
+    analysis_id: Optional[str] = None,
+    user_requirement: Optional[str] = None
 ) -> str:
     """在默认数据库上执行一条只读 SQL，并返回结果表。
     
     Args:
         sql: 要执行的 SQL 语句
         analysis_id: 分析任务 ID（用于持久化结果）
+        user_requirement: 用户的原始需求描述（用于审核 SQL 是否符合需求）
     """
     if not sql or not sql.strip():
         raise ValueError("SQL 不能为空。")
@@ -165,7 +170,7 @@ def db_run_sql_tool(
     if _SQL_REVIEW_ENABLED:
         _LOGGER.info(f"Running SQL Review for: {sql}")
         schema_info = _get_schema_for_review()
-        review = _review_sql_logic(sql, schema_info)
+        review = _review_sql_logic(sql, schema_info, user_requirement or "")
         if not review.get("approved", True):
             return json.dumps({
                 "success": False, "error": "SQL 审核不通过",

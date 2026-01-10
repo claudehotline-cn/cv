@@ -1,0 +1,40 @@
+{
+  "success": true,
+  "chart_type": "pie",
+  "option": {
+    "title": {
+      "text": "城市总金额分布"
+    },
+    "tooltip": {
+      "trigger": "item"
+    },
+    "legend": {
+      "data": [
+        "上海",
+        "北京",
+        "深圳"
+      ]
+    },
+    "series": [
+      {
+        "name": "城市金额",
+        "type": "pie",
+        "radius": "50%",
+        "data": [
+          {
+            "name": "上海",
+            "value": 15710.0
+          },
+          {
+            "name": "北京",
+            "value": 33200.0
+          },
+          {
+            "name": "深圳",
+            "value": 16430.0
+          }
+        ]
+      }
+    ]
+  }
+}
