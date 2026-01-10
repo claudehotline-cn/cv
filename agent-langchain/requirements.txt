@@ -19,3 +19,4 @@ pyarrow>=18.0
 json_repair>=0.30.0
 scikit-learn>=1.5
 scipy>=1.14
+tabulate

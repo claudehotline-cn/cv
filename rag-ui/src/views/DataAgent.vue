@@ -36,6 +36,10 @@ const renderMarkdown = (content: string) => {
      markerMatch = content.match(/DATA_RESULT:(\{.*\})/s)
   } else if (content.includes('CHART_DATA:')) {
      markerMatch = content.match(/CHART_DATA:(\{.*\})/s)
+  } else if (content.includes('REPORT_CONTENT:')) {
+     // 报告内容：直接渲染 Markdown
+     const reportContent = content.split('REPORT_CONTENT:')[1]
+     return md.render(reportContent || '')
   }
 
   if (markerMatch && markerMatch[1]) {
@@ -201,6 +205,9 @@ const runAnalysis = async () => {
     let graphId = ''
     let input: any = {}
     
+    // 生成 analysis_id 用于结果持久化
+    const analysisId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
+    
     // 如果开启知识库，先获取 RAG 上下文
     if (useKnowledgeBase.value && selectedKb.value) {
       // TODO: 调用 RAG API 并增强 query
@@ -211,7 +218,7 @@ const runAnalysis = async () => {
       input = {
         messages: [{
           role: 'human',
-          content: `请分析数据库 ${dbName.value}：${query.value}`
+          content: `[analysis_id=${analysisId}] 请分析数据库 ${dbName.value}：${query.value}`
         }]
       }
     } else {
@@ -220,7 +227,7 @@ const runAnalysis = async () => {
       input = {
         messages: [{
           role: 'human',
-          content: `请分析 Excel 文件：${query.value}`
+          content: `[analysis_id=${analysisId}] 请分析 Excel 文件：${query.value}`
         }]
       }
     }

@@ -1,0 +1,39 @@
+{
+  "success": true,
+  "chart_type": "line",
+  "option": {
+    "title": {
+      "text": "各城市每月总金额趋势"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "legend": {
+      "data": [
+        "北京"
+      ]
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "2023-01",
+        "2023-02",
+        "2023-03"
+      ]
+    },
+    "yAxis": {
+      "type": "value"
+    },
+    "series": [
+      {
+        "name": "北京",
+        "type": "line",
+        "data": [
+          350.0,
+          400.0,
+          450.0
+        ]
+      }
+    ]
+  }
+}

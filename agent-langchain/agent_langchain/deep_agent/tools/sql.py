@@ -178,6 +178,14 @@ def db_run_sql_tool(
         
         df = pd.DataFrame(result.rows, columns=result.columns)
         
+        # 打印 SQL 结果到日志（前5行）
+        _LOGGER.info(f"[SQL EXECUTION] SQL: {sql}")
+        _LOGGER.info(f"[SQL RESULT PREVIEW] Shape: {df.shape}")
+        if not df.empty:
+            _LOGGER.info(f"[SQL RESULT SAMPLE]\n{df.head(5).to_string(index=False)}")
+        else:
+            _LOGGER.info("[SQL RESULT] Empty result set")
+        
         # 存储到工作区（Parquet）
         if analysis_id:
             store_dataframe("sql_result", df, analysis_id)

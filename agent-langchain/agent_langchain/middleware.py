@@ -170,6 +170,39 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
         if "structured_response" in state and state["structured_response"]:
             structured_data = state["structured_response"]
             _LOGGER.info("Middleware: Found structured_response.")
+            
+            # ------------------------------------------------------------------
+            # Hack: 强制从历史消息中提取 Report Agent 的完整 Markdown 报告
+            # ------------------------------------------------------------------
+            try:
+                messages = state.get("messages", [])
+                report_content = ""
+                # 倒序查找，找到最近的一条包含报告特征的消息
+                for msg in reversed(messages):
+                    content = getattr(msg, "content", "")
+                    if isinstance(content, str):
+                        # 特征1: 包含 "# " 标题
+                        # 特征2: 篇幅较长
+                        # 特征3: Report Agent 之前的特征 (REPORT_CONTENT 等，虽已移除但以防万一)
+                        if ("# " in content and len(content) > 100) or "REPORT_CONTENT:" in content:
+                            if "MainAgentOutput" not in content and "summary" not in content: # 排除掉自己
+                                report_content = content
+                                break
+                
+                if report_content:
+                    _LOGGER.info("Middleware: Found potential report content, overwriting summary.")
+                    # 清理可能的前缀
+                    if "REPORT_CONTENT:" in report_content:
+                        report_content = report_content.split("REPORT_CONTENT:")[1]
+                    if "REPORT_AGENT_COMPLETE:" in report_content:
+                         report_content = report_content.replace("REPORT_AGENT_COMPLETE:", "")
+                    
+                    if hasattr(structured_data, "summary"):
+                        structured_data.summary = report_content.strip()
+            except Exception as e:
+                _LOGGER.warning(f"Middleware: Failed to extract report content: {e}")
+            # ------------------------------------------------------------------
+
             try:
                 if hasattr(structured_data, "model_dump_json"):
                     json_str = structured_data.model_dump_json()
