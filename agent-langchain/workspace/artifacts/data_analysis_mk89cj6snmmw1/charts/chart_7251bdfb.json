@@ -1,0 +1,48 @@
+{
+  "success": true,
+  "chart_type": "pie",
+  "option": {
+    "title": {
+      "text": "城市总金额分布"
+    },
+    "tooltip": {
+      "trigger": "item"
+    },
+    "legend": {
+      "top": "5%",
+      "left": "center"
+    },
+    "series": [
+      {
+        "name": "金额",
+        "type": "pie",
+        "radius": "50%",
+        "data": [
+          {
+            "value": 14610.0,
+            "name": "用户A"
+          },
+          {
+            "value": 18590.0,
+            "name": "用户B"
+          },
+          {
+            "value": 15710.0,
+            "name": "用户C"
+          },
+          {
+            "value": 16430.0,
+            "name": "用户D"
+          }
+        ],
+        "emphasis": {
+          "itemStyle": {
+            "shadowBlur": 10,
+            "shadowOffsetX": 0,
+            "shadowColor": "rgba(0, 0, 0, 0.5)"
+          }
+        }
+      }
+    ]
+  }
+}
