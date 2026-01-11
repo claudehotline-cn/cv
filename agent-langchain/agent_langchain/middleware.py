@@ -165,7 +165,12 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
                         chart_content = f.read().strip()
                     if chart_content and hasattr(structured_data, "chart"):
                         # 解析 JSON 并赋值
-                        structured_data.chart = json.loads(chart_content)
+                        chart_json_data = json.loads(chart_content)
+                        # 如果是 ChartResultSchema 格式（包含 option），只提取 option 以适配前端 ECharts
+                        if isinstance(chart_json_data, dict) and "option" in chart_json_data:
+                            structured_data.chart = chart_json_data["option"]
+                        else:
+                            structured_data.chart = chart_json_data
                         _LOGGER.info("Middleware: Loaded chart (%d chars)", len(chart_content))
             except Exception as e:
                 _LOGGER.warning("Middleware: Failed to read chart: %s", e)
