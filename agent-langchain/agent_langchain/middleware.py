@@ -191,6 +191,9 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
             has_chart = '"chart":' in json_str
             _LOGGER.info("Middleware: Serialized JSON (len=%d), has_chart=%s", len(json_str), has_chart)
             
+            # User requested full log without truncation
+            _LOGGER.info("Middleware: FINAL_FULL_JSON_PAYLOAD:\n%s", json_str)
+            
             return {"messages": [AIMessage(content=f"DATA_RESULT:{json_str}")]}
         except Exception as e:
             _LOGGER.error("Middleware: Failed to serialize: %s", e)
