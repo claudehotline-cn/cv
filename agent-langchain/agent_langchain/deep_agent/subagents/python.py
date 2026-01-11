@@ -114,8 +114,15 @@ python
     # 获取 LLM
     llm = build_chat_llm(task_name="data_deep_subagent")
     
-    response = llm.invoke([HumanMessage(content=final_prompt)])
-    code = response.content
+    # Use Standard Content Block
+    from ...utils.message_utils import extract_text_from_message
+    
+    messages = [HumanMessage(content=[
+        {"type": "text", "text": final_prompt}
+    ])]
+    
+    response = llm.invoke(messages)
+    code = extract_text_from_message(response)
     # 提取代码块
     if "```python" in code:
         code = code.split("```python")[1].split("```")[0]

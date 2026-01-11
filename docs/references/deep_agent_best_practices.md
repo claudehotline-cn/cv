@@ -29,7 +29,7 @@
     *   **Middleware 隐式注入**: 使用 Middleware (`AnalysisIDMiddleware`) 自动从上下文提取 ID 并注入到 Tool 的参数中，防止 LLM 忘记传参。
 
 ### 共享存储 (Shared Store)
-*   使用 `InMemoryStore` 或持久化 Store 在不同 Agent 线程间共享数据（如生成的文章内容、临时数据表路径）。
+*   使用 `InMemoryStore` 或持久化 Store 在不同 Agent 线程间共享数据（如全局 ID）。
 
 ## 3. 提示词工程 (Prompt Engineering)
 

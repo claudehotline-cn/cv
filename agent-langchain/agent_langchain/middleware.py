@@ -25,10 +25,21 @@ class AnalysisIDMiddleware(AgentMiddleware):
         parsed_id = None
         for msg in reversed(messages):
             content = getattr(msg, "content", "")
+            
+            # Normalize content to string for regex search
+            text_to_search = ""
             if isinstance(content, str):
-                _LOGGER.debug(f"[AnalysisIDMiddleware] Scanning parsing content: {content[:100]}...")
+                text_to_search = content
+            elif isinstance(content, list):
+                # Handle Content Blocks: extract text from {"type": "text", "text": "..."}
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_to_search += block.get("text", "") + "\n"
+            
+            if text_to_search:
+                _LOGGER.debug(f"[AnalysisIDMiddleware] Scanning parsing content: {text_to_search[:100]}...")
                 # Support [analysis_id=xxx], analysis_id=xxx, analysis_id: xxx
-                match = re.search(r'\[?analysis_id[:\s=]+([a-zA-Z0-9_]+)\]?', content, re.IGNORECASE)
+                match = re.search(r'\[?analysis_id[:\s=]+([a-zA-Z0-9_]+)\]?', text_to_search, re.IGNORECASE)
                 if match:
                     parsed_id = match.group(1)
                     _LOGGER.info(f"[AnalysisIDMiddleware] Match found: {parsed_id}")
@@ -52,6 +63,18 @@ class ThinkingLoggerMiddleware(AgentMiddleware):
     """DeepSeek/Qwen Thinking Process Logger."""
     
     async def awrap_model_call(self, request, handler):
+        # DEBUG: Log request message structure before LLM call
+        try:
+            req_messages = getattr(request, 'messages', [])
+            _LOGGER.info(f"[MIDDLEWARE DEBUG] awrap_model_call: {len(req_messages)} messages")
+            for i, m in enumerate(req_messages[-5:]):  # Log last 5 messages
+                content = getattr(m, 'content', None)
+                content_type = type(content).__name__ if content else 'None'
+                content_len = len(str(content)) if content else 0
+                _LOGGER.info(f"[MIDDLEWARE DEBUG] Msg[{i}] role={type(m).__name__}, content_type={content_type}, len={content_len}")
+        except Exception as e:
+            _LOGGER.debug(f"[MIDDLEWARE DEBUG] Log error: {e}")
+        
         response = await handler(request)
         try:
             messages = getattr(response, 'result', None)
@@ -133,7 +156,19 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
             messages = state.get("messages", [])
             for msg in reversed(messages):
                 content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-                match = re.search(r'\[?analysis_id[:\s=]+([a-zA-Z0-9_]+)\]?', str(content), re.IGNORECASE)
+                
+                # Normalize content to string
+                text_to_search = ""
+                if isinstance(content, str):
+                    text_to_search = content
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text_to_search += block.get("text", "") + "\n"
+                else:
+                    text_to_search = str(content)
+
+                match = re.search(r'\[?analysis_id[:\s=]+([a-zA-Z0-9_]+)\]?', text_to_search, re.IGNORECASE)
                 if match:
                     analysis_id = match.group(1).strip()
                     _LOGGER.info("Middleware: Recovered analysis_id from messages: %s", analysis_id)

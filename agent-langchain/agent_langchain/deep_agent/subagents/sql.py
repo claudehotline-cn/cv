@@ -129,11 +129,27 @@ Strictly result ONLY the SQL code.
     # 使用 System + Human 结构，明确角色防止 "Assistant" 幻觉
     messages = [
         SystemMessage(content="You are a strict SQL Code Generator. You must output ONLY valid SQL code. Do not start with 'Assistant:'."),
-        HumanMessage(content=prompt + "\n\nCRITICAL: Output ONLY the SQL query. Start immediately with ```sql")
+        HumanMessage(content=[
+            {"type": "text", "text": prompt + "\n\nCRITICAL: Output ONLY the SQL query. Start immediately with ```sql"}
+        ])
     ]
     
+    # DEBUG: Log message structure before LLM call
+    for i, m in enumerate(messages):
+        content_type = type(m.content).__name__
+        content_len = len(str(m.content))
+        _LOGGER.info(f"[SQL DEBUG] Message[{i}] role={type(m).__name__}, content_type={content_type}, len={content_len}")
+        if isinstance(m.content, list):
+            _LOGGER.info(f"[SQL DEBUG] Message[{i}] content_blocks={len(m.content)}, first_block_type={m.content[0].get('type') if m.content else 'N/A'}")
+    
     response = llm.invoke(messages)
-    sql_content = response.content
+    
+    # DEBUG: Log response structure
+    resp_content_type = type(response.content).__name__
+    _LOGGER.info(f"[SQL DEBUG] Response content_type={resp_content_type}, len={len(str(response.content))}")
+    
+    from ...utils.message_utils import extract_text_from_message
+    sql_content = extract_text_from_message(response)
     
     _LOGGER.info("[SQL Agent] Raw LLM response: %s", sql_content[:500] if sql_content else "(empty)")
     _LOGGER.debug("[SQL Agent] Full prompt sent to LLM: %s", prompt[:1000])

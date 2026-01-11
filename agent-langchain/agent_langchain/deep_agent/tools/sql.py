@@ -73,8 +73,19 @@ def _review_sql_logic(sql: str, schema_info: str, user_requirement: str = "") ->
 
     try:
         llm = build_chat_llm(task_name="sql_review")
-        response = llm.invoke(review_prompt)
-        content = response.content.strip()
+        
+        # Use Standard Content Block (Best Practice #4)
+        from langchain_core.messages import HumanMessage
+        messages = [
+            HumanMessage(content=[
+                {"type": "text", "text": review_prompt}
+            ])
+        ]
+        
+        response = llm.invoke(messages)
+        
+        from ...utils.message_utils import extract_text_from_message
+        content = extract_text_from_message(response).strip()
         
         import re
         json_match = re.search(r'\{.*\}', content, re.DOTALL)

@@ -112,8 +112,15 @@ def report_step2_generate(state: ReportAgentState) -> dict:
     # 获取 LLM
     llm = build_chat_llm(task_name="data_deep_subagent")
     
-    response = llm.invoke([HumanMessage(content=prompt)])
-    content = response.content
+    # Use Standard Content Block
+    from ...utils.message_utils import extract_text_from_message
+    
+    messages = [HumanMessage(content=[
+        {"type": "text", "text": prompt}
+    ])]
+    
+    response = llm.invoke(messages)
+    content = extract_text_from_message(response)
     _LOGGER.info("[Report Agent] LLM generated report content length: %d", len(content))
     
     # 持久化报告到文件
