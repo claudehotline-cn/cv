@@ -19,7 +19,7 @@ MAIN_AGENT_PROMPT = """你是数据分析主管，负责根据用户的分析需
 ### 📋 标准工作流程顺序（必须严格遵守！）
 
 ```
-1️⃣ 数据获取：sql_agent / excel_agent
+1️⃣ 数据查询(含聚合)：sql_agent / excel_agent
       ↓
 2️⃣ 数据处理/分析：python_agent (可执行一般处理、统计、ML任务)
       ↓
