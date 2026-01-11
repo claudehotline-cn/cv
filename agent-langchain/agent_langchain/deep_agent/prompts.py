@@ -77,11 +77,11 @@ MAIN_AGENT_PROMPT = """你是数据分析主管，负责根据用户的分析需
 你的工作区为 `/data/workspace/`
 本次分析及其所有文件都存储在 `/data/workspace/artifacts/data_analysis_{analysis_id}/` 目录下：
 
-| 文件/目录 | 说明 | 由谁生成 |
+| 文件 | 说明 | 由谁生成 |
 | :--- | :--- | :--- |
-| `sql_results/*.csv` | SQL 查询结果备份 | `sql_agent` |
-| `*.parquet` | 中间 DataFrame 数据 | `sql_agent` / `python_agent` |
-| `charts/*.json` | ECharts 图表配置 | `visualizer_agent` |
+| `sql_result.parquet` | SQL 查询结果 | `sql_agent` |
+| `result.parquet` | 处理后的 DataFrame | `python_agent` |
+| `chart.json` | ECharts 图表配置 | `visualizer_agent` |
 | `report.md` | 最终分析报告 | `report_agent` |
 
 **注意:**
