@@ -17,7 +17,7 @@ class AnalysisIDMiddleware(AgentMiddleware):
     """Middleware to ensure analysis_id exists and is injected into tool calls."""
     
     def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> Dict[str, Any] | None:
-        """Check for analysis_id in user message or context, generate if missing."""
+        """Check for analysis_id in user message."""
         messages = state.get("messages", [])
         
         # 1. Try to parse analysis_id from messages
@@ -34,19 +34,15 @@ class AnalysisIDMiddleware(AgentMiddleware):
                     break
         
         # 2. Update ContextVar
-        current_id = _ANALYSIS_ID_CTX.get()
         if parsed_id:
             _ANALYSIS_ID_CTX.set(parsed_id)
-            _LOGGER.info(f"[AnalysisIDMiddleware] ✓ Set ContextVar analysis_id: {parsed_id}")
-            current_id = parsed_id
-        elif current_id:
-            _LOGGER.info(f"[AnalysisIDMiddleware] Using inherited ContextVar analysis_id: {current_id}")
+            _LOGGER.info(f"[AnalysisIDMiddleware] ✓ Set analysis_id: {parsed_id}")
         else:
-             _LOGGER.warning(f"[AnalysisIDMiddleware] ✗ No analysis_id found in messages or context!")
+            _LOGGER.warning(f"[AnalysisIDMiddleware] ✗ No analysis_id found in messages!")
 
         # 3. Ensure analysis_id is in state
-        if "analysis_id" not in state and current_id:
-            return {"analysis_id": current_id}
+        if "analysis_id" not in state and parsed_id:
+            return {"analysis_id": parsed_id}
              
         return None
     
