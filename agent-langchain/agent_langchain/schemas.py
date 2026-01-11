@@ -76,3 +76,12 @@ class MainAgentOutput(BaseModel):
     citations: Optional[List[str]] = Field(default=None, description="引用/证据来源（可选）")
     chart: Optional[Dict[str, Any]] = Field(default=None, description="ECharts 图表配置 (可选)")
 
+    def __str__(self):
+        """Override string representation to return valid JSON.
+        This ensures LangGraph streams valid JSON instead of Python object repr.
+        """
+        try:
+            return self.model_dump_json(exclude_none=True)
+        except Exception:
+            return super().__str__()
+
