@@ -202,23 +202,11 @@ def python_execute_tool(
         if stderr_out:
             _LOGGER.warning(f"STDERR:\n{stderr_out}")
 
-        # 处理图表输出
-        saved_chart_path = ""
+        # 处理图表输出（仅做简单检查，不阻断，不持久化，交由 Agent 处理）
         if stdout_out and "CHART_DATA:" in stdout_out:
-            try:
-                chart_part = stdout_out.split("CHART_DATA:", 1)[1].strip()
-                chart_json = json.loads(chart_part)
-                val_res = validate_chart_option(chart_json)
-                if not val_res.get("valid"):
-                    return json.dumps({"success": False, "error": "图表验证失败", "issues": val_res.get("issues")}, ensure_ascii=False)
-                if analysis_id:
-                    saved_chart_path = _persist_chart(chart_part, analysis_id)
-            except Exception as e:
-                _LOGGER.warning("Chart processing error: %s", e)
+            pass
 
         output_data = {"success": True, "stdout": stdout_out, "stderr": stderr_out}
-        if saved_chart_path:
-            output_data["saved_chart"] = saved_chart_path
 
         # 自动存储 DataFrame 到工作区
         saved_dfs = []
