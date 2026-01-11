@@ -260,18 +260,26 @@ const runAnalysis = async () => {
     // 3. 处理流式响应
     const reader = runRes.body?.getReader()
     const decoder = new TextDecoder()
+    let buffer = ''
     
     while (reader) {
       const { done, value } = await reader.read()
       if (done) break
       
-      const chunk = decoder.decode(value)
-      const lines = chunk.split('\n')
+      // 🚀 核心修复：处理 SSE 分包 (Packet Splitting)
+      // 网络包可能在任意位置截断，导致单行 JSON 不完整。必须使用 Buffer 拼接。
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      // 保留最后一行（可能是半截数据），留待下一次拼接
+      buffer = lines.pop() || ''
       
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        
+        if (trimmed.startsWith('data: ')) {
           try {
-            const data = JSON.parse(line.slice(6))
+            const data = JSON.parse(trimmed.slice(6))
             // Deep Agent 返回 messages 数组
             if (data.messages && Array.isArray(data.messages)) {
               for (const msg of data.messages) {
