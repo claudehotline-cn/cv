@@ -23,6 +23,8 @@ _LOGGER = logging.getLogger("agent_langchain.tools.python")
 def _json_default(obj):
     if isinstance(obj, (pd.Timestamp, datetime, date)):
         return obj.isoformat()
+    if isinstance(obj, pd.Period):
+        return str(obj)  # 处理 pd.Period 类型
     if isinstance(obj, Decimal):
         return float(obj)
     if isinstance(obj, uuid.UUID):
@@ -60,7 +62,21 @@ def _create_safe_globals(analysis_id: Optional[str]) -> Dict[str, Any]:
                 safe_globals["np"] = safe_globals["numpy"] = np
             elif lib == "json":
                 import json as json_module
-                safe_globals["json"] = json_module
+                # 包装 json.dumps 使其自动处理 Period 等特殊类型
+                class SafeJson:
+                    loads = json_module.loads
+                    load = json_module.load
+                    @staticmethod
+                    def dumps(obj, **kwargs):
+                        kwargs.setdefault('default', _json_default)
+                        kwargs.setdefault('ensure_ascii', False)
+                        return json_module.dumps(obj, **kwargs)
+                    @staticmethod
+                    def dump(obj, fp, **kwargs):
+                        kwargs.setdefault('default', _json_default)
+                        kwargs.setdefault('ensure_ascii', False)
+                        return json_module.dump(obj, fp, **kwargs)
+                safe_globals["json"] = SafeJson
         except ImportError:
             pass
     
@@ -81,6 +97,13 @@ def _create_safe_globals(analysis_id: Optional[str]) -> Dict[str, Any]:
             if df is None:
                 available = _list_dfs(analysis_id)
                 raise ValueError(f"DataFrame '{name}' 不存在。可用的 DataFrame: {available}")
+            
+            # 自动将 Period 类型列转换为字符串，避免序列化和操作错误
+            for col in df.columns:
+                if pd.api.types.is_period_dtype(df[col]):
+                    df[col] = df[col].astype(str)
+                    _LOGGER.info("Converted Period column '%s' to string", col)
+            
             _LOGGER.info("Loaded DataFrame '%s' from file, shape=%s", name, df.shape)
             return df
         
@@ -164,7 +187,9 @@ def python_execute_tool(
                 expr_node = tree.body[-1]
                 if body_nodes:
                     exec(compile(ast.Module(body=body_nodes, type_ignores=[]), "<string>", "exec"), safe_globals, safe_locals)
-                result = eval(compile(ast.Expression(body=expr_node.value), "<string>", "eval"), {**safe_globals, **safe_locals}, safe_locals)
+                # 🔴 合并 globals 和 locals，确保 exec 中定义的变量可在 eval 中访问
+                merged_namespace = {**safe_globals, **safe_locals}
+                result = eval(compile(ast.Expression(body=expr_node.value), "<string>", "eval"), merged_namespace)
             else:
                 exec(code, safe_globals, safe_locals)
                 result = safe_locals.get("result")
@@ -213,7 +238,15 @@ def python_execute_tool(
         if result is not None:
             if isinstance(result, pd.DataFrame):
                 output_data["result_type"] = "DataFrame"
-                output_data["result_preview"] = result.head(20).to_dict(orient="records")
+                # 🔴 将 Period 等不可序列化类型转换为字符串
+                safe_df = result.head(20).copy()
+                for col in safe_df.columns:
+                    if safe_df[col].dtype == 'period[M]' or safe_df[col].dtype.name.startswith('period'):
+                        safe_df[col] = safe_df[col].astype(str)
+                    elif safe_df[col].dtype == 'object':
+                        # 处理 object 列中可能的 Period 对象
+                        safe_df[col] = safe_df[col].apply(lambda x: str(x) if isinstance(x, pd.Period) else x)
+                output_data["result_preview"] = safe_df.to_dict(orient="records")
                 if analysis_id:
                     store_dataframe("result", result, analysis_id)
             else:

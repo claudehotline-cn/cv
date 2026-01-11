@@ -265,7 +265,7 @@ def write_all_sections_tool(
     _LOGGER.info(f"Processing {len(sections)} sections from outline")
     
     # 并行处理所有章节 (Parallel Execution)
-    max_workers = 5  # 启用并行执行
+    max_workers = 1  # 串行执行
     
     _LOGGER.info(f"[Parallel] Starting Native LangChain batch writing with max_concurrency={max_workers} for {len(sections)} sections")
     

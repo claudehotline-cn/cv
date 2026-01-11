@@ -357,7 +357,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # LLM 配置：使用 vLLM
       - AGENT_LLM_PROVIDER=vllm
-      - AGENT_OPENAI_MODEL=/data/models/qwen3-30b-a3b-nvfp4
+      - AGENT_OPENAI_MODEL=/data/models/qwen3-omni-30b-a3b-instruct-awq
       - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       # 数据库配置：复用 mysql 服务
       - AGENT_DB_HOST=mysql
@@ -414,7 +414,7 @@ services:
     environment:
       # LLM 提供方：gemini | ollama | openai | siliconflow | vllm
       - ARTICLE_AGENT_LLM_PROVIDER=vllm
-      - ARTICLE_AGENT_LLM_MODEL=/data/models/qwen3-30b-a3b-nvfp4
+      - ARTICLE_AGENT_LLM_MODEL=/data/models/qwen3-omni-30b-a3b-instruct-awq
       - ARTICLE_AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       # VLM 配置
       - ARTICLE_AGENT_VLM_ENABLED=true
@@ -542,9 +542,9 @@ services:
     ipc: host
     command:
       - "--model"
-      - "/data/models/qwen3-30b-a3b-nvfp4"
+      - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
       - "--tokenizer"
-      - "/data/models/qwen3-30b-a3b-nvfp4"
+      - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
       - "--host"
       - "0.0.0.0"
       - "--port"
@@ -552,7 +552,7 @@ services:
       - "--max-model-len"
       - "24576"
       - "--gpu-memory-utilization"
-      - "0.6"
+      - "0.70"
       - "--max-num-seqs"
       - "16"
       - "--kv-cache-dtype"

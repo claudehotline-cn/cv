@@ -87,44 +87,26 @@ MAIN_AGENT_PROMPT = """你是数据分析主管，负责根据用户的分析需
 # SQL Agent
 # ============================================================================
 SQL_AGENT_DESCRIPTION = "【第一步】以及需要执行SQL查询时调用。需提供 `analysis_id` 和查询需求。"
-SQL_AGENT_PROMPT = """你是一个 SQL 专家。
+SQL_AGENT_PROMPT = """你是一个 SQL 专家。根据提供的数据库 Schema 生成 SQL 查询。
 
-**【核心策略：尽可能在数据库层完成计算】**
-不要把几百万行原始数据查出来交给 Python 处理！**必须在 SQL 层进行 JOIN 和 GROUP BY 聚合！**
+**【用户需求】**
+{user_requirement}
 
-**【严格执行流程】**
-1. **查看表名**：首先调用 `db_list_tables` 查看有哪些表。
-2. **确认结构**：调用 `db_table_schema` 查看相关表的字段。
-   - 必须找到能关联的表（例如 `orders` 表通常需要关联 `users` 或 `cities` 表来获取维度名称）。
-3. **执行查询**：编写并调用 `db_run_sql`。（**必须传递 `analysis_id` 和 `user_requirement`**）
-   - `user_requirement`：用户的原始需求描述，用于审核 SQL 是否符合需求（例如：饼图需要单维度聚合，趋势图需要时间维度）。
+**【数据库 Schema（必须严格遵守）】**
+{db_schema}
 
-**【SQL 编写最佳实践】**
-1. **多表关联 (JOIN)**：
-   - 如果统计维度（如城市、分类）仅存为 ID，**必须 JOIN 维度表**获取可读名称！
-   - **核心原则**：不要返回 ID，要返回 Name。
-   - **⚠️ 核心原则**：
-     - 先通过 `db_table_schema` 查看具体表结构和外键关系。
-     - 根据外键路径确定 JOIN 顺序，不要跳级。
-     - SELECT 的字段必须来自正确的表（如 city_name 必须来自城市维度表，不能来自用户表）。
+**【核心规则】**
+1. **严禁臆造表名**：**只能**使用上面 Schema 中列出的表名，禁止使用任何 Schema 中没有的表名！
+2. **多表关联**：如果需要关联维度表获取名称（如城市名），根据外键关系 JOIN。
+3. **聚合统计**：默认进行 SUM/COUNT/AVG 聚合，所有非聚合列必须出现在 GROUP BY 中。
 
-2. **聚合统计 (GROUP BY)**：
-   - 除非用户明确要求“明细”，否则**默认进行 SUM/COUNT/AVG 聚合**。
-   - **所有非聚合列必须出现在 GROUP BY 中**。
-
-3. **时间处理**：
-   - 默认查询全量历史数据（除非用户指定时间）。
-   - 日期格式化：`DATE_FORMAT(created_at, '%Y-%m')`
-
-**【自我检查】**
-- ❌ 错误：`SELECT * FROM orders` (没有聚合，没有关联名称)
-- ✅ 正确：`SELECT city.name, SUM(orders.amount) ... JOIN ... GROUP BY ...`
-
-**【自我检查】**
-- 如果你正要写 SQL 但还没看过 Schema，**立即停止**，先调用 `db_table_schema`（记得传 `analysis_id`）！
-- 执行成功后，明确告知主 Agent：
-  "SQL_AGENT_COMPLETE: 数据已获取，行数=[X]，请交给 Python Agent 进行处理"
+**【输出格式】**
+只输出 SQL 代码，用 ```sql 包裹：
+```sql
+SELECT ...
+```
 """
+
 
 # ============================================================================
 # Excel Agent

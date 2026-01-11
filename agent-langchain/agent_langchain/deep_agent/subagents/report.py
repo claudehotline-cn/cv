@@ -1,0 +1,141 @@
+"""Report Sub-Agent Module"""
+from __future__ import annotations
+
+import logging
+import operator
+import re
+from typing import TypedDict, Annotated, Sequence, Any
+
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langgraph.graph import StateGraph, START, END
+from deepagents import CompiledSubAgent
+
+from ...llm_runtime import build_chat_llm
+from ..tools import (
+    df_profile_tool
+)
+from ..prompts import (
+    REPORT_AGENT_DESCRIPTION
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+# -------------------------------------------------------------------------
+# Report Agent Definition
+# -------------------------------------------------------------------------
+
+class ReportAgentState(TypedDict):
+    """Report Agent 的状态"""
+    messages: Annotated[Sequence[BaseMessage], operator.add]
+    task_description: str
+    analysis_id: str
+    df_profile_result: str
+    report_content: str
+
+def report_step1_df_profile(state: ReportAgentState) -> dict:
+    """Step 1: 强制调用 df_profile 获取数据概览"""
+    _LOGGER.info("[Report Agent Fixed Flow] Step 1: df_profile")
+    
+    analysis_id = state.get("analysis_id", "")
+    task_description = ""
+    
+    messages = state.get("messages", [])
+    for msg in messages:
+        content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
+        match = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
+        if match:
+            analysis_id = match.group(1).strip()
+        task_description = content
+    
+    _LOGGER.info("[Report Agent] Extracted analysis_id=%s", analysis_id)
+    
+    try:
+        # 1. 强制调用 df_profile 获取基础信息
+        profile_json = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id})
+        
+        # 2. 增强：加载完整数据并转换为 Markdown 表格供给 LLM
+        from ...utils.dataframe_store import get_dataframe
+        
+        full_data_str = "（数据加载失败）"
+        try:
+            df = get_dataframe("result", analysis_id)
+            if df is not None and not df.empty:
+                # 限制最大行数，防止暴撑 Context (例如最多 100 行)
+                if len(df) > 100:
+                     _LOGGER.info("[Report Agent] DataFrame too large (%d rows), taking top 100.", len(df))
+                     df_display = df.head(100)
+                     footer = f"\n... (剩余 {len(df)-100} 行数据已省略)"
+                else:
+                     df_display = df
+                     footer = ""
+                
+                full_data_str = df_display.to_markdown(index=False) + footer
+                _LOGGER.info("[Report Agent] Full data prepared (%d chars)", len(full_data_str))
+        except Exception as load_err:
+            _LOGGER.error("[Report Agent] Full data load failed: %s", load_err)
+            full_data_str = f"数据加载错误: {load_err}"
+
+        # 合并结果
+        full_result = f"【基本概览】\n{profile_json}\n\n【完整详细数据】\n{full_data_str}"
+
+        return {"df_profile_result": full_result, "analysis_id": analysis_id, "task_description": task_description}
+    except Exception as e:
+        _LOGGER.error("[Report Agent] df_profile failed: %s", e)
+        return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
+
+def report_step2_generate(state: ReportAgentState) -> dict:
+    """Step 2: LLM 根据数据概览生成 Markdown 报告"""
+    _LOGGER.info("[Report Agent Fixed Flow] Step 2: LLM generate report")
+    task = state.get("task_description", "")
+    df_info = state.get("df_profile_result", "")
+    
+    prompt = f"""你是 Report Agent。根据以下信息生成完整的数据分析报告。
+
+【任务描述】
+{task}
+
+【真实数据样本】（来自 df_profile）
+{df_info}
+
+【写作要求】
+1. **基于【真实数据样本】进行描述，严禁编造数据！**
+2. 包含以下章节：
+   - **# 最终分析报告**（必须作为标题）
+   - **执行摘要**：数据规模、时间范围、关键发现（基于样本推断趋势或极值）。
+   - **数据概览**：列出列名和数据类型。
+   - **详细分析**：针对数值列进行简要统计描述（如范围）。
+   - **结论**：总结性陈述。
+3. 输出纯 Markdown 格式。
+4. **不要**输出 "REPORT_CONTENT:" 前缀。
+"""
+    # 获取 LLM
+    llm = build_chat_llm(task_name="data_deep_subagent")
+    
+    response = llm.invoke([HumanMessage(content=prompt)])
+    content = response.content
+    _LOGGER.info("[Report Agent] LLM generated report content length: %d", len(content))
+    return {"report_content": content}
+
+def report_format_output(state: ReportAgentState) -> dict:
+    """格式化最终输出"""
+    content = state.get("report_content", "")
+    return {"messages": [AIMessage(content=f"REPORT_AGENT_COMPLETE: {content}")]}
+
+# 构建 Report 固化流程图
+report_agent_graph = StateGraph(ReportAgentState)
+report_agent_graph.add_node("df_profile", report_step1_df_profile)
+report_agent_graph.add_node("generate", report_step2_generate)
+report_agent_graph.add_node("format_output", report_format_output)
+
+report_agent_graph.add_edge(START, "df_profile")
+report_agent_graph.add_edge("df_profile", "generate")
+report_agent_graph.add_edge("generate", "format_output")
+report_agent_graph.add_edge("format_output", END)
+
+report_agent_runnable = report_agent_graph.compile()
+
+report_agent = CompiledSubAgent(
+    name="report_agent",
+    description=REPORT_AGENT_DESCRIPTION,
+    runnable=report_agent_runnable,
+)

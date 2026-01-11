@@ -1,0 +1,216 @@
+"""Python Sub-Agent Module"""
+from __future__ import annotations
+
+import logging
+import operator
+import re
+import json
+from typing import TypedDict, Annotated, Sequence, Any
+
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langgraph.graph import StateGraph, START, END
+from deepagents import CompiledSubAgent
+
+from ...llm_runtime import build_chat_llm
+from ..tools import (
+    df_profile_tool, python_execute_tool
+)
+from ..prompts import (
+    PYTHON_AGENT_DESCRIPTION, PYTHON_AGENT_PROMPT
+)
+from ..skills.registry import SKILLS_REGISTRY
+
+_LOGGER = logging.getLogger(__name__)
+
+# -------------------------------------------------------------------------
+# Python Agent Definition
+# -------------------------------------------------------------------------
+
+class PythonAgentState(TypedDict):
+    """Python Agent 的状态"""
+    messages: Annotated[Sequence[BaseMessage], operator.add]
+    task_description: str
+    analysis_id: str
+    df_profile_result: str  # Step 1 的结果
+    python_code: str        # LLM 生成的代码
+    python_result: str      # Step 2 的结果
+    retry_count: int        # 重试次数
+    error_feedback: str     # 错误反馈
+
+def step1_df_profile(state: PythonAgentState) -> dict:
+    """Step 1: 调用 df_profile 查看数据结构"""
+    _LOGGER.info("[Python Agent Fixed Flow] Step 1: df_profile")
+    
+    # 从 messages 中提取 analysis_id（格式如 [analysis_id=xxx]）
+    analysis_id = state.get("analysis_id", "")
+    task_description = ""
+    
+    messages = state.get("messages", [])
+    for msg in messages:
+        content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
+        # 尝试匹配 [analysis_id=xxx] 格式
+        match = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
+        if match:
+            analysis_id = match.group(1).strip()
+        task_description = content  # 最后一条消息作为任务描述
+    
+    _LOGGER.info("[Python Agent] Extracted analysis_id=%s", analysis_id)
+    
+    try:
+        result = df_profile_tool.invoke({"df_name": "sql_result", "analysis_id": analysis_id})
+        _LOGGER.info("[Python Agent] df_profile result: %s", result[:500] if len(result) > 500 else result)
+        return {"df_profile_result": result, "analysis_id": analysis_id, "task_description": task_description}
+    except Exception as e:
+        _LOGGER.error("[Python Agent] df_profile failed: %s", e)
+        return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
+
+def step2_llm_generate_code(state: PythonAgentState) -> dict:
+    """Step 2: LLM 根据 df_profile 结果生成 Python 代码"""
+    _LOGGER.info("[Python Agent Fixed Flow] Step 2: LLM generate code")
+    task = state.get("task_description", "")
+    df_info = state.get("df_profile_result", "")
+    
+    # 1. 提取 Skill (从 task_description 中解析 [skill=xxx])
+    skill_match = re.search(r'\[skill[=:]?\s*([a-zA-Z0-9_]+)\]', task, re.IGNORECASE)
+    skill_name = skill_match.group(1).lower() if skill_match else "general"
+    
+    # 2. 获取 Skill 配置
+    skill_config = SKILLS_REGISTRY.get(skill_name, SKILLS_REGISTRY["general"])
+    skill_display_name = skill_config.get("name", "General")
+    skill_instruction = skill_config.get("instruction", "")
+    skill_examples = skill_config.get("examples", "")
+    
+    _LOGGER.info("[Python Agent] Active Skill: %s (%s)", skill_name, skill_display_name)
+    
+    # 3. 动态构建 Prompt
+    prompt = PYTHON_AGENT_PROMPT.format(
+        skill_name=skill_display_name,
+        skill_instruction=skill_instruction,
+        skill_examples=skill_examples
+    )
+    
+    # 4. 拼接具体任务和数据信息
+    final_prompt = f"""{prompt}
+
+【任务描述】
+{task}
+
+【数据结构】（来自 df_profile）
+{df_info}
+"""
+    # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
+    error_feedback = state.get("error_feedback", "")
+    if error_feedback:
+        _LOGGER.warning("[Python Agent] Retrying with error feedback: %s", error_feedback[:200])
+        final_prompt += f"""
+python
+【上一次生成的代码执行错误】
+错误信息: {error_feedback}
+
+请修正上述代码，确保不再发生此错误。
+"""
+    # ---------------------------------------------
+    
+    # 获取 LLM
+    llm = build_chat_llm(task_name="data_deep_subagent")
+    
+    response = llm.invoke([HumanMessage(content=final_prompt)])
+    code = response.content
+    # 提取代码块
+    if "```python" in code:
+        code = code.split("```python")[1].split("```")[0]
+    elif "```" in code:
+        code = code.split("```")[1].split("```")[0]
+    
+    _LOGGER.info("[Python Agent] LLM generated code: %s", code[:300])
+    return {"python_code": code.strip()}
+
+def step3_python_execute(state: PythonAgentState) -> dict:
+    """Step 3: 执行 LLM 生成的 Python 代码"""
+    _LOGGER.info("[Python Agent Fixed Flow] Step 3: python_execute")
+    code = state.get("python_code", "")
+    analysis_id = state.get("analysis_id", "")
+    
+    if not code:
+        return {"python_result": "Error: No code to execute", "retry_count": 0}
+    
+    retry_count = state.get("retry_count", 0)
+    
+    try:
+        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id})
+        _LOGGER.info("[Python Agent] python_execute result: %s", result[:500] if len(result) > 500 else result)
+        
+        # 检查执行结果是否包含错误
+        import json
+        is_success = True
+        error_msg = ""
+        try:
+            res_json = json.loads(result) if isinstance(result, str) else result
+            if isinstance(res_json, dict) and not res_json.get("success", False):
+                is_success = False
+                error_msg = res_json.get("error", "Unknown error")
+        except:
+            pass
+        
+        if not is_success:
+            _LOGGER.warning("[Python Agent] Execution failed: %s", error_msg)
+            return {
+                "python_result": result, 
+                "retry_count": retry_count + 1,
+                "error_feedback": error_msg
+            }
+        
+        # 成功清除错误状态
+        return {"python_result": result, "error_feedback": ""}
+        
+    except Exception as e:
+        _LOGGER.error("[Python Agent] python_execute failed: %s", e)
+        return {
+            "python_result": f"Error: {e}", 
+            "retry_count": retry_count + 1,
+            "error_feedback": str(e)
+        }
+
+def format_final_output(state: PythonAgentState) -> dict:
+    """格式化最终输出为 Agent 消息"""
+    result = state.get("python_result", "")
+    return {"messages": [AIMessage(content=f"PYTHON_AGENT_COMPLETE: {result}")]}
+
+def check_python_retry(state: PythonAgentState) -> str:
+    """检查是否需要重试"""
+    retry_count = state.get("retry_count", 0)
+    error_feedback = state.get("error_feedback", "")
+    
+    if error_feedback and retry_count < 3:
+        _LOGGER.info("[Python Agent] Retrying... Attempt %d", retry_count + 1)
+        return "retry"
+    return "continue"
+
+# 构建 Python Agent Graph
+python_agent_graph = StateGraph(PythonAgentState)
+python_agent_graph.add_node("df_profile", step1_df_profile)
+python_agent_graph.add_node("llm_generate", step2_llm_generate_code)
+python_agent_graph.add_node("python_execute", step3_python_execute)
+python_agent_graph.add_node("format_output", format_final_output)
+
+python_agent_graph.add_edge(START, "df_profile")
+python_agent_graph.add_edge("df_profile", "llm_generate")
+python_agent_graph.add_edge("llm_generate", "python_execute")
+
+python_agent_graph.add_conditional_edges(
+    "python_execute",
+    check_python_retry,
+    {
+        "retry": "llm_generate",
+        "continue": "format_output"
+    }
+)
+python_agent_graph.add_edge("format_output", END)
+
+python_agent_runnable = python_agent_graph.compile()
+
+python_agent = CompiledSubAgent(
+    name="python_agent",
+    description=PYTHON_AGENT_DESCRIPTION,
+    runnable=python_agent_runnable,
+)
