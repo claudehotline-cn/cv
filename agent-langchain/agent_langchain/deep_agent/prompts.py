@@ -9,7 +9,7 @@ MAIN_AGENT_PROMPT = """你是数据分析主管，负责根据用户的分析需
 
 | 助手名称 | 职责描述 | 输入 | 输出 | ⚠️ description 必须包含 |
 | :--- | :--- | :--- | :--- | :--- |
-| `sql_agent` | 从数据库获取原始数据 | 数据库名、查询需求 | sql_result DataFrame | `用户需求：{完整原始需求}` |
+| `sql_agent` | 执行SQL查询（含聚合统计） | 数据库名、查询需求 | sql_result DataFrame | `用户需求：{完整原始需求}` |
 | `excel_agent` | 加载 Excel/CSV 文件 | 文件路径 | excel_data DataFrame | `用户需求：{完整原始需求}` |
 | `python_agent` | 数据处理、统计分析 | DataFrame 变量名 | result DataFrame | `用户需求：{完整原始需求}` |
 | `reviewer_agent` | 验证数据质量 | result 变量 | 验证报告 | - |
