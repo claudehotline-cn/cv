@@ -289,10 +289,10 @@ const runAnalysis = async () => {
 
                 // 🚀 核心修复：忽略后端泄露的 MainAgentOutput 原始对象消息
                 // 该消息包含 Python str() 格式的数据，会覆盖正常的 DATA_RESULT，导致渲染失败
-                if (msg.name === 'MainAgentOutput') {
-                    console.log('Skipping MainAgentOutput raw message')
-                    continue
-                }
+                // if (msg.name === 'MainAgentOutput') {
+                //    console.log('Skipping MainAgentOutput raw message')
+                //    continue
+                // }
 
                 // DEBUG: 打印消息结构
                 console.log('MSG:', msg.type, msg.id?.slice(-8), 'content:', msg.content?.slice(0, 50), 'tool_calls:', !!msg.tool_calls)
