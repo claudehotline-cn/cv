@@ -125,8 +125,11 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
             
         _LOGGER.info("Middleware: Processing structured_response")
         
-        analysis_id = state.get("analysis_id", "")
+        # 从 ContextVar 获取 analysis_id（比 state 更可靠）
+        analysis_id = _ANALYSIS_ID_CTX.get() or state.get("analysis_id", "")
         artifact_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}" if analysis_id else ""
+        
+        _LOGGER.info("Middleware: Using analysis_id=%s, artifact_dir=%s", analysis_id, artifact_dir)
         
         # Step 1: 从文件读取报告内容
         if artifact_dir:
