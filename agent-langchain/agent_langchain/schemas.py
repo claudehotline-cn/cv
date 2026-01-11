@@ -74,4 +74,5 @@ class MainAgentOutput(BaseModel):
     actions: List[str] = Field(default=[], description="下一步可执行动作列表")
     confidence: str = Field(description="主结论把握度 (low/medium/high)")
     citations: Optional[List[str]] = Field(default=None, description="引用/证据来源（可选）")
+    chart: Optional[Dict[str, Any]] = Field(default=None, description="ECharts 图表配置 (可选)")
 
