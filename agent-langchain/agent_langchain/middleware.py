@@ -125,8 +125,20 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
             
         _LOGGER.info("Middleware: Processing structured_response")
         
-        # 从 ContextVar 获取 analysis_id（比 state 更可靠）
+        # 尝试多种方式获取 analysis_id
         analysis_id = _ANALYSIS_ID_CTX.get() or state.get("analysis_id", "")
+        
+        # Fallback: 如果ContextVar和State都为空，再次尝试从消息中解析
+        if not analysis_id:
+            messages = state.get("messages", [])
+            for msg in reversed(messages):
+                content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
+                match = re.search(r'\[?analysis_id[:\s=]+([a-zA-Z0-9_]+)\]?', str(content), re.IGNORECASE)
+                if match:
+                    analysis_id = match.group(1).strip()
+                    _LOGGER.info("Middleware: Recovered analysis_id from messages: %s", analysis_id)
+                    break
+        
         artifact_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}" if analysis_id else ""
         
         _LOGGER.info("Middleware: Using analysis_id=%s, artifact_dir=%s", analysis_id, artifact_dir)
