@@ -193,3 +193,134 @@ flowchart TB
     ORC --> SA2 --> MO
     MO --> OUT
 ```
+
+## 10. 全栈数据流最佳实践 (Full-Stack Data Flow)
+
+在 LangGraph 流式传输场景下，确保大数据量（如图表配置）的完整性和前端解析的稳定性至关重要。以下是针对 LangChain 1.0/LangGraph 的关键优化模式。
+
+### 后端序列化 (Backend Serialization)
+LangGraph 在 `stream_mode="values"` 时，默认会将 Pydantic 状态对象转换为字符串流式传输。如果未做处理，输出的是 Python 对象的 `repr()`（如 `{'key': True}`），这会导致前端 JSON 解析失败。
+
+**最佳实践**：
+在 Pydantic 模型（如 `MainAgentOutput`）中重写 `__str__` 方法，强制返回标准 JSON。
+
+```python
+class MainAgentOutput(BaseModel):
+    # ... fields ...
+
+    def __str__(self):
+        """Override string representation to return valid JSON.
+        Ensures LangGraph streams valid JSON instead of Python object repr.
+        """
+        try:
+            return self.model_dump_json(exclude_none=True)
+        except Exception:
+            return super().__str__()
+```
+
+### 前端流式解析 (Frontend SSE Parsing)
+网络传输层会将大数据包（如几 KB 的 ECharts 配置）拆分为多个 TCP 包（Chunks）。前端不应假设每个 SSE 事件 (`data: ...`) 都应在单个 Chunk 中结束。
+
+**反模式 (Naive Splitting)**:
+```javascript
+// ❌ 错误：假设 chunk.split('\n') 能完美分割 lines
+const lines = chunk.split('\n') 
+for (const line of lines) JSON.parse(line) // 如果 JSON 被截断则报错
+```
+
+**最佳实践 (Buffer Mechanism)**:
+前端必须维护一个 Buffer 来拼接跨 Chunk 的数据。
+
+```javascript
+// ✅ 正确：使用 Buffer 拼接
+let buffer = ''
+while (reader) {
+  const { value } = await reader.read()
+  buffer += decoder.decode(value, { stream: true })
+  
+  const lines = buffer.split('\n')
+  // 保留最后一行（可能是半截数据），留待下一次拼接
+  buffer = lines.pop() || '' 
+  
+  for (const line of lines) {
+    if (line.startsWith('data: ')) process(line)
+  }
+}
+```
+
+### 消息过滤 (Message Filtering)
+虽然 Main Agent 被强制要求返回结构化输出（JSON），但在使用 Middleware 模式时，LangGraph 仍会广播两条语义重复的消息：
+1.  **原始节点消息**: `MainAgent` 节点的直接输出（标准 JSON）。
+2.  **Middleware 消息**: 经过 Middleware 再次封装的协议消息（如添加 `DATA_RESULT:` 前缀）。
+
+**最佳实践**: 
+前端应通过 `msg.name` 识别并**过滤掉原始节点消息**，只消费 Middleware 封装后的协议消息。
+*   **原因**: 避免界面重复渲染同一份数据。
+*   **优势**: Middleware 消息通常包含了从 Context 提取的额外元数据（如 `analysis_id`），且格式统一（Text/Markdown Wrapper），比纯 JSON 更适合直接对接聊天界面渲染器。
+
+## 11. LangChain 核心消息对象详解 (LangChain Message Objects)
+
+LangChain 定义了一套标准的消息协议。随着多模态和 Tool Calling 的发展，这些消息对象的结构变得灵活多态。正确解析它们是前端展示和后端逻辑的基础。
+
+### 1. AIMessage (模型输出)
+
+代表 LLM 的响应。继承自 `BaseMessage`。
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| **`content`** | `str \| List[Union[str, Dict]]` | **必填**。主要文本内容。多模态场景下为 Block 列表（Text/Image）。当 `tool_calls` 存在时可能为空。 |
+| **`tool_calls`** | `List[ToolCall]` | **可选**。模型生成的工具调用请求列表。每个 `ToolCall` 包含 `name` (工具名), `args` (参数字典), `id` (唯一ID)。 |
+| **`usage_metadata`** | `UsageMetadata` | **可选**。Token 消耗统计（`input_tokens`, `output_tokens`, `total_tokens`）。(LangChain 0.1.17+) |
+| **`response_metadata`** | `Dict` | **可选**。底层模型提供商的原始响应元数据（如 `finish_reason`, `logprobs`）。 |
+| **`invalid_tool_calls`** | `List[InvalidToolCall]` | **可选**。模型生成了无法解析为合法 ToolCall 的内容（如 JSON 格式错误），用于容错处理。 |
+| **`name`** | `str` | **可选**。发送者名称（通常为空，但在多 Agent 场景可用于标记身份）。 |
+
+### 2. ToolMessage (工具结果)
+
+代表工具执行后的返回结果。必须紧跟在发起调用的 `AIMessage` 之后。
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| **`content`** | `str \| List` | **必填**。工具执行结果的**字符串表示**。这是 LLM 唯一能看到的内容。务必简洁，避免 Context 溢出。 |
+| **`tool_call_id`** | `str` | **必填**。对应 `AIMessage.tool_calls[i].id`，用于将结果与请求匹配。 |
+| **`artifact`** | `Any` | **可选** (LangChain 0.2+)。**原始执行结果**。可以存储 DataFrame、二进制图像、Pydantic 对象等。**LLM 看不到此字段**，专供后续 ToolNode 或 Middleware 使用。 |
+| **`status`** | `'success' \| 'error'` | **可选**。工具执行状态。用于在 Frontend 区分展示或 Graph 路由判断（如 Error 时重试）。 |
+| **`name`** | `str` | **可选**。工具名称。 |
+
+### 3. 解析策略表
+| 场景 | 关键字段 | 处理逻辑 |
+| :--- | :--- | :--- |
+| **普通对话** | `AIMessage.content` | 直接显示文本。注意处理流式输出中的空字符串。 |
+| **工具调用** | `AIMessage.tool_calls` | 渲染为 "正在调用工具: {name}..."。应遍历列表处理并行调用。 |
+| **工具结果** | `ToolMessage.content` | 渲染为工具执行摘要。 |
+| **多模态展示** | `ToolMessage.artifact` | **优先使用**。由 Middleware 提取并转换为前端特定格式（如 `DATA_RESULT`）。不要试图从 content 解析复杂数据。 |
+| **错误处理** | `AIMessage.invalid_tool_calls` | 如果存在，应提示用户模型意图识别失败或自动触发重试机制。 |
+
+> **版本提示**: 本说明基于 LangChain 1.x / `langchain-core` 0.2+ 规范。老版本（0.0.x）可能缺少 `artifact`, `status`, `usage_metadata` 等字段。
+
+### 4. 标准 Content Block 结构 (Vendor Abstraction)
+LangChain 为了屏蔽底层厂商（OpenAI, Anthropic 等）的格式差异，定义了一套**标准 Content Block**。推荐在业务代码中**优先构造标准 Block**，由 LangChain 自动转换为厂商特定格式。
+
+前面3点描述的是消息对象（Container）及其顶层属性（如 `tool_calls`）。本节描述的是 **`content` 字段** 的标准内部结构。它是 `AIMessage.content` 或 `HumanMessage.content` 的具体填充物。
+
+| Block 类型 | `type` 值 | 关键字段 | 说明 | 厂商适配 (LangChain 自动处理) |
+| :--- | :--- | :--- | :--- | :--- |
+| **文本块** | `"text"` | `text` | 纯文本内容。 | 基础通用。 |
+| **图片块** | `"image"` | `url` / `base64` | 图片资源。 | **OpenAI** 转为 `image_url` 对象；**Anthropic** 转为 `source` 对象。 |
+| **工具调用** | `"tool_use"` | `id`, `name`, `input` | 模型发起的工具调用。 | **OpenAI** 转为 `function_call`；**Anthropic** 转为 `tool_use`。 |
+| **工具结果** | `"tool_result"` | `tool_use_id`, `content` | 工具执行结果。 | —— |
+
+**最佳实践示例**:
+```python
+# ✅ 推荐: 使用 LangChain 标准格式 (跨模型通用)
+msg = HumanMessage(content=[
+    {"type": "text", "text": "分析这张图片"},
+    {"type": "image", "url": "http://example.com/img.jpg"}
+])
+
+# ❌ 不推荐: 使用厂商原生格式 (绑定特定模型, e.g. OpenAI)
+msg = HumanMessage(content=[
+    {"type": "text", "text": "分析这张图片"},
+    {"type": "image_url", "image_url": {"url": "..."}} 
+])
+```
