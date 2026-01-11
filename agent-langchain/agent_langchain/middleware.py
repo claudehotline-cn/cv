@@ -182,18 +182,35 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
         
         # Step 3: 序列化并返回
         try:
-            if hasattr(structured_data, "model_dump_json"):
-                json_str = structured_data.model_dump_json()
+            # 1.以此为基础转为 Dict，以便添加兼容字段
+            if hasattr(structured_data, "model_dump"):
+                resp_dict = structured_data.model_dump()
+            elif isinstance(structured_data, dict):
+                resp_dict = structured_data
             else:
-                json_str = json.dumps(structured_data, default=str, ensure_ascii=False)
+                resp_dict = structured_data.__dict__ if hasattr(structured_data, "__dict__") else {}
+
+            # 🚀 关键修复：前端 (DataAgent.vue) 只检查顶层的 toolResult.option
+            # 因此必须将 chart 中的 option 提升到顶层，否则前端会忽略图表
+            if "chart" in resp_dict and resp_dict["chart"]:
+                chart_obj = resp_dict["chart"]
+                if isinstance(chart_obj, dict):
+                    # Case A: chart 是完整结构 {success: true, option: {...}}
+                    if "option" in chart_obj:
+                        resp_dict["option"] = chart_obj["option"]
+                        _LOGGER.info("Middleware: Promoted 'option' to top-level from chart.option")
+                    # Case B: chart 已经是纯 Option (title/series等)
+                    # 或者是我们在 Step 2 做的 Hybrid 结构 (option 展平在 chart 里)
+                    elif "title" in chart_obj or "series" in chart_obj or "xAxis" in chart_obj:
+                         resp_dict["option"] = chart_obj
+                         _LOGGER.info("Middleware: Promoted chart object directly to top-level 'option'")
+
+            json_str = json.dumps(resp_dict, default=str, ensure_ascii=False)
             
             # Debug log to verify chart field presence in final output
-            has_chart_field = '"chart":' in json_str and '"chart":null' not in json_str.replace(" ", "")
-            _LOGGER.info("Middleware: Serialized JSON (len=%d), has_chart_field=%s", len(json_str), has_chart_field)
-            if has_chart_field:
-                # Log a snippet around "chart" to confirm it's not null
-                idx = json_str.find('"chart":')
-                _LOGGER.info("Middleware: Chart snippet: %s", json_str[idx:idx+100])
+            has_chart = '"chart":' in json_str
+            has_option = '"option":' in json_str
+            _LOGGER.info("Middleware: Serialized JSON (len=%d), has_chart=%s, has_option=%s", len(json_str), has_chart, has_option)
             
             return {"messages": [AIMessage(content=f"DATA_RESULT:{json_str}")]}
         except Exception as e:
