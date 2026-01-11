@@ -135,7 +135,8 @@ Strictly result ONLY the SQL code.
     response = llm.invoke(messages)
     sql_content = response.content
     
-    _LOGGER.info("[SQL Agent] Raw LLM response: %s", sql_content)
+    _LOGGER.info("[SQL Agent] Raw LLM response: %s", sql_content[:500] if sql_content else "(empty)")
+    _LOGGER.debug("[SQL Agent] Full prompt sent to LLM: %s", prompt[:1000])
     
     # 改进 SQL 提取逻辑
     extracted_sql = sql_content.strip()
