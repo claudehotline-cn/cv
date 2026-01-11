@@ -179,14 +179,39 @@ def viz_step3_python_execute(state: VisualizerAgentState) -> dict:
         error_msg = ""
         try:
             res_json = json.loads(result) if isinstance(result, str) else result
+            
+            # 1. 检查代码执行层面是否成功
             if isinstance(res_json, dict) and not res_json.get("success", False):
                 is_success = False
-                error_msg = res_json.get("error", "Unknown error")
-        except:
-            pass
+                error_msg = res_json.get("error", "Unknown execution error")
+            
+            # 2. 🔥 核心校验：必须包含 CHART_DATA 且 JSON 有效
+            if is_success:
+                stdout = res_json.get("stdout", "")
+                if "CHART_DATA:" not in stdout:
+                    is_success = False
+                    error_msg = "代码执行成功，但未输出 'CHART_DATA:'。请确保使用 print('CHART_DATA:' + json.dumps(...)) 输出结果。"
+                else:
+                    try:
+                        chart_part = stdout.split("CHART_DATA:", 1)[1].strip()
+                        chart_json = json.loads(chart_part)
+                        # 简单校验 option 字段
+                        if "option" not in chart_json:
+                            is_success = False
+                            error_msg = "CHART_DATA JSON 中缺少 'option' 字段。"
+                    except json.JSONDecodeError:
+                        is_success = False
+                        error_msg = "CHART_DATA 之后的 JSON 格式无效，无法解析。"
+                    except Exception as e:
+                        is_success = False
+                        error_msg = f"CHART_DATA 验证异常: {str(e)}"
+
+        except Exception as e:
+            is_success = False
+            error_msg = f"结果解析异常: {str(e)}"
             
         if not is_success:
-            _LOGGER.warning("[Visualizer Agent] Execution failed: %s", error_msg)
+            _LOGGER.warning("[Visualizer Agent] Validation failed: %s", error_msg)
             return {
                 "chart_result": result,
                 "retry_count": retry_count + 1,
