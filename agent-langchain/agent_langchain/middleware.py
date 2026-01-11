@@ -46,57 +46,6 @@ class AnalysisIDMiddleware(AgentMiddleware):
              
         return None
     
-    def wrap_tool_call(self, request, handler):
-        """Inject analysis_id into tool arguments."""
-        return self._inject_analysis_id(request, handler)
-    
-    async def awrap_tool_call(self, request, handler):
-        """Async version: Inject analysis_id into tool arguments."""
-        return await self._inject_analysis_id_async(request, handler)
-    
-    def _inject_analysis_id(self, request, handler):
-        """Synchronously inject analysis_id into tool call args."""
-        current_id = _ANALYSIS_ID_CTX.get()
-        if current_id:
-            try:
-                tool_call = getattr(request, 'tool_call', {})
-                if isinstance(tool_call, dict):
-                    args = tool_call.get('args', {})
-                    if isinstance(args, dict):
-                         # Force overwrite to prevent hallucinations
-                        args['analysis_id'] = current_id
-                        _LOGGER.debug(f"[AnalysisIDMiddleware] Injected/Overwrote analysis_id: {current_id}")
-                elif hasattr(tool_call, 'args'):
-                    args = getattr(tool_call, 'args', {})
-                    if isinstance(args, dict):
-                         # Force overwrite
-                        args['analysis_id'] = current_id
-                        _LOGGER.debug(f"[AnalysisIDMiddleware] Injected/Overwrote analysis_id: {current_id}")
-            except Exception as e:
-                _LOGGER.warning(f"[AnalysisIDMiddleware] Failed to inject: {e}")
-        return handler(request)
-    
-    async def _inject_analysis_id_async(self, request, handler):
-        """Asynchronously inject analysis_id into tool call args."""
-        current_id = _ANALYSIS_ID_CTX.get()
-        if current_id:
-            try:
-                tool_call = getattr(request, 'tool_call', {})
-                if isinstance(tool_call, dict):
-                    args = tool_call.get('args', {})
-                    if isinstance(args, dict):
-                        # Force overwrite
-                        args['analysis_id'] = current_id
-                        _LOGGER.debug(f"[AnalysisIDMiddleware] Injected/Overwrote analysis_id: {current_id}")
-                elif hasattr(tool_call, 'args'):
-                    args = getattr(tool_call, 'args', {})
-                    if isinstance(args, dict):
-                        # Force overwrite
-                        args['analysis_id'] = current_id
-                        _LOGGER.debug(f"[AnalysisIDMiddleware] Injected/Overwrote analysis_id: {current_id}")
-            except Exception as e:
-                _LOGGER.warning(f"[AnalysisIDMiddleware] Failed to inject: {e}")
-        return await handler(request)
 
 class ThinkingLoggerMiddleware(AgentMiddleware):
     """DeepSeek/Qwen Thinking Process Logger."""
