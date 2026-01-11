@@ -330,6 +330,39 @@ const runAnalysis = async () => {
                   if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
                     console.log('AI message content:', msg.content.slice(0, 100))
                     analysisResult.value = msg.content
+                    
+                    // 🚀 核心修复：Middleware 返回的是 AI 消息，包含 DATA_RESULT，此前被漏了解析
+                    // 必须在此处提取图表配置，否则图表无法渲染
+                    try {
+                        let content = msg.content
+                        let markerMatch = null
+                        if (content.includes('DATA_RESULT:')) {
+                            markerMatch = content.match(/DATA_RESULT:(\{.*\})/s)
+                        } else if (content.includes('CHART_DATA:')) {
+                            markerMatch = content.match(/CHART_DATA:(\{.*\})/s)
+                        }
+                        
+                        if (markerMatch && markerMatch[1]) {
+                           let toolResult = JSON.parse(markerMatch[1])
+                           // 提取图表配置 (复用之前的增强逻辑)
+                           let chartOpt = null
+                           if (toolResult.chart && toolResult.chart.option) {
+                               chartOpt = toolResult.chart.option
+                           } else if (toolResult.chart && toolResult.chart.series) {
+                               chartOpt = toolResult.chart
+                           } else if (toolResult.option) {
+                               chartOpt = toolResult.option
+                           }
+                           
+                           if (chartOpt) {
+                               console.log('AI_MSG: Found chart config, rendering...')
+                               chartConfig.value = chartOpt
+                               setTimeout(renderChart, 100)
+                           }
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse chart from AI message', e)
+                    }
                   }
                 }
                 
