@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import operator
+import os
 import re
 import json
 from typing import TypedDict, Annotated, Sequence, Any
@@ -203,8 +204,9 @@ def viz_step3_python_execute(state: VisualizerAgentState) -> dict:
         }
 
 def viz_format_final_output(state: VisualizerAgentState) -> dict:
-    """格式化最终输出 - 提取 CHART_DATA 直接返回给前端"""
+    """格式化最终输出 - 提取 CHART_DATA 并持久化到文件"""
     result = state.get("chart_result", "")
+    analysis_id = state.get("analysis_id", "")
     
     # 从 python_execute 结果中提取 CHART_DATA
     try:
@@ -212,9 +214,21 @@ def viz_format_final_output(state: VisualizerAgentState) -> dict:
         stdout = result_json.get("stdout", "")
         if "CHART_DATA:" in stdout:
             chart_data_str = stdout.split("CHART_DATA:", 1)[1].strip()
-            _LOGGER.info("[Visualizer Agent] Returning chart data: CHART_DATA:%s", chart_data_str[:100])
-            # 直接返回 CHART_DATA 格式字符串
-            return {"messages": [AIMessage(content=f"CHART_DATA:{chart_data_str}")]}
+            _LOGGER.info("[Visualizer Agent] Extracted chart data: %s", chart_data_str[:100])
+            
+            # 持久化图表数据到文件
+            if analysis_id:
+                try:
+                    chart_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}"
+                    os.makedirs(chart_dir, exist_ok=True)
+                    chart_path = os.path.join(chart_dir, "chart.json")
+                    with open(chart_path, "w", encoding="utf-8") as f:
+                        f.write(chart_data_str)
+                    _LOGGER.info("[Visualizer Agent] Chart saved to: %s", chart_path)
+                except Exception as e:
+                    _LOGGER.error("[Visualizer Agent] Failed to save chart: %s", e)
+            
+            return {"messages": [AIMessage(content=f"VISUALIZER_AGENT_COMPLETE: Chart generated")]}
     except:
         pass
         

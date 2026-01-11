@@ -110,57 +110,59 @@ class ThinkingLoggerMiddleware(AgentMiddleware):
         return await handler(request)
 
 class StructuredOutputToTextMiddleware(AgentMiddleware):
-    """Middleware to ensure structured output is returned as text in the final message."""
+    """将 Agent 的结构化输出序列化为 JSON 文本，供前端解析。
+    
+    职责：
+    1. 从文件读取 Report Agent 生成的报告内容，覆盖到 structured_data.summary
+    2. 从文件读取 Visualizer Agent 生成的图表配置，覆盖到 structured_data.chart
+    3. 将 structured_data 序列化为 JSON，添加 DATA_RESULT: 前缀返回
+    """
     
     def after_agent(self, state: AgentState, runtime: Runtime[Any], result: Any = None) -> Dict[str, Any] | None:
-        if "structured_response" in state and state["structured_response"]:
-            structured_data = state["structured_response"]
-            _LOGGER.info("Middleware: Found structured_response.")
+        structured_data = state.get("structured_response")
+        if not structured_data:
+            return None
             
-            # ------------------------------------------------------------------
-            # 从文件读取 Report Agent 生成的报告
-            # ------------------------------------------------------------------
-            try:
-                analysis_id = state.get("analysis_id", "")
-                report_content = ""
-                
-                if analysis_id:
-                    report_path = f"/data/workspace/artifacts/data_analysis_{analysis_id}/report.md"
-                    if os.path.exists(report_path):
-                        with open(report_path, "r", encoding="utf-8") as f:
-                            report_content = f.read()
-                        _LOGGER.info("Middleware: Loaded report from file: %s (%d chars)", report_path, len(report_content))
-                
-                if report_content and hasattr(structured_data, "summary"):
-                    structured_data.summary = report_content.strip()
-            except Exception as e:
-                _LOGGER.warning(f"Middleware: Failed to read report file: {e}")
-            # ------------------------------------------------------------------
-
-            try:
-                if hasattr(structured_data, "model_dump_json"):
-                    json_str = structured_data.model_dump_json()
-                else:
-                    json_str = json.dumps(structured_data, default=str, ensure_ascii=False)
-                content = f"DATA_RESULT:{json_str}"
-                return {"messages": [AIMessage(content=content)]}
-            except Exception as e:
-                _LOGGER.error("Middleware: Failed to serialize: %s", e)
+        _LOGGER.info("Middleware: Processing structured_response")
         
-        # Fallback: Check ToolMessages for hidden DATA_RESULT
-        if "messages" in state:
-            messages = state["messages"]
-            last_msg = messages[-1] if messages else None
-            structured_tool_output = None
-            for msg in reversed(messages):
-                if hasattr(msg, "content") and isinstance(msg.content, str):
-                    if "DATA_RESULT:" in msg.content or "CHART_DATA:" in msg.content:
-                         structured_tool_output = msg.content
-                         break
+        analysis_id = state.get("analysis_id", "")
+        artifact_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}" if analysis_id else ""
+        
+        # Step 1: 从文件读取报告内容
+        if artifact_dir:
+            report_path = os.path.join(artifact_dir, "report.md")
+            try:
+                if os.path.exists(report_path):
+                    with open(report_path, "r", encoding="utf-8") as f:
+                        report_content = f.read().strip()
+                    if report_content and hasattr(structured_data, "summary"):
+                        structured_data.summary = report_content
+                        _LOGGER.info("Middleware: Loaded report (%d chars)", len(report_content))
+            except Exception as e:
+                _LOGGER.warning("Middleware: Failed to read report: %s", e)
+        
+        # Step 2: 从文件读取图表配置
+        if artifact_dir:
+            chart_path = os.path.join(artifact_dir, "chart.json")
+            try:
+                if os.path.exists(chart_path):
+                    with open(chart_path, "r", encoding="utf-8") as f:
+                        chart_content = f.read().strip()
+                    if chart_content and hasattr(structured_data, "chart"):
+                        # 解析 JSON 并赋值
+                        structured_data.chart = json.loads(chart_content)
+                        _LOGGER.info("Middleware: Loaded chart (%d chars)", len(chart_content))
+            except Exception as e:
+                _LOGGER.warning("Middleware: Failed to read chart: %s", e)
+        
+        # Step 3: 序列化并返回
+        try:
+            if hasattr(structured_data, "model_dump_json"):
+                json_str = structured_data.model_dump_json()
+            else:
+                json_str = json.dumps(structured_data, default=str, ensure_ascii=False)
             
-            if structured_tool_output:
-                if last_msg and isinstance(last_msg.content, str) and structured_tool_output not in last_msg.content:
-                     _LOGGER.info("Middleware: Bubbling up hidden tool output.")
-                     combined_content = f"{last_msg.content}\n\n{structured_tool_output}"
-                     return {"messages": [AIMessage(content=combined_content)]}
-        return None
+            return {"messages": [AIMessage(content=f"DATA_RESULT:{json_str}")]}
+        except Exception as e:
+            _LOGGER.error("Middleware: Failed to serialize: %s", e)
+            return None
