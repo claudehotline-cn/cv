@@ -187,6 +187,14 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
             else:
                 json_str = json.dumps(structured_data, default=str, ensure_ascii=False)
             
+            # Debug log to verify chart field presence in final output
+            has_chart_field = '"chart":' in json_str and '"chart":null' not in json_str.replace(" ", "")
+            _LOGGER.info("Middleware: Serialized JSON (len=%d), has_chart_field=%s", len(json_str), has_chart_field)
+            if has_chart_field:
+                # Log a snippet around "chart" to confirm it's not null
+                idx = json_str.find('"chart":')
+                _LOGGER.info("Middleware: Chart snippet: %s", json_str[idx:idx+100])
+            
             return {"messages": [AIMessage(content=f"DATA_RESULT:{json_str}")]}
         except Exception as e:
             _LOGGER.error("Middleware: Failed to serialize: %s", e)
