@@ -159,14 +159,24 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
         # Step 2: 从文件读取图表配置
         if artifact_dir:
             chart_path = os.path.join(artifact_dir, "chart.json")
+            _LOGGER.info("Middleware: Checking chart path: %s", chart_path)
             try:
                 if os.path.exists(chart_path):
                     with open(chart_path, "r", encoding="utf-8") as f:
                         chart_content = f.read().strip()
-                    if chart_content and hasattr(structured_data, "chart"):
+                    
+                    has_chart_attr = hasattr(structured_data, "chart")
+                    _LOGGER.info("Middleware: Chart content len=%d, has_chart_attr=%s", len(chart_content), has_chart_attr)
+                    
+                    if chart_content and has_chart_attr:
                         # 解析 JSON 并赋值（保留完整结构，包含 success/chart_type/option，防止前端依赖 success 字段 check）
-                        structured_data.chart = json.loads(chart_content)
-                        _LOGGER.info("Middleware: Loaded chart (%d chars)", len(chart_content))
+                        chart_json = json.loads(chart_content)
+                        structured_data.chart = chart_json
+                        _LOGGER.info("Middleware: Loaded chart success. Keys: %s", list(chart_json.keys()) if isinstance(chart_json, dict) else "NotDict")
+                    else:
+                        _LOGGER.warning("Middleware: Skipped chart assignment. Content empty or no attr.")
+                else:
+                    _LOGGER.info("Middleware: Chart file not found.")
             except Exception as e:
                 _LOGGER.warning("Middleware: Failed to read chart: %s", e)
         
