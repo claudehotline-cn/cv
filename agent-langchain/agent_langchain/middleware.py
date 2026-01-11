@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 import json
 import logging
+import os
 import uuid
 import re
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, HumanMessage, trim_messages
@@ -117,35 +118,23 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
             _LOGGER.info("Middleware: Found structured_response.")
             
             # ------------------------------------------------------------------
-            # Hack: 强制从历史消息中提取 Report Agent 的完整 Markdown 报告
+            # 从文件读取 Report Agent 生成的报告
             # ------------------------------------------------------------------
             try:
-                messages = state.get("messages", [])
+                analysis_id = state.get("analysis_id", "")
                 report_content = ""
-                # 倒序查找，找到最近的一条包含报告特征的消息
-                for msg in reversed(messages):
-                    content = getattr(msg, "content", "")
-                    if isinstance(content, str):
-                        # 特征1: 包含 "# " 标题
-                        # 特征2: 篇幅较长
-                        # 特征3: Report Agent 之前的特征 (REPORT_CONTENT 等，虽已移除但以防万一)
-                        if ("# " in content and len(content) > 100) or "REPORT_CONTENT:" in content:
-                            if "MainAgentOutput" not in content and "summary" not in content: # 排除掉自己
-                                report_content = content
-                                break
                 
-                if report_content:
-                    _LOGGER.info("Middleware: Found potential report content, overwriting summary.")
-                    # 清理可能的前缀
-                    if "REPORT_CONTENT:" in report_content:
-                        report_content = report_content.split("REPORT_CONTENT:")[1]
-                    if "REPORT_AGENT_COMPLETE:" in report_content:
-                         report_content = report_content.replace("REPORT_AGENT_COMPLETE:", "")
-                    
-                    if hasattr(structured_data, "summary"):
-                        structured_data.summary = report_content.strip()
+                if analysis_id:
+                    report_path = f"/data/workspace/artifacts/data_analysis_{analysis_id}/report.md"
+                    if os.path.exists(report_path):
+                        with open(report_path, "r", encoding="utf-8") as f:
+                            report_content = f.read()
+                        _LOGGER.info("Middleware: Loaded report from file: %s (%d chars)", report_path, len(report_content))
+                
+                if report_content and hasattr(structured_data, "summary"):
+                    structured_data.summary = report_content.strip()
             except Exception as e:
-                _LOGGER.warning(f"Middleware: Failed to extract report content: {e}")
+                _LOGGER.warning(f"Middleware: Failed to read report file: {e}")
             # ------------------------------------------------------------------
 
             try:

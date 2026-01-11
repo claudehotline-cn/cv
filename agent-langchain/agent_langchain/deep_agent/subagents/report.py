@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import operator
+import os
 import re
 from typing import TypedDict, Annotated, Sequence, Any
 
@@ -114,6 +115,20 @@ def report_step2_generate(state: ReportAgentState) -> dict:
     response = llm.invoke([HumanMessage(content=prompt)])
     content = response.content
     _LOGGER.info("[Report Agent] LLM generated report content length: %d", len(content))
+    
+    # 持久化报告到文件
+    analysis_id = state.get("analysis_id", "")
+    if analysis_id:
+        try:
+            report_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}"
+            os.makedirs(report_dir, exist_ok=True)
+            report_path = os.path.join(report_dir, "report.md")
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            _LOGGER.info("[Report Agent] Report saved to: %s", report_path)
+        except Exception as e:
+            _LOGGER.error("[Report Agent] Failed to save report: %s", e)
+    
     return {"report_content": content}
 
 def report_format_output(state: ReportAgentState) -> dict:
