@@ -377,9 +377,23 @@ const runAnalysis = async () => {
                           })
                           
                           // 1. 处理图表
-                          if (toolResult.option) {
+                          // 优先检查标准结构 toolResult.chart.option，其次是兼容结构 toolResult.option
+                          let chartOpt = null
+                          if (toolResult.chart && toolResult.chart.option) {
+                              console.log('DEBUG: Found chart option in toolResult.chart.option')
+                              chartOpt = toolResult.chart.option
+                          } else if (toolResult.chart && toolResult.chart.series) {
+                              // 兼容 Hybrid/Flatten 结构
+                              console.log('DEBUG: Found chart option in toolResult.chart (flattened)')
+                              chartOpt = toolResult.chart
+                          } else if (toolResult.option) {
+                              console.log('DEBUG: Found chart option in toolResult.option (legacy)')
+                              chartOpt = toolResult.option
+                          }
+
+                          if (chartOpt) {
                             console.log('DEBUG: Setting chartConfig and triggering render...')
-                            chartConfig.value = toolResult.option
+                            chartConfig.value = chartOpt
                             // Use nextTick + timeout to ensure DOM is ready
                             setTimeout(() => {
                                 console.log('DEBUG: Calling renderChart()')
@@ -428,13 +442,20 @@ const runAnalysis = async () => {
                        resultDisplay = `SQL 执行结果: ${toolResult.total_rows} 行数据`
                     } else if (msg.name === 'data_generate_chart' || (toolResult && toolResult.option)) {
                         // 检查是否是图表生成工具的结果
-                        // 增强：即使 msg.name 不匹配，只要 toolResult.option 存在就渲染图表
-                        if (toolResult && toolResult.option) {
-                          console.log('Found chart option:', toolResult.option)
-                          chartConfig.value = toolResult.option
+                        // 增强：即使 msg.name 不匹配，只要 option 存在就渲染图表
+                        // 支持从 chart.option 或 option 读取
+                        let chartOpt = toolResult.option
+                        if (!chartOpt && toolResult.chart) {
+                             if (toolResult.chart.option) chartOpt = toolResult.chart.option
+                             else if (toolResult.chart.series) chartOpt = toolResult.chart
+                        }
+
+                        if (chartOpt) {
+                          console.log('Found chart option:', chartOpt)
+                          chartConfig.value = chartOpt
                           // renderChart 在 watch 或 nextTick 处理
                           setTimeout(renderChart, 100) 
-                          resultDisplay = `图表生成成功: ${toolResult.chart_type || 'unknown'}`
+                          resultDisplay = `图表生成成功: ${toolResult.chart_type || (toolResult.chart && toolResult.chart.chart_type) || 'unknown'}`
                         }
                     } else if (msg.name === 'python_execute') {
                         resultDisplay = `Python 执行结果:\n${JSON.stringify(toolResult.result || toolResult, null, 2)}`
