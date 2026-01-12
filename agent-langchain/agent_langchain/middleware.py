@@ -10,15 +10,18 @@ from langgraph.runtime import Runtime
 
 _LOGGER = logging.getLogger(__name__)
 
-import contextvars
+# 使用 runtime.store (LangGraph BaseStore) 存储 analysis_id
+# 通过 deepagents 的 StoreBackend 实现跨线程持久化
 
-_ANALYSIS_ID_CTX = contextvars.ContextVar("analysis_id", default=None)
+# Namespace 用于 Store 中的 analysis_id 存储
+_ANALYSIS_ID_NAMESPACE = ("analysis",)
 
 class AnalysisIDMiddleware(AgentMiddleware):
     """Middleware to ensure analysis_id exists and is injected into tool calls."""
     
-    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> Dict[str, Any] | None:
-        """Check for analysis_id in user message."""
+    async def abefore_agent(self, state: AgentState, runtime: Runtime[Any]) -> Dict[str, Any] | None:
+        """Check for analysis_id in user message (async version)."""
+        _LOGGER.info("[AnalysisIDMiddleware] abefore_agent called, store=%s", "available" if runtime.store else "None")
         messages = state.get("messages", [])
         
         # 1. Try to parse analysis_id from messages
@@ -45,10 +48,22 @@ class AnalysisIDMiddleware(AgentMiddleware):
                     _LOGGER.info(f"[AnalysisIDMiddleware] Match found: {parsed_id}")
                     break
         
-        # 2. Update ContextVar
+        # 2. Store in LangGraph Store (via runtime.store) - using async API
         if parsed_id:
-            _ANALYSIS_ID_CTX.set(parsed_id)
-            _LOGGER.info(f"[AnalysisIDMiddleware] ✓ Set analysis_id: {parsed_id}")
+            thread_id = state.get("configurable", {}).get("thread_id", "default")
+            try:
+                # 使用 runtime.store.aput() 异步存储 analysis_id
+                if runtime.store is not None:
+                    await runtime.store.aput(
+                        namespace=_ANALYSIS_ID_NAMESPACE,
+                        key=thread_id,
+                        value={"analysis_id": parsed_id}
+                    )
+                    _LOGGER.info(f"[AnalysisIDMiddleware] ✓ Stored analysis_id={parsed_id} in Store (thread={thread_id})")
+                else:
+                    _LOGGER.warning("[AnalysisIDMiddleware] runtime.store is None, cannot persist analysis_id")
+            except Exception as e:
+                _LOGGER.warning(f"[AnalysisIDMiddleware] Failed to store analysis_id: {e}")
         else:
             _LOGGER.warning(f"[AnalysisIDMiddleware] ✗ No analysis_id found in messages!")
 
@@ -63,15 +78,13 @@ class ThinkingLoggerMiddleware(AgentMiddleware):
     """DeepSeek/Qwen Thinking Process Logger."""
     
     async def awrap_model_call(self, request, handler):
-        # DEBUG: Log request message structure before LLM call
+        # DEBUG: Log request message structure before LLM call (using content_blocks)
         try:
             req_messages = getattr(request, 'messages', [])
             _LOGGER.info(f"[MIDDLEWARE DEBUG] awrap_model_call: {len(req_messages)} messages")
             for i, m in enumerate(req_messages[-5:]):  # Log last 5 messages
-                content = getattr(m, 'content', None)
-                content_type = type(content).__name__ if content else 'None'
-                content_len = len(str(content)) if content else 0
-                _LOGGER.info(f"[MIDDLEWARE DEBUG] Msg[{i}] role={type(m).__name__}, content_type={content_type}, len={content_len}")
+                blocks = getattr(m, 'content_blocks', [])
+                _LOGGER.info(f"[MIDDLEWARE DEBUG] Msg[{i}] role={type(m).__name__}, content_blocks_count={len(blocks)}")
         except Exception as e:
             _LOGGER.debug(f"[MIDDLEWARE DEBUG] Log error: {e}")
         
@@ -141,7 +154,7 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
     3. 将 structured_data 序列化为 JSON，添加 DATA_RESULT: 前缀返回
     """
     
-    def after_agent(self, state: AgentState, runtime: Runtime[Any], result: Any = None) -> Dict[str, Any] | None:
+    async def aafter_agent(self, state: AgentState, runtime: Runtime[Any], result: Any = None) -> Dict[str, Any] | None:
         structured_data = state.get("structured_response")
         if not structured_data:
             return None
@@ -149,30 +162,20 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
         _LOGGER.info("Middleware: Processing structured_response")
         
         # 尝试多种方式获取 analysis_id
-        analysis_id = _ANALYSIS_ID_CTX.get() or state.get("analysis_id", "")
+        thread_id = state.get("configurable", {}).get("thread_id", "default")
+        analysis_id = state.get("analysis_id", "")
         
-        # Fallback: 如果ContextVar和State都为空，再次尝试从消息中解析
-        if not analysis_id:
-            messages = state.get("messages", [])
-            for msg in reversed(messages):
-                content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-                
-                # Normalize content to string
-                text_to_search = ""
-                if isinstance(content, str):
-                    text_to_search = content
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text_to_search += block.get("text", "") + "\n"
-                else:
-                    text_to_search = str(content)
-
-                match = re.search(r'\[?analysis_id[:\s=]+([a-zA-Z0-9_]+)\]?', text_to_search, re.IGNORECASE)
-                if match:
-                    analysis_id = match.group(1).strip()
-                    _LOGGER.info("Middleware: Recovered analysis_id from messages: %s", analysis_id)
-                    break
+        # 尝试从 Store 获取 (使用异步 API)
+        if not analysis_id and runtime.store is not None:
+            try:
+                item = await runtime.store.aget(namespace=_ANALYSIS_ID_NAMESPACE, key=thread_id)
+                if item and isinstance(item.value, dict):
+                    analysis_id = item.value.get("analysis_id", "")
+                    _LOGGER.info(f"Middleware: Retrieved analysis_id={analysis_id} from Store")
+            except Exception as e:
+                _LOGGER.debug(f"Middleware: Failed to get analysis_id from Store: {e}")
+        
+        # 如果仍然没有 analysis_id，记录警告\n        if not analysis_id:\n            _LOGGER.warning(\"Middleware: No analysis_id found in state or Store\")
         
         artifact_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}" if analysis_id else ""
         

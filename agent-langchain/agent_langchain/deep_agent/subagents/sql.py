@@ -134,19 +134,19 @@ Strictly result ONLY the SQL code.
         ])
     ]
     
-    # DEBUG: Log message structure before LLM call
+    # DEBUG: Log message structure before LLM call (using content_blocks)
     for i, m in enumerate(messages):
-        content_type = type(m.content).__name__
-        content_len = len(str(m.content))
-        _LOGGER.info(f"[SQL DEBUG] Message[{i}] role={type(m).__name__}, content_type={content_type}, len={content_len}")
-        if isinstance(m.content, list):
-            _LOGGER.info(f"[SQL DEBUG] Message[{i}] content_blocks={len(m.content)}, first_block_type={m.content[0].get('type') if m.content else 'N/A'}")
+        blocks = getattr(m, 'content_blocks', [])
+        _LOGGER.info(f"[SQL DEBUG] Message[{i}] role={type(m).__name__}, content_blocks_count={len(blocks)}")
+        if blocks:
+            first_block_type = blocks[0].get('type') if isinstance(blocks[0], dict) else type(blocks[0]).__name__
+            _LOGGER.info(f"[SQL DEBUG] Message[{i}] first_block_type={first_block_type}")
     
     response = llm.invoke(messages)
     
-    # DEBUG: Log response structure
-    resp_content_type = type(response.content).__name__
-    _LOGGER.info(f"[SQL DEBUG] Response content_type={resp_content_type}, len={len(str(response.content))}")
+    # DEBUG: Log response structure (using content_blocks)
+    resp_blocks = getattr(response, 'content_blocks', [])
+    _LOGGER.info(f"[SQL DEBUG] Response content_blocks_count={len(resp_blocks)}")
     
     from ...utils.message_utils import extract_text_from_message
     sql_content = extract_text_from_message(response)
