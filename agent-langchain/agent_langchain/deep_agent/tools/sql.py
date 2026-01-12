@@ -7,6 +7,7 @@ import os
 import pandas as pd
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 
 from ...config import get_settings
 from ...utils.db_utils import get_sql_database, run_sql_query, load_schema_preview
@@ -100,14 +101,16 @@ def _review_sql_logic(sql: str, schema_info: str, user_requirement: str = "") ->
         return {"approved": True, "issues": [], "suggestion": ""}
 
 
-def _save_sql_result_csv(rows: List[Dict], columns: List[str], analysis_id: str) -> str:
+def _save_sql_result_csv(rows: List[Dict], columns: List[str], analysis_id: str, user_id: str = "anonymous") -> str:
     """保存 SQL 结果为 CSV 文件（备份）。"""
     if not analysis_id:
         return ""
     try:
-        base_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}/sql_results"
+        # User Isolation Path
+        base_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/sql_results"
         os.makedirs(base_dir, exist_ok=True)
         filepath = os.path.join(base_dir, f"sql_{uuid.uuid4().hex[:8]}.csv")
+        # Ensure we write valid CSV
         pd.DataFrame(rows, columns=columns).to_csv(filepath, index=False)
         return filepath
     except Exception as e:
@@ -159,7 +162,8 @@ def db_table_schema_tool(table: str) -> str:
 def db_run_sql_tool(
     sql: str, 
     analysis_id: Optional[str] = None,
-    user_requirement: Optional[str] = None
+    user_requirement: Optional[str] = None,
+    config: RunnableConfig = None
 ) -> str:
     """在默认数据库上执行一条只读 SQL，并返回结果表。
     
@@ -168,6 +172,12 @@ def db_run_sql_tool(
         analysis_id: 分析任务 ID（用于持久化结果）
         user_requirement: 用户的原始需求描述（用于审核 SQL 是否符合需求）
     """
+    user_id = "anonymous"
+    if config:
+        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+    
+    _LOGGER.info(f"[DEBUG] db_run_sql_tool: analysis_id={analysis_id}, user_id={user_id}, config_keys={list(config.keys()) if config else 'None'}")
+
     if not sql or not sql.strip():
         raise ValueError("SQL 不能为空。")
 
@@ -204,9 +214,10 @@ def db_run_sql_tool(
             _LOGGER.info("[SQL RESULT] Empty result set")
         
         # 存储到工作区（Parquet）
+        # 存储到工作区（Parquet）
         if analysis_id:
-            store_dataframe("sql_result", df, analysis_id)
-            _save_sql_result_csv(result.rows, result.columns, analysis_id)
+            store_dataframe("sql_result", df, analysis_id, user_id)
+            _save_sql_result_csv(result.rows, result.columns, analysis_id, user_id)
 
         result_data = SQLResultSchema(
             success=True,

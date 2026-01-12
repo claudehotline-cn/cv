@@ -9,6 +9,7 @@ import json
 from typing import TypedDict, Annotated, Sequence, Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from deepagents import CompiledSubAgent
 
@@ -37,7 +38,7 @@ class VisualizerAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-def viz_step1_df_profile(state: VisualizerAgentState) -> dict:
+def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 1: df_profile")
     
@@ -57,7 +58,7 @@ def viz_step1_df_profile(state: VisualizerAgentState) -> dict:
     
     # 只加载 result（Python Agent 处理后的数据，已转换好类型）
     try:
-        result = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id})
+        result = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=config)
         _LOGGER.info("[Visualizer Agent] df_profile(result): %s", result[:500] if len(result) > 500 else result)
         return {"df_profile_result": result, "analysis_id": analysis_id, "task_description": task_description}
     except Exception as e:
@@ -166,7 +167,7 @@ python
     _LOGGER.info("[Visualizer Agent] LLM generated code: %s", code[:300])
     return {"chart_code": code.strip()}
 
-def viz_step3_python_execute(state: VisualizerAgentState) -> dict:
+def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """Step 3: 执行 Python 代码"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 3: python_execute")
     code = state.get("chart_code", "")
@@ -178,7 +179,7 @@ def viz_step3_python_execute(state: VisualizerAgentState) -> dict:
     retry_count = state.get("retry_count", 0)
     
     try:
-        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id})
+        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=config)
         _LOGGER.info("[Visualizer Agent] python_execute result: %s", result[:500] if len(result) > 500 else result)
         
         # 检查执行结果是否包含错误
@@ -235,10 +236,15 @@ def viz_step3_python_execute(state: VisualizerAgentState) -> dict:
             "error_feedback": str(e)
         }
 
-def viz_format_final_output(state: VisualizerAgentState) -> dict:
+def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """格式化最终输出 - 提取 CHART_DATA 并持久化到文件"""
     result = state.get("chart_result", "")
     analysis_id = state.get("analysis_id", "")
+    
+    # Extract user_id from config
+    user_id = "anonymous"
+    if config:
+        user_id = config.get("configurable", {}).get("user_id", "anonymous")
     
     # 从 python_execute 结果中提取 CHART_DATA
     try:
@@ -251,7 +257,7 @@ def viz_format_final_output(state: VisualizerAgentState) -> dict:
             # 持久化图表数据到文件
             if analysis_id:
                 try:
-                    chart_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}"
+                    chart_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}"
                     os.makedirs(chart_dir, exist_ok=True)
                     chart_path = os.path.join(chart_dir, "chart.json")
                     with open(chart_path, "w", encoding="utf-8") as f:

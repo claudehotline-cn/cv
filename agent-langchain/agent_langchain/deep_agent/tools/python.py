@@ -41,7 +41,7 @@ _FORBIDDEN_BUILTINS = {"open", "exec", "eval", "compile"}
 _CODE_REVIEW_ENABLED = True
 
 
-def _create_safe_globals(analysis_id: Optional[str]) -> Dict[str, Any]:
+def _create_safe_globals(analysis_id: Optional[str], user_id: str = "anonymous") -> Dict[str, Any]:
     """创建安全的执行环境，提供 load_dataframe 函数供代码显式加载数据。"""
     import builtins
     safe_builtins = {k: v for k, v in builtins.__dict__.items() if k not in _FORBIDDEN_BUILTINS}
@@ -93,9 +93,9 @@ def _create_safe_globals(analysis_id: Optional[str]) -> Dict[str, Any]:
             Returns:
                 加载的 DataFrame，如果不存在则抛出异常
             """
-            df = _get_df(name, analysis_id)
+            df = _get_df(name, analysis_id, user_id)
             if df is None:
-                available = _list_dfs(analysis_id)
+                available = _list_dfs(analysis_id, user_id)
                 raise ValueError(f"DataFrame '{name}' 不存在。可用的 DataFrame: {available}")
             
             # 自动将 Period 类型列转换为字符串，避免序列化和操作错误
@@ -126,12 +126,12 @@ def _review_python_code(code: str) -> Dict[str, Any]:
         return {"approved": False, "issues": [str(e)], "suggestion": "修复语法错误"}
 
 
-def _persist_chart(chart_json_str: str, analysis_id: str) -> str:
+def _persist_chart(chart_json_str: str, analysis_id: str, user_id: str = "anonymous") -> str:
     """保存 Chart JSON"""
     if not analysis_id:
         return ""
     try:
-        base_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}/charts"
+        base_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/charts"
         os.makedirs(base_dir, exist_ok=True)
         filepath = os.path.join(base_dir, f"chart_{uuid.uuid4().hex[:8]}.json")
         with open(filepath, 'w') as f:
@@ -142,10 +142,13 @@ def _persist_chart(chart_json_str: str, analysis_id: str) -> str:
         return ""
 
 
+from langchain_core.runnables import RunnableConfig
+
 @tool("python_execute")
 def python_execute_tool(
     code: str, 
-    analysis_id: str
+    analysis_id: str,
+    config: RunnableConfig
 ) -> str:
     """在安全沙箱中执行 Python 代码进行数据分析。
     
@@ -156,10 +159,10 @@ def python_execute_tool(
     if not code or not code.strip():
         raise ValueError("代码不能为空。")
 
-    _LOGGER.info("python_execute: analysis_id=%s", analysis_id)
+    user_id = config.get("configurable", {}).get("user_id", "anonymous")
+    _LOGGER.info("python_execute: analysis_id=%s, user_id=%s", analysis_id, user_id)
     
-    # 打印待执行代码（响应用户需求）
-    _LOGGER.info(f"Executing Python code:\n{'-'*40}\n{code}\n{'-'*40}")
+    # ... (omitted logging) ...
 
     # 安全检查
     code_lower = code.lower()
@@ -167,16 +170,16 @@ def python_execute_tool(
         if f"import {forbidden}" in code_lower or f"from {forbidden}" in code_lower:
             raise ValueError(f"禁止导入模块：{forbidden}")
 
-    # 语法检查
+    # ... (omitted syntax check) ...
+
     if _CODE_REVIEW_ENABLED:
         review = _review_python_code(code)
         if not review.get("approved"):
             return json.dumps({"success": False, "error": "语法错误", "issues": review.get("issues")}, ensure_ascii=False)
 
-    safe_globals = _create_safe_globals(analysis_id)
+    safe_globals = _create_safe_globals(analysis_id, user_id)
     # 🔴 重要：不使用单独的 locals 字典！
-    # Python 3 中列表推导式有独立作用域，无法访问 exec() 的 locals。
-    # 解决方案：所有变量都存入 globals，确保推导式内部可以访问。
+    # ... (omitted exec logic) ...
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     result = None
@@ -188,7 +191,6 @@ def python_execute_tool(
                 body_nodes = tree.body[:-1]
                 expr_node = tree.body[-1]
                 if body_nodes:
-                    # 不传 locals，所有变量存入 safe_globals
                     exec(compile(ast.Module(body=body_nodes, type_ignores=[]), "<string>", "exec"), safe_globals)
                 result = eval(compile(ast.Expression(body=expr_node.value), "<string>", "eval"), safe_globals)
             else:
@@ -198,12 +200,11 @@ def python_execute_tool(
         stdout_out = stdout_capture.getvalue()
         stderr_out = stderr_capture.getvalue()
         
-        # 打印执行结果到后端日志
+        # ... (omitted result logging) ...
         _LOGGER.info(f"Python Execution Result:\n{'='*50}\nSTDOUT:\n{stdout_out}\n{'='*50}")
         if stderr_out:
             _LOGGER.warning(f"STDERR:\n{stderr_out}")
 
-        # 处理图表输出（仅做简单检查，不阻断，不持久化，交由 Agent 处理）
         if stdout_out and "CHART_DATA:" in stdout_out:
             pass
 
@@ -214,7 +215,7 @@ def python_execute_tool(
         if analysis_id:
             for k, v in safe_globals.items():
                 if isinstance(v, pd.DataFrame) and not k.startswith("_"):
-                    path = store_dataframe(k, v, analysis_id)
+                    path = store_dataframe(k, v, analysis_id, user_id)
                     if path:
                         saved_dfs.append(path)
                     if result is None and k in ("df", "result"):
@@ -227,17 +228,17 @@ def python_execute_tool(
         if result is not None:
             if isinstance(result, pd.DataFrame):
                 output_data["result_type"] = "DataFrame"
-                # 🔴 将 Period 等不可序列化类型转换为字符串
+                # ... (omitted safe conversion) ...
                 safe_df = result.head(20).copy()
                 for col in safe_df.columns:
-                    if safe_df[col].dtype == 'period[M]' or safe_df[col].dtype.name.startswith('period'):
-                        safe_df[col] = safe_df[col].astype(str)
-                    elif safe_df[col].dtype == 'object':
-                        # 处理 object 列中可能的 Period 对象
-                        safe_df[col] = safe_df[col].apply(lambda x: str(x) if isinstance(x, pd.Period) else x)
+                     if safe_df[col].dtype == 'period[M]' or safe_df[col].dtype.name.startswith('period'):
+                         safe_df[col] = safe_df[col].astype(str)
+                     elif safe_df[col].dtype == 'object':
+                         safe_df[col] = safe_df[col].apply(lambda x: str(x) if isinstance(x, pd.Period) else x)
+
                 output_data["result_preview"] = safe_df.to_dict(orient="records")
                 if analysis_id:
-                    store_dataframe("result", result, analysis_id)
+                    store_dataframe("result", result, analysis_id, user_id)
             else:
                 output_data["result_type"] = type(result).__name__
                 output_data["result"] = str(result)
@@ -252,7 +253,8 @@ def python_execute_tool(
 @tool("df_profile")
 def df_profile_tool(
     df_name: str = "result",
-    analysis_id: Optional[str] = None
+    analysis_id: Optional[str] = None,
+    config: RunnableConfig = None
 ) -> str:
     """获取 DataFrame 的元数据摘要。
     
@@ -260,7 +262,13 @@ def df_profile_tool(
         df_name: DataFrame 名称
         analysis_id: 分析任务 ID
     """
-    df = get_dataframe(df_name, analysis_id) if analysis_id else None
+    user_id = "anonymous"
+    if config:
+        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+    
+    _LOGGER.info(f"[DEBUG] df_profile_tool: analysis_id={analysis_id}, user_id={user_id}, config_keys={list(config.keys()) if config else 'None'}")
+
+    df = get_dataframe(df_name, analysis_id, user_id) if analysis_id else None
     if df is None:
         return json.dumps({"error": f"DataFrame '{df_name}' 未找到。请确保已执行 SQL 或 Python 生成数据。"})
     

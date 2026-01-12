@@ -8,6 +8,7 @@ import re
 from typing import TypedDict, Annotated, Sequence, Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from deepagents import CompiledSubAgent
 
@@ -33,11 +34,16 @@ class ReportAgentState(TypedDict):
     df_profile_result: str
     report_content: str
 
-def report_step1_df_profile(state: ReportAgentState) -> dict:
+def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> dict:
     """Step 1: 强制调用 df_profile 获取数据概览"""
     _LOGGER.info("[Report Agent Fixed Flow] Step 1: df_profile")
     
     analysis_id = state.get("analysis_id", "")
+    
+    # Extract User ID
+    user_id = "anonymous"
+    if config:
+        user_id = config.get("configurable", {}).get("user_id", "anonymous")
     task_description = ""
     
     messages = state.get("messages", [])
@@ -52,14 +58,14 @@ def report_step1_df_profile(state: ReportAgentState) -> dict:
     
     try:
         # 1. 强制调用 df_profile 获取基础信息
-        profile_json = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id})
+        profile_json = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=config)
         
         # 2. 增强：加载完整数据并转换为 Markdown 表格供给 LLM
         from ...utils.dataframe_store import get_dataframe
         
         full_data_str = "（数据加载失败）"
         try:
-            df = get_dataframe("result", analysis_id)
+            df = get_dataframe("result", analysis_id, user_id)
             if df is not None and not df.empty:
                 # 限制最大行数，防止暴撑 Context (例如最多 100 行)
                 if len(df) > 100:
@@ -84,7 +90,7 @@ def report_step1_df_profile(state: ReportAgentState) -> dict:
         _LOGGER.error("[Report Agent] df_profile failed: %s", e)
         return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
 
-def report_step2_generate(state: ReportAgentState) -> dict:
+def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据数据概览生成 Markdown 报告"""
     _LOGGER.info("[Report Agent Fixed Flow] Step 2: LLM generate report")
     task = state.get("task_description", "")
@@ -125,9 +131,13 @@ def report_step2_generate(state: ReportAgentState) -> dict:
     
     # 持久化报告到文件
     analysis_id = state.get("analysis_id", "")
+    user_id = "anonymous"
+    if config:
+        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+    
     if analysis_id:
         try:
-            report_dir = f"/data/workspace/artifacts/data_analysis_{analysis_id}"
+            report_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}"
             os.makedirs(report_dir, exist_ok=True)
             report_path = os.path.join(report_dir, "report.md")
             with open(report_path, "w", encoding="utf-8") as f:

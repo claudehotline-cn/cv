@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Optional
 
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
 
 from ...utils.dataframe_store import get_dataframe
 
@@ -24,7 +25,8 @@ def _json_default(obj):
 @tool("data_validate_result")
 def validate_result_tool(
     data_source: str = "result",
-    analysis_id: Optional[str] = None
+    analysis_id: Optional[str] = None,
+    config: RunnableConfig = None
 ) -> str:
     """验证分析结果的有效性。
     
@@ -32,9 +34,13 @@ def validate_result_tool(
         data_source: 数据源名称
         analysis_id: 分析任务 ID
     """
-    _LOGGER.info("validate_result_tool: data_source=%s, analysis_id=%s", data_source, analysis_id)
+    user_id = "anonymous"
+    if config:
+        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+
+    _LOGGER.info("validate_result_tool: data_source=%s, analysis_id=%s, user_id=%s", data_source, analysis_id, user_id)
     
-    df = get_dataframe(data_source, analysis_id) if analysis_id else None
+    df = get_dataframe(data_source, analysis_id, user_id) if analysis_id else None
     if df is None:
         return json.dumps({"valid": False, "error": f"DataFrame '{data_source}' 不存在"})
     

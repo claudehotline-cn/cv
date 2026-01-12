@@ -8,6 +8,7 @@ import json
 from typing import TypedDict, Annotated, Sequence, Any
 
 from langchain_core.messages import BaseMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from deepagents import CompiledSubAgent
 
@@ -32,7 +33,7 @@ class ReviewerAgentState(TypedDict):
     validation_result: str
     review_decision: str
 
-def reviewer_step1_validate(state: ReviewerAgentState) -> dict:
+def reviewer_step1_validate(state: ReviewerAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 validate_result_tool 检查数据"""
     _LOGGER.info("[Reviewer Agent Fixed Flow] Step 1: validate_result")
     
@@ -50,7 +51,7 @@ def reviewer_step1_validate(state: ReviewerAgentState) -> dict:
     _LOGGER.info("[Reviewer Agent] Extracted analysis_id=%s", analysis_id)
     
     try:
-        result = validate_result_tool.invoke({"data_source": "result", "analysis_id": analysis_id})
+        result = validate_result_tool.invoke({"data_source": "result", "analysis_id": analysis_id}, config=config)
         _LOGGER.info("[Reviewer Agent] validate_result: %s", result[:500] if len(result) > 500 else result)
         return {"validation_result": result, "analysis_id": analysis_id, "task_description": task_description}
     except Exception as e:

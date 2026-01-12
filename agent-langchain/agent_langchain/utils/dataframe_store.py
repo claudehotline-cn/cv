@@ -13,18 +13,26 @@ _LOGGER = logging.getLogger("agent_langchain.utils.dataframe_store")
 WORKSPACE_ROOT = os.environ.get("DATA_WORKSPACE_ROOT", "/data/workspace")
 
 
-def _get_dataframe_dir(analysis_id: str) -> str:
-    """获取 DataFrame 存储目录"""
-    return os.path.join(WORKSPACE_ROOT, "artifacts", f"data_analysis_{analysis_id}", "dataframes")
+def _get_dataframe_dir(analysis_id: str, user_id: str = "anonymous") -> str:
+    """获取 DataFrame 存储目录
+    Args:
+        analysis_id: 分析任务 ID
+        user_id: 用户 ID (用于隔离)
+    """
+    # Ensure user_id is valid
+    user_id = user_id if user_id and user_id.strip() else "anonymous"
+    # 路径结构: /data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/dataframes
+    return os.path.join(WORKSPACE_ROOT, user_id, "artifacts", f"data_analysis_{analysis_id}", "dataframes")
 
 
-def store_dataframe(name: str, df: pd.DataFrame, analysis_id: str) -> str:
+def store_dataframe(name: str, df: pd.DataFrame, analysis_id: str, user_id: str = "anonymous") -> str:
     """存储 DataFrame 到 Parquet 文件
     
     Args:
         name: DataFrame 名称 (如 'sql_result', 'result')
         df: 要存储的 DataFrame
         analysis_id: 分析任务 ID
+        user_id: 用户 ID (可选，默认为 anonymous)
         
     Returns:
         存储的文件路径
@@ -33,7 +41,7 @@ def store_dataframe(name: str, df: pd.DataFrame, analysis_id: str) -> str:
         _LOGGER.error("store_dataframe called without analysis_id, persistence failed!")
         return ""
         
-    dir_path = _get_dataframe_dir(analysis_id)
+    dir_path = _get_dataframe_dir(analysis_id, user_id)
     os.makedirs(dir_path, exist_ok=True)
     
     filepath = os.path.join(dir_path, f"{name}.parquet")
@@ -42,12 +50,13 @@ def store_dataframe(name: str, df: pd.DataFrame, analysis_id: str) -> str:
     return filepath
 
 
-def get_dataframe(name: str, analysis_id: str) -> Optional[pd.DataFrame]:
+def get_dataframe(name: str, analysis_id: str, user_id: str = "anonymous") -> Optional[pd.DataFrame]:
     """从工作区加载 DataFrame
     
     Args:
         name: DataFrame 名称
         analysis_id: 分析任务 ID
+        user_id: 用户 ID
         
     Returns:
         加载的 DataFrame，如果不存在返回 None
@@ -56,7 +65,7 @@ def get_dataframe(name: str, analysis_id: str) -> Optional[pd.DataFrame]:
         _LOGGER.warning("get_dataframe called without analysis_id")
         return None
         
-    filepath = os.path.join(_get_dataframe_dir(analysis_id), f"{name}.parquet")
+    filepath = os.path.join(_get_dataframe_dir(analysis_id, user_id), f"{name}.parquet")
     if not os.path.exists(filepath):
         _LOGGER.debug("DataFrame '%s' not found at %s", name, filepath)
         return None
@@ -66,7 +75,7 @@ def get_dataframe(name: str, analysis_id: str) -> Optional[pd.DataFrame]:
     return df
 
 
-def list_dataframes(analysis_id: str) -> List[str]:
+def list_dataframes(analysis_id: str, user_id: str = "anonymous") -> List[str]:
     """列出当前分析任务的所有 DataFrame
     
     Returns:
@@ -75,34 +84,34 @@ def list_dataframes(analysis_id: str) -> List[str]:
     if not analysis_id:
         return []
         
-    dir_path = _get_dataframe_dir(analysis_id)
+    dir_path = _get_dataframe_dir(analysis_id, user_id)
     if not os.path.exists(dir_path):
         return []
         
     return [f.replace(".parquet", "") for f in os.listdir(dir_path) if f.endswith(".parquet")]
 
 
-def get_all_dataframes(analysis_id: str) -> dict[str, pd.DataFrame]:
+def get_all_dataframes(analysis_id: str, user_id: str = "anonymous") -> dict[str, pd.DataFrame]:
     """加载当前分析任务的所有 DataFrame
     
     Returns:
         名称 -> DataFrame 的字典
     """
     result = {}
-    for name in list_dataframes(analysis_id):
-        df = get_dataframe(name, analysis_id)
+    for name in list_dataframes(analysis_id, user_id):
+        df = get_dataframe(name, analysis_id, user_id)
         if df is not None:
             result[name] = df
     return result
 
 
-def clear_dataframes(analysis_id: str) -> None:
+def clear_dataframes(analysis_id: str, user_id: str = "anonymous") -> None:
     """清空指定分析任务的所有 DataFrame 文件"""
     if not analysis_id:
         return
         
-    dir_path = _get_dataframe_dir(analysis_id)
+    dir_path = _get_dataframe_dir(analysis_id, user_id)
     if os.path.exists(dir_path):
         import shutil
         shutil.rmtree(dir_path)
-        _LOGGER.info("Cleared all DataFrames for analysis_id=%s", analysis_id)
+        _LOGGER.info("Cleared all DataFrames for analysis_id=%s, user_id=%s", analysis_id, user_id)

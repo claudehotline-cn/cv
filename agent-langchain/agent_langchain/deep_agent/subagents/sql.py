@@ -8,8 +8,13 @@ import json
 from typing import TypedDict, Annotated, Sequence, Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.store.base import BaseStore
+from deepagents.backends import StoreBackend
+from langgraph.runtime import Runtime
 from langgraph.graph import StateGraph, START, END
 from deepagents import CompiledSubAgent
+from ...utils.message_utils import extract_text_from_message
 
 from ...llm_runtime import build_chat_llm
 from ..tools import (
@@ -27,9 +32,9 @@ _LOGGER = logging.getLogger(__name__)
 
 class SQLAgentState(TypedDict):
     """SQL Agent 的状态"""
-    messages: Annotated[Sequence[BaseMessage], operator.add]
-    task_description: str
-    analysis_id: str
+    messages: Annotated[Sequence[BaseMessage], operator.add]  # 消息历史，自动追加合并
+    task_description: str  # 当前 SQL 任务的具体描述 (从上游传入)
+    analysis_id: str  # 全局唯一分析ID，用于关联文件/工作区上下文
     tables_info: str       # Step 1: 表列表
     schema_info: str       # Step 2: 表结构
     generated_sql: str     # Step 3: LLM 生成的 SQL
@@ -37,20 +42,49 @@ class SQLAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-def sql_step1_list_tables(state: SQLAgentState) -> dict:
+def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: BaseStore, runtime: Runtime) -> dict:
     """Step 1: 列出所有表"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 1: list_tables")
+    # Check if runtime has 'state' attribute
+    if hasattr(runtime, "state"):
+        _LOGGER.info(f"Runtime.state found: {runtime.state}")
+    else:
+        _LOGGER.info("Runtime has no 'state' attribute.")
     
-    analysis_id = state.get("analysis_id", "")
+    # Check for user_id from config (injected via Middleware)
+    user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
+    _LOGGER.info(f"[SQL Agent] User ID from Config: {user_id}")
+        
+    analysis_id = ""
     task_description = ""
     
     messages = state.get("messages", [])
-    for msg in messages:
-        content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-        match = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
-        if match:
-            analysis_id = match.group(1).strip()
-        task_description = content  # 最后一条消息作为任务描述
+    # 提取任务描述 (取最后一条消息)
+    if messages:
+        last_msg = messages[-1]
+        task_description = extract_text_from_message(last_msg)
+
+    # 3. Store Fallback: Read from /_shared/analysis_id (StoreBackend)
+    # Using injected 'runtime' directly.
+    if not analysis_id:
+        try:
+            # 使用 StoreBackend 读取 /_shared/analysis_id
+            # 这是一个虚拟文件路径，映射到 DB 里的 isolated storage
+            sb = StoreBackend(runtime)
+            result = sb.read("/_shared/analysis_id")
+            
+            if result:
+                analysis_id = result.decode("utf-8") if isinstance(result, bytes) else str(result)
+                
+                # Cleanup: StoreBackend might return formatted text (e.g., line numbers "1\tID")
+                analysis_id = analysis_id.strip()
+                if analysis_id and any(c.isspace() for c in analysis_id):
+                    # Take the last part if there are spaces/tabs (heuristic for "LineNo Content")
+                    analysis_id = analysis_id.split()[-1]
+                    
+                _LOGGER.info(f"[SQL Agent] Recovered analysis_id '{analysis_id}' from StoreBackend (/_shared/analysis_id)")
+        except Exception as e:
+            _LOGGER.warning(f"[SQL Agent] Failed to read from StoreBackend: {e}")
     
     try:
         result = db_list_tables_tool.invoke({"analysis_id": analysis_id})

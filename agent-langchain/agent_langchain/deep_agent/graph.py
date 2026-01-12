@@ -10,7 +10,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBacken
 from langgraph.store.memory import InMemoryStore
 
 from ..llm_runtime import build_chat_llm
-from ..middleware import StructuredOutputToTextMiddleware, ThinkingLoggerMiddleware, AnalysisIDMiddleware
+from ..middleware import StructuredOutputToTextMiddleware, ThinkingLoggerMiddleware, AnalysisIDMiddleware, UserIdInjectionMiddleware
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -22,9 +22,6 @@ from .subagents.reviewer import reviewer_agent
 from .subagents.report import report_agent
 
 _LOGGER = logging.getLogger("agent_langchain.data_deep_graph")
-
-# 进程级别共享 Store 实例，用于跨线程数据共享
-_shared_store = InMemoryStore()
 
 def get_data_deep_agent_graph() -> Any:
     """构造并返回统一的数据分析 Deep Agent (Multi-Agent 架构)。"""
@@ -50,12 +47,12 @@ def get_data_deep_agent_graph() -> Any:
         ],
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
-        middleware=[ThinkingLoggerMiddleware(), AnalysisIDMiddleware(), StructuredOutputToTextMiddleware()],
+        middleware=[UserIdInjectionMiddleware(), ThinkingLoggerMiddleware(), AnalysisIDMiddleware(), StructuredOutputToTextMiddleware()],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
             routes={"/_shared/": StoreBackend(rt)},
         ),
-        store=_shared_store,  # 传入共享的 Store 实例
+        store=lambda: InMemoryStore(),  # Use factory for fresh store per instance/run
         response_format=response_format,
     )
     
