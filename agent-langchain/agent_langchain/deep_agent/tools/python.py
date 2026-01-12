@@ -174,7 +174,9 @@ def python_execute_tool(
             return json.dumps({"success": False, "error": "语法错误", "issues": review.get("issues")}, ensure_ascii=False)
 
     safe_globals = _create_safe_globals(analysis_id)
-    safe_locals: Dict[str, Any] = {}
+    # 🔴 重要：不使用单独的 locals 字典！
+    # Python 3 中列表推导式有独立作用域，无法访问 exec() 的 locals。
+    # 解决方案：所有变量都存入 globals，确保推导式内部可以访问。
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     result = None
@@ -186,13 +188,12 @@ def python_execute_tool(
                 body_nodes = tree.body[:-1]
                 expr_node = tree.body[-1]
                 if body_nodes:
-                    exec(compile(ast.Module(body=body_nodes, type_ignores=[]), "<string>", "exec"), safe_globals, safe_locals)
-                # 🔴 合并 globals 和 locals，确保 exec 中定义的变量可在 eval 中访问
-                merged_namespace = {**safe_globals, **safe_locals}
-                result = eval(compile(ast.Expression(body=expr_node.value), "<string>", "eval"), merged_namespace)
+                    # 不传 locals，所有变量存入 safe_globals
+                    exec(compile(ast.Module(body=body_nodes, type_ignores=[]), "<string>", "exec"), safe_globals)
+                result = eval(compile(ast.Expression(body=expr_node.value), "<string>", "eval"), safe_globals)
             else:
-                exec(code, safe_globals, safe_locals)
-                result = safe_locals.get("result")
+                exec(code, safe_globals)
+                result = safe_globals.get("result")
 
         stdout_out = stdout_capture.getvalue()
         stderr_out = stderr_capture.getvalue()
@@ -211,7 +212,7 @@ def python_execute_tool(
         # 自动存储 DataFrame 到工作区
         saved_dfs = []
         if analysis_id:
-            for k, v in safe_locals.items():
+            for k, v in safe_globals.items():
                 if isinstance(v, pd.DataFrame) and not k.startswith("_"):
                     path = store_dataframe(k, v, analysis_id)
                     if path:
