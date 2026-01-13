@@ -355,34 +355,15 @@ const runAnalysis = async () => {
                   if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
                     console.log('AI message content:', msg.content.slice(0, 100))
                     
-                    // 🚀 核心修复：防止报告被后续消息覆盖
-                    // 用户需求：只有报告才显示在结果区，普通对话移动到思考过程区
-                    
-                    // 检查是否包含特殊标记 (Legacy)
-                    const isLegacyMarker = msg.content.includes('DATA_RESULT:') || msg.content.includes('CHART_DATA:')
-                    
-                    if (isLegacyMarker) {
-                         if (!reportLoaded) {
-                             analysisResult.value = msg.content
-                         }
-                    } else if (msg.content.startsWith('# ')) { 
-                        // 如果是以标题开头的 Markdown，也视为报告 (Fallback)
-                        if (!reportLoaded) {
-                            analysisResult.value = msg.content
-                        }
-                    } else {
-                        // 普通文本消息：不直接显示在结果区，而是作为思考过程/步骤显示
-                        // 这样结果区只保留纯净的图表和报告
-                        console.log('Redirecting chat message to Thinking Panel:', msg.content.slice(0, 50))
-                        // 避免重复添加完全相同的思考内容
-                        const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
-                        if (!lastEvent || lastEvent.content !== msg.content) {
-                            addThinkingEvent('step', msg.content)
-                        }
+                    // 🚀 简化逻辑：ALL AI chat messages go to Thinking Panel
+                    // Result Panel 只由 artifact.type === 'report' 更新（在下方 artifact 处理块中）
+                    console.log('Redirecting AI message to Thinking Panel:', msg.content.slice(0, 50))
+                    const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
+                    if (!lastEvent || lastEvent.content !== msg.content) {
+                        addThinkingEvent('step', msg.content)
                     }
                     
-                    // 🚀 核心修复：Middleware 返回的是 AI 消息，包含 DATA_RESULT，此前被漏了解析
-                    // 必须在此处提取图表配置，否则图表无法渲染
+                    // 保留图表解析逻辑 (Legacy DATA_RESULT 兼容)
                     try {
                         let content = msg.content
                         let markerMatch = null
