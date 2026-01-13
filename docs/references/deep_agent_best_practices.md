@@ -103,6 +103,16 @@ planner_llm_forced = planner_llm.bind_tools(
 
 ### 上下文感知工具与全栈传递 (Context-Aware Tools & Full-Stack Propagation)
 
+在 LangGraph 里，**运行时配置 (Runtime Config) ≠ Agent 初始化参数**。它是在每一次 `run` / `invoke` 时动态传入的上下文参数。
+
+**典型用途**:
+1.  **用户身份**: `user_id`, `session_id`
+2.  **功能开关**: 前端传来的开关（如 `enable_chart_generation=true`）
+3.  **动态模型**: 此次运行指定的模型（如 `model_name="gpt-4"`）
+4.  **业务参数**: 风格、字数限制、目标语言
+5.  **调试控制**: `trace=true`, debug 标记
+6.  **资源配置**: `backend` 路径, `runtime.store` 命名空间
+
 在 LangGraph CLI 部署模式下，`configurable` 参数是连接前端与后端工具的桥梁。
 
 #### 1. 前端传递 (Frontend Request)
