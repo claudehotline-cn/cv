@@ -46,8 +46,18 @@ class ThinkingLoggerMiddleware(AgentMiddleware):
                 if tool_calls:
                     _LOGGER.info(f"[LLM] Tool Calls: {len(tool_calls)}")
                 
-                additional_kwargs = getattr(msg, 'additional_kwargs', {})
-                thinking = additional_kwargs.get('reasoning_content', '')
+                # Try to extract thinking from content_blocks (Standard LangChain)
+                thinking = ""
+                content_blocks = getattr(msg, 'content_blocks', [])
+                for block in content_blocks:
+                    if isinstance(block, dict) and block.get('type') == 'reasoning':
+                        thinking += block.get('reasoning', '')
+                
+                # Fallback to additional_kwargs (Legacy/Provider specific)
+                if not thinking:
+                    additional_kwargs = getattr(msg, 'additional_kwargs', {})
+                    thinking = additional_kwargs.get('reasoning_content', '')
+                
                 if thinking:
                     _LOGGER.info(f"[THINKING] {len(thinking)} chars:\n{thinking[:500]}...")
         except Exception as e:
