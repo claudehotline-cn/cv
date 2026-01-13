@@ -85,6 +85,39 @@ backend=lambda rt: CompositeBackend(
 *   Sub-Agent 的 System Prompt 中应包含详细的参数说明和示例。
 *   对于需要精确格式的输出（如 JSON），使用 Pydantic Model (`response_format`) 结合 Middleware 强制格式化。
 
+### response_format 与 Agent 终止条件
+
+在 DeepAgent/LangGraph 中，`response_format` 参数不仅控制输出格式，更重要的是**定义 Agent 的终止条件**。
+
+#### 支持的类型
+| 类型 | 示例 | 说明 |
+| :--- | :--- | :--- |
+| **Pydantic Model** | `MainAgentOutput` | ✅ 推荐。LLM 必须调用此"响应工具"才算完成。 |
+| **ToolStrategy(Model)** | `ToolStrategy(MainAgentOutput)` | ✅ 推荐。将 Schema 包装为工具调用。 |
+| **None** | `response_format=None` | ⚠️ 危险。行为不稳定，可能立即结束或无限循环。 |
+| **str** | `response_format=str` | ❌ 不支持。框架会报错。 |
+
+#### 行为对比
+| 配置 | Agent 行为 |
+| :--- | :--- |
+| 有 `response_format` | LLM 必须调用"响应工具"才终止，行为可预测 |
+| 无 `response_format` | LLM 输出纯文本即终止，可能过早结束或死循环 |
+
+#### 最佳实践
+```python
+from langchain.agents.structured_output import ToolStrategy
+
+class MainAgentOutput(BaseModel):
+    """简化版：只保留必要字段，复杂数据由 Middleware 注入。"""
+    summary: str = Field(description="任务完成后的简短总结")
+    confidence: str = Field(description="low/medium/high")
+    # chart/report 等数据由 FileContentInjectionMiddleware 从文件注入
+
+response_format = ToolStrategy(MainAgentOutput)
+```
+
+> **注意**: 如果使用 Middleware 从文件系统注入 Chart/Report 等大数据，Schema 中就不需要包含这些字段，可以显著简化 LLM 的输出负担。
+
 ## 4. 工具设计与调用控制 (Tooling)
 
 ### 强制工具调用 (Forced Tool Calling)
@@ -231,6 +264,57 @@ class MyMiddleware(AgentMiddleware):
 *   **Result Bubbling**: (`ArticleContentMiddleware`, `StructuredOutputToTextMiddleware`) 将 Sub-Agent 的复杂执行结果（如生成的长文、图表数据）提取并"冒泡"给 Main Agent 或前端，防止被 LLM 总结时丢失细节。
 *   **Logging & Debug**: (`ThinkingLoggerMiddleware`) 记录思维链和工具调用参数，便于调试。
 *   **Validation**: (`IllustratorValidationMiddleware`) 在 Agent 返回结果前拦截并校验（如检查生成图片路径是否存在），自动修复错误。
+*   **Artifact Injection**: (`FileContentInjectionMiddleware`) 拦截 Sub-Agent 的 Tool 返回，从文件系统读取生成的内容（如 `chart.json`, `report.md`），注入到 `ToolMessage.artifact` 字段。前端可直接渲染，无需 LLM 中转。
+
+#### FileContentInjectionMiddleware 模式
+
+当 Sub-Agent 生成文件型产物（图表、报告）时，使用此中间件将内容直接注入到消息流中：
+
+```python
+class FileContentInjectionMiddleware(AgentMiddleware):
+    async def awrap_tool_call(self, request, handler):
+        result = await handler(request)
+        
+        # 只处理 task 工具（调用 Sub-Agent）
+        if request.name != "task":
+            return result
+            
+        subagent_type = request.args.get("subagent_type")
+        
+        if subagent_type == "visualizer_agent":
+            chart_path = f"/data/workspace/artifacts/{analysis_id}/chart.json"
+            with open(chart_path, 'r') as f:
+                chart_data = json.load(f)
+            return ToolMessage(
+                content=result.content + "\n[System: Chart artifact loaded]",
+                tool_call_id=result.tool_call_id,
+                artifact={"type": "chart", "data": chart_data}  # 前端直接读取
+            )
+        elif subagent_type == "report_agent":
+            report_path = f"/data/workspace/artifacts/{analysis_id}/report.md"
+            with open(report_path, 'r') as f:
+                report_content = f.read()
+            return ToolMessage(
+                content=result.content + "\n[System: Report artifact loaded]",
+                tool_call_id=result.tool_call_id,
+                artifact={"type": "report", "content": report_content}
+            )
+        return result
+```
+
+**前端处理**:
+```javascript
+if (msg.type === 'tool' && msg.artifact) {
+    if (msg.artifact.type === 'chart') {
+        chartConfig.value = msg.artifact.data
+        renderChart()
+    } else if (msg.artifact.type === 'report') {
+        analysisResult.value = msg.artifact.content
+    }
+}
+```
+
+> **优势**: LLM 无需输出大段 JSON/Markdown，只需生成文件即可。Middleware 负责读取和分发，前端直接渲染结构化数据。
 
 ### Middleware 同步/异步 Hook
 LangChain AgentMiddleware 同时支持同步和异步版本的 hook 方法：
