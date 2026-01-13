@@ -24,9 +24,12 @@
 
 ### 全局唯一标识 (Analysis/Article ID)
 *   **必须性**: 在多 Agent 协作中，必须有一个全局 ID (`analysis_id` 或 `article_id`) 贯穿始终，用于关联文件、数据和上下文。
-*   **传递机制**:
-    *   **Prompt 显式传递**: Main Agent 在调用 Sub-Agent 时，必须在 `description` 中包含 ID（例如 `description="[analysis_id=xyz] 查询..."`）。
-    *   **Middleware 隐式注入**: 使用 Middleware (`AnalysisIDMiddleware`) 自动从上下文提取 ID 并注入到 Tool 的参数中，防止 LLM 忘记传参。
+*   **传递机制 (Config Propagation)**:
+    *   **推荐方式**: 通过 LangChain/LangGraph 的 `config` 对象传递。前端发起请求时将 ID 放入 `config.configurable`，后端所有 Agent、Tool 和 Middleware 均可直接从 `config` 中读取，无需污染 Prompt 或函数签名。
+    *   **Frontend**: 请求体包含 `{ "configurable": { "analysis_id": "..." } }`。
+    *   **Backend**: 
+        *   **Agent/Tool**: `config.get("configurable", {}).get("analysis_id")`
+        *   **Middleware**: `runtime.config.get("configurable", {}).get("analysis_id")` 或 `runtime.context.get("analysis_id")`
 
 ### 共享存储 (Shared Store)
 使用 `runtime.store`（LangGraph BaseStore）在 Middleware 间共享数据。
@@ -37,32 +40,12 @@
 
 ```python
 # middleware.py
-_ANALYSIS_ID_NAMESPACE = ("analysis",)
-
-class AnalysisIDMiddleware(AgentMiddleware):
-    # ✅ 使用 abefore_agent (异步版本)
+class AsyncStateMiddleware(AgentMiddleware):
     async def abefore_agent(self, state, runtime):
-        parsed_id = ...  # 从消息中解析
-        thread_id = state.get("configurable", {}).get("thread_id", "default")
-        
-        # ✅ 使用 aput() 异步存储
-        await runtime.store.aput(
-            namespace=_ANALYSIS_ID_NAMESPACE,
-            key=thread_id,
-            value={"analysis_id": parsed_id}
-        )
-        return {"analysis_id": parsed_id}
-    
-    # ✅ 使用 aafter_agent (异步版本)
-    async def aafter_agent(self, state, runtime, result):
-        thread_id = state.get("configurable", {}).get("thread_id", "default")
-        
-        # ✅ 使用 aget() 异步读取
-        item = await runtime.store.aget(
-            namespace=_ANALYSIS_ID_NAMESPACE,
-            key=thread_id
-        )
-        analysis_id = item.value.get("analysis_id") if item else ""
+        thread_id = state.get("configurable", {}).get("thread_id")
+        # 异步读取
+        await runtime.store.aget(namespace=("shared",), key=thread_id)
+        return state
 ```
 
 ### 文件系统与工作区 (Filesystem Backend)
@@ -94,6 +77,10 @@ backend=lambda rt: CompositeBackend(
 *   使用 **"严禁..."**, **"必须..."** 等强硬措辞约束行为。
 *   明确“完成条件”，例如“只有收到 `report_agent` 的 Markdown 输出才算结束”。
 
+### 提示词纯净原则 (Clean Prompts)
+*   **分离业务与基建**：Prompt 应专注于“做什么”和“怎么做”（业务逻辑），而不是“怎么传参”（基础设施）。
+*   **无需手动传递 ID**：配置信息（如 `analysis_id`、`user_id`）应由代码层自动处理，**严禁**在 Prompt 中要求 LLM 手动提取或传递这些 ID。这能减少 Token 消耗并降低幻觉风险。
+
 ### 结构化输入输出
 *   Sub-Agent 的 System Prompt 中应包含详细的参数说明和示例。
 *   对于需要精确格式的输出（如 JSON），使用 Pydantic Model (`response_format`) 结合 Middleware 强制格式化。
@@ -113,6 +100,16 @@ planner_llm_forced = planner_llm.bind_tools(
 ### 专注于原子能力
 *   工具功能应单一且原子化（如 `db_run_sql` 只跑 SQL，不负责解释）。
 *   复杂的逻辑组合应交给 Graph 或 Agent 编排。
+
+### 上下文感知工具 (Context-Aware Tools)
+*   工具不应要求 LLM 传递上下文参数（如 `user_id`, `analysis_id`）。
+*   工具函数应配置为接收 `config: RunnableConfig`（LangChain 标准），并从 `config.configurable` 中读取环境参数。
+```python
+def my_tool(arg1: str, config: RunnableConfig) -> str:
+    # ✅ 正确：从 config 读取上下文
+    analysis_id = config.get("configurable", {}).get("analysis_id")
+    # ...
+```
 
 ## 5. 多模态文件流处理 (Multimodal File Flow)
 
