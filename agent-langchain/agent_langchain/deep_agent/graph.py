@@ -10,7 +10,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBacken
 from langgraph.store.memory import InMemoryStore
 
 from ..llm_runtime import build_chat_llm
-from ..middleware import StructuredOutputToTextMiddleware, ThinkingLoggerMiddleware
+from ..middleware import StructuredOutputToTextMiddleware, ThinkingLoggerMiddleware, FileContentInjectionMiddleware
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -47,7 +47,7 @@ def get_data_deep_agent_graph() -> Any:
         ],
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
-        middleware=[ThinkingLoggerMiddleware(), StructuredOutputToTextMiddleware()],
+        middleware=[ThinkingLoggerMiddleware(), FileContentInjectionMiddleware(), StructuredOutputToTextMiddleware()],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
             routes={"/_shared/": StoreBackend(rt)},

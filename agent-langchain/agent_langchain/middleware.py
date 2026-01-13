@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 import re
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, HumanMessage, trim_messages
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, HumanMessage, ToolMessage, trim_messages
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langgraph.runtime import Runtime
 from deepagents.backends import StoreBackend
@@ -94,6 +94,111 @@ class ThinkingLoggerMiddleware(AgentMiddleware):
             _LOGGER.warning(f"[Middleware] Tool log error: {e}")
         return await handler(request)
 
+class FileContentInjectionMiddleware(AgentMiddleware):
+    """
+    Middleware 拦截 'task' 工具调用，检测 Visualizer/Report Agent，
+    读取它们生成的 'chart.json' 或 'report.md'，并注入到 ToolMessage.artifact 中。
+    这允许前端直接接收结构化数据进行渲染，而无需等待主 Agent 冒泡结果。
+    """
+
+    async def awrap_tool_call(self, request, handler):
+        # 1. 执行原工具调用，获取基础回复 (subagent 运行结果 ToolMessage or str)
+        response = await handler(request)
+        
+        # 2. 检查是否是目标 subagent
+        try:
+            tool_call = getattr(request, 'tool_call', {})
+            # Normalized tool access
+            if isinstance(tool_call, dict):
+                tool_name = tool_call.get('name', '')
+                args = tool_call.get('args', {})
+                tool_id = tool_call.get('id', '')
+            else:
+                tool_name = getattr(tool_call, 'name', '')
+                args = getattr(tool_call, 'args', {})
+                tool_id = getattr(tool_call, 'id', '')
+
+            subagent = args.get('subagent_type')
+        except Exception:
+            # Fallback safe
+            tool_name = ""
+            subagent = ""
+
+        if tool_name == 'task' and subagent in ['visualizer_agent', 'report_agent']:
+            # 获取 ID (复用通用的从 context/config 获取逻辑)
+            runtime = getattr(request, 'runtime', None)
+            analysis_id, user_id = "", "anonymous"
+            if runtime:
+                # 1. context (CLI)
+                if hasattr(runtime, 'context') and isinstance(runtime.context, dict):
+                    analysis_id = runtime.context.get("analysis_id", "")
+                    user_id = runtime.context.get("user_id", "anonymous")
+                
+                # 2. config (Fallback)
+                if not analysis_id:
+                    config = getattr(runtime, "config", {})
+                    configurable = config.get("configurable", {})
+                    analysis_id = configurable.get("analysis_id", "")
+                    if user_id == "anonymous":
+                        user_id = configurable.get("user_id", "anonymous")
+
+            if analysis_id:
+                artifact_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}"
+                injected_artifact = {}
+                inject_msg = ""
+
+                try:
+                    if subagent == 'visualizer_agent':
+                        # 读取 chart.json
+                        chart_path = os.path.join(artifact_dir, "chart.json")
+                        if os.path.exists(chart_path):
+                            with open(chart_path, "r", encoding="utf-8") as f:
+                                chart_content = f.read().strip()
+                            if chart_content:
+                                chart_data = json.loads(chart_content)
+                                injected_artifact = {"type": "chart", "data": chart_data}
+                                inject_msg = f"\n\n[SYSTEM] Successfully loaded chart.json ({len(chart_content)} chars)."
+                                _LOGGER.info(f"[Middleware] Injected chart artifact for {analysis_id}")
+                    
+                    elif subagent == 'report_agent':
+                        # 读取 report.md
+                        report_path = os.path.join(artifact_dir, "report.md")
+                        if os.path.exists(report_path):
+                            with open(report_path, "r", encoding="utf-8") as f:
+                                report_content = f.read().strip()
+                            if report_content:
+                                injected_artifact = {"type": "report", "content": report_content}
+                                inject_msg = f"\n\n[SYSTEM] Successfully loaded report.md ({len(report_content)} chars)."
+                                _LOGGER.info(f"[Middleware] Injected report artifact for {analysis_id}")
+
+                except Exception as e:
+                    _LOGGER.warning(f"[Middleware] Failed to read artifact: {e}")
+
+                if injected_artifact:
+                    # 3. 构造 ToolMessage (带 artifact)
+                    # response 可能是 str 或 AIMessage/ToolMessage。这里我们作为 Tool 的结果返回，必须也是 Message。
+                    # LangGraph 的 handler 一般返回 Message 或 content list。我们用 ToolMessage 包装最为稳妥。
+                    
+                    # 确定 content: 如果 response 是对象，取其 content；如果是 str，直接用
+                    original_content = ""
+                    if hasattr(response, 'content'):
+                        original_content = response.content
+                    else:
+                        original_content = str(response)
+
+                    new_content = original_content + inject_msg
+
+                    return ToolMessage(
+                        tool_call_id=tool_id,
+                        content=new_content,     # LLM 看到的 (带提示)
+                        artifact=injected_artifact, # 前端看到的结构化数据
+                        name=tool_name,
+                        status="success"
+                    )
+
+        return response
+
+
 class StructuredOutputToTextMiddleware(AgentMiddleware):
     """将 Agent 的结构化输出序列化为 JSON 文本，供前端解析。
     
@@ -115,10 +220,22 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
         analysis_id = ""
         user_id = "anonymous"
         
-        analysis_id = runtime.context.get("analysis_id", "")
-        user_id = runtime.context.get("user_id", "anonymous")
-        _LOGGER.info(f"Middleware: Retrieved user_id={user_id} from runtime.context")
+        if hasattr(runtime, 'context') and isinstance(runtime.context, dict):
+            analysis_id = runtime.context.get("analysis_id", "")
+            user_id = runtime.context.get("user_id", "anonymous")
 
+        # Priority 2: Check config.configurable (Fallback)
+        if not analysis_id:
+            config = getattr(runtime, "config", {})
+            configurable = config.get("configurable", {})
+            analysis_id = configurable.get("analysis_id", "")
+            if not user_id or user_id == "anonymous":
+                user_id = configurable.get("user_id", "anonymous")
+
+        # Priority 3: Check state (Legacy support)
+        if not analysis_id:
+            analysis_id = state.get("analysis_id", "")
+        
         artifact_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}" if analysis_id else ""
         _LOGGER.info("Middleware: Using analysis_id=%s, user_id=%s, artifact_dir=%s", analysis_id, user_id, artifact_dir)
         
