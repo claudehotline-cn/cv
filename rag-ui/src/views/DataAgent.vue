@@ -127,6 +127,8 @@ interface ThinkingEvent {
 const thinkingEvents = ref<ThinkingEvent[]>([])
 // 跟踪已处理的消息 ID，避免重复显示
 let processedMsgIds = new Set<string>()
+let reportLoaded = false
+
 
 // 格式化时间
 const formatTime = (timestamp: number) => {
@@ -194,7 +196,9 @@ const runAnalysis = async () => {
   analysisResult.value = ''
   chartConfig.value = null
   thinkingEvents.value = []
+  thinkingEvents.value = []
   processedMsgIds.clear()
+  reportLoaded = false
   
   if (chartInstance) {
     chartInstance.dispose()
@@ -350,7 +354,13 @@ const runAnalysis = async () => {
                   // 处理 AI 消息内容（无论是否有 tool_calls，只要有 content 就更新）
                   if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
                     console.log('AI message content:', msg.content.slice(0, 100))
-                    analysisResult.value = msg.content
+                    
+                    // 🚀 核心修复：防止报告被后续消息覆盖
+                    if (!reportLoaded) {
+                        analysisResult.value = msg.content
+                    } else {
+                        console.log('Skipping AI content update because report is already loaded.')
+                    }
                     
                     // 🚀 核心修复：Middleware 返回的是 AI 消息，包含 DATA_RESULT，此前被漏了解析
                     // 必须在此处提取图表配置，否则图表无法渲染
@@ -415,8 +425,9 @@ const runAnalysis = async () => {
                     else if (artifact.type === 'report' && artifact.content) {
                         console.log('ARTIFACT: Found report content')
                         // 追加或替换分析结果
-                        // 通常报告是最终结果，直接显示可能更好
                         analysisResult.value = artifact.content
+                        // ❌ 锁定内容，防止后续 Main Agent 的 "Done" 或其他简短回复覆盖报告
+                        reportLoaded = true 
                         addThinkingEvent('tool_result', `📝 报告已根据系统注入数据加载`, msg.name)
                     }
                 }
