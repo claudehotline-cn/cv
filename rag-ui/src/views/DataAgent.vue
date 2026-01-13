@@ -362,7 +362,6 @@ const runAnalysis = async () => {
                     if (!lastEvent || lastEvent.content !== msg.content) {
                         addThinkingEvent('step', msg.content)
                     }
-                    
                   }
                 }
                 

@@ -69,12 +69,16 @@ class ValidationResultSchema(BaseModel):
 # Main Agent Output Schema
 # ============================================================================
 class MainAgentOutput(BaseModel):
-    """Structured output for the Main Agent's final response."""
-    summary: str = Field(description="给用户的最终总结（可读文本）")
-    actions: List[str] = Field(default=[], description="下一步可执行动作列表")
+    """Structured output for the Main Agent's final response.
+    
+    简化版：只保留必要字段，chart/report 由 Middleware 从文件注入。
+    """
+    summary: str = Field(description="任务完成后的简短总结")
     confidence: str = Field(description="主结论把握度 (low/medium/high)")
-    citations: Optional[List[str]] = Field(default=None, description="引用/证据来源（可选）")
-    chart: Optional[Dict[str, Any]] = Field(default=None, description="ECharts 图表配置 (可选)")
+    # 以下字段已由 Middleware 从文件注入，不再需要 Agent 显式输出
+    # actions: List[str] = Field(default=[], description="下一步可执行动作列表")
+    # citations: Optional[List[str]] = Field(default=None, description="引用/证据来源（可选）")
+    # chart: Optional[Dict[str, Any]] = Field(default=None, description="ECharts 图表配置 (可选)")
 
     def __str__(self):
         """Override string representation to return valid JSON.

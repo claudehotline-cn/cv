@@ -32,6 +32,13 @@ def get_data_deep_agent_graph() -> Any:
     # ============================================================================
     # 创建主 Deep Agent
     # ============================================================================
+    from ..schemas import MainAgentOutput
+    try:
+        from langchain.agents.structured_output import ToolStrategy
+        response_format = ToolStrategy(MainAgentOutput)
+    except ImportError:
+        response_format = MainAgentOutput
+
     graph = create_deep_agent(
         model=main_llm,
         subagents=[
@@ -46,6 +53,7 @@ def get_data_deep_agent_graph() -> Any:
             routes={"/_shared/": StoreBackend(rt)},
         ),
         store=lambda: InMemoryStore(),  # Use factory for fresh store per instance/run
+        response_format=response_format,
     )
     
     return graph
