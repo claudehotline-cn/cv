@@ -37,18 +37,17 @@ def reviewer_step1_validate(state: ReviewerAgentState, config: RunnableConfig) -
     """Step 1: 调用 validate_result_tool 检查数据"""
     _LOGGER.info("[Reviewer Agent Fixed Flow] Step 1: validate_result")
     
-    analysis_id = state.get("analysis_id", "")
+    # Check for user_id and analysis_id from config
+    user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
+
+    
     task_description = ""
-    
     messages = state.get("messages", [])
-    for msg in messages:
-        content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-        match = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
-        if match:
-            analysis_id = match.group(1).strip()
-        task_description = content
-    
-    _LOGGER.info("[Reviewer Agent] Extracted analysis_id=%s", analysis_id)
+    if messages:
+        task_description = str(messages[-1].content)
+        
+
     
     try:
         result = validate_result_tool.invoke({"data_source": "result", "analysis_id": analysis_id}, config=config)

@@ -51,40 +51,21 @@ def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: B
     else:
         _LOGGER.info("Runtime has no 'state' attribute.")
     
-    # Check for user_id from config (injected via Middleware)
+    # Check for user_id and analysis_id from config
     user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
-    _LOGGER.info(f"[SQL Agent] User ID from Config: {user_id}")
-        
-    analysis_id = ""
-    task_description = ""
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
     
+
+
+    task_description = ""
     messages = state.get("messages", [])
-    # 提取任务描述 (取最后一条消息)
     if messages:
         last_msg = messages[-1]
         task_description = extract_text_from_message(last_msg)
 
-    # 3. Store Fallback: Read from /_shared/analysis_id (StoreBackend)
-    # Using injected 'runtime' directly.
+        
     if not analysis_id:
-        try:
-            # 使用 StoreBackend 读取 /_shared/analysis_id
-            # 这是一个虚拟文件路径，映射到 DB 里的 isolated storage
-            sb = StoreBackend(runtime)
-            result = sb.read("/_shared/analysis_id")
-            
-            if result:
-                analysis_id = result.decode("utf-8") if isinstance(result, bytes) else str(result)
-                
-                # Cleanup: StoreBackend might return formatted text (e.g., line numbers "1\tID")
-                analysis_id = analysis_id.strip()
-                if analysis_id and any(c.isspace() for c in analysis_id):
-                    # Take the last part if there are spaces/tabs (heuristic for "LineNo Content")
-                    analysis_id = analysis_id.split()[-1]
-                    
-                _LOGGER.info(f"[SQL Agent] Recovered analysis_id '{analysis_id}' from StoreBackend (/_shared/analysis_id)")
-        except Exception as e:
-            _LOGGER.warning(f"[SQL Agent] Failed to read from StoreBackend: {e}")
+        _LOGGER.warning("[SQL Agent] No analysis_id found in config!")
     
     try:
         result = db_list_tables_tool.invoke({"analysis_id": analysis_id})

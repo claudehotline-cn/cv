@@ -251,7 +251,13 @@ const runAnalysis = async () => {
       body: JSON.stringify({
         assistant_id: graphId,
         input: input,
-        stream_mode: ["values"]
+        stream_mode: ["values"],
+        config: {
+          configurable: {
+            user_id: "mock_user_from_tool_call_999",  // TODO: Replace with actual user ID from auth context
+            analysis_id: analysisId
+          }
+        }
       })
     })
     

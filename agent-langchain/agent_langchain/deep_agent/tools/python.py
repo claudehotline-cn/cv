@@ -80,39 +80,34 @@ def _create_safe_globals(analysis_id: Optional[str], user_id: str = "anonymous")
         except ImportError:
             pass
     
-    # 提供显式加载函数（不再自动注入 DataFrame）
-    if analysis_id:
-        from ...utils.dataframe_store import get_dataframe as _get_df, list_dataframes as _list_dfs
+    # 提供 load_dataframe / list_dataframes 函数供代码加载数据
+    from ...utils.dataframe_store import get_dataframe as _get_df, list_dataframes as _list_dfs
+    
+    def load_dataframe(name: str) -> pd.DataFrame:
+        """从工作区加载指定的 DataFrame。"""
+        if not analysis_id:
+            raise ValueError("analysis_id 未传递，无法加载 DataFrame。")
+        df = _get_df(name, analysis_id, user_id)
+        if df is None:
+            available = _list_dfs(analysis_id, user_id)
+            raise ValueError(f"DataFrame '{name}' 不存在。可用的 DataFrame: {available}")
         
-        def load_dataframe(name: str) -> pd.DataFrame:
-            """从工作区加载指定的 DataFrame。
-            
-            Args:
-                name: DataFrame 名称（如 'sql_result', 'excel_data'）
-            
-            Returns:
-                加载的 DataFrame，如果不存在则抛出异常
-            """
-            df = _get_df(name, analysis_id, user_id)
-            if df is None:
-                available = _list_dfs(analysis_id, user_id)
-                raise ValueError(f"DataFrame '{name}' 不存在。可用的 DataFrame: {available}")
-            
-            # 自动将 Period 类型列转换为字符串，避免序列化和操作错误
-            for col in df.columns:
-                if pd.api.types.is_period_dtype(df[col]):
-                    df[col] = df[col].astype(str)
-                    _LOGGER.info("Converted Period column '%s' to string", col)
-            
-            _LOGGER.info("Loaded DataFrame '%s' from file, shape=%s", name, df.shape)
-            return df
+        for col in df.columns:
+            if pd.api.types.is_period_dtype(df[col]):
+                df[col] = df[col].astype(str)
+                _LOGGER.info("Converted Period column '%s' to string", col)
         
-        def list_dataframes() -> list:
-            """列出工作区中所有可用的 DataFrame 名称。"""
-            return _list_dfs(analysis_id)
-        
-        safe_globals["load_dataframe"] = load_dataframe
-        safe_globals["list_dataframes"] = list_dataframes
+        _LOGGER.info("Loaded DataFrame '%s' from file, shape=%s", name, df.shape)
+        return df
+    
+    def list_dataframes() -> list:
+        """列出工作区中所有可用的 DataFrame 名称。"""
+        if not analysis_id:
+            return []
+        return _list_dfs(analysis_id, user_id)
+    
+    safe_globals["load_dataframe"] = load_dataframe
+    safe_globals["list_dataframes"] = list_dataframes
             
     return safe_globals
 
@@ -160,6 +155,10 @@ def python_execute_tool(
         raise ValueError("代码不能为空。")
 
     user_id = config.get("configurable", {}).get("user_id", "anonymous")
+    # 优先从 config 获取 analysis_id，参数作为 fallback
+    cfg_analysis_id = config.get("configurable", {}).get("analysis_id", "")
+    if cfg_analysis_id:
+        analysis_id = cfg_analysis_id
     _LOGGER.info("python_execute: analysis_id=%s, user_id=%s", analysis_id, user_id)
     
     # ... (omitted logging) ...

@@ -42,19 +42,17 @@ def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) ->
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 1: df_profile")
     
-    analysis_id = state.get("analysis_id", "")
+    # Check for user_id and analysis_id from config
+    user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
+
+    
     task_description = ""
-    
     messages = state.get("messages", [])
-    for msg in messages:
-        content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-        # 尝试匹配 [analysis_id=xxx] 格式
-        match = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
-        if match:
-            analysis_id = match.group(1).strip()
-        task_description = content  # 最后一条消息作为任务描述
-    
-    _LOGGER.info("[Visualizer Agent] Extracted analysis_id=%s", analysis_id)
+    if messages:
+        task_description = str(messages[-1].content)
+        
+
     
     # 只加载 result（Python Agent 处理后的数据，已转换好类型）
     try:

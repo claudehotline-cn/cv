@@ -32,21 +32,21 @@ class ExcelAgentState(TypedDict):
     sheets_info: str       # Step 1: Sheet 列表
     load_result: str       # Step 2: 加载结果
 
-def excel_step1_list_sheets(state: ExcelAgentState) -> dict:
+def excel_step1_list_sheets(state: ExcelAgentState, config: RunnableConfig) -> dict:
     """Step 1: 列出 Excel Sheet"""
     _LOGGER.info("[Excel Agent Fixed Flow] Step 1: list_sheets")
     
-    analysis_id = state.get("analysis_id", "")
+    # Check for user_id and analysis_id from config
+    user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
+
+    
     file_id = ""
     task_description = ""
     
     messages = state.get("messages", [])
     for msg in messages:
         content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-        # 提取 analysis_id
-        match_aid = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
-        if match_aid:
-            analysis_id = match_aid.group(1).strip()
         # 提取 file_id
         match_fid = re.search(r'\[file_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
         if match_fid:

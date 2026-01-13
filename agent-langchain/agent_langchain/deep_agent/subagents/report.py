@@ -38,23 +38,17 @@ def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> 
     """Step 1: 强制调用 df_profile 获取数据概览"""
     _LOGGER.info("[Report Agent Fixed Flow] Step 1: df_profile")
     
-    analysis_id = state.get("analysis_id", "")
+    # Check for user_id and analysis_id from config
+    user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
+
     
-    # Extract User ID
-    user_id = "anonymous"
-    if config:
-        user_id = config.get("configurable", {}).get("user_id", "anonymous")
     task_description = ""
-    
     messages = state.get("messages", [])
-    for msg in messages:
-        content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-        match = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
-        if match:
-            analysis_id = match.group(1).strip()
-        task_description = content
+    if messages:
+        task_description = str(messages[-1].content)
     
-    _LOGGER.info("[Report Agent] Extracted analysis_id=%s", analysis_id)
+
     
     try:
         # 1. 强制调用 df_profile 获取基础信息

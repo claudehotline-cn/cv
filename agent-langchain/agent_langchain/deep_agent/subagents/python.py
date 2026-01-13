@@ -37,24 +37,22 @@ class PythonAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-def step1_df_profile(state: PythonAgentState) -> dict:
+def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 1: df_profile")
     
-    # 从 messages 中提取 analysis_id（格式如 [analysis_id=xxx]）
-    analysis_id = state.get("analysis_id", "")
+    # Check for user_id and analysis_id from config
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id", "NOT_FOUND")
+    analysis_id = configurable.get("analysis_id", "")
+    
     task_description = ""
-    
     messages = state.get("messages", [])
-    for msg in messages:
-        content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-        # 尝试匹配 [analysis_id=xxx] 格式
-        match = re.search(r'\[analysis_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
-        if match:
-            analysis_id = match.group(1).strip()
-        task_description = content  # 最后一条消息作为任务描述
+    if messages:
+         # 最后一条消息作为任务描述
+         task_description = str(messages[-1].content)
     
-    _LOGGER.info("[Python Agent] Extracted analysis_id=%s", analysis_id)
+
     
     try:
         result = df_profile_tool.invoke({"df_name": "sql_result", "analysis_id": analysis_id})
@@ -132,11 +130,12 @@ python
     _LOGGER.info("[Python Agent] LLM generated code: %s", code[:300])
     return {"python_code": code.strip()}
 
-def step3_python_execute(state: PythonAgentState) -> dict:
+def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> dict:
     """Step 3: 执行 LLM 生成的 Python 代码"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 3: python_execute")
     code = state.get("python_code", "")
-    analysis_id = state.get("analysis_id", "")
+    # 直接从 config 读取 analysis_id，不依赖 state 传递
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
     
     if not code:
         return {"python_result": "Error: No code to execute", "retry_count": 0}
@@ -144,7 +143,8 @@ def step3_python_execute(state: PythonAgentState) -> dict:
     retry_count = state.get("retry_count", 0)
     
     try:
-        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id})
+        # Pass config to tool invocation so it gets user_id
+        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=config)
         _LOGGER.info("[Python Agent] python_execute result: %s", result[:500] if len(result) > 500 else result)
         
         # 检查执行结果是否包含错误
