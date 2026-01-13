@@ -47,7 +47,7 @@ def get_data_deep_agent_graph() -> Any:
         ],
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
-        middleware=[ThinkingLoggerMiddleware(), FileContentInjectionMiddleware(), StructuredOutputToTextMiddleware()],
+        middleware=[ThinkingLoggerMiddleware(), FileContentInjectionMiddleware()],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
             routes={"/_shared/": StoreBackend(rt)},
