@@ -145,25 +145,33 @@ def my_tool(arg1: str, config: RunnableConfig) -> str:
 ```
 
 #### 3. Middleware 获取 (Middleware Access)
-在 LangGraph Runtime 中，Middleware 可以通过 `runtime.context` 或 `runtime.config` 访问这些值。
+在 LangGraph Runtime 中，Middleware 的所有 Hook 方法（如 `awrap_tool_call`, `abefore_agent`, `aafter_agent`）都可以通过 `runtime.context` 访问这些值。
 
-*   **场景**: 在 `awrap_tool_call` 中拦截 Tool 调用，注入额外逻辑。
-*   **方式**: 优先检查 `runtime.context`（LangGraph 内部传递），这比 parsed config 更底层。
+*   **场景**: 在 `awrap_tool_call`（拦截工具）或 `aafter_agent`（结果处理）中访问全局配置。
+*   **方式**: 优先检查 `runtime.context`。
 
 ```python
 class MyMiddleware(AgentMiddleware):
+    # 示例 1: 拦截工具调用
     async def awrap_tool_call(self, request, handler):
-        # ✅ 从 runtime.context 获取（LangGraph CLI 环境）
-        if hasattr(request, "runtime") and hasattr(request.runtime, "context"):
-            user_id = request.runtime.context.get("user_id")
-            # 注意：analysis_id 可能不在 context 根目录，仍需回退到 config 检查
-            
-        # ✅ 通用回退：从 request.runtime.config 获取
-        config = getattr(request.runtime, "config", {})
-        configurable = config.get("configurable", {})
-        analysis_id = configurable.get("analysis_id")
-        
+        analysis_id = self._get_config_value(request.runtime, "analysis_id")
         return await handler(request)
+
+    # 示例 2: 处理 Agent 结果
+    async def aafter_agent(self, state, runtime, result):
+        analysis_id = self._get_config_value(runtime, "analysis_id")
+        # 使用 analysis_id 读取文件或处理结果...
+        return result
+        
+    def _get_config_value(self, runtime, key):
+        # 1. 尝试从 runtime.context 获取 (LangGraph CLI)
+        if hasattr(runtime, "context") and isinstance(runtime.context, dict):
+            val = runtime.context.get(key)
+            if val: return val
+            
+        # 2. 回退到 runtime.config
+        config = getattr(runtime, "config", {})
+        return config.get("configurable", {}).get(key)
 ```
 
 ## 5. 多模态文件流处理 (Multimodal File Flow)
