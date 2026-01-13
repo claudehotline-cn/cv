@@ -101,14 +101,69 @@ planner_llm_forced = planner_llm.bind_tools(
 *   工具功能应单一且原子化（如 `db_run_sql` 只跑 SQL，不负责解释）。
 *   复杂的逻辑组合应交给 Graph 或 Agent 编排。
 
-### 上下文感知工具 (Context-Aware Tools)
-*   工具不应要求 LLM 传递上下文参数（如 `user_id`, `analysis_id`）。
-*   工具函数应配置为接收 `config: RunnableConfig`（LangChain 标准），并从 `config.configurable` 中读取环境参数。
+### 上下文感知工具与全栈传递 (Context-Aware Tools & Full-Stack Propagation)
+
+在 LangGraph CLI 部署模式下，`configurable` 参数是连接前端与后端工具的桥梁。
+
+#### 1. 前端传递 (Frontend Request)
+调用 LangGraph API (`POST /threads/{thread_id}/runs`) 时，将业务 ID 放入 `config.configurable` 字段。
+
+```javascript
+// 前端请求示例
+await fetch(`/api/threads/${threadId}/runs`, {
+  method: 'POST',
+  body: JSON.stringify({
+    assistant_id: 'agent_name',
+    input: { messages: [...] },
+    // ✅ 关键：放入 configurable
+    config: {
+      configurable: {
+        analysis_id: "idx_123",
+        user_id: "usr_456"
+      }
+    }
+  })
+})
+```
+
+#### 2. 后端工具接收 (Backend Tool Access)
+LangGraph 会自动将 API 请求中的 `config` 注入到 Tool 的执行上下文中。
+
+*   **定义**: 工具必须包含 `config: RunnableConfig` 参数。
+*   **读取**: 直接从 `config["configurable"]` 获取。
+
 ```python
+from langchain_core.runnables import RunnableConfig
+
+@tool
 def my_tool(arg1: str, config: RunnableConfig) -> str:
-    # ✅ 正确：从 config 读取上下文
+    # ✅ 正确：从 config 读取上下文，无需 LLM 传递
     analysis_id = config.get("configurable", {}).get("analysis_id")
+    if not analysis_id:
+        raise ValueError("缺少 analysis_id")
     # ...
+```
+
+#### 3. Middleware 获取 (Middleware Access)
+在 LangGraph Runtime 中，Middleware 可以通过 `runtime.context` 或 `runtime.config` 访问这些值。
+
+*   **场景**: 在 `awrap_tool_call` 中拦截 Tool 调用，注入额外逻辑。
+*   **方式**: 优先检查 `runtime.context`（LangGraph 内部传递），这比 parsed config 更底层。
+
+```python
+class MyMiddleware(AgentMiddleware):
+    async def awrap_tool_call(self, request, handler):
+        # ✅ 从 runtime.context 获取（LangGraph CLI 环境）
+        if hasattr(request, "runtime") and hasattr(request.runtime, "context"):
+            user_id = request.runtime.context.get("user_id")
+            # 注意：analysis_id 可能不在 context 根目录，仍需回退到 config 检查
+            
+        # ✅ 通用回退：从 request.runtime.config 获取
+        config = getattr(request.runtime, "config", {})
+        configurable = config.get("configurable", {})
+        analysis_id = configurable.get("analysis_id")
+        
+        return await handler(request)
 ```
 
 ## 5. 多模态文件流处理 (Multimodal File Flow)
