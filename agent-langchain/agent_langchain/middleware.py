@@ -13,15 +13,6 @@ from deepagents.backends import StoreBackend
 _LOGGER = logging.getLogger(__name__)
 
 
-
-# 使用 runtime.store (LangGraph BaseStore) 存储 analysis_id
-# 通过 deepagents 的 StoreBackend 实现跨线程持久化
-
-
-
-
-    
-
 class ThinkingLoggerMiddleware(AgentMiddleware):
     """DeepSeek/Qwen Thinking Process Logger."""
     
@@ -120,30 +111,13 @@ class StructuredOutputToTextMiddleware(AgentMiddleware):
         _LOGGER.info("Middleware: Processing structured_response")
         
         # 尝试多种方式获取 analysis_id
-        thread_id = state.get("configurable", {}).get("thread_id", "default")
-        analysis_id = ""
-
         # Priority 1: Check runtime.context (Propagated from request config)
-        if hasattr(runtime, 'context') and isinstance(runtime.context, dict):
-            analysis_id = runtime.context.get("analysis_id", "")
-            if analysis_id:
-                _LOGGER.info(f"Middleware: Retrieved analysis_id={analysis_id} from runtime.context")
-
-        # Priority 2: Check state
-        if not analysis_id:
-            analysis_id = state.get("analysis_id", "")
-        
-
-        
-        # Extract user_id for path isolation
+        analysis_id = ""
         user_id = "anonymous"
         
-        # Check runtime.context (Where LangGraph InMemRuntime passes config)
-        if hasattr(runtime, 'context') and isinstance(runtime.context, dict):
-            ctx_user_id = runtime.context.get("user_id", "")
-            if ctx_user_id:
-                user_id = ctx_user_id
-                _LOGGER.info(f"Middleware: Retrieved user_id={user_id} from runtime.context")
+        analysis_id = runtime.context.get("analysis_id", "")
+        user_id = runtime.context.get("user_id", "anonymous")
+        _LOGGER.info(f"Middleware: Retrieved user_id={user_id} from runtime.context")
 
         artifact_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}" if analysis_id else ""
         _LOGGER.info("Middleware: Using analysis_id=%s, user_id=%s, artifact_dir=%s", analysis_id, user_id, artifact_dir)
