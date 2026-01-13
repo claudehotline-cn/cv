@@ -125,38 +125,22 @@ class FileContentInjectionMiddleware(AgentMiddleware):
             subagent = ""
 
         if tool_name == 'task' and subagent in ['visualizer_agent', 'report_agent']:
-            # 获取 ID (尝试多种路径：request.runtime, request.config, request.context)
-            analysis_id, user_id = "", "anonymous"
-            
-            # 1. Try request.runtime (DeepAgents specific)
+            # 获取 ID (复用通用的从 context/config 获取逻辑)
             runtime = getattr(request, 'runtime', None)
+            analysis_id, user_id = "", "anonymous"
             if runtime:
+                # 1. context (CLI)
                 if hasattr(runtime, 'context') and isinstance(runtime.context, dict):
                     analysis_id = runtime.context.get("analysis_id", "")
                     user_id = runtime.context.get("user_id", "anonymous")
+                
+                # 2. config (Fallback)
                 if not analysis_id:
                     config = getattr(runtime, "config", {})
                     configurable = config.get("configurable", {})
                     analysis_id = configurable.get("analysis_id", "")
                     if user_id == "anonymous":
                         user_id = configurable.get("user_id", "anonymous")
-
-            # 2. Try request.config (Standard LangChain/LangGraph)
-            if not analysis_id:
-                config = getattr(request, 'config', {})
-                if config:
-                    configurable = config.get("configurable", {})
-                    analysis_id = configurable.get("analysis_id", "")
-                    if user_id == "anonymous":
-                        user_id = configurable.get("user_id", "anonymous")
-            
-            # 3. Try request.context (Direct context access)
-            if not analysis_id:
-                context = getattr(request, 'context', {})
-                if isinstance(context, dict):
-                     analysis_id = context.get("analysis_id", "")
-                     if user_id == "anonymous":
-                        user_id = context.get("user_id", "anonymous")
 
             if analysis_id:
                 artifact_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}"

@@ -392,6 +392,34 @@ const runAnalysis = async () => {
                 if (msg.type === 'tool' || msg.name) {
                   console.log('FULL MSG:', JSON.stringify(msg, null, 2)?.slice(0, 500))
                 }
+
+                // 🚀 核心修复：优先检查 artifact (结构化数据注入)
+                if (msg.type === 'tool' && msg.artifact) {
+                    console.log('TOOL ARTIFACT FOUND:', msg.artifact)
+                    const artifact = msg.artifact
+                    
+                    // 1. 处理图表
+                    if (artifact.type === 'chart' && artifact.data) {
+                        console.log('ARTIFACT: Found chart data')
+                        const chartData = artifact.data
+                        // 支持多种结构 (option/series/flattened)
+                        let chartOpt = chartData.option || (chartData.series ? chartData : null)
+                        
+                        if (chartOpt) {
+                            chartConfig.value = chartOpt
+                            setTimeout(renderChart, 100)
+                            addThinkingEvent('tool_result', `📊 图表已根据系统注入数据自动渲染`, msg.name)
+                        }
+                    } 
+                    // 2. 处理报告
+                    else if (artifact.type === 'report' && artifact.content) {
+                        console.log('ARTIFACT: Found report content')
+                        // 追加或替换分析结果
+                        // 通常报告是最终结果，直接显示可能更好
+                        analysisResult.value = artifact.content
+                        addThinkingEvent('tool_result', `📝 报告已根据系统注入数据加载`, msg.name)
+                    }
+                }
                 
                 if ((msg.type === 'tool' || msg.name === 'data_generate_chart' || msg.name === 'data_db_run_sql' || msg.name === 'python_execute') && msg.content) {
                   try {
