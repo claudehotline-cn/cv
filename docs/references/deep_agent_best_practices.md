@@ -129,6 +129,8 @@ await fetch(`/api/threads/${threadId}/runs`, {
 #### 2. 后端接收 (Backend Access: Tool & Node)
 LangGraph 会自动将 API 请求中的 `config` 注入到 **Tool** 和 **Node** 的执行上下文中。
 
+> **注意**: 凡是被 `Runnable` 接口调用或包装的函数（包括 Tool 和 Node），只要签名中包含 `config` 参数，运行时都会自动注入配置。
+
 *   **定义**: 函数必须包含 `config: RunnableConfig` 参数。
 *   **读取**: 直接从 `config["configurable"]` 获取。
 
