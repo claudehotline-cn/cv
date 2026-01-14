@@ -307,8 +307,12 @@ const runAnalysis = async () => {
           try {
             const data = JSON.parse(trimmed.slice(6))
             
+            // DEBUG: Log all parsed data to see what's coming from backend
+            console.log('STREAM DATA:', JSON.stringify(data).slice(0, 300))
+            
             // 🚀 Human-in-the-Loop: 检测中断
             if (data.__interrupt__) {
+              console.log('HITL INTERRUPT DETECTED:', data.__interrupt__)
               handleInterrupt(data.__interrupt__, thread.thread_id)
               return  // 中断流式处理，等待用户决策
             }
