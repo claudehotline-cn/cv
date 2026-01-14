@@ -1302,21 +1302,25 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.1); /* 降低遮罩浓度 */
   display: flex;
-  align-items: center;
+  align-items: flex-end; /* 底部对齐 */
   justify-content: center;
   z-index: 100;
-  backdrop-filter: blur(4px);
+  padding-bottom: 20px;
+  pointer-events: none; /* 让遮罩层不阻挡鼠标事件（如查看图表 Tooltip） */
 }
 
 .hitl-card {
+  pointer-events: auto; /* 卡片区域恢复交互 */
   background: linear-gradient(135deg, #1e1e2e 0%, #313244 100%);
   border: 1px solid #45475a;
-  border-radius: 16px;
-  padding: 24px;
-  max-width: 400px;
+  border-radius: 12px;
+  padding: 16px 24px;
+  width: 90%;
+  max-width: 600px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
 }
 
 .hitl-title {
