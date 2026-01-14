@@ -114,6 +114,11 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
 【重要提示】
 - 如果任务描述中包含颜色、样式等自定义要求，**必须**在代码中实现
 - 例如"北京用红色"，则北京系列的 itemStyle.color 应设为红色
+- **关于"去掉"/"移除"类指令**：
+  - "去掉标签" = `label.show` 设为 `False` 或省略 label 配置
+  - "去掉图例" = 省略 legend 配置或设 `legend.show` 为 `False`
+  - "去掉某条线" = 不要在 series 中包含该系列
+  - "去掉横线/markLine" = 不要添加 markLine 配置
 
 请根据任务描述直接生成 Python 代码："""
     # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
