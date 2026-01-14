@@ -709,36 +709,21 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
                   reportLoaded = true
                   addThinkingEvent('tool_result', '📝 报告已加载', msg.name)
                 }
-              }
-
-              // 处理 content 中的图表数据 (Fixed: 图表更新逻辑)
-              let contentToSearch = msg.content
-              if (msg.type === 'tool' && typeof msg.content === 'string') {
+                
+                // 处理 chart artifact (中间件注入的)
+                if (msg.artifact.type === 'chart' && msg.artifact.data) {
                   try {
-                      // 尝试解析 tool result，可能是 JSON 格式包含 stdout
-                      const parsed = JSON.parse(msg.content)
-                      if (parsed.stdout) {
-                          contentToSearch = parsed.stdout
-                      }
+                    console.log('Detected chart artifact in resume stream:', msg.artifact.data)
+                    // artifact.data 可能是 {option: {...}} 或直接是 option
+                    const chartOption = msg.artifact.data.option || msg.artifact.data
+                    chartConfig.value = chartOption
+                    await nextTick()
+                    renderChart()
+                    addThinkingEvent('tool_result', '📊 图表已更新', 'visualizer_agent')
                   } catch (e) {
-                      // ignore parsing error, use original content
+                    console.error('Failed to render chart from artifact', e)
                   }
-              }
-
-              if (contentToSearch && contentToSearch.includes('CHART_DATA:')) {
-                 const chartMatch = contentToSearch.match(/CHART_DATA:(\{.*\})/s)
-                 if (chartMatch) {
-                   try {
-                     console.log('Detected updated chart data in resume stream')
-                     const chartData = JSON.parse(chartMatch[1])
-                     chartConfig.value = chartData
-                     await nextTick()
-                     renderChart()
-                     addThinkingEvent('tool_result', '📊 图表已更新', 'visualizer_agent')
-                   } catch (e) {
-                     console.error('Failed to render updated chart', e)
-                   }
-                 }
+                }
               }
             }
           }
