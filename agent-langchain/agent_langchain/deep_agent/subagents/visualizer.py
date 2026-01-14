@@ -76,7 +76,7 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
     # 尝试读取现有的 chart.json 作为参考
     previous_chart = ""
     if analysis_id:
-        chart_path = f"/data/workspace/mock_user_from_tool_call_999/artifacts/{analysis_id}/chart.json"
+        chart_path = f"/data/workspace/mock_user_from_tool_call_999/artifacts/data_analysis_{analysis_id}/chart.json"
         try:
             import os
             if os.path.exists(chart_path):
