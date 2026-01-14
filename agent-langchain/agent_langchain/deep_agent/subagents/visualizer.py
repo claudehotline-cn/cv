@@ -115,7 +115,7 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
 - 如果任务描述中包含颜色、样式等自定义要求，**必须**在代码中实现
 - 例如"北京用红色"，则北京系列的 itemStyle.color 应设为红色
 
-请根据任务描述直接生成 Python 代码：\"\"\"
+请根据任务描述直接生成 Python 代码："""
     # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
     error_feedback = state.get("error_feedback", "")
     if error_feedback:
