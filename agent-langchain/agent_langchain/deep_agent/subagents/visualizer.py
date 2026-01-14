@@ -143,6 +143,11 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableCon
 【重要提示】
 - 如果任务描述中包含颜色、样式等自定义要求，**必须**在代码中实现
 - 例如"北京用红色"，则北京系列的 itemStyle.color 应设为红色
+【常用功能指南】
+- **添加平均线/最大值/最小值**：请**优先使用 markLine**，不要自己计算数据点。
+  - 平均线：`series[i]["markLine"] = {"data": [{"type": "average", "name": "平均值"}]}`
+  - 最大值：`series[i]["markPoint"] = {"data": [{"type": "max", "name": "最大值"}]}`
+
 - **关于"去掉"/"移除"/"隐藏"类指令**：找到 ECharts 中对应元素的配置项，将其 `show` 属性设为 `False`，或完全省略该配置。
 请根据任务描述直接生成 Python 代码："""
     # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
