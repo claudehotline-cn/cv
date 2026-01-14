@@ -225,47 +225,44 @@ class SubAgentHITLMiddleware(AgentMiddleware):
     
     async def awrap_tool_call(self, request, handler):
         """在工具调用之前检查是否需要中断。"""
-        try:
-            tool_call = getattr(request, 'tool_call', {})
-            if isinstance(tool_call, dict):
-                tool_name = tool_call.get('name', '')
-                args = tool_call.get('args', {})
-            else:
-                tool_name = getattr(tool_call, 'name', '')
-                args = getattr(tool_call, 'args', {})
-            
-            # DEBUG: Log every tool call to see what's coming through
-            _LOGGER.info(f"[HITL DEBUG] awrap_tool_call invoked: tool_name='{tool_name}', args_keys={list(args.keys()) if isinstance(args, dict) else type(args)}")
-            
-            # 只处理 task 工具
-            if tool_name == 'task':
-                subagent_type = args.get('subagent_type', '')
-                
-                # 检查是否是需要中断的 subagent
-                if subagent_type in self.interrupt_subagents:
-                    _LOGGER.info(f"[HITL] Triggering interrupt before calling {subagent_type}")
-                    
-                    # 构造中断请求
-                    interrupt_value = {
-                        "action_requests": [{
-                            "name": subagent_type,
-                            "args": args,
-                            "description": f"{self.description}\n\n即将调用: {subagent_type}"
-                        }],
-                        "review_configs": [{
-                            "action_name": subagent_type,
-                            "allowed_decisions": self.allowed_decisions
-                        }]
-                    }
-                    
-                    # 触发中断，等待用户决策
-                    interrupt(interrupt_value)
-                    
-                    # 如果代码继续执行到这里，说明用户已批准
-                    _LOGGER.info(f"[HITL] User approved, continuing with {subagent_type}")
+        tool_call = getattr(request, 'tool_call', {})
+        if isinstance(tool_call, dict):
+            tool_name = tool_call.get('name', '')
+            args = tool_call.get('args', {})
+        else:
+            tool_name = getattr(tool_call, 'name', '')
+            args = getattr(tool_call, 'args', {})
         
-        except Exception as e:
-            _LOGGER.warning(f"[HITL] Error checking interrupt: {e}")
+        # DEBUG: Log every tool call to see what's coming through
+        _LOGGER.info(f"[HITL DEBUG] awrap_tool_call invoked: tool_name='{tool_name}', args_keys={list(args.keys()) if isinstance(args, dict) else type(args)}")
+        
+        # 只处理 task 工具
+        if tool_name == 'task':
+            subagent_type = args.get('subagent_type', '')
+            
+            # 检查是否是需要中断的 subagent
+            if subagent_type in self.interrupt_subagents:
+                _LOGGER.info(f"[HITL] Triggering interrupt before calling {subagent_type}")
+                
+                # 构造中断请求
+                interrupt_value = {
+                    "action_requests": [{
+                        "name": subagent_type,
+                        "args": args,
+                        "description": f"{self.description}\n\n即将调用: {subagent_type}"
+                    }],
+                    "review_configs": [{
+                        "action_name": subagent_type,
+                        "allowed_decisions": self.allowed_decisions
+                    }]
+                }
+                
+                # 触发中断，等待用户决策
+                # interrupt() 会抛出 GraphInterrupt 异常，必须让它向上传播
+                interrupt(interrupt_value)
+                
+                # 如果代码继续执行到这里，说明用户已批准（通过 Command(resume=...) 恢复）
+                _LOGGER.info(f"[HITL] User approved, continuing with {subagent_type}")
         
         # 继续执行工具调用
         return await handler(request)
