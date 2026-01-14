@@ -755,6 +755,18 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
       reviewConfigs: interruptData.review_configs || [],
       feedbackMessage: '',
     }
+    
+    // 如果中断数据中包含 artifact (图表)，立即渲染
+    if (interruptData.artifact && interruptData.artifact.type === 'chart') {
+      console.log('Rendering chart from interrupt artifact:', interruptData.artifact.data)
+      chartConfig.value = interruptData.artifact.data.option || interruptData.artifact.data
+      
+      // 等待 DOM 更新后渲染
+      nextTick(() => {
+        renderChart()
+      })
+    }
+    
     addThinkingEvent('step', '⏸️ 等待用户审核图表...')
     loading.value = false
   }

@@ -250,6 +250,11 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 
                 _LOGGER.info(f"[HITL] {subagent_type} completed, triggering interrupt for user review")
                 
+                # 尝试从 response 中提取 artifact (由 FileContentInjectionMiddleware 注入)
+                artifact_data = None
+                if hasattr(response, 'artifact') and response.artifact:
+                    artifact_data = response.artifact
+                
                 # 构造中断请求
                 interrupt_value = {
                     "action_requests": [{
@@ -260,7 +265,9 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                     "review_configs": [{
                         "action_name": subagent_type,
                         "allowed_decisions": self.allowed_decisions
-                    }]
+                    }],
+                    # 将 artifact 数据直接包含在中断 payload 中，以便前端在中断状态下也能渲染
+                    "artifact": artifact_data
                 }
                 
                 # 触发中断，等待用户决策
