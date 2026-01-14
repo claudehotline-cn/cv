@@ -7,6 +7,7 @@ import os
 import re
 import json
 from typing import TypedDict, Annotated, Sequence, Any
+from datetime import datetime
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
@@ -66,10 +67,14 @@ def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) ->
 def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
     """Step 2: LLM 根据 df_profile 结果生成 ECharts 代码"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 2: LLM generate chart code")
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    
     task = state.get("task_description", "")
     df_info = state.get("df_profile_result", "")
+
+    _LOGGER.info(f"[Visualizer Agent] Generating code for task: {task}")
     
-    prompt = f"""你是 Visualizer Agent。根据以下信息生成 ECharts 图表代码。
+    prompt = f"""你是 Visualizer Agent。当前日期: {today_str}。根据以下信息生成 ECharts 图表代码。
 
 【🔴 核心规则 - 必须严格遵守】
 1. **代码的第一行必须是**：`df = load_dataframe('result')`
