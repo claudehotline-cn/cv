@@ -747,9 +747,16 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
 
 // 处理中断
 const handleInterrupt = (interrupt: any[], threadId: string) => {
-  console.log('HITL INTERRUPT:', interrupt)
+  console.log('HITL INTERRUPT received:', interrupt)
   if (interrupt.length > 0) {
     const interruptData = interrupt[0].value || interrupt[0]
+    console.log('HITL interruptData:', interruptData)
+    console.log('HITL artifact present:', interruptData.artifact ? 'YES' : 'NO')
+    if (interruptData.artifact) {
+      console.log('HITL artifact type:', interruptData.artifact.type)
+      console.log('HITL artifact data keys:', Object.keys(interruptData.artifact.data || {}))
+    }
+    
     hitlState.value = {
       isInterrupted: true,
       threadId: threadId,
@@ -762,12 +769,17 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
     // 如果中断数据中包含 artifact (图表)，立即渲染
     if (interruptData.artifact && interruptData.artifact.type === 'chart') {
       console.log('Rendering chart from interrupt artifact:', interruptData.artifact.data)
-      chartConfig.value = interruptData.artifact.data.option || interruptData.artifact.data
+      const chartOption = interruptData.artifact.data.option || interruptData.artifact.data
+      console.log('Chart option to render:', chartOption)
+      chartConfig.value = chartOption
       
       // 等待 DOM 更新后渲染
       nextTick(() => {
+        console.log('Calling renderChart() after nextTick')
         renderChart()
       })
+    } else {
+      console.log('No chart artifact found in interrupt data')
     }
     
     addThinkingEvent('step', '⏸️ 等待用户审核图表...')
