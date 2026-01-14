@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis, Connection, Document, VideoPlay, Loading, Plus } from '@element-plus/icons-vue'
+import { DataAnalysis, Connection, Document, VideoPlay, Loading, Plus, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { knowledgeBaseApi } from '../api'
 
 // Markdown 渲染
@@ -136,6 +136,7 @@ interface HITLState {
   actionRequests: any[]
   reviewConfigs: any[]
   feedbackMessage: string
+  isCollapsed: boolean
 }
 const hitlState = ref<HITLState>({
   isInterrupted: false,
@@ -143,6 +144,7 @@ const hitlState = ref<HITLState>({
   actionRequests: [],
   reviewConfigs: [],
   feedbackMessage: '',
+  isCollapsed: false,
 })
 
 // 当前分析 ID，用于 resume 时恢复上下文
@@ -754,6 +756,7 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
       actionRequests: interruptData.action_requests || [],
       reviewConfigs: interruptData.review_configs || [],
       feedbackMessage: '',
+      isCollapsed: false,
     }
     
     // 如果中断数据中包含 artifact (图表)，立即渲染
@@ -879,34 +882,46 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
             <!-- 🚀 Human-in-the-Loop 审批覆盖层 -->
             <div v-if="hitlState.isInterrupted" class="hitl-overlay">
               <div class="hitl-card">
-                <div class="hitl-title">
-                  <el-icon size="24" color="#67c23a"><VideoPlay /></el-icon>
-                  <span>图表生成完成，请确认</span>
-                </div>
-                <div class="hitl-description">
-                  系统已生成图表，请确认是否继续生成分析报告。如有问题，可输入反馈后重新生成。
-                </div>
-                <el-input
-                  v-model="hitlState.feedbackMessage"
-                  type="textarea"
-                  :rows="2"
-                  placeholder="可选：输入反馈意见（如：请改为柱状图）"
-                  class="hitl-feedback"
-                />
-                <div class="hitl-actions">
+                <div class="hitl-header">
+                  <div class="hitl-title">
+                    <el-icon size="24" color="#67c23a"><VideoPlay /></el-icon>
+                    <span>图表生成完成，请确认</span>
+                  </div>
                   <el-button 
-                    type="danger" 
-                    @click="resumeWithDecision('reject')"
-                    :disabled="!hitlState.feedbackMessage.trim()"
+                    link
+                    class="hitl-toggle-btn"
+                    @click="hitlState.isCollapsed = !hitlState.isCollapsed"
                   >
-                    重新生成
+                    <el-icon><ArrowDown v-if="hitlState.isCollapsed" /><ArrowUp v-else /></el-icon>
                   </el-button>
-                  <el-button 
-                    type="primary" 
-                    @click="resumeWithDecision('approve')"
-                  >
-                    确认并继续
-                  </el-button>
+                </div>
+                
+                <div v-show="!hitlState.isCollapsed" class="hitl-content">
+                  <div class="hitl-description">
+                    系统已生成图表，请确认是否继续生成分析报告。如有问题，可输入反馈后重新生成。
+                  </div>
+                  <el-input
+                    v-model="hitlState.feedbackMessage"
+                    type="textarea"
+                    :rows="2"
+                    placeholder="可选：输入反馈意见（如：请改为柱状图）"
+                    class="hitl-feedback"
+                  />
+                  <div class="hitl-actions">
+                    <el-button 
+                      type="danger" 
+                      @click="resumeWithDecision('reject')"
+                      :disabled="!hitlState.feedbackMessage.trim()"
+                    >
+                      重新生成
+                    </el-button>
+                    <el-button 
+                      type="primary" 
+                      @click="resumeWithDecision('approve')"
+                    >
+                      审批通过
+                    </el-button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1362,6 +1377,13 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
   backdrop-filter: blur(10px);
 }
 
+.hitl-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
 .hitl-title {
   display: flex;
   align-items: center;
@@ -1369,7 +1391,7 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
   font-size: 18px;
   font-weight: 600;
   color: #cdd6f4;
-  margin-bottom: 12px;
+  margin-bottom: 0; /* 移除底部外边距，由 header 控制 */
 }
 
 .hitl-description {
