@@ -1341,12 +1341,12 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.1); /* 降低遮罩浓度 */
+  background: transparent; /* 移除遮罩背景色，完全透明 */
   display: flex;
-  align-items: flex-end; /* 底部对齐 */
-  justify-content: center;
+  align-items: center; /* 垂直居中 */
+  justify-content: flex-end; /* 靠右对齐 */
   z-index: 100;
-  padding-bottom: 20px;
+  padding-right: 20px; /* 右侧留白 */
   pointer-events: none; /* 让遮罩层不阻挡鼠标事件（如查看图表 Tooltip） */
 }
 
@@ -1356,8 +1356,8 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
   border: 1px solid #45475a;
   border-radius: 12px;
   padding: 16px 24px;
-  width: 90%;
-  max-width: 600px;
+  width: 360px; /* 减小宽度 */
+  max-width: 90%;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(10px);
 }
