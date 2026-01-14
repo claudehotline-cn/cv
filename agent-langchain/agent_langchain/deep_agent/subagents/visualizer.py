@@ -128,12 +128,15 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableCon
    - `xAxis`：X轴配置（类别轴用 category，数值轴用 value）
    - `yAxis`：Y轴配置
    - `series`：数据系列数组，每个系列包含 name、type、data
-3. **输出结果**：使用 `print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "类型", "option": chart_option}}))`
+     * **注意**：`data` 必须是**列表** (List)，**严禁**使用字典 (Dictionary)！
+     * 正确: `data: [10, 20, 30]` 或 `data: [["2023-01", 10], ["2023-02", 20]]`
+     * 错误: `data: {"2023-01": 10, "2023-02": 20}`
+3. **输出结果**：使用 `print("CHART_DATA:" + json.dumps({"success": True, "chart_type": "类型", "option": chart_option}))`
 
 【图表类型说明】
 - 折线图 (line)：series.type = "line"
 - 柱状图 (bar)：series.type = "bar"
-- 饼图 (pie)：series.type = "pie"，data 格式为 [{{"name": "名称", "value": 数值}}, ...]，不需要 xAxis/yAxis
+- 饼图 (pie)：series.type = "pie"，data 格式为 [{"name": "名称", "value": 数值}}, ...]，不需要 xAxis/yAxis
 
 【样式自定义】
 - **颜色**：在 series 中使用 `itemStyle.color` 指定颜色
