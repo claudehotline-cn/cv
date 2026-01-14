@@ -160,6 +160,9 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableCon
 1. **严禁**添加任务未要求的任何装饰（如平均线、最大最小值标记、背景色等）。
 2. **严禁**使用"添加一个新 Series"的方式来实现辅助线（如平均线、竖线）。辅助线必须用 `markLine`。
 3. **严禁**擅自修改数据或计算逻辑。
+4. **语义区分**：
+   - 用户说"画一条线"展示某数据趋势 -> 使用 **Series**
+   - 用户说"添加一条横线/竖线/平均线"作为参考 -> 使用 **markLine**
 
 请根据任务描述直接生成 Python 代码："""
     # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
