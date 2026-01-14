@@ -50,12 +50,12 @@ def get_data_deep_agent_graph() -> Any:
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
             ThinkingLoggerMiddleware(),
-            FileContentInjectionMiddleware(),
             SubAgentHITLMiddleware(
                 interrupt_subagents=["visualizer_agent"],
                 allowed_decisions=["approve", "reject"],
                 description="图表生成完成，请确认是否继续生成报告",
             ),
+            FileContentInjectionMiddleware(),
         ],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
