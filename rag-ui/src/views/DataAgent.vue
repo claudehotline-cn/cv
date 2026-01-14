@@ -145,6 +145,9 @@ const hitlState = ref<HITLState>({
   feedbackMessage: '',
 })
 
+// 当前分析 ID，用于 resume 时恢复上下文
+const currentAnalysisId = ref('')
+
 
 // 格式化时间
 const formatTime = (timestamp: number) => {
@@ -227,6 +230,7 @@ const runAnalysis = async () => {
     
     // 生成 analysis_id 用于结果持久化
     const analysisId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
+    currentAnalysisId.value = analysisId
     
     // 如果开启知识库，先获取 RAG 上下文
     if (useKnowledgeBase.value && selectedKb.value) {
@@ -651,6 +655,14 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
         assistant_id: 'data_deep_agent', // 必须与创建 run 时一致
         command: {
           resume: { decisions }
+        },
+        config: {
+          configurable: {
+            thread_id: hitlState.value.threadId,
+             // 保持与 runAnalysis 一致的用户 ID
+            user_id: "mock_user_from_tool_call_999",
+            analysis_id: currentAnalysisId.value
+          }
         },
         stream_mode: ["values"]
       })
