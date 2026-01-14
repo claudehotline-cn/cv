@@ -234,6 +234,9 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 tool_name = getattr(tool_call, 'name', '')
                 args = getattr(tool_call, 'args', {})
             
+            # DEBUG: Log every tool call to see what's coming through
+            _LOGGER.info(f"[HITL DEBUG] awrap_tool_call invoked: tool_name='{tool_name}', args_keys={list(args.keys()) if isinstance(args, dict) else type(args)}")
+            
             # 只处理 task 工具
             if tool_name == 'task':
                 subagent_type = args.get('subagent_type', '')
