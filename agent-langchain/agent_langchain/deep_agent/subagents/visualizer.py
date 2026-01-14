@@ -107,7 +107,7 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
 - 饼图 (pie)：series.type = "pie"，data 格式为 [{{"name": "名称", "value": 数值}}, ...]，不需要 xAxis/yAxis
 
 【样式自定义】
-- **颜色**：在 series 中使用 `itemStyle.color` 指定颜色，如 `"itemStyle": {{"color": "#FF0000"}}` 为红色
+- **颜色**：在 series 中使用 `itemStyle.color` 指定颜色
 - **线条样式**：使用 `lineStyle.color`、`lineStyle.width` 等
 - **标签**：使用 `label.show`、`label.formatter` 等
 
