@@ -219,12 +219,13 @@ class SubAgentHITLMiddleware(AgentMiddleware):
         description: str = "请确认是否继续"
     ):
         super().__init__()
-        self.interrupt_subagents = interrupt_subagents or ["report_agent"]
+        # 修改：在 visualizer_agent 完成后中断，而不是 report_agent 开始前
+        self.interrupt_subagents = interrupt_subagents or ["visualizer_agent"]
         self.allowed_decisions = allowed_decisions or ["approve", "reject"]
         self.description = description
     
     async def awrap_tool_call(self, request, handler):
-        """在工具调用之前检查是否需要中断。"""
+        """在工具调用之后检查是否需要中断（针对 visualizer_agent）。"""
         tool_call = getattr(request, 'tool_call', {})
         if isinstance(tool_call, dict):
             tool_name = tool_call.get('name', '')
@@ -242,14 +243,19 @@ class SubAgentHITLMiddleware(AgentMiddleware):
             
             # 检查是否是需要中断的 subagent
             if subagent_type in self.interrupt_subagents:
-                _LOGGER.info(f"[HITL] Triggering interrupt before calling {subagent_type}")
+                _LOGGER.info(f"[HITL] Executing {subagent_type} first, will interrupt after completion")
+                
+                # 先执行 subagent，让它完成图表生成
+                response = await handler(request)
+                
+                _LOGGER.info(f"[HITL] {subagent_type} completed, triggering interrupt for user review")
                 
                 # 构造中断请求
                 interrupt_value = {
                     "action_requests": [{
                         "name": subagent_type,
                         "args": args,
-                        "description": f"{self.description}\n\n即将调用: {subagent_type}"
+                        "description": f"{self.description}\n\n{subagent_type} 已完成，请审核结果。"
                     }],
                     "review_configs": [{
                         "action_name": subagent_type,
@@ -258,7 +264,6 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 }
                 
                 # 触发中断，等待用户决策
-                # interrupt() 会抛出 GraphInterrupt 异常，必须让它向上传播
                 interrupt_res = interrupt(interrupt_value)
                 
                 # 如果代码继续执行到这里，说明用户已恢复
@@ -270,14 +275,16 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                     if decisions and isinstance(decisions, list):
                         decision = decisions[0]
                         if decision.get("type") == "reject":
-                            feedback = decision.get("message", "用户拒绝了执行")
+                            feedback = decision.get("message", "用户拒绝了图表")
                             _LOGGER.info(f"[HITL] User rejected {subagent_type}: {feedback}")
                             
-                            # 返回用户反馈作为工具执行结果，而不是执行 handler
-                            # 这将告诉 Agent 这一步失败了（或者完成了但有反馈），Agent 应该根据反馈进行调整
-                            return f"USER_INTERRUPT: 用户拒绝了执行 {subagent_type}。原因: {feedback}。请根据此反馈修改之前的步骤或数据。"
+                            # 返回用户反馈作为工具执行结果
+                            # Agent 应该根据反馈重新调用 visualizer_agent
+                            return f"USER_INTERRUPT: 用户对图表不满意。反馈: {feedback}。请根据反馈修改图表，然后再次尝试。"
 
-                _LOGGER.info(f"[HITL] User approved, continuing with {subagent_type}")
+                _LOGGER.info(f"[HITL] User approved, returning original response")
+                # 用户批准，返回原始响应继续流程
+                return response
         
         # 继续执行工具调用
         return await handler(request)
