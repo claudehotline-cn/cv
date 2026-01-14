@@ -648,6 +648,7 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        assistant_id: 'data_deep_agent', // 必须与创建 run 时一致
         command: {
           resume: { decisions }
         },
