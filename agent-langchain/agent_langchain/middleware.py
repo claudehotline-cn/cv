@@ -259,9 +259,24 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 
                 # 触发中断，等待用户决策
                 # interrupt() 会抛出 GraphInterrupt 异常，必须让它向上传播
-                interrupt(interrupt_value)
+                interrupt_res = interrupt(interrupt_value)
                 
-                # 如果代码继续执行到这里，说明用户已批准（通过 Command(resume=...) 恢复）
+                # 如果代码继续执行到这里，说明用户已恢复
+                _LOGGER.info(f"[HITL] Resumed with: {interrupt_res}")
+                
+                # 检查用户的决定
+                if isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
+                    decisions = interrupt_res["decisions"]
+                    if decisions and isinstance(decisions, list):
+                        decision = decisions[0]
+                        if decision.get("type") == "reject":
+                            feedback = decision.get("message", "用户拒绝了执行")
+                            _LOGGER.info(f"[HITL] User rejected {subagent_type}: {feedback}")
+                            
+                            # 返回用户反馈作为工具执行结果，而不是执行 handler
+                            # 这将告诉 Agent 这一步失败了（或者完成了但有反馈），Agent 应该根据反馈进行调整
+                            return f"USER_INTERRUPT: 用户拒绝了执行 {subagent_type}。原因: {feedback}。请根据此反馈修改之前的步骤或数据。"
+
                 _LOGGER.info(f"[HITL] User approved, continuing with {subagent_type}")
         
         # 继续执行工具调用
