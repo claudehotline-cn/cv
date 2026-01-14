@@ -7,12 +7,11 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
-from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from ..llm_runtime import build_chat_llm
-from ..middleware import ThinkingLoggerMiddleware, FileContentInjectionMiddleware
+from ..middleware import ThinkingLoggerMiddleware, FileContentInjectionMiddleware, SubAgentHITLMiddleware
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -52,11 +51,10 @@ def get_data_deep_agent_graph() -> Any:
         middleware=[
             ThinkingLoggerMiddleware(),
             FileContentInjectionMiddleware(),
-            HumanInTheLoopMiddleware(
-                interrupt_on={
-                    "report_agent": {"allowed_decisions": ["approve", "reject"]},
-                },
-                description_prefix="图表生成完成，请确认是否继续生成报告",
+            SubAgentHITLMiddleware(
+                interrupt_subagents=["report_agent"],
+                allowed_decisions=["approve", "reject"],
+                description="图表生成完成，请确认是否继续生成报告",
             ),
         ],
         backend=lambda rt: CompositeBackend(

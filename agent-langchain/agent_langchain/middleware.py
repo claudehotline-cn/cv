@@ -7,6 +7,7 @@ import re
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, HumanMessage, ToolMessage, trim_messages
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langgraph.runtime import Runtime
+from langgraph.types import interrupt
 from deepagents.backends import StoreBackend
 
 
@@ -197,6 +198,75 @@ class FileContentInjectionMiddleware(AgentMiddleware):
                     )
 
         return response
+
+
+class SubAgentHITLMiddleware(AgentMiddleware):
+    """
+    自定义 Human-in-the-Loop 中间件，在特定 SubAgent 调用之前触发中断。
+    
+    由于所有 SubAgent 都通过 'task' 工具调用，标准 HumanInTheLoopMiddleware
+    无法按 subagent_type 参数过滤。此中间件解决这个问题。
+    
+    配置:
+        interrupt_subagents: 需要中断的 subagent 名称列表
+        allowed_decisions: 允许的决策类型
+    """
+    
+    def __init__(
+        self, 
+        interrupt_subagents: List[str] = None,
+        allowed_decisions: List[str] = None,
+        description: str = "请确认是否继续"
+    ):
+        super().__init__()
+        self.interrupt_subagents = interrupt_subagents or ["report_agent"]
+        self.allowed_decisions = allowed_decisions or ["approve", "reject"]
+        self.description = description
+    
+    async def awrap_tool_call(self, request, handler):
+        """在工具调用之前检查是否需要中断。"""
+        try:
+            tool_call = getattr(request, 'tool_call', {})
+            if isinstance(tool_call, dict):
+                tool_name = tool_call.get('name', '')
+                args = tool_call.get('args', {})
+            else:
+                tool_name = getattr(tool_call, 'name', '')
+                args = getattr(tool_call, 'args', {})
+            
+            # 只处理 task 工具
+            if tool_name == 'task':
+                subagent_type = args.get('subagent_type', '')
+                
+                # 检查是否是需要中断的 subagent
+                if subagent_type in self.interrupt_subagents:
+                    _LOGGER.info(f"[HITL] Triggering interrupt before calling {subagent_type}")
+                    
+                    # 构造中断请求
+                    interrupt_value = {
+                        "action_requests": [{
+                            "name": subagent_type,
+                            "args": args,
+                            "description": f"{self.description}\n\n即将调用: {subagent_type}"
+                        }],
+                        "review_configs": [{
+                            "action_name": subagent_type,
+                            "allowed_decisions": self.allowed_decisions
+                        }]
+                    }
+                    
+                    # 触发中断，等待用户决策
+                    interrupt(interrupt_value)
+                    
+                    # 如果代码继续执行到这里，说明用户已批准
+                    _LOGGER.info(f"[HITL] User approved, continuing with {subagent_type}")
+        
+        except Exception as e:
+            _LOGGER.warning(f"[HITL] Error checking interrupt: {e}")
+        
+        # 继续执行工具调用
+        return await handler(request)
+
 
 
 class StructuredOutputToTextMiddleware(AgentMiddleware):
