@@ -152,7 +152,7 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableCon
   - 如果要求添加，请**优先使用 markLine**：
     - 平均线：`series[i]["markLine"] = {"data": [{"type": "average", "name": "平均值"}]}`
     - 最大值：`series[i]["markPoint"] = {"data": [{"type": "max", "name": "最大值"}]}`
-    - **特定X轴位置竖线**：`series[0]["markLine"] = {"data": [{"xAxis": "2023-10", "name": "标记点"}]}`
+    - **特定X轴位置竖线**：`series[0]["markLine"] = {"data": [{"xAxis": "2023-xx(请求的日期)", "name": "标记点"}]}`
 
 - **语义区分**：
   - 用户说"画一条线"展示某数据趋势 -> 使用 **Series**
