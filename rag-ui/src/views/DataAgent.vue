@@ -614,7 +614,7 @@ const renderChart = () => {
       }
     }
     
-    chartInstance.setOption(config)
+    chartInstance.setOption(config, { notMerge: true })
     console.log('ECharts setOption succeeded')
   } catch (e) {
     console.error('ECharts setOption failed:', e)
