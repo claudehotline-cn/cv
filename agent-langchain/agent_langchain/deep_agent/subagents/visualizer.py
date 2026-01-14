@@ -90,53 +90,32 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
 数据概览:
 {df_info}
 
-【代码结构】
-```python
-import json
-# 1. 必选：加载数据并赋值给 df
-df = load_dataframe('result')
+【代码结构要求】
+1. **加载数据**：使用 `df = load_dataframe('result')` 加载数据
+2. **构建 chart_option**：创建一个字典，包含以下字段：
+   - `title.text`：图表标题
+   - `tooltip.trigger`：通常为 "axis"
+   - `legend.data`：图例名称列表
+   - `xAxis`：X轴配置（类别轴用 category，数值轴用 value）
+   - `yAxis`：Y轴配置
+   - `series`：数据系列数组，每个系列包含 name、type、data
+3. **输出结果**：使用 `print("CHART_DATA:" + json.dumps({{"success": True, "chart_type": "类型", "option": chart_option}}))`
 
-# 2. 构建 chart_option (使用 df 数据)
-# 务必包含 tooltip 和 legend 以显示提示和图例
-chart_option = {{
-    "title": {{ "text": "标题" }},
-    "tooltip": {{ "trigger": "axis" }},
-    "legend": {{ "data": ["系列1", "系列2"] }},
-    "xAxis": {{ "type": "category", "data": df['月份列'].tolist() }},
-    "yAxis": {{ "type": "value" }},
-    "series": [
-        {{
-            "name": "系列1", 
-            "type": "line|bar|...", 
-            "data": df['数值列1'].tolist()
-        }},
-        {{
-            "name": "系列2", 
-            "type": "line|bar|...", 
-            "data": df['数值列2'].tolist()
-        }},
-        # ⚠️ 【特殊规则】如果是饼图 (pie)：
-        # data 必须是字典列表: [{{"name": "北京", "value": 100}}, ...]
-        # 不需要 xAxis/yAxis
-        {{
-            "name": "系列名",
-            "type": "pie",
-            "radius": "50%",
-            "label": {{ "formatter": "{{b}}: {{c}} ({{d}}%)" }},  # 显示名称、数值和百分比
-            "data": [
-                {{ "name": row['Category'], "value": row['Value'] }} 
-                for _, row in df.iterrows()
-            ]
-        }}
-        ...
-    ]
-}}
+【图表类型说明】
+- 折线图 (line)：series.type = "line"
+- 柱状图 (bar)：series.type = "bar"
+- 饼图 (pie)：series.type = "pie"，data 格式为 [{{"name": "名称", "value": 数值}}, ...]，不需要 xAxis/yAxis
 
-# 3. 输出结果
-print("CHART_DATA:" + json.dumps({{ "success": True, "chart_type": "line", "option": chart_option }}))
-```
+【样式自定义】
+- **颜色**：在 series 中使用 `itemStyle.color` 指定颜色，如 `"itemStyle": {{"color": "#FF0000"}}` 为红色
+- **线条样式**：使用 `lineStyle.color`、`lineStyle.width` 等
+- **标签**：使用 `label.show`、`label.formatter` 等
 
-请直接生成代码："""
+【重要提示】
+- 如果任务描述中包含颜色、样式等自定义要求，**必须**在代码中实现
+- 例如"北京用红色"，则北京系列的 itemStyle.color 应设为红色
+
+请根据任务描述直接生成 Python 代码：\"\"\"
     # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
     error_feedback = state.get("error_feedback", "")
     if error_feedback:
