@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis, Connection, Document, VideoPlay, Loading } from '@element-plus/icons-vue'
+import { DataAnalysis, Connection, Document, VideoPlay, Loading, Plus } from '@element-plus/icons-vue'
 import { knowledgeBaseApi } from '../api'
 
 // Markdown 渲染
@@ -128,6 +128,22 @@ const thinkingEvents = ref<ThinkingEvent[]>([])
 // 跟踪已处理的消息 ID，避免重复显示
 let processedMsgIds = new Set<string>()
 let reportLoaded = false
+
+// Human-in-the-Loop 状态
+interface HITLState {
+  isInterrupted: boolean
+  threadId: string
+  actionRequests: any[]
+  reviewConfigs: any[]
+  feedbackMessage: string
+}
+const hitlState = ref<HITLState>({
+  isInterrupted: false,
+  threadId: '',
+  actionRequests: [],
+  reviewConfigs: [],
+  feedbackMessage: '',
+})
 
 
 // 格式化时间
@@ -290,6 +306,13 @@ const runAnalysis = async () => {
         if (trimmed.startsWith('data: ')) {
           try {
             const data = JSON.parse(trimmed.slice(6))
+            
+            // 🚀 Human-in-the-Loop: 检测中断
+            if (data.__interrupt__) {
+              handleInterrupt(data.__interrupt__, thread.thread_id)
+              return  // 中断流式处理，等待用户决策
+            }
+            
             // Deep Agent 返回 messages 数组
             if (data.messages && Array.isArray(data.messages)) {
               for (const msg of data.messages) {
@@ -591,6 +614,119 @@ const renderChart = () => {
     chartInstance?.resize()
   })
 }
+
+// Human-in-the-Loop: 恢复执行
+const resumeWithDecision = async (decision: 'approve' | 'reject') => {
+  if (!hitlState.value.threadId) {
+    ElMessage.error('无法继续：缺少线程 ID')
+    return
+  }
+  
+  loading.value = true
+  hitlState.value.isInterrupted = false
+  
+  try {
+    const decisions = hitlState.value.actionRequests.map(() => {
+      if (decision === 'approve') {
+        return { type: 'approve' }
+      } else {
+        return { 
+          type: 'reject', 
+          message: hitlState.value.feedbackMessage || '用户拒绝，请重新生成'
+        }
+      }
+    })
+    
+    addThinkingEvent('step', decision === 'approve' ? '用户确认继续...' : `用户拒绝: ${hitlState.value.feedbackMessage}`)
+    
+    // 发送 resume 请求
+    const runRes = await fetch(`/api/agents/data/threads/${hitlState.value.threadId}/runs/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        command: {
+          resume: { decisions }
+        },
+        stream_mode: ["values"]
+      })
+    })
+    
+    if (!runRes.ok) throw new Error('恢复执行失败')
+    
+    // 处理恢复后的流式响应（复用原有逻辑）
+    const reader = runRes.body?.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    
+    while (reader) {
+      const { done, value } = await reader.read()
+      if (done) break
+      
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith('data: ')) continue
+        
+        try {
+          const data = JSON.parse(trimmed.slice(6))
+          
+          // 检查是否又触发了中断（例如报告审核）
+          if (data.__interrupt__) {
+            handleInterrupt(data.__interrupt__, hitlState.value.threadId)
+            return
+          }
+          
+          // 处理消息（简化版，主要看 artifact）
+          if (data.messages && Array.isArray(data.messages)) {
+            for (const msg of data.messages) {
+              if (msg.id && processedMsgIds.has(msg.id)) continue
+              if (msg.id) processedMsgIds.add(msg.id)
+              
+              // 处理 artifact
+              if (msg.type === 'tool' && msg.artifact) {
+                if (msg.artifact.type === 'report' && msg.artifact.content) {
+                  analysisResult.value = msg.artifact.content
+                  reportLoaded = true
+                  addThinkingEvent('tool_result', '📝 报告已加载', msg.name)
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+    
+    addThinkingEvent('step', '分析任务完成')
+    ElMessage.success('分析完成')
+    
+  } catch (err: any) {
+    ElMessage.error(err.message || '恢复执行失败')
+    addThinkingEvent('step', `错误: ${err.message}`)
+  } finally {
+    loading.value = false
+    hitlState.value.feedbackMessage = ''
+  }
+}
+
+// 处理中断
+const handleInterrupt = (interrupt: any[], threadId: string) => {
+  console.log('HITL INTERRUPT:', interrupt)
+  if (interrupt.length > 0) {
+    const interruptData = interrupt[0].value || interrupt[0]
+    hitlState.value = {
+      isInterrupted: true,
+      threadId: threadId,
+      actionRequests: interruptData.action_requests || [],
+      reviewConfigs: interruptData.review_configs || [],
+      feedbackMessage: '',
+    }
+    addThinkingEvent('step', '⏸️ 等待用户审核图表...')
+    loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -694,6 +830,41 @@ const renderChart = () => {
             <div ref="chartContainer" class="chart-box"></div>
             <div v-if="!chartConfig && !loading" class="empty-chart">
               图表将在此显示
+            </div>
+            
+            <!-- 🚀 Human-in-the-Loop 审批覆盖层 -->
+            <div v-if="hitlState.isInterrupted" class="hitl-overlay">
+              <div class="hitl-card">
+                <div class="hitl-title">
+                  <el-icon size="24" color="#67c23a"><VideoPlay /></el-icon>
+                  <span>图表生成完成，请确认</span>
+                </div>
+                <div class="hitl-description">
+                  系统已生成图表，请确认是否继续生成分析报告。如有问题，可输入反馈后重新生成。
+                </div>
+                <el-input
+                  v-model="hitlState.feedbackMessage"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="可选：输入反馈意见（如：请改为柱状图）"
+                  class="hitl-feedback"
+                />
+                <div class="hitl-actions">
+                  <el-button 
+                    type="danger" 
+                    @click="resumeWithDecision('reject')"
+                    :disabled="!hitlState.feedbackMessage.trim()"
+                  >
+                    重新生成
+                  </el-button>
+                  <el-button 
+                    type="primary" 
+                    @click="resumeWithDecision('approve')"
+                  >
+                    确认并继续
+                  </el-button>
+                </div>
+              </div>
             </div>
           </div>
           
@@ -1117,5 +1288,56 @@ const renderChart = () => {
 .event-text {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Human-in-the-Loop 审批 UI 样式 */
+.hitl-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+}
+
+.hitl-card {
+  background: linear-gradient(135deg, #1e1e2e 0%, #313244 100%);
+  border: 1px solid #45475a;
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 400px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.hitl-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #cdd6f4;
+  margin-bottom: 12px;
+}
+
+.hitl-description {
+  font-size: 14px;
+  color: #a6adc8;
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.hitl-feedback {
+  margin-bottom: 16px;
+}
+
+.hitl-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
 }
 </style>

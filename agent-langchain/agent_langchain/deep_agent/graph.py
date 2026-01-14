@@ -7,10 +7,12 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
+from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from ..llm_runtime import build_chat_llm
-from ..middleware import StructuredOutputToTextMiddleware, ThinkingLoggerMiddleware, FileContentInjectionMiddleware
+from ..middleware import ThinkingLoggerMiddleware, FileContentInjectionMiddleware
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -47,12 +49,22 @@ def get_data_deep_agent_graph() -> Any:
         ],
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
-        middleware=[ThinkingLoggerMiddleware(), FileContentInjectionMiddleware()],
+        middleware=[
+            ThinkingLoggerMiddleware(),
+            FileContentInjectionMiddleware(),
+            HumanInTheLoopMiddleware(
+                interrupt_on={
+                    "report_agent": {"allowed_decisions": ["approve", "reject"]},
+                },
+                description_prefix="图表生成完成，请确认是否继续生成报告",
+            ),
+        ],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
             routes={"/_shared/": StoreBackend(rt)},
         ),
         store=lambda: InMemoryStore(),  # Use factory for fresh store per instance/run
+        checkpointer=InMemorySaver(),   # Required for HITL
         response_format=response_format,
     )
     
