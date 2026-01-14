@@ -712,8 +712,21 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
               }
 
               // 处理 content 中的图表数据 (Fixed: 图表更新逻辑)
-              if (msg.content && msg.content.includes('CHART_DATA:')) {
-                 const chartMatch = msg.content.match(/CHART_DATA:(\{.*\})/s)
+              let contentToSearch = msg.content
+              if (msg.type === 'tool' && typeof msg.content === 'string') {
+                  try {
+                      // 尝试解析 tool result，可能是 JSON 格式包含 stdout
+                      const parsed = JSON.parse(msg.content)
+                      if (parsed.stdout) {
+                          contentToSearch = parsed.stdout
+                      }
+                  } catch (e) {
+                      // ignore parsing error, use original content
+                  }
+              }
+
+              if (contentToSearch && contentToSearch.includes('CHART_DATA:')) {
+                 const chartMatch = contentToSearch.match(/CHART_DATA:(\{.*\})/s)
                  if (chartMatch) {
                    try {
                      console.log('Detected updated chart data in resume stream')
