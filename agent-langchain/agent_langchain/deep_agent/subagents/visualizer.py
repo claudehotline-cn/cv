@@ -153,6 +153,15 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableCon
     - 平均线：`series[i]["markLine"] = {"data": [{"type": "average", "name": "平均值"}]}`
     - 最大值：`series[i]["markPoint"] = {"data": [{"type": "max", "name": "最大值"}]}`
     - **特定X轴位置竖线**：`series[0]["markLine"] = {"data": [{"xAxis": "2023-xx(请求的日期)", "name": "标记点"}]}`
+    - **区域背景填充(markArea)**：
+      ```python
+      series[0]["markArea"] = {
+          "itemStyle": {"color": "rgba(255, 0, 0, 0.2)"},
+          "data": [
+              [{"xAxis": "2023-xx(起点)"}, {"xAxis": "2023-xx(终点)"}]  # 注意：起点和终点在同一个列表中
+          ]
+      }
+      ```
 
 - **语义区分**：
   - 用户说"画一条线"展示某数据趋势 -> 使用 **Series**
