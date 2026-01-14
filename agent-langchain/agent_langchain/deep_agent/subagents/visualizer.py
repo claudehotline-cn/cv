@@ -71,6 +71,20 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
     
     task = state.get("task_description", "")
     df_info = state.get("df_profile_result", "")
+    analysis_id = state.get("analysis_id", "")
+    
+    # 尝试读取现有的 chart.json 作为参考
+    previous_chart = ""
+    if analysis_id:
+        chart_path = f"/data/workspace/mock_user_from_tool_call_999/artifacts/{analysis_id}/chart.json"
+        try:
+            import os
+            if os.path.exists(chart_path):
+                with open(chart_path, "r", encoding="utf-8") as f:
+                    previous_chart = f.read().strip()
+                    _LOGGER.info(f"[Visualizer Agent] Found previous chart: {len(previous_chart)} chars")
+        except Exception as e:
+            _LOGGER.warning(f"[Visualizer Agent] Failed to read previous chart: {e}")
 
     _LOGGER.info(f"[Visualizer Agent] Generating code for task: {task}")
     
@@ -89,7 +103,19 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
 任务描述: {task}
 数据概览:
 {df_info}
-
+"""
+    
+    # 如果存在上一次的图表，添加到 Prompt 中作为参考
+    if previous_chart:
+        prompt += f"""
+【⚠️ 修改模式 - 基于现有图表修改】
+以下是上一次生成的图表配置（JSON 格式），你需要**基于此配置进行修改**，而不是从头生成。
+请仔细阅读任务描述中的修改要求，只修改需要改变的部分，保留其他配置。
+上一次的图表配置:
+{previous_chart}
+"""
+    
+    prompt += """
 【代码结构要求】
 1. **加载数据**：使用 `df = load_dataframe('result')` 加载数据
 2. **构建 chart_option**：创建一个字典，包含以下字段：
@@ -114,18 +140,7 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
 【重要提示】
 - 如果任务描述中包含颜色、样式等自定义要求，**必须**在代码中实现
 - 例如"北京用红色"，则北京系列的 itemStyle.color 应设为红色
-- **关于"去掉"/"移除"/"隐藏"类指令**：
-  - "去掉标签" = `label.show` 设为 `False`
-  - "去掉图例" = `legend.show` 设为 `False`
-  - "去掉某系列" = 不要在 series 中包含该系列
-  - "去掉横线/markLine" = 不要添加 markLine 配置
-  - "去掉标题" = 不添加 title 或设 `title.show` 为 `False`
-  - "去掉提示框/tooltip" = `tooltip.show` 设为 `False`
-  - "去掉网格线" = `xAxis.splitLine.show` 或 `yAxis.splitLine.show` 设为 `False`
-  - "去掉坐标轴" = `xAxis.show` 或 `yAxis.show` 设为 `False`
-  - "去掉数据点/圆点" = `series.symbol` 设为 `"none"` 或 `series.showSymbol` 设为 `False`
-  - 其他"去掉X"的指令 = 找到对应配置项设为 `False` 或省略
-
+- **关于"去掉"/"移除"/"隐藏"类指令**：找到 ECharts 中对应元素的配置项，将其 `show` 属性设为 `False`，或完全省略该配置。
 请根据任务描述直接生成 Python 代码："""
     # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
     error_feedback = state.get("error_feedback", "")
