@@ -417,9 +417,17 @@ const runAnalysis = async () => {
                         let chartOpt = chartData.option || (chartData.series ? chartData : null)
                         
                         if (chartOpt) {
-                            chartConfig.value = chartOpt
-                            setTimeout(renderChart, 100)
-                            addThinkingEvent('tool_result', `📊 图表已根据系统注入数据自动渲染`, msg.name)
+                            // 🚀 Prevent re-rendering if config is identical
+                            const newConfigStr = JSON.stringify(chartOpt)
+                            const currentConfigStr = JSON.stringify(chartConfig.value)
+                            
+                            if (newConfigStr !== currentConfigStr) {
+                                chartConfig.value = chartOpt
+                                setTimeout(renderChart, 100)
+                                addThinkingEvent('tool_result', `📊 图表已根据系统注入数据自动渲染`, msg.name)
+                            } else {
+                                console.log('DEBUG: Chart config identical, skipping re-render')
+                            }
                         }
                     } 
                     // 2. 处理报告
