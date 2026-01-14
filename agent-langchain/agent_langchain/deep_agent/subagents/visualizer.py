@@ -64,19 +64,22 @@ def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) ->
         _LOGGER.error("[Visualizer Agent] df_profile(result) failed: %s", e)
         return {"df_profile_result": f'{{"error": "DataFrame result not found: {e}"}}', "analysis_id": analysis_id, "task_description": task_description}
 
-def viz_step2_llm_generate_code(state: VisualizerAgentState) -> dict:
+def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据 df_profile 结果生成 ECharts 代码"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 2: LLM generate chart code")
     today_str = datetime.now().strftime("%Y-%m-%d")
     
     task = state.get("task_description", "")
     df_info = state.get("df_profile_result", "")
-    analysis_id = state.get("analysis_id", "")
+    
+    # 从 config 中获取 analysis_id 和 user_id
+    user_id = config.get("configurable", {}).get("user_id", "mock_user_from_tool_call_999")
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
     
     # 尝试读取现有的 chart.json 作为参考
     previous_chart = ""
     if analysis_id:
-        chart_path = f"/data/workspace/mock_user_from_tool_call_999/artifacts/data_analysis_{analysis_id}/chart.json"
+        chart_path = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/chart.json"
         try:
             import os
             if os.path.exists(chart_path):
