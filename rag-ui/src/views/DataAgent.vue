@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DataAnalysis, Connection, Document, VideoPlay, Loading, Plus } from '@element-plus/icons-vue'
 import { knowledgeBaseApi } from '../api'
@@ -709,6 +709,23 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
                   reportLoaded = true
                   addThinkingEvent('tool_result', '📝 报告已加载', msg.name)
                 }
+              }
+
+              // 处理 content 中的图表数据 (Fixed: 图表更新逻辑)
+              if (msg.content && msg.content.includes('CHART_DATA:')) {
+                 const chartMatch = msg.content.match(/CHART_DATA:(\{.*\})/s)
+                 if (chartMatch) {
+                   try {
+                     console.log('Detected updated chart data in resume stream')
+                     const chartData = JSON.parse(chartMatch[1])
+                     chartConfig.value = chartData
+                     await nextTick()
+                     renderChart()
+                     addThinkingEvent('tool_result', '📊 图表已更新', 'visualizer_agent')
+                   } catch (e) {
+                     console.error('Failed to render updated chart', e)
+                   }
+                 }
               }
             }
           }
