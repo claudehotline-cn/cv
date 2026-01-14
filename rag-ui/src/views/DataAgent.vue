@@ -627,8 +627,13 @@ const renderChart = () => {
 
 // Human-in-the-Loop: 恢复执行
 const resumeWithDecision = async (decision: 'approve' | 'reject') => {
+  console.log('[resumeWithDecision] Called with decision:', decision)
+  console.log('[resumeWithDecision] threadId:', hitlState.value.threadId)
+  console.log('[resumeWithDecision] feedbackMessage:', hitlState.value.feedbackMessage)
+  
   if (!hitlState.value.threadId) {
     ElMessage.error('无法继续：缺少线程 ID')
+    console.log('[resumeWithDecision] ABORT: No threadId')
     return
   }
   
