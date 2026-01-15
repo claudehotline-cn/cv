@@ -326,7 +326,10 @@ def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig)
                 except Exception as e:
                     _LOGGER.error("[Visualizer Agent] Failed to save chart: %s", e)
             
-            return {"messages": [AIMessage(content=f"VISUALIZER_AGENT_COMPLETE: Chart generated")]}
+            # 直接把 chart data 放入消息，通过 subgraph streaming 传给前端
+            # 格式: VISUALIZER_AGENT_COMPLETE: {"type": "chart", "data": {...}}
+            chart_message = json.dumps({"type": "chart", "data": json.loads(chart_data_str)}, ensure_ascii=False)
+            return {"messages": [AIMessage(content=f"VISUALIZER_AGENT_COMPLETE: {chart_message}")]}
     except:
         pass
         
