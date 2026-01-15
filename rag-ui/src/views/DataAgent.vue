@@ -752,6 +752,8 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
           const data = JSON.parse(trimmed.slice(6))
           
           // 🚀 修复：先处理消息，再检查中断（确保 VISUALIZER_AGENT_COMPLETE 被处理）
+          // 🔍 DEBUG: 打印收到的原始数据结构
+          console.log('RESUME STREAM DATA:', JSON.stringify(data).slice(0, 500))
           
           // 处理消息（简化版，主要看 artifact）
           if (data.messages && Array.isArray(data.messages)) {
