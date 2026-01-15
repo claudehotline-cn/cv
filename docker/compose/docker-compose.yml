@@ -507,15 +507,15 @@ services:
       - ../../article_agent/workspace/artifacts:/data/workspace/artifacts:ro
 
   rag-ui:
-    build:
-      context: ../..
-      dockerfile: docker/rag-ui/Dockerfile
-    image: cv/rag-ui:latest
+    image: node:20-slim
     container_name: rag-ui
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 80"
     environment:
       - VITE_API_URL=/api
     volumes:
-      - ../../docker/rag-ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../../rag-ui:/app
+      - rag-ui-node-modules:/app/node_modules
     depends_on:
       - rag-service
       - article-agent
@@ -585,3 +585,4 @@ volumes:
   neo4j-data:
   rag-model-cache:
   ollama-vl-data:
+  rag-ui-node-modules:
