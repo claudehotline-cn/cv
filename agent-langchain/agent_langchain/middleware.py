@@ -251,10 +251,51 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 
                 _LOGGER.info(f"[HITL] {subagent_type} completed, triggering interrupt for user review")
                 
-                # 尝试从 response 中提取 artifact (由 FileContentInjectionMiddleware 注入)
+                # 尝试从 response 中提取 artifact (之前由 FileContentInjectionMiddleware 注入，现在直接从子图消息中解析)
                 artifact_data = None
-                if hasattr(response, 'artifact') and response.artifact:
-                    artifact_data = response.artifact
+                
+                # 1. 尝试从 messages 中解析结构化消息 (VISUALIZER_AGENT_COMPLETE: {...})
+                try:
+                    # response 可能是 dict (State) 或 ToolMessage
+                    messages = []
+                    if isinstance(response, dict):
+                         messages = response.get("messages", [])
+                    elif hasattr(response, "content"):
+                        # 如果是单个消息对象
+                        messages = [response]
+                        
+                    for msg in messages:
+                        content = getattr(msg, "content", "")
+                        if not content: continue
+                        
+                        # 解析 Visualizer Agent 的输出
+                        if content.startswith("VISUALIZER_AGENT_COMPLETE:"):
+                            json_str = content.replace("VISUALIZER_AGENT_COMPLETE:", "", 1).strip()
+                            try:
+                                data = json.loads(json_str)
+                                if isinstance(data, dict) and data.get("type") == "chart":
+                                    artifact_data = data
+                                    break
+                            except Exception as e:
+                                _LOGGER.warning(f"[HITL] Failed to parse chart data from message: {e}")
+
+                        # 解析 Report Agent 的输出
+                        elif content.startswith("REPORT_AGENT_COMPLETE:"):
+                            json_str = content.replace("REPORT_AGENT_COMPLETE:", "", 1).strip()
+                            try:
+                                data = json.loads(json_str)
+                                if isinstance(data, dict) and data.get("type") == "report":
+                                    artifact_data = data
+                                    break
+                            except Exception as e:
+                                _LOGGER.warning(f"[HITL] Failed to parse report data from message: {e}")
+                                
+                    # 2. 如果消息解析失败但 response 依然携带 artifact (兼容旧逻辑)
+                    if not artifact_data and hasattr(response, 'artifact') and response.artifact:
+                        artifact_data = response.artifact
+                        
+                except Exception as e:
+                    _LOGGER.error(f"[HITL] Failed to extract artifact from response: {e}")
                 
                 # 构造中断请求
                 interrupt_value = {
