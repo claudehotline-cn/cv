@@ -391,12 +391,40 @@ const runAnalysis = async () => {
                   if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
                     console.log('AI message content:', msg.content.slice(0, 100))
                     
+                    // 🚀 新增：解析 subgraph streaming 传来的 VISUALIZER_AGENT_COMPLETE 图表数据
+                    if (msg.content.startsWith('VISUALIZER_AGENT_COMPLETE:')) {
+                      const jsonStr = msg.content.substring('VISUALIZER_AGENT_COMPLETE:'.length).trim()
+                      try {
+                        const parsed = JSON.parse(jsonStr)
+                        if (parsed.type === 'chart' && parsed.data) {
+                          console.log('SUBGRAPH: Found chart data from VISUALIZER_AGENT_COMPLETE')
+                          const chartOpt = parsed.data.option || (parsed.data.series ? parsed.data : parsed.data)
+                          if (chartOpt) {
+                            const newConfigStr = JSON.stringify(chartOpt)
+                            const currentConfigStr = JSON.stringify(chartConfig.value)
+                            if (newConfigStr !== currentConfigStr) {
+                              chartConfig.value = chartOpt
+                              setTimeout(renderChart, 100)
+                              addThinkingEvent('tool_result', `📊 图表配置已从子图流式接收`, 'visualizer_agent')
+                            }
+                          }
+                        }
+                      } catch (e) {
+                        console.log('Failed to parse VISUALIZER_AGENT_COMPLETE JSON:', e)
+                      }
+                    }
+                    // 🚀 新增：解析 subgraph streaming 传来的生成的 SQL 查询
+                    else if (msg.content.startsWith('生成的 SQL 查询:')) {
+                      addThinkingEvent('step', msg.content, 'sql_agent')
+                    }
                     // 🚀 简化逻辑：ALL AI chat messages go to Thinking Panel
                     // Result Panel 只由 artifact.type === 'report' 更新（在下方 artifact 处理块中）
-                    console.log('Redirecting AI message to Thinking Panel:', msg.content.slice(0, 50))
-                    const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
-                    if (!lastEvent || lastEvent.content !== msg.content) {
-                        addThinkingEvent('step', msg.content)
+                    else {
+                      console.log('Redirecting AI message to Thinking Panel:', msg.content.slice(0, 50))
+                      const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
+                      if (!lastEvent || lastEvent.content !== msg.content) {
+                          addThinkingEvent('step', msg.content)
+                      }
                     }
                   }
                 }
