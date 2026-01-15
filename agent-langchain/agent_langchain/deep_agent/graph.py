@@ -51,9 +51,9 @@ def get_data_deep_agent_graph() -> Any:
         middleware=[
             ThinkingLoggerMiddleware(),
             SubAgentHITLMiddleware(
-                interrupt_subagents=["visualizer_agent"],
+                interrupt_subagents=["visualizer_agent", "report_agent"],
                 allowed_decisions=["approve", "reject"],
-                description="图表生成完成，请确认是否继续生成报告",
+                description="图表/报告生成完成，请确认是否继续",
             ),
             FileContentInjectionMiddleware(),
         ],
