@@ -240,6 +240,7 @@ class SubAgentHITLMiddleware(AgentMiddleware):
         # 只处理 task 工具
         if tool_name == 'task':
             subagent_type = args.get('subagent_type', '')
+            _LOGGER.info(f"[HITL DEBUG] task tool detected: subagent_type='{subagent_type}', interrupt_subagents={self.interrupt_subagents}")
             
             # 检查是否是需要中断的 subagent
             if subagent_type in self.interrupt_subagents:
