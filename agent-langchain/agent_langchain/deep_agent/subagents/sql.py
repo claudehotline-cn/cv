@@ -5,7 +5,7 @@ import logging
 import operator
 import re
 import json
-from typing import TypedDict, Annotated, Sequence, Any
+from typing import TypedDict, Annotated, Sequence, Any, Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -193,7 +193,7 @@ Strictly result ONLY the SQL code.
     _LOGGER.info("[SQL Agent] Extracted SQL: %s", extracted_sql[:100])
     return {"generated_sql": extracted_sql}
 
-def sql_step4_run_sql(state: SQLAgentState) -> Command:
+def sql_step4_run_sql(state: SQLAgentState) -> Command[Literal["llm_generate_sql", "format_output"]]:
     """步骤 4: 执行 SQL，使用 Command 决定下一步走向"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 4: run_sql")
     

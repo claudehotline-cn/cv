@@ -6,7 +6,7 @@ import operator
 import os
 import re
 import json
-from typing import TypedDict, Annotated, Sequence, Any
+from typing import TypedDict, Annotated, Sequence, Any, Literal
 from datetime import datetime
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -209,7 +209,7 @@ python
     _LOGGER.info("[Visualizer Agent] LLM generated code: %s", code[:300])
     return {"chart_code": code.strip()}
 
-def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> Command:
+def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> Command[Literal["llm_generate", "format_output"]]:
     """Step 3: 执行 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 3: python_execute")
     code = state.get("chart_code", "")

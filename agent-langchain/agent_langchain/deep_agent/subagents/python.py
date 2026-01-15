@@ -5,7 +5,7 @@ import logging
 import operator
 import re
 import json
-from typing import TypedDict, Annotated, Sequence, Any
+from typing import TypedDict, Annotated, Sequence, Any, Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
@@ -132,7 +132,7 @@ python
     _LOGGER.info("[Python Agent] LLM generated code: %s", code[:300])
     return {"python_code": code.strip()}
 
-def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Command:
+def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Command[Literal["llm_generate", "format_output"]]:
     """步骤 3: 执行 LLM 生成的 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 3: python_execute")
     code = state.get("python_code", "")
