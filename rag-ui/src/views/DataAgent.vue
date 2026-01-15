@@ -280,6 +280,7 @@ const runAnalysis = async () => {
         assistant_id: graphId,
         input: input,
         stream_mode: ["values"],
+        stream_subgraphs: true,  // 启用子图流式输出，让前端看到 sub-agent 中间步骤
         config: {
           configurable: {
             user_id: "mock_user_from_tool_call_999",  // TODO: Replace with actual user ID from auth context
@@ -681,7 +682,8 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
             analysis_id: currentAnalysisId.value
           }
         },
-        stream_mode: ["values"]
+        stream_mode: ["values"],
+        stream_subgraphs: true  // 启用子图流式输出
       })
     })
     
