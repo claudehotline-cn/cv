@@ -170,23 +170,19 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
         except Exception as e:
             _LOGGER.error("[Report Agent] Failed to save report: %s", e)
     
-    return {"report_content": content}
-
-def report_format_output(state: ReportAgentState) -> dict:
-    """格式化最终输出"""
-    content = state.get("report_content", "")
-    return {"messages": [AIMessage(content=f"REPORT_AGENT_COMPLETE: {content}")]}
+    # 直接返回最终消息，通过 subgraph streaming 传给前端
+    # 格式: REPORT_AGENT_COMPLETE: {"type": "report", "content": "..."}
+    report_message = json.dumps({"type": "report", "content": content}, ensure_ascii=False)
+    return {"messages": [AIMessage(content=f"REPORT_AGENT_COMPLETE: {report_message}")]}
 
 # 构建 Report 固化流程图
 report_agent_graph = StateGraph(ReportAgentState)
 report_agent_graph.add_node("df_profile", report_step1_df_profile)
 report_agent_graph.add_node("generate", report_step2_generate)
-report_agent_graph.add_node("format_output", report_format_output)
 
 report_agent_graph.add_edge(START, "df_profile")
 report_agent_graph.add_edge("df_profile", "generate")
-report_agent_graph.add_edge("generate", "format_output")
-report_agent_graph.add_edge("format_output", END)
+report_agent_graph.add_edge("generate", END)
 
 report_agent_runnable = report_agent_graph.compile()
 

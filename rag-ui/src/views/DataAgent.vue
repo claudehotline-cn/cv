@@ -417,6 +417,20 @@ const runAnalysis = async () => {
                     else if (msg.content.startsWith('生成的 SQL 查询:')) {
                       addThinkingEvent('step', msg.content, 'sql_agent')
                     }
+                    // 🚀 新增：解析 subgraph streaming 传来的 REPORT_AGENT_COMPLETE 报告数据
+                    else if (msg.content.startsWith('REPORT_AGENT_COMPLETE:')) {
+                      const jsonStr = msg.content.substring('REPORT_AGENT_COMPLETE:'.length).trim()
+                      try {
+                        const parsed = JSON.parse(jsonStr)
+                        if (parsed.type === 'report' && parsed.content) {
+                          console.log('SUBGRAPH: Found report content from REPORT_AGENT_COMPLETE')
+                          analysisResult.value = parsed.content
+                          addThinkingEvent('tool_result', `📝 报告已从子图流式接收`, 'report_agent')
+                        }
+                      } catch (e) {
+                        console.log('Failed to parse REPORT_AGENT_COMPLETE JSON:', e)
+                      }
+                    }
                     // 🚀 简化逻辑：ALL AI chat messages go to Thinking Panel
                     // Result Panel 只由 artifact.type === 'report' 更新（在下方 artifact 处理块中）
                     else {
