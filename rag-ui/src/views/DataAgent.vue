@@ -763,7 +763,49 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
               if (msg.id && processedMsgIds.has(msg.id)) continue
               if (msg.id) processedMsgIds.add(msg.id)
               
-              // 处理 artifact
+              // 🚀 新增：处理子图消息内容（VISUALIZER_AGENT_COMPLETE, REPORT_AGENT_COMPLETE, SQL）
+              const content = msg.content
+              if (content && typeof content === 'string') {
+                // 解析 VISUALIZER_AGENT_COMPLETE
+                if (content.startsWith('VISUALIZER_AGENT_COMPLETE:')) {
+                  const jsonStr = content.substring('VISUALIZER_AGENT_COMPLETE:'.length).trim()
+                  try {
+                    const parsed = JSON.parse(jsonStr)
+                    if (parsed.type === 'chart' && parsed.data) {
+                      console.log('RESUME: Found chart data from VISUALIZER_AGENT_COMPLETE')
+                      const chartOpt = parsed.data.option || (parsed.data.series ? parsed.data : parsed.data)
+                      if (chartOpt) {
+                        chartConfig.value = chartOpt
+                        await nextTick()
+                        renderChart()
+                        addThinkingEvent('tool_result', `📊 图表已根据反馈重新生成`, 'visualizer_agent')
+                      }
+                    }
+                  } catch (e) {
+                    console.log('Failed to parse VISUALIZER_AGENT_COMPLETE in resume:', e)
+                  }
+                }
+                // 解析 REPORT_AGENT_COMPLETE
+                else if (content.startsWith('REPORT_AGENT_COMPLETE:')) {
+                  const jsonStr = content.substring('REPORT_AGENT_COMPLETE:'.length).trim()
+                  try {
+                    const parsed = JSON.parse(jsonStr)
+                    if (parsed.type === 'report' && parsed.content) {
+                      console.log('RESUME: Found report content from REPORT_AGENT_COMPLETE')
+                      analysisResult.value = parsed.content
+                      addThinkingEvent('tool_result', `📝 报告已根据反馈重新生成`, 'report_agent')
+                    }
+                  } catch (e) {
+                    console.log('Failed to parse REPORT_AGENT_COMPLETE in resume:', e)
+                  }
+                }
+                // 解析生成的 SQL 查询
+                else if (content.startsWith('生成的 SQL 查询:')) {
+                  addThinkingEvent('step', content, 'sql_agent')
+                }
+              }
+              
+              // 处理 artifact (兼容旧逻辑)
               if (msg.type === 'tool' && msg.artifact) {
                 if (msg.artifact.type === 'report' && msg.artifact.content) {
                   analysisResult.value = msg.artifact.content
