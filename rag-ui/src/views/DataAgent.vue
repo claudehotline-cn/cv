@@ -751,11 +751,7 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
         try {
           const data = JSON.parse(trimmed.slice(6))
           
-          // 检查是否又触发了中断（例如报告审核）
-          if (data.__interrupt__) {
-            handleInterrupt(data.__interrupt__, hitlState.value.threadId)
-            return
-          }
+          // 🚀 修复：先处理消息，再检查中断（确保 VISUALIZER_AGENT_COMPLETE 被处理）
           
           // 处理消息（简化版，主要看 artifact）
           if (data.messages && Array.isArray(data.messages)) {
@@ -829,6 +825,12 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
                 }
               }
             }
+          }
+          
+          // 🚀 现在检查是否触发了新的中断（在消息处理之后）
+          if (data.__interrupt__) {
+            handleInterrupt(data.__interrupt__, hitlState.value.threadId)
+            return
           }
         } catch {}
       }
