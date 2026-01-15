@@ -5,6 +5,7 @@ import logging
 import operator
 import os
 import re
+import json
 from typing import TypedDict, Annotated, Sequence, Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -134,10 +135,11 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
 ## 详细分析（数值统计描述）
 ## 结论
 
-【重要】如果任务描述中包含"用户反馈"，必须优先遵守反馈要求：
-- "去掉数据概览" → 不输出"数据概览"章节
-- "去掉 XXX" → 不输出该章节
-- 其他修改要求 → 按反馈修改
+【重要】如果任务描述中包含"用户反馈"，你必须严格遵守用户的修改要求：
+- "去掉 XXX" / "删除 XXX" → 在新报告中不输出该章节
+- "添加 XXX" / "增加 XXX" → 在新报告中新增该章节内容
+- "修改 XXX" → 按照用户要求修改对应内容
+- 用户的反馈是最高优先级，务必完全按照反馈执行
 """
     # 获取 LLM
     llm = build_chat_llm(task_name="data_deep_subagent")

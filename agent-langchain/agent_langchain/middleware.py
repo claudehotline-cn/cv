@@ -287,9 +287,14 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                             else:
                                 return f"USER_INTERRUPT: 用户对 {subagent_type} 输出不满意。反馈: {feedback}。请根据反馈重新执行该任务。"
 
-                # 用户批准，直接返回原始响应
-                _LOGGER.info(f"[HITL] User approved, returning original response")
-                return response
+                # 用户批准，返回明确的批准消息，告知 Main Agent 继续下一步
+                _LOGGER.info(f"[HITL] User approved, returning approval message")
+                if subagent_type == "visualizer_agent":
+                    return f"USER_APPROVED: 用户已批准图表。图表生成完成，请继续执行下一步任务（如生成分析报告）。不要再次调用 visualizer_agent。"
+                elif subagent_type == "report_agent":
+                    return f"USER_APPROVED: 用户已批准分析报告。报告已完成，任务结束。不要再次调用 report_agent。"
+                else:
+                    return f"USER_APPROVED: 用户已批准 {subagent_type} 的输出。请继续执行下一步，不要重复调用同一个 subagent。"
         
         # 继续执行工具调用
         return await handler(request)
