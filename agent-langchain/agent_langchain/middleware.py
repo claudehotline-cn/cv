@@ -289,9 +289,29 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                             # Agent 应该根据反馈重新调用 visualizer_agent
                             return f"USER_INTERRUPT: 用户对图表不满意。反馈: {feedback}。请根据反馈修改图表，然后再次尝试。"
 
-                _LOGGER.info(f"[HITL] User approved, returning original response")
-                # 用户批准，返回原始响应继续流程
-                return response
+                _LOGGER.info(f"[HITL] User approved, returning response WITHOUT artifact to prevent duplicate emission")
+                # 用户批准，返回不带 artifact 的响应
+                # 图表数据已在中断时发送给前端，无需重复发送
+                original_content = ""
+                if hasattr(response, 'content'):
+                    original_content = response.content
+                else:
+                    original_content = str(response)
+                
+                # 获取 tool_call_id
+                tool_id = ""
+                if isinstance(tool_call, dict):
+                    tool_id = tool_call.get('id', '')
+                else:
+                    tool_id = getattr(tool_call, 'id', '')
+                
+                return ToolMessage(
+                    tool_call_id=tool_id,
+                    content=original_content,
+                    name=tool_name,
+                    status="success"
+                    # 注意：没有 artifact 参数
+                )
         
         # 继续执行工具调用
         return await handler(request)
