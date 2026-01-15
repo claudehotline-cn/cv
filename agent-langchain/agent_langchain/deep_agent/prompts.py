@@ -86,7 +86,7 @@ MAIN_AGENT_PROMPT = """你是数据分析主管，负责根据用户的分析需
 # ============================================================================
 # SQL Agent
 # ============================================================================
-SQL_AGENT_DESCRIPTION = "【第一步】以及需要执行SQL查询时调用。需提供查询需求。"
+SQL_AGENT_DESCRIPTION = "【第一步】以及需要执行SQL查询时调用。调用时需提供用户需求。"
 SQL_AGENT_PROMPT = """你是一个 SQL 专家。根据提供的数据库 Schema 生成 SQL 查询。
 
 **【用户需求】**
@@ -122,7 +122,7 @@ EXCEL_AGENT_PROMPT = """你是一个 Excel 专家。
 # ============================================================================
 # Python Agent
 # ============================================================================
-PYTHON_AGENT_DESCRIPTION = "专用于执行 Python/Pandas 数据处理。"
+PYTHON_AGENT_DESCRIPTION = "专用于执行 Python/Pandas 数据处理。调用时需提供用户需求。"
 PYTHON_AGENT_PROMPT = """你是一个 Python 数据分析师。拥有的核心技能：{skill_name}
 
 ## 核心职责
@@ -179,7 +179,7 @@ print("Columns:", df.columns.tolist())  # 必须先查看列名！
 # ============================================================================
 # Reviewer Agent
 # ============================================================================
-REVIEWER_AGENT_DESCRIPTION = "专用于检查数据质量。需提供结果变量名。"
+REVIEWER_AGENT_DESCRIPTION = "专用于检查数据质量。调用时需提供用户需求。"
 REVIEWER_AGENT_PROMPT = """你是一个数据质量审核员。
 职责：
 1. 调用 `data_validate_result(data_source="result")` 检查 Python Agent 生成的最终结果。
@@ -199,7 +199,7 @@ REVIEWER_AGENT_PROMPT = """你是一个数据质量审核员。
 # ============================================================================
 # Visualizer Agent (Profile + Python Architecture)
 # ============================================================================
-VISUALIZER_AGENT_DESCRIPTION = "【可视化编译器】使用 Python 生成 ECharts 图表。"
+VISUALIZER_AGENT_DESCRIPTION = "【可视化编译器】使用 Python 生成 ECharts 图表。调用时需提供用户需求。"
 VISUALIZER_AGENT_PROMPT = """你是可视化代理。必须生成图表！
 
 **【核心指令】**
@@ -250,7 +250,7 @@ print("CHART_DATA:" + json.dumps({"success": True, "chart_type": "line", "option
 # ============================================================================
 # Report Agent (报告生成专家)
 # ============================================================================
-REPORT_AGENT_DESCRIPTION = "最后一步，生成分析报告。description 需包含：用户原始需求。"
+REPORT_AGENT_DESCRIPTION = "最后一步，生成分析报告。调用时需提供用户需求。"
 REPORT_AGENT_PROMPT = """你是数据分析报告专家，负责将分析结果整理成专业报告。
 
 **【核心能力】**
