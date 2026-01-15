@@ -246,58 +246,12 @@ class SubAgentHITLMiddleware(AgentMiddleware):
             if subagent_type in self.interrupt_subagents:
                 _LOGGER.info(f"[HITL] Executing {subagent_type} first, will interrupt after completion")
                 
-                # 先执行 subagent，让它完成图表生成
+                # 先执行 subagent，让它完成生成（图表/报告）
                 response = await handler(request)
                 
                 _LOGGER.info(f"[HITL] {subagent_type} completed, triggering interrupt for user review")
                 
-                # 尝试从 response 中提取 artifact (之前由 FileContentInjectionMiddleware 注入，现在直接从子图消息中解析)
-                artifact_data = None
-                
-                # 1. 尝试从 messages 中解析结构化消息 (VISUALIZER_AGENT_COMPLETE: {...})
-                try:
-                    # response 可能是 dict (State) 或 ToolMessage
-                    messages = []
-                    if isinstance(response, dict):
-                         messages = response.get("messages", [])
-                    elif hasattr(response, "content"):
-                        # 如果是单个消息对象
-                        messages = [response]
-                        
-                    for msg in messages:
-                        content = getattr(msg, "content", "")
-                        if not content: continue
-                        
-                        # 解析 Visualizer Agent 的输出
-                        if content.startswith("VISUALIZER_AGENT_COMPLETE:"):
-                            json_str = content.replace("VISUALIZER_AGENT_COMPLETE:", "", 1).strip()
-                            try:
-                                data = json.loads(json_str)
-                                if isinstance(data, dict) and data.get("type") == "chart":
-                                    artifact_data = data
-                                    break
-                            except Exception as e:
-                                _LOGGER.warning(f"[HITL] Failed to parse chart data from message: {e}")
-
-                        # 解析 Report Agent 的输出
-                        elif content.startswith("REPORT_AGENT_COMPLETE:"):
-                            json_str = content.replace("REPORT_AGENT_COMPLETE:", "", 1).strip()
-                            try:
-                                data = json.loads(json_str)
-                                if isinstance(data, dict) and data.get("type") == "report":
-                                    artifact_data = data
-                                    break
-                            except Exception as e:
-                                _LOGGER.warning(f"[HITL] Failed to parse report data from message: {e}")
-                                
-                    # 2. 如果消息解析失败但 response 依然携带 artifact (兼容旧逻辑)
-                    if not artifact_data and hasattr(response, 'artifact') and response.artifact:
-                        artifact_data = response.artifact
-                        
-                except Exception as e:
-                    _LOGGER.error(f"[HITL] Failed to extract artifact from response: {e}")
-                
-                # 构造中断请求
+                # 构造中断请求（artifact 数据已通过 subgraph streaming 发送给前端）
                 interrupt_value = {
                     "action_requests": [{
                         "name": subagent_type,
@@ -307,9 +261,7 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                     "review_configs": [{
                         "action_name": subagent_type,
                         "allowed_decisions": self.allowed_decisions
-                    }],
-                    # 将 artifact 数据直接包含在中断 payload 中，以便前端在中断状态下也能渲染
-                    "artifact": artifact_data
+                    }]
                 }
                 
                 # 触发中断，等待用户决策
@@ -328,7 +280,6 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                             _LOGGER.info(f"[HITL] User rejected {subagent_type}: {feedback}")
                             
                             # 返回用户反馈作为工具执行结果
-                            # 根据 subagent_type 生成不同的提示
                             if subagent_type == "visualizer_agent":
                                 return f"USER_INTERRUPT: 用户对图表不满意。反馈: {feedback}。请根据反馈修改图表，然后再次调用 visualizer_agent。"
                             elif subagent_type == "report_agent":
@@ -336,29 +287,9 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                             else:
                                 return f"USER_INTERRUPT: 用户对 {subagent_type} 输出不满意。反馈: {feedback}。请根据反馈重新执行该任务。"
 
-                _LOGGER.info(f"[HITL] User approved, returning response WITHOUT artifact to prevent duplicate emission")
-                # 用户批准，返回不带 artifact 的响应
-                # 图表数据已在中断时发送给前端，无需重复发送
-                original_content = ""
-                if hasattr(response, 'content'):
-                    original_content = response.content
-                else:
-                    original_content = str(response)
-                
-                # 获取 tool_call_id
-                tool_id = ""
-                if isinstance(tool_call, dict):
-                    tool_id = tool_call.get('id', '')
-                else:
-                    tool_id = getattr(tool_call, 'id', '')
-                
-                return ToolMessage(
-                    tool_call_id=tool_id,
-                    content=original_content,
-                    name=tool_name,
-                    status="success"
-                    # 注意：没有 artifact 参数
-                )
+                # 用户批准，直接返回原始响应
+                _LOGGER.info(f"[HITL] User approved, returning original response")
+                return response
         
         # 继续执行工具调用
         return await handler(request)
