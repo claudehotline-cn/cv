@@ -89,12 +89,37 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     _LOGGER.info("[Report Agent Fixed Flow] Step 2: LLM generate report")
     task = state.get("task_description", "")
     df_info = state.get("df_profile_result", "")
+    analysis_id = state.get("analysis_id", "")
+    user_id = "anonymous"
+    if config:
+        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+    
+    # 🚀 读取之前的报告（如果存在），支持增量修改
+    prev_report = ""
+    prev_report_section = ""
+    if analysis_id and user_id:
+        report_path = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/report.md"
+        if os.path.exists(report_path):
+            try:
+                with open(report_path, "r", encoding="utf-8") as f:
+                    prev_report = f.read().strip()
+                if prev_report:
+                    _LOGGER.info("[Report Agent] Loaded previous report (%d chars) for incremental modification", len(prev_report))
+                    prev_report_section = f"""
+【上一个版本的报告】
+以下是之前生成的报告，用户可能对此有反馈。请根据任务描述中的用户反馈进行修改。
+
+{prev_report}
+
+"""
+            except Exception as e:
+                _LOGGER.warning("[Report Agent] Failed to load previous report: %s", e)
     
     prompt = f"""你是 Report Agent。根据以下信息生成完整的数据分析报告。
 
 【任务描述】
 {task}
-
+{prev_report_section}
 【真实数据样本】（来自 df_profile）
 {df_info}
 
