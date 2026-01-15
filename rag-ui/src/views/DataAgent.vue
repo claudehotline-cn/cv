@@ -796,11 +796,10 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
   if (interrupt.length > 0) {
     const interruptData = interrupt[0].value || interrupt[0]
     console.log('HITL interruptData:', interruptData)
-    console.log('HITL artifact present:', interruptData.artifact ? 'YES' : 'NO')
-    if (interruptData.artifact) {
-      console.log('HITL artifact type:', interruptData.artifact.type)
-      console.log('HITL artifact data keys:', Object.keys(interruptData.artifact.data || {}))
-    }
+    
+    // 获取 action_requests 中的 subagent_type 来推断 reviewType
+    const actionRequest = interruptData.action_requests?.[0]
+    const subagentName = actionRequest?.name || ''
     
     hitlState.value = {
       isInterrupted: true,
@@ -809,33 +808,31 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
       reviewConfigs: interruptData.review_configs || [],
       feedbackMessage: '',
       isCollapsed: false,
-      reviewType: ''  // Will be set below based on artifact type
+      reviewType: ''
     }
     
-    // 如果中断数据中包含 artifact (图表)，立即渲染
-    if (interruptData.artifact && interruptData.artifact.type === 'chart') {
-      console.log('Rendering chart from interrupt artifact:', interruptData.artifact.data)
-      const chartOption = interruptData.artifact.data.option || interruptData.artifact.data
-      console.log('Chart option to render:', chartOption)
-      chartConfig.value = chartOption
+    // FileContentInjectionMiddleware 已移除，图表/报告数据已通过 subgraph stream 加载
+    // 只需根据 subagent 类型设置 reviewType
+    if (subagentName === 'visualizer_agent' || interruptData.artifact?.type === 'chart') {
       hitlState.value.reviewType = 'chart'
-      
-      // 等待 DOM 更新后渲染
-      nextTick(() => {
-        console.log('Calling renderChart() after nextTick')
-        renderChart()
-      })
+      // 如果有 artifact（兼容旧代码），也尝试加载
+      if (interruptData.artifact?.data) {
+        const chartOption = interruptData.artifact.data.option || interruptData.artifact.data
+        chartConfig.value = chartOption
+        nextTick(() => renderChart())
+      }
       addThinkingEvent('step', '⏸️ 等待用户审核图表...')
     } 
-    // 如果中断数据中包含 artifact (报告)，显示报告内容
-    else if (interruptData.artifact && interruptData.artifact.type === 'report') {
-      console.log('Rendering report from interrupt artifact')
-      analysisResult.value = interruptData.artifact.content
+    else if (subagentName === 'report_agent' || interruptData.artifact?.type === 'report') {
       hitlState.value.reviewType = 'report'
+      if (interruptData.artifact?.content) {
+        analysisResult.value = interruptData.artifact.content
+      }
       addThinkingEvent('step', '⏸️ 等待用户审核报告...')
     }
     else {
-      console.log('No chart/report artifact found in interrupt data')
+      console.log('Unknown interrupt type, subagent:', subagentName)
+      addThinkingEvent('step', '⏸️ 等待用户确认...')
     }
     
     loading.value = false

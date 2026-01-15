@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from ..llm_runtime import build_chat_llm
-from ..middleware import ThinkingLoggerMiddleware, FileContentInjectionMiddleware, SubAgentHITLMiddleware
+from ..middleware import ThinkingLoggerMiddleware, SubAgentHITLMiddleware
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -55,7 +55,7 @@ def get_data_deep_agent_graph() -> Any:
                 allowed_decisions=["approve", "reject"],
                 description="图表/报告生成完成，请确认是否继续",
             ),
-            FileContentInjectionMiddleware(),
+            # FileContentInjectionMiddleware 已移除，改用 subgraph streaming 直接传输数据
         ],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
