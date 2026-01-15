@@ -279,7 +279,7 @@ const runAnalysis = async () => {
       body: JSON.stringify({
         assistant_id: graphId,
         input: input,
-        stream_mode: ["values"],
+        stream_mode: ["updates", "values"],  // updates 模式才能看到子图输出
         stream_subgraphs: true,  // 启用子图流式输出，让前端看到 sub-agent 中间步骤
         config: {
           configurable: {
@@ -682,7 +682,7 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
             analysis_id: currentAnalysisId.value
           }
         },
-        stream_mode: ["values"],
+        stream_mode: ["updates", "values"],  // updates 模式才能看到子图输出
         stream_subgraphs: true  // 启用子图流式输出
       })
     })
