@@ -283,12 +283,17 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                     if decisions and isinstance(decisions, list):
                         decision = decisions[0]
                         if decision.get("type") == "reject":
-                            feedback = decision.get("message", "用户拒绝了图表")
+                            feedback = decision.get("message", f"用户拒绝了{subagent_type}输出")
                             _LOGGER.info(f"[HITL] User rejected {subagent_type}: {feedback}")
                             
                             # 返回用户反馈作为工具执行结果
-                            # Agent 应该根据反馈重新调用 visualizer_agent
-                            return f"USER_INTERRUPT: 用户对图表不满意。反馈: {feedback}。请根据反馈修改图表，然后再次尝试。"
+                            # 根据 subagent_type 生成不同的提示
+                            if subagent_type == "visualizer_agent":
+                                return f"USER_INTERRUPT: 用户对图表不满意。反馈: {feedback}。请根据反馈修改图表，然后再次调用 visualizer_agent。"
+                            elif subagent_type == "report_agent":
+                                return f"USER_INTERRUPT: 用户对分析报告不满意。反馈: {feedback}。请根据反馈修改报告，然后再次调用 report_agent。"
+                            else:
+                                return f"USER_INTERRUPT: 用户对 {subagent_type} 输出不满意。反馈: {feedback}。请根据反馈重新执行该任务。"
 
                 _LOGGER.info(f"[HITL] User approved, returning response WITHOUT artifact to prevent duplicate emission")
                 # 用户批准，返回不带 artifact 的响应
