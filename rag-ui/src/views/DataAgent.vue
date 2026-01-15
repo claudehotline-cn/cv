@@ -729,21 +729,25 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
       })
     })
     
+    console.log('[RESUME DEBUG] POST response status:', runRes.status, runRes.ok)
     if (!runRes.ok) throw new Error('恢复执行失败')
     
     // 处理恢复后的流式响应（复用原有逻辑）
     const reader = runRes.body?.getReader()
+    console.log('[RESUME DEBUG] Got reader:', !!reader)
     const decoder = new TextDecoder()
     let buffer = ''
     
     while (reader) {
       const { done, value } = await reader.read()
+      console.log('[RESUME DEBUG] Read chunk, done:', done, 'value length:', value?.length || 0)
       if (done) break
       
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
       
+      console.log('[RESUME DEBUG] Processing', lines.length, 'lines')
       for (const line of lines) {
         const trimmed = line.trim()
         if (!trimmed || !trimmed.startsWith('data: ')) continue
