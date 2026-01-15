@@ -191,7 +191,12 @@ Strictly result ONLY the SQL code.
         extracted_sql = "" # 清空，触发 run_sql 报错重试
     
     _LOGGER.info("[SQL Agent] Extracted SQL: %s", extracted_sql[:100])
-    return {"generated_sql": extracted_sql}
+    
+    # 将生成的 SQL 添加到 messages，以便通过 subgraph streaming 流式传输给前端
+    from langchain_core.messages import AIMessage
+    sql_preview_msg = AIMessage(content=f"生成的 SQL 查询:\n```sql\n{extracted_sql}\n```")
+    
+    return {"generated_sql": extracted_sql, "messages": [sql_preview_msg]}
 
 def sql_step4_run_sql(state: SQLAgentState) -> Command[Literal["llm_generate_sql", "format_output"]]:
     """步骤 4: 执行 SQL，使用 Command 决定下一步走向"""
