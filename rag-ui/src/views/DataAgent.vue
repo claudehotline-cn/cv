@@ -137,6 +137,7 @@ interface HITLState {
   reviewConfigs: any[]
   feedbackMessage: string
   isCollapsed: boolean
+  reviewType: 'chart' | 'report' | ''  // 当前审核类型
 }
 const hitlState = ref<HITLState>({
   isInterrupted: false,
@@ -145,6 +146,7 @@ const hitlState = ref<HITLState>({
   reviewConfigs: [],
   feedbackMessage: '',
   isCollapsed: false,
+  reviewType: ''
 })
 
 // 当前分析 ID，用于 resume 时恢复上下文
@@ -777,6 +779,7 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
       reviewConfigs: interruptData.review_configs || [],
       feedbackMessage: '',
       isCollapsed: false,
+      reviewType: ''  // Will be set below based on artifact type
     }
     
     // 如果中断数据中包含 artifact (图表)，立即渲染
@@ -785,17 +788,26 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
       const chartOption = interruptData.artifact.data.option || interruptData.artifact.data
       console.log('Chart option to render:', chartOption)
       chartConfig.value = chartOption
+      hitlState.value.reviewType = 'chart'
       
       // 等待 DOM 更新后渲染
       nextTick(() => {
         console.log('Calling renderChart() after nextTick')
         renderChart()
       })
-    } else {
-      console.log('No chart artifact found in interrupt data')
+      addThinkingEvent('step', '⏸️ 等待用户审核图表...')
+    } 
+    // 如果中断数据中包含 artifact (报告)，显示报告内容
+    else if (interruptData.artifact && interruptData.artifact.type === 'report') {
+      console.log('Rendering report from interrupt artifact')
+      analysisResult.value = interruptData.artifact.content
+      hitlState.value.reviewType = 'report'
+      addThinkingEvent('step', '⏸️ 等待用户审核报告...')
+    }
+    else {
+      console.log('No chart/report artifact found in interrupt data')
     }
     
-    addThinkingEvent('step', '⏸️ 等待用户审核图表...')
     loading.value = false
   }
 }
@@ -910,7 +922,7 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
                 <div class="hitl-header">
                   <div class="hitl-title">
                     <el-icon size="24" color="#67c23a"><VideoPlay /></el-icon>
-                    <span>图表生成完成，请确认</span>
+                    <span>{{ hitlState.reviewType === 'report' ? '分析报告生成完成，请确认' : '图表生成完成，请确认' }}</span>
                   </div>
                   <el-button 
                     link
@@ -923,13 +935,17 @@ const handleInterrupt = (interrupt: any[], threadId: string) => {
                 
                 <div v-show="!hitlState.isCollapsed" class="hitl-content">
                   <div class="hitl-description">
-                    系统已生成图表，请确认是否继续生成分析报告。如有问题，可输入反馈后重新生成。
+                    {{ hitlState.reviewType === 'report' 
+                      ? '系统已生成分析报告，请确认内容是否满意。如有问题，可输入反馈后重新生成。' 
+                      : '系统已生成图表，请确认是否继续生成分析报告。如有问题，可输入反馈后重新生成。' }}
                   </div>
                   <el-input
                     v-model="hitlState.feedbackMessage"
                     type="textarea"
                     :rows="2"
-                    placeholder="可选：输入反馈意见（如：请改为柱状图）"
+                    :placeholder="hitlState.reviewType === 'report' 
+                      ? '可选：输入反馈意见（如：请补充数据来源说明）' 
+                      : '可选：输入反馈意见（如：请改为柱状图）'"
                     class="hitl-feedback"
                   />
                   <div class="hitl-actions">

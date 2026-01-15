@@ -219,8 +219,8 @@ class SubAgentHITLMiddleware(AgentMiddleware):
         description: str = "请确认是否继续"
     ):
         super().__init__()
-        # 修改：在 visualizer_agent 完成后中断，而不是 report_agent 开始前
-        self.interrupt_subagents = interrupt_subagents or ["visualizer_agent"]
+        # 修改：在 visualizer_agent 和 report_agent 完成后中断
+        self.interrupt_subagents = interrupt_subagents or ["visualizer_agent", "report_agent"]
         self.allowed_decisions = allowed_decisions or ["approve", "reject"]
         self.description = description
     
