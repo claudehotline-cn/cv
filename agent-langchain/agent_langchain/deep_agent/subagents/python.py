@@ -200,6 +200,7 @@ def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Com
 def format_final_output(state: PythonAgentState) -> dict:
     """格式化最终输出为 Agent 消息"""
     result = state.get("python_result", "")
+    _LOGGER.info("[Python Agent] format_final_output result length: %d", len(result))
     return {"messages": [AIMessage(content=f"PYTHON_AGENT_COMPLETE: {result}")]}
 
 # check_python_retry 函数已移除，改用 Command 模式在 python_execute 中直接决定走向
