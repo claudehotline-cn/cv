@@ -8,7 +8,9 @@ import json
 from typing import TypedDict, Annotated, Sequence, Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command
 from deepagents import CompiledSubAgent
 
 from ...llm_runtime import build_chat_llm
@@ -130,17 +132,20 @@ python
     _LOGGER.info("[Python Agent] LLM generated code: %s", code[:300])
     return {"python_code": code.strip()}
 
-def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> dict:
-    """Step 3: 执行 LLM 生成的 Python 代码"""
+def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Command:
+    """步骤 3: 执行 LLM 生成的 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 3: python_execute")
     code = state.get("python_code", "")
     # 直接从 config 读取 analysis_id，不依赖 state 传递
     analysis_id = config.get("configurable", {}).get("analysis_id", "")
     
-    if not code:
-        return {"python_result": "Error: No code to execute", "retry_count": 0}
-    
     retry_count = state.get("retry_count", 0)
+    
+    if not code:
+        return Command(
+            update={"python_result": "Error: No code to execute", "retry_count": 0},
+            goto="format_output"
+        )
     
     try:
         # Pass config to tool invocation so it gets user_id
@@ -161,37 +166,43 @@ def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> dic
         
         if not is_success:
             _LOGGER.warning("[Python Agent] Execution failed: %s", error_msg)
-            return {
-                "python_result": result, 
-                "retry_count": retry_count + 1,
-                "error_feedback": error_msg
-            }
+            if retry_count < 3:
+                _LOGGER.info("[Python Agent] Retrying... Attempt %d", retry_count + 1)
+                return Command(
+                    update={"python_result": result, "retry_count": retry_count + 1, "error_feedback": error_msg},
+                    goto="llm_generate"
+                )
+            else:
+                return Command(
+                    update={"python_result": result, "error_feedback": error_msg},
+                    goto="format_output"
+                )
         
         # 成功清除错误状态
-        return {"python_result": result, "error_feedback": ""}
+        return Command(
+            update={"python_result": result, "error_feedback": ""},
+            goto="format_output"
+        )
         
     except Exception as e:
         _LOGGER.error("[Python Agent] python_execute failed: %s", e)
-        return {
-            "python_result": f"Error: {e}", 
-            "retry_count": retry_count + 1,
-            "error_feedback": str(e)
-        }
+        if retry_count < 3:
+            return Command(
+                update={"python_result": f"Error: {e}", "retry_count": retry_count + 1, "error_feedback": str(e)},
+                goto="llm_generate"
+            )
+        else:
+            return Command(
+                update={"python_result": f"Error: {e}", "error_feedback": str(e)},
+                goto="format_output"
+            )
 
 def format_final_output(state: PythonAgentState) -> dict:
     """格式化最终输出为 Agent 消息"""
     result = state.get("python_result", "")
     return {"messages": [AIMessage(content=f"PYTHON_AGENT_COMPLETE: {result}")]}
 
-def check_python_retry(state: PythonAgentState) -> str:
-    """检查是否需要重试"""
-    retry_count = state.get("retry_count", 0)
-    error_feedback = state.get("error_feedback", "")
-    
-    if error_feedback and retry_count < 3:
-        _LOGGER.info("[Python Agent] Retrying... Attempt %d", retry_count + 1)
-        return "retry"
-    return "continue"
+# check_python_retry 函数已移除，改用 Command 模式在 python_execute 中直接决定走向
 
 # 构建 Python Agent Graph
 python_agent_graph = StateGraph(PythonAgentState)
@@ -204,14 +215,7 @@ python_agent_graph.add_edge(START, "df_profile")
 python_agent_graph.add_edge("df_profile", "llm_generate")
 python_agent_graph.add_edge("llm_generate", "python_execute")
 
-python_agent_graph.add_conditional_edges(
-    "python_execute",
-    check_python_retry,
-    {
-        "retry": "llm_generate",
-        "continue": "format_output"
-    }
-)
+# Command 模式：python_execute 内部直接决定下一步，无需 conditional_edges
 python_agent_graph.add_edge("format_output", END)
 
 python_agent_runnable = python_agent_graph.compile()

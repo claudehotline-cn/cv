@@ -13,6 +13,7 @@ from langgraph.store.base import BaseStore
 from deepagents.backends import StoreBackend
 from langgraph.runtime import Runtime
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command
 from deepagents import CompiledSubAgent
 from ...utils.message_utils import extract_text_from_message
 
@@ -192,8 +193,8 @@ Strictly result ONLY the SQL code.
     _LOGGER.info("[SQL Agent] Extracted SQL: %s", extracted_sql[:100])
     return {"generated_sql": extracted_sql}
 
-def sql_step4_run_sql(state: SQLAgentState) -> dict:
-    """Step 4: 执行 SQL"""
+def sql_step4_run_sql(state: SQLAgentState) -> Command:
+    """步骤 4: 执行 SQL，使用 Command 决定下一步走向"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 4: run_sql")
     
     sql = state.get("generated_sql", "")
@@ -203,11 +204,19 @@ def sql_step4_run_sql(state: SQLAgentState) -> dict:
     retry_count = state.get("retry_count", 0)
     
     if not sql:
-        return {
-            "sql_result": "Error: No SQL generated or SQL is invalid.",
-            "retry_count": retry_count + 1,
-            "error_feedback": "Previous attempt failed to generate valid SQL. Please generate a valid SELECT statement."
-        }
+        if retry_count < 3:
+            _LOGGER.info("[SQL Agent] No SQL generated, retrying... Attempt %d", retry_count + 1)
+            return Command(
+                update={"sql_result": "Error: No SQL generated or SQL is invalid.", 
+                        "retry_count": retry_count + 1,
+                        "error_feedback": "Previous attempt failed to generate valid SQL. Please generate a valid SELECT statement."},
+                goto="llm_generate_sql"
+            )
+        else:
+            return Command(
+                update={"sql_result": "Error: No SQL generated after 3 attempts.", "error_feedback": "Max retries exceeded"},
+                goto="format_output"
+            )
     
     try:
         # 传入 user_requirement 以启用 SQL 审查
@@ -234,22 +243,36 @@ def sql_step4_run_sql(state: SQLAgentState) -> dict:
             pass
             
         if not is_success:
-             _LOGGER.warning("[SQL Agent] Execution/Review failed: %s", error_msg)
-             return {
-                "sql_result": result,
-                "retry_count": retry_count + 1,
-                "error_feedback": error_msg
-            }
+            _LOGGER.warning("[SQL Agent] Execution/Review failed: %s", error_msg)
+            if retry_count < 3:
+                _LOGGER.info("[SQL Agent] Retrying... Attempt %d", retry_count + 1)
+                return Command(
+                    update={"sql_result": result, "retry_count": retry_count + 1, "error_feedback": error_msg},
+                    goto="llm_generate_sql"
+                )
+            else:
+                return Command(
+                    update={"sql_result": result, "error_feedback": error_msg},
+                    goto="format_output"
+                )
             
-        return {"sql_result": result, "error_feedback": ""} # 成功清除错误
+        return Command(
+            update={"sql_result": result, "error_feedback": ""},
+            goto="format_output"
+        )
         
     except Exception as e:
         _LOGGER.error("[SQL Agent] SQL execution failed: %s", e)
-        return {
-            "sql_result": f"Error: {e}",
-            "retry_count": retry_count + 1,
-            "error_feedback": str(e)
-        }
+        if retry_count < 3:
+            return Command(
+                update={"sql_result": f"Error: {e}", "retry_count": retry_count + 1, "error_feedback": str(e)},
+                goto="llm_generate_sql"
+            )
+        else:
+            return Command(
+                update={"sql_result": f"Error: {e}", "error_feedback": str(e)},
+                goto="format_output"
+            )
 
 def sql_format_output(state: SQLAgentState) -> dict:
     """格式化输出"""
@@ -257,15 +280,7 @@ def sql_format_output(state: SQLAgentState) -> dict:
     output = f"SQL_AGENT_COMPLETE: {sql_result}"
     return {"messages": [AIMessage(content=output)]}
 
-def check_sql_retry(state: SQLAgentState) -> str:
-    """检查是否需要重试"""
-    retry_count = state.get("retry_count", 0)
-    error_feedback = state.get("error_feedback", "")
-    
-    if error_feedback and retry_count < 3:
-        _LOGGER.info("[SQL Agent] Retrying... Attempt %d", retry_count + 1)
-        return "retry"
-    return "continue"
+# check_sql_retry 函数已移除，改用 Command 模式在 run_sql 中直接决定走向
 
 # 构建 SQL 固化流程图
 sql_agent_graph = StateGraph(SQLAgentState)
@@ -280,14 +295,7 @@ sql_agent_graph.add_edge("list_tables", "table_schema")
 sql_agent_graph.add_edge("table_schema", "llm_generate_sql")
 sql_agent_graph.add_edge("llm_generate_sql", "run_sql")
 
-sql_agent_graph.add_conditional_edges(
-    "run_sql",
-    check_sql_retry,
-    {
-        "retry": "llm_generate_sql",
-        "continue": "format_output"
-    }
-)
+# Command 模式：run_sql 内部直接决定下一步，无需 conditional_edges
 sql_agent_graph.add_edge("format_output", END)
 
 sql_agent_runnable = sql_agent_graph.compile()

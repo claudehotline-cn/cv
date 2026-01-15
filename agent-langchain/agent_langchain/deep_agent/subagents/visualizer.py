@@ -12,6 +12,7 @@ from datetime import datetime
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command
 from deepagents import CompiledSubAgent
 
 from ...llm_runtime import build_chat_llm
@@ -208,14 +209,17 @@ python
     _LOGGER.info("[Visualizer Agent] LLM generated code: %s", code[:300])
     return {"chart_code": code.strip()}
 
-def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> dict:
-    """Step 3: 执行 Python 代码"""
+def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> Command:
+    """Step 3: 执行 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 3: python_execute")
     code = state.get("chart_code", "")
     analysis_id = state.get("analysis_id", "")
     
     if not code:
-        return {"chart_result": "Error: No code to execute", "retry_count": 0}
+        return Command(
+            update={"chart_result": "Error: No code to execute", "retry_count": 0},
+            goto="format_output"
+        )
         
     retry_count = state.get("retry_count", 0)
     
@@ -261,21 +265,36 @@ def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig
             
         if not is_success:
             _LOGGER.warning("[Visualizer Agent] Validation failed: %s", error_msg)
-            return {
-                "chart_result": result,
-                "retry_count": retry_count + 1,
-                "error_feedback": error_msg
-            }
+            # 使用 Command 决定是否重试
+            if retry_count < 3:
+                _LOGGER.info("[Visualizer Agent] Retrying... Attempt %d", retry_count + 1)
+                return Command(
+                    update={"chart_result": result, "retry_count": retry_count + 1, "error_feedback": error_msg},
+                    goto="llm_generate"  # 回到 LLM 重新生成
+                )
+            else:
+                return Command(
+                    update={"chart_result": result, "error_feedback": error_msg},
+                    goto="format_output"  # 超过重试次数，结束
+                )
         
-        return {"chart_result": result, "error_feedback": ""}
+        return Command(
+            update={"chart_result": result, "error_feedback": ""},
+            goto="format_output"
+        )
         
     except Exception as e:
         _LOGGER.error("[Visualizer Agent] python_execute failed: %s", e)
-        return {
-            "chart_result": f"Error: {e}",
-            "retry_count": retry_count + 1,
-            "error_feedback": str(e)
-        }
+        if retry_count < 3:
+            return Command(
+                update={"chart_result": f"Error: {e}", "retry_count": retry_count + 1, "error_feedback": str(e)},
+                goto="llm_generate"
+            )
+        else:
+            return Command(
+                update={"chart_result": f"Error: {e}", "error_feedback": str(e)},
+                goto="format_output"
+            )
 
 def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """格式化最终输出 - 提取 CHART_DATA 并持久化到文件"""
@@ -313,15 +332,7 @@ def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig)
         
     return {"messages": [AIMessage(content=f"VISUALIZER_AGENT_COMPLETE: {result}")]}
 
-def check_viz_retry(state: VisualizerAgentState) -> str:
-    """检查 Visualizer Agent 是否需要重试"""
-    retry_count = state.get("retry_count", 0)
-    error_feedback = state.get("error_feedback", "")
-    
-    if error_feedback and retry_count < 3:
-        _LOGGER.info("[Visualizer Agent] Retrying... Attempt %d", retry_count + 1)
-        return "retry"
-    return "continue"
+# check_viz_retry 函数已移除，改用 Command 模式在 python_execute 中直接决定走向
 
 # 构建 Visualizer Agent Graph
 viz_agent_graph = StateGraph(VisualizerAgentState)
@@ -334,14 +345,7 @@ viz_agent_graph.add_edge(START, "df_profile")
 viz_agent_graph.add_edge("df_profile", "llm_generate")
 viz_agent_graph.add_edge("llm_generate", "python_execute")
 
-viz_agent_graph.add_conditional_edges(
-    "python_execute",
-    check_viz_retry,
-    {
-        "retry": "llm_generate",
-        "continue": "format_output"
-    }
-)
+# Command 模式：python_execute 内部直接决定下一步，无需 conditional_edges
 viz_agent_graph.add_edge("format_output", END)
 
 visualizer_agent_runnable = viz_agent_graph.compile()
