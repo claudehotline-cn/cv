@@ -279,7 +279,7 @@ const runAnalysis = async () => {
       body: JSON.stringify({
         assistant_id: graphId,
         input: input,
-        stream_mode: ["updates", "values"],  // updates 模式才能看到子图输出
+        stream_mode: ["updates", "values", "custom"],  // updates 模式才能看到子图输出，custom 模式看到思维链 CoT
         stream_subgraphs: true,  // 启用子图流式输出，让前端看到 sub-agent 中间步骤
         config: {
           configurable: {
@@ -327,9 +327,32 @@ const runAnalysis = async () => {
             }
             
             // 🚀 解析 custom streaming events (get_stream_writer 发送的思维链)
-            if (data.type && data.type.endsWith('_reasoning') && data.content) {
-              console.log('REASONING:', data.type, data.content.slice(0, 100))
-              addThinkingEvent('step', `💭 ${data.content}`, data.type.replace('_reasoning', ''))
+            // 兼容旧版 (*_reasoning) 和标准版 (reasoning)
+            const isLegacyReasoning = data.type && data.type.endsWith('_reasoning') && data.content
+            const isStandardReasoning = data.type === 'reasoning' && data.reasoning
+            
+            if (isLegacyReasoning || isStandardReasoning) {
+              const content = isStandardReasoning ? data.reasoning : data.content
+              const typeLabel = isStandardReasoning ? 'reasoning' : data.type.replace('_reasoning', '')
+              console.log('REASONING:', typeLabel, content.slice(0, 100))
+              
+              // 🚀 Aggregation Logic: Append to last event if it matches
+              try {
+                  const hasEvents = thinkingEvents.value.length > 0
+                  const lastEvent = hasEvents ? thinkingEvents.value[thinkingEvents.value.length - 1] : null
+                  const isStep = lastEvent?.type === 'step'
+                  const isSameTool = lastEvent?.toolName === typeLabel
+                  const isThinking = lastEvent?.content && typeof lastEvent.content === 'string' && lastEvent.content.startsWith('💭')
+                  
+                  if (lastEvent && isStep && isSameTool && isThinking) {
+                      lastEvent.content += content
+                  } else {
+                      addThinkingEvent('step', `💭 ${content}`, typeLabel)
+                  }
+              } catch (e) {
+                  console.error('Aggregation error:', e)
+                  addThinkingEvent('step', `💭 ${content}`, typeLabel)
+              }
             }
             
             // Deep Agent 返回 messages 数组
@@ -741,7 +764,7 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
             analysis_id: currentAnalysisId.value
           }
         },
-        stream_mode: ["updates", "values"],  // updates 模式才能看到子图输出
+        stream_mode: ["updates", "values", "custom"],  // updates 模式才能看到子图输出，custom 模式看到思维链 CoT
         stream_subgraphs: true  // 启用子图流式输出
       })
     })
@@ -775,6 +798,34 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
           // 🚀 修复：先处理消息，再检查中断（确保 VISUALIZER_AGENT_COMPLETE 被处理）
           // 🔍 DEBUG: 打印收到的原始数据结构
           console.log('RESUME STREAM DATA:', JSON.stringify(data).slice(0, 500))
+          
+          // 🚀 解析 custom streaming events (兼容 resume 后的思维链)
+          const isLegacyReasoning = data.type && data.type.endsWith('_reasoning') && data.content
+          const isStandardReasoning = data.type === 'reasoning' && data.reasoning
+            
+          if (isLegacyReasoning || isStandardReasoning) {
+              const content = isStandardReasoning ? data.reasoning : data.content
+              const typeLabel = isStandardReasoning ? 'reasoning' : data.type.replace('_reasoning', '')
+              console.log('RESUME REASONING:', typeLabel, content.slice(0, 100))
+              
+              // 🚀 Aggregation Logic: Append to last event if it matches
+              try {
+                  const hasEvents = thinkingEvents.value.length > 0
+                  const lastEvent = hasEvents ? thinkingEvents.value[thinkingEvents.value.length - 1] : null
+                  const isStep = lastEvent?.type === 'step'
+                  const isSameTool = lastEvent?.toolName === typeLabel
+                  const isThinking = lastEvent?.content && typeof lastEvent.content === 'string' && lastEvent.content.startsWith('💭')
+                  
+                  if (lastEvent && isStep && isSameTool && isThinking) {
+                      lastEvent.content += content
+                  } else {
+                      addThinkingEvent('step', `💭 ${content}`, typeLabel)
+                  }
+              } catch (e) {
+                  console.error('Resume aggregation error:', e)
+                  addThinkingEvent('step', `💭 ${content}`, typeLabel)
+              }
+          }
           
           // 处理消息（简化版，主要看 artifact）
           if (data.messages && Array.isArray(data.messages)) {

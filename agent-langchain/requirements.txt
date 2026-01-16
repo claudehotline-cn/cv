@@ -1,9 +1,9 @@
-langchain==1.2.3
+langchain==1.2.5
 langgraph==1.0.5
 langgraph-prebuilt==1.0.5
 langgraph-cli[inmem]>=0.4.11
 langgraph-api==0.6.28
-langchain-openai==1.1.7
+langchain-openai>=1.1.7
 langchain-community>=0.4.1
 langchain-ollama>=0.2
 deepagents==0.3.0

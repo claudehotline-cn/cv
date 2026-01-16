@@ -111,6 +111,8 @@ SQL_AGENT_PROMPT = """你是一个 SQL 专家。根据提供的数据库 Schema 
 ```sql
 SELECT ...
 ```
+
+请使用中文交流
 """
 
 

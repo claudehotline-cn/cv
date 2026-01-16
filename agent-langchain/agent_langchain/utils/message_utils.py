@@ -76,10 +76,16 @@ def stream_reasoning(response, event_type: str = "reasoning") -> None:
                 reasoning = block.get("reasoning", "")
                 break
         
+        # Fallback: Check additional_kwargs (for streaming chunks or older LangChain versions)
+        if not reasoning and hasattr(response, "additional_kwargs"):
+            reasoning = response.additional_kwargs.get("reasoning_content") or \
+                       response.additional_kwargs.get("reasoning")
+        
         if reasoning:
-            writer({"type": event_type, "content": reasoning})
+            # Use 'reasoning' field to match standard block structure, regardless of event_type
+            writer({"type": event_type, "reasoning": reasoning})
             _LOGGER.info("[stream_reasoning] Sent %s via custom stream (%d chars)", event_type, len(reasoning))
         else:
-            _LOGGER.debug("[stream_reasoning] No reasoning content found in content_blocks")
+            _LOGGER.debug("[stream_reasoning] No reasoning content found in content_blocks or kwargs")
     except Exception as e:
         _LOGGER.debug("[stream_reasoning] get_stream_writer not available: %s", e)

@@ -15,7 +15,7 @@ from langgraph.runtime import Runtime
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 from deepagents import CompiledSubAgent
-from ...utils.message_utils import extract_text_from_message
+from ...utils.message_utils import extract_text_from_message, stream_reasoning
 
 from ...llm_runtime import build_chat_llm
 from ..tools import (
@@ -158,15 +158,30 @@ Strictly result ONLY the SQL code.
             first_block_type = blocks[0].get('type') if isinstance(blocks[0], dict) else type(blocks[0]).__name__
             _LOGGER.info(f"[SQL DEBUG] Message[{i}] first_block_type={first_block_type}")
     
-    response = llm.invoke(messages)
+    # Use Streaming to support real-time CoT display
+    full_response = None
     
-    # DEBUG: Log response structure (using content_blocks)
-    resp_blocks = getattr(response, 'content_blocks', [])
-    _LOGGER.info(f"[SQL DEBUG] Response content_blocks_count={len(resp_blocks)}")
+    # 获取 stream writer
+    from langgraph.config import get_stream_writer
+    writer = get_stream_writer()
     
-    # 🚀 提取思维链并通过 custom streaming 直接发送到前端（不进入 state）
-    from ...utils.message_utils import stream_reasoning
-    stream_reasoning(response, "sql_reasoning")
+    for chunk in llm.stream(messages):
+        # 1. Accumulate response
+        if full_response is None:
+            full_response = chunk
+        else:
+            full_response += chunk
+            
+        # 2. Extract and stream reasoning (CoT) delta
+        # Using shared utility which handles both content_blocks and additional_kwargs
+        stream_reasoning(chunk, "reasoning")
+             
+    response = full_response
+    
+    # Log final counts
+    if response:
+        resp_blocks = getattr(response, 'content_blocks', [])
+        _LOGGER.info(f"[SQL DEBUG] Response content_blocks_count={len(resp_blocks)}")
     
     from ...utils.message_utils import extract_text_from_message
     sql_content = extract_text_from_message(response)

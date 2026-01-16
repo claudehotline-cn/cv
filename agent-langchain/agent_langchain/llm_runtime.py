@@ -24,22 +24,29 @@ def _apply_reasoning_content_patch():
     """
     try:
         import langchain_openai.chat_models.base as openai_base
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, FunctionMessage, ToolMessage, ChatMessage
-        from typing import Mapping, cast
+        from langchain_core.messages import AIMessage, AIMessageChunk
+        from typing import Mapping, Any
         
-        # Store original function
+        # Store original functions
         _original_convert_dict_to_message = openai_base._convert_dict_to_message
+        _original_convert_delta = openai_base._convert_delta_to_message_chunk
         
+        # --------------------------------------------------------
+        # Patch 1: Non-streaming responses (_convert_dict_to_message)
+        # --------------------------------------------------------
         def _patched_convert_dict_to_message(_dict: Mapping[str, Any]):
             """Patched version that preserves reasoning_content in additional_kwargs."""
             role = _dict.get("role")
-            name = _dict.get("name")
-            id_ = _dict.get("id")
-            
-            if role == "user":
-                return HumanMessage(content=_dict.get("content", ""), id=id_, name=name)
             
             if role == "assistant":
+                # Check for reasoning field first
+                reasoning = _dict.get("reasoning_content") or _dict.get("reasoning")
+                
+                # If no reasoning, use original logic
+                if not reasoning:
+                     return _original_convert_dict_to_message(_dict)
+                
+                # Re-implement AIMessage construction to include reasoning
                 content = _dict.get("content", "") or ""
                 additional_kwargs: dict = {}
                 
@@ -47,14 +54,10 @@ def _apply_reasoning_content_patch():
                     additional_kwargs["function_call"] = dict(function_call)
                 if audio := _dict.get("audio"):
                     additional_kwargs["audio"] = audio
-                # 🚀 FIX: Preserve reasoning_content (PR #34705)
-                if reasoning_content := _dict.get("reasoning_content"):
-                    additional_kwargs["reasoning_content"] = reasoning_content
-                    _LOGGER.info(f"[Patch] Extracted reasoning_content: {len(reasoning_content)} chars")
-                # Also check for 'reasoning' field (vLLM uses both)
-                if reasoning := _dict.get("reasoning"):
-                    additional_kwargs["reasoning"] = reasoning
-                    _LOGGER.info(f"[Patch] Extracted reasoning: {len(str(reasoning))} chars")
+                
+                # 🚀 FIX: Preserve reasoning_content
+                additional_kwargs["reasoning_content"] = reasoning
+                _LOGGER.info(f"[Patch] Extracted reasoning (non-stream): {len(reasoning)} chars")
                 
                 tool_calls = []
                 invalid_tool_calls = []
@@ -66,21 +69,40 @@ def _apply_reasoning_content_patch():
                         except Exception as e:
                             invalid_tool_calls.append(make_invalid_tool_call(raw_tool_call, str(e)))
                 
+                if refusal := _dict.get("refusal"):
+                    additional_kwargs["refusal"] = refusal
+                
                 return AIMessage(
                     content=content,
                     additional_kwargs=additional_kwargs,
-                    name=name,
-                    id=id_,
+                    name=_dict.get("name"),
+                    id=_dict.get("id"),
                     tool_calls=tool_calls,
                     invalid_tool_calls=invalid_tool_calls,
                 )
             
-            # For other roles, use original function
             return _original_convert_dict_to_message(_dict)
         
-        # Apply the patch
+        # --------------------------------------------------------
+        # Patch 2: Streaming responses (_convert_delta_to_message_chunk)
+        # --------------------------------------------------------
+        def _patched_convert_delta_to_message_chunk(_dict, default_class):
+            """Patched version that preserves reasoning_content in streaming chunks."""
+            # Call original to get the base chunk
+            chunk = _original_convert_delta(_dict, default_class)
+            
+            # 🚀 FIX: Inject reasoning_content into AIMessageChunk.additional_kwargs
+            reasoning = _dict.get("reasoning_content") or _dict.get("reasoning")
+            
+            if reasoning and isinstance(chunk, AIMessageChunk):
+                chunk.additional_kwargs["reasoning_content"] = reasoning
+                
+            return chunk
+
+        # Apply the patches
         openai_base._convert_dict_to_message = _patched_convert_dict_to_message
-        _LOGGER.info("[Patch] Applied reasoning_content fix to langchain_openai")
+        openai_base._convert_delta_to_message_chunk = _patched_convert_delta_to_message_chunk
+        _LOGGER.info("[Patch] Applied reasoning_content fix to langchain_openai (stream & non-stream)")
         
     except Exception as e:
         _LOGGER.warning(f"[Patch] Failed to apply reasoning_content patch: {e}")
@@ -130,6 +152,7 @@ def build_chat_llm(task_name: str = "generic") -> Any:
                 api_key="EMPTY",  # vLLM 不需要真正的 API key
                 temperature=0.6,  # 🚀 Thinking Mode 推荐使用 0.6, 防止 suppression
                 output_version="v1",  # 🚀 LangChain v1 标准化 content_blocks，分离 <think> 到 ReasoningContentBlock
+                max_tokens=8192,      # 🚀 增加最大 Token 数，防止 CoT 被截断
                 extra_body={
                     "chat_template_kwargs": {
                         "enable_thinking": True,  # 🚀 启用 Qwen3 思维模式
