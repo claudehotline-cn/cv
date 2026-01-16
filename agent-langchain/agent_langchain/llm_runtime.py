@@ -12,6 +12,84 @@ from .config import get_settings
 _LOGGER = logging.getLogger("agent_langchain.llm")
 
 
+# ============================================================================
+# Monkey Patch: Fix reasoning_content extraction (PR #34705)
+# https://github.com/langchain-ai/langchain/pull/34705
+# ============================================================================
+def _apply_reasoning_content_patch():
+    """Apply monkey patch to langchain_openai to preserve reasoning_content.
+    
+    This fixes the issue where vLLM's reasoning_content field is silently dropped
+    when converting OpenAI responses to LangChain AIMessage objects.
+    """
+    try:
+        import langchain_openai.chat_models.base as openai_base
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, FunctionMessage, ToolMessage, ChatMessage
+        from typing import Mapping, cast
+        
+        # Store original function
+        _original_convert_dict_to_message = openai_base._convert_dict_to_message
+        
+        def _patched_convert_dict_to_message(_dict: Mapping[str, Any]):
+            """Patched version that preserves reasoning_content in additional_kwargs."""
+            role = _dict.get("role")
+            name = _dict.get("name")
+            id_ = _dict.get("id")
+            
+            if role == "user":
+                return HumanMessage(content=_dict.get("content", ""), id=id_, name=name)
+            
+            if role == "assistant":
+                content = _dict.get("content", "") or ""
+                additional_kwargs: dict = {}
+                
+                if function_call := _dict.get("function_call"):
+                    additional_kwargs["function_call"] = dict(function_call)
+                if audio := _dict.get("audio"):
+                    additional_kwargs["audio"] = audio
+                # 🚀 FIX: Preserve reasoning_content (PR #34705)
+                if reasoning_content := _dict.get("reasoning_content"):
+                    additional_kwargs["reasoning_content"] = reasoning_content
+                    _LOGGER.info(f"[Patch] Extracted reasoning_content: {len(reasoning_content)} chars")
+                # Also check for 'reasoning' field (vLLM uses both)
+                if reasoning := _dict.get("reasoning"):
+                    additional_kwargs["reasoning"] = reasoning
+                    _LOGGER.info(f"[Patch] Extracted reasoning: {len(str(reasoning))} chars")
+                
+                tool_calls = []
+                invalid_tool_calls = []
+                if raw_tool_calls := _dict.get("tool_calls"):
+                    from langchain_core.output_parsers.openai_tools import parse_tool_call, make_invalid_tool_call
+                    for raw_tool_call in raw_tool_calls:
+                        try:
+                            tool_calls.append(parse_tool_call(raw_tool_call, return_id=True))
+                        except Exception as e:
+                            invalid_tool_calls.append(make_invalid_tool_call(raw_tool_call, str(e)))
+                
+                return AIMessage(
+                    content=content,
+                    additional_kwargs=additional_kwargs,
+                    name=name,
+                    id=id_,
+                    tool_calls=tool_calls,
+                    invalid_tool_calls=invalid_tool_calls,
+                )
+            
+            # For other roles, use original function
+            return _original_convert_dict_to_message(_dict)
+        
+        # Apply the patch
+        openai_base._convert_dict_to_message = _patched_convert_dict_to_message
+        _LOGGER.info("[Patch] Applied reasoning_content fix to langchain_openai")
+        
+    except Exception as e:
+        _LOGGER.warning(f"[Patch] Failed to apply reasoning_content patch: {e}")
+
+
+# Apply patch on module load
+_apply_reasoning_content_patch()
+
+
 def build_chat_llm(task_name: str = "generic") -> Any:
     """根据全局 Settings 构造用于对话/推理的 Chat LLM 客户端。"""
 
@@ -40,7 +118,7 @@ def build_chat_llm(task_name: str = "generic") -> Any:
     if provider == "vllm":
         vllm_base_url = getattr(settings, "vllm_base_url", "http://vllm:8000/v1")
         _LOGGER.info(
-            "llm.init provider=vllm task=%s model=%s base_url=%s",
+            "llm.init provider=vllm task=%s model=%s base_url=%s thinking=enabled",
             task_name,
             settings.llm_model,
             vllm_base_url,
@@ -50,11 +128,15 @@ def build_chat_llm(task_name: str = "generic") -> Any:
                 model=settings.llm_model,
                 base_url=vllm_base_url,
                 api_key="EMPTY",  # vLLM 不需要真正的 API key
-                temperature=0,
-                model_kwargs={"stop": ["<|im_end|>", "<|endoftext|>"]},
+                temperature=0.6,  # 🚀 Thinking Mode 推荐使用 0.6, 防止 suppression
+                output_version="v1",  # 🚀 LangChain v1 标准化 content_blocks，分离 <think> 到 ReasoningContentBlock
                 extra_body={
-                    "chat_template_kwargs": {"enable_thinking": False},
-                    "parallel_tool_calls": False,  # 🔴 强制禁用并发调用 (vLLM/OpenAI)
+                    "chat_template_kwargs": {
+                        "enable_thinking": True,  # 🚀 启用 Qwen3 思维模式
+                    },
+                },
+                model_kwargs={
+                    "stop": ["<|im_end|>", "<|endoftext|>"],
                 },
             )
         except Exception as exc:  # pragma: no cover
@@ -76,79 +158,3 @@ def build_chat_llm(task_name: str = "generic") -> Any:
     except Exception as exc:  # pragma: no cover
         _LOGGER.error("llm.init_failed provider=openai task=%s error=%s", task_name, exc)
         raise RuntimeError(f"LLM 初始化失败（openai, task={task_name}）") from exc
-
-
-def build_structured_llm(schema: Any, task_name: str = "structured") -> Any:
-    """构造配置了结构化输出的 LLM。
-    
-    使用 LangChain 的 with_structured_output() 方法确保 LLM 返回符合 Pydantic schema 的数据。
-    
-    Args:
-        schema: Pydantic BaseModel 类，定义期望的输出格式
-        task_name: 任务名称用于日志
-        
-    Returns:
-        配置了结构化输出的 LLM，调用 invoke() 会直接返回 Pydantic 对象
-    """
-    base_llm = build_chat_llm(task_name=task_name)
-    
-    _LOGGER.info("llm.structured_output task=%s schema=%s", task_name, schema.__name__ if hasattr(schema, '__name__') else str(schema))
-    
-    try:
-        return base_llm.with_structured_output(schema)
-    except Exception as exc:
-        _LOGGER.error("llm.structured_output_failed task=%s error=%s", task_name, exc)
-        raise RuntimeError(f"结构化输出配置失败（task={task_name}）") from exc
-
-
-def extract_text_content(response: Any) -> str:
-    """从 LLM 响应中提取纯文本内容。
-    
-    支持 LangChain v1 的 content_blocks 列表格式和传统字符串格式。
-    
-    Args:
-        response: LLM 响应对象 (AIMessage) 或内容字符串/列表
-        
-    Returns:
-        提取的纯文本内容 (去除思维链和非文本块)
-    """
-    content = getattr(response, "content", response)
-    
-    # 1. Handle String
-    if isinstance(content, str):
-        return content.strip()
-    
-    # 2. Handle List (Content Blocks)
-    if isinstance(content, list):
-        text_parts = []
-        for block in content:
-            if isinstance(block, dict):
-                block_type = block.get("type", "unknown")
-                if block_type == "text":
-                    text_parts.append(str(block.get("text", "")))
-                # Ignore 'reasoning' or 'image' blocks for text extraction
-            elif isinstance(block, str):
-                text_parts.append(block)
-        return "\n".join(text_parts).strip()
-        
-    return str(content)
-
-
-def invoke_llm_with_timeout(
-    task_name: str,
-    fn: Callable[[], Any],
-    timeout_sec: float,
-) -> Any:
-    """以统一的超时封装执行 LLM 调用函数。"""
-
-    if timeout_sec is not None and timeout_sec <= 0:
-        return fn()
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(fn)
-        try:
-            return future.result(timeout=timeout_sec)
-        except FuturesTimeoutError as exc:
-            _LOGGER.error("llm.timeout task=%s timeout_sec=%.1f", task_name, timeout_sec)
-            raise TimeoutError(f"LLM 调用超时（task={task_name}, >{timeout_sec}s）") from exc
-

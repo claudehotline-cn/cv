@@ -48,3 +48,38 @@ def extract_text_from_message(message: Union[BaseMessage, str, List, Dict]) -> s
         return "\n".join(text_parts)
         
     return str(content)
+
+
+def stream_reasoning(response, event_type: str = "reasoning") -> None:
+    """Extract reasoning/CoT from LLM response and stream it directly to frontend.
+    
+    Uses get_stream_writer() to send custom events without storing in state.
+    Expects reasoning to be in standard content_blocks with type="reasoning".
+    
+    Args:
+        response: AIMessage from LLM
+        event_type: Type label for the custom event (e.g., 'sql_reasoning', 'python_reasoning')
+    """
+    content_blocks = getattr(response, 'content_blocks', [])
+    
+    try:
+        from langgraph.config import get_stream_writer
+        writer = get_stream_writer()
+        if not writer:
+            _LOGGER.debug("[stream_reasoning] No writer available")
+            return
+            
+        # Extract reasoning from standard content_blocks (type=reasoning)
+        reasoning = ""
+        for block in content_blocks:
+            if isinstance(block, dict) and block.get("type") == "reasoning":
+                reasoning = block.get("reasoning", "")
+                break
+        
+        if reasoning:
+            writer({"type": event_type, "content": reasoning})
+            _LOGGER.info("[stream_reasoning] Sent %s via custom stream (%d chars)", event_type, len(reasoning))
+        else:
+            _LOGGER.debug("[stream_reasoning] No reasoning content found in content_blocks")
+    except Exception as e:
+        _LOGGER.debug("[stream_reasoning] get_stream_writer not available: %s", e)

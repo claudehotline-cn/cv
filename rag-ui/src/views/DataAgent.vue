@@ -326,6 +326,12 @@ const runAnalysis = async () => {
               return  // 中断流式处理，等待用户决策
             }
             
+            // 🚀 解析 custom streaming events (get_stream_writer 发送的思维链)
+            if (data.type && data.type.endsWith('_reasoning') && data.content) {
+              console.log('REASONING:', data.type, data.content.slice(0, 100))
+              addThinkingEvent('step', `💭 ${data.content}`, data.type.replace('_reasoning', ''))
+            }
+            
             // Deep Agent 返回 messages 数组
             if (data.messages && Array.isArray(data.messages)) {
               for (const msg of data.messages) {
@@ -387,6 +393,17 @@ const runAnalysis = async () => {
                       addThinkingEvent('tool_call', content, toolCall.name)
                     }
                   }
+                  
+                  // 🚀 解析 AIMessage content_blocks 中的 reasoning（Main Agent 思维链）
+                  if (msg.content && Array.isArray(msg.content)) {
+                    for (const block of msg.content) {
+                      if (block.type === 'reasoning' && block.reasoning) {
+                        console.log('MAIN_AGENT_REASONING:', block.reasoning.slice(0, 100))
+                        addThinkingEvent('step', `💭 ${block.reasoning}`, 'main_agent')
+                      }
+                    }
+                  }
+                  
                   // 处理 AI 消息内容（无论是否有 tool_calls，只要有 content 就更新）
                   if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
                     console.log('AI message content:', msg.content.slice(0, 100))

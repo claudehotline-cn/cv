@@ -122,6 +122,11 @@ python
     ])]
     
     response = llm.invoke(messages)
+    
+    # 🚀 流式输出思维链（不进入 state）
+    from ...utils.message_utils import stream_reasoning
+    stream_reasoning(response, "python_reasoning")
+    
     code = extract_text_from_message(response)
     # 提取代码块
     if "```python" in code:

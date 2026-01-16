@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from ..llm_runtime import build_chat_llm
-from ..middleware import ThinkingLoggerMiddleware, SubAgentHITLMiddleware
+from ..middleware import SubAgentHITLMiddleware
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -49,7 +49,6 @@ def get_data_deep_agent_graph() -> Any:
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
-            ThinkingLoggerMiddleware(),
             SubAgentHITLMiddleware(
                 interrupt_subagents=["visualizer_agent", "report_agent"],
                 allowed_decisions=["approve", "reject"],

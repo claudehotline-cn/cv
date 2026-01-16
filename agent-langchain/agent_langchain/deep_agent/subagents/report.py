@@ -152,6 +152,11 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     ])]
     
     response = llm.invoke(messages)
+    
+    # 🚀 流式输出思维链（不进入 state）
+    from ...utils.message_utils import stream_reasoning
+    stream_reasoning(response, "report_reasoning")
+    
     content = extract_text_from_message(response)
     _LOGGER.info("[Report Agent] LLM generated report content length: %d", len(content))
     

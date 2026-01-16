@@ -200,6 +200,11 @@ python
     ])]
     
     response = llm.invoke(messages)
+    
+    # 🚀 流式输出思维链（不进入 state）
+    from ...utils.message_utils import stream_reasoning
+    stream_reasoning(response, "visualizer_reasoning")
+    
     code = extract_text_from_message(response)
     if "```python" in code:
         code = code.split("```python")[1].split("```")[0]

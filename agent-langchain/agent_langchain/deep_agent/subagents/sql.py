@@ -164,6 +164,10 @@ Strictly result ONLY the SQL code.
     resp_blocks = getattr(response, 'content_blocks', [])
     _LOGGER.info(f"[SQL DEBUG] Response content_blocks_count={len(resp_blocks)}")
     
+    # 🚀 提取思维链并通过 custom streaming 直接发送到前端（不进入 state）
+    from ...utils.message_utils import stream_reasoning
+    stream_reasoning(response, "sql_reasoning")
+    
     from ...utils.message_utils import extract_text_from_message
     sql_content = extract_text_from_message(response)
     

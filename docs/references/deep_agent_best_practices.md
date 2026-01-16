@@ -793,3 +793,78 @@ def extract_reasoning(message: BaseMessage) -> str:
 ```
 
 > **提示**: `.content_blocks` 会自动将 `str` 类型的 `content` 包装为 `[{"type": "text", "text": content}]`，确保统一的访问接口。
+
+## 15. 思维链 (Chain of Thought) 全链路配置指南
+
+在使用 Qwen3、DeepSeek-R1 等支持思维链 (CoT) 的推理模型时，需要从模型部署层到前端展示层进行全链路配置，以确保 `<think>` 内容能被正确解析、传输和渲染。
+
+### 15.1 模型部署层 (vLLM)
+
+vLLM 服务端需要显式启用推理解析器，将原始输出中的 `<think>...</think>` 标签剥离为独立的 `reasoning_content` 字段，防止其干扰 Tool Call 的解析。
+
+| 参数 | 推荐值 | 说明 |
+| :--- | :--- | :--- |
+| **`--reasoning-parser`** | `qwen3` 或 `deepseek_r1` | **核心参数**。启用 vLLM 服务端解析，将思考内容与正文分离。 |
+| **`--enable-auto-tool-choice`** | `True` | 允许模型在推理后自动选择工具。 |
+| **`--tool-call-parser`** | `hermes` | 配合 Qwen/DeepSeek 使用的高级工具解析器。 |
+
+### 15.2 后端服务层 (LangChain)
+
+在后端  初始化 `ChatOpenAI` 客户端时，需启用 v1 输出格式以支持标准化的 `content_blocks`。
+
+```python
+ChatOpenAI(
+    model="qwen3-thinking",
+    base_url="http://vllm:8000/v1",
+    parameters={
+        "temperature": 0.6,       # 推荐 0.6，防止思考过程被抑制
+    },
+    output_version="v1",          # ✅ 关键：启用 content_blocks 解析接口
+    extra_body={
+        "chat_template_kwargs": {
+            "enable_thinking": True  # 显式告知 vLLM 开启思考模式
+        }
+    }
+)
+```
+
+### 15.3 消息处理与解析 (Processing)
+
+当上述配置正确时，LangChain 会自动将 vLLM 返回的 `reasoning_content` 封装为标准的 **Reasoning Block**。
+
+**后端提取逻辑**:
+业务代码（Logger, Streamer）应直接从 `content_blocks` 读取，**无需**编写复杂的 Regex 或检查 `additional_kwargs`。
+
+```python
+# ✅ 标准化提取方式
+def extract_thinking(message: AIMessage) -> str:
+    thinking = ""
+    # 直接遍历 content_blocks，寻找 type="reasoning"
+    for block in getattr(message, 'content_blocks', []):
+        if block.get('type') == 'reasoning':
+            thinking += block.get('reasoning', '')
+    return thinking
+```
+
+### 15.4 前端界面层 (Web UI)
+
+Web 前端接收到的消息 `content` 将是一个结构化的 Block 数组（而非单一字符串）。UI 组件应遍历此数组进行渲染。
+
+**数据结构示例**:
+```json
+// LLM Response Content
+[
+  {
+    "type": "reasoning",
+    "reasoning": "首先，我需要查询用户上传的 Excel 文件..."
+  },
+  {
+    "type": "text",
+    "text": "我已经帮您分析了数据，结果如下..."
+  }
+]
+```
+
+**渲染逻辑**:
+*   `type="reasoning"`: 渲染在折叠面板或灰色引用块中（通常带有 "思考过程" 标签）。
+*   `type="text"`: 渲染为常规 Markdown 消息。

@@ -357,7 +357,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # LLM 配置：使用 vLLM
       - AGENT_LLM_PROVIDER=vllm
-      - AGENT_OPENAI_MODEL=/data/models/qwen3-omni-30b-a3b-instruct-awq
+      - AGENT_OPENAI_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
       - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       # 数据库配置：复用 mysql 服务
       - AGENT_DB_HOST=mysql
@@ -414,11 +414,11 @@ services:
     environment:
       # LLM 提供方：gemini | ollama | openai | siliconflow | vllm
       - ARTICLE_AGENT_LLM_PROVIDER=vllm
-      - ARTICLE_AGENT_LLM_MODEL=/data/models/qwen3-omni-30b-a3b-instruct-awq
+      - ARTICLE_AGENT_LLM_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
       - ARTICLE_AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       # VLM 配置
       - ARTICLE_AGENT_VLM_ENABLED=true
-      - ARTICLE_AGENT_VLM_MODEL=/data/models/qwen3-omni-30b-a3b-instruct-awq
+      - ARTICLE_AGENT_VLM_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
       - ARTICLE_AGENT_VLLM_VL_BASE_URL=http://vllm:8000/v1
       # 输出目录配置
       - ARTICLE_TEMP_DIR=/data/workspace/artifacts
@@ -542,9 +542,7 @@ services:
     ipc: host
     command:
       - "--model"
-      - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
-      - "--tokenizer"
-      - "/data/models/qwen3-omni-30b-a3b-instruct-awq"
+      - "/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit"
       - "--host"
       - "0.0.0.0"
       - "--port"
@@ -563,6 +561,8 @@ services:
       - "--enable-auto-tool-choice"
       - "--tool-call-parser"
       - "hermes"
+      - "--reasoning-parser"
+      - "qwen3"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
