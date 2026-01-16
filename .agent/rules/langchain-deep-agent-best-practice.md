@@ -90,7 +90,6 @@ if (content.startsWith('VISUALIZER_AGENT_COMPLETE:')) {
 ```
 
 ### 常用 Middleware
-- **ThinkingLoggerMiddleware**: 记录思维链和工具调用
 - **SubAgentHITLMiddleware**: 在 Sub-Agent 完成后触发中断，等待用户审核
 
 ## 7. Command 模式 (动态路由)
@@ -301,20 +300,29 @@ def extract_text_from_message(message: BaseMessage) -> str:
     )
 ```
 
-### 提取思维链（兼容多厂商）
+### 提取思维链（标准化）
 ```python
 def extract_reasoning(message: BaseMessage) -> str:
-    # 1. 从标准 Block 提取
+    # ✅ 仅从标准 Block 提取 (type="reasoning")
     blocks = message.content_blocks
-    from_blocks = "".join(
+    return "".join(
         block.get("reasoning", "") 
         for block in blocks 
         if block.get("type") == "reasoning"
     )
-    if from_blocks: return from_blocks
-    
-    # 2. 回退到 additional_kwargs
-    return message.additional_kwargs.get("reasoning_content", "")
 ```
 
-更多详细信息请使用angchain-docs mcp 工具
+## 15. 思维链 (CoT) 全链路配置
+
+### vLLM (后端部署)
+- `--reasoning-parser qwen3`: 启用服务端标签解析
+- `--enable-auto-tool-choice`: 兼容 Tool Call
+
+### LangChain (客户端)
+- `output_version="v1"`: 启用 content_blocks 解析接口
+- `chat_template_kwargs={"enable_thinking": True}`: 告知模型开启思考
+
+### 前端渲染
+- 遍历 `content` 数组，渲染 `type="reasoning"` 为思考块，`type="text"` 为正文。
+
+更多详细信息请使用 langchain-docs mcp 工具和 context7 mcp 工具
