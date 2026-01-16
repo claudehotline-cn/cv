@@ -6,10 +6,10 @@ trigger: always_on
 
 ## 1. 架构模式
 - **Main Agent + Sub-Agents**: Main 负责编排，Sub-Agent 专注特定任务（SQL/Python/Visualizer/Report）
-- **StateGraph 固化流**: 对数据处理流程（先看数据再写代码）使用 `StateGraph` 而非 LLM 自行决定
+- **StateGraph + Command 固化流**: 对数据处理流程（先看数据再写代码）使用 `StateGraph` 而非 LLM 自行决定
 - **两种 Sub-Agent 模式**:
-  - `CompiledSubAgent`: 任务灵活，LLM 驱动（如 planner）
-  - `StateGraph`: 步骤固定，代码驱动（如 python_agent、visualizer_agent）
+  - `CompiledSubAgent`: 任务灵活，LLM 驱动（如 planner、researcher）
+  - `StateGraph + Command`: 步骤固定，代码驱动（如 sql_agent、python_agent、visualizer_agent、report_agent）
 
 ## 2. 状态与上下文传递
 
@@ -71,27 +71,27 @@ response_format = ToolStrategy(MainAgentOutput)
 
 ## 6. Middleware 模式
 
-### FileContentInjectionMiddleware
-从文件读取 artifact 注入到 `ToolMessage.artifact`：
+### Subgraph Streaming（推荐）
+Sub-Agent 直接在输出消息中包含结构化数据，前端从 stream 中解析：
 ```python
-async def awrap_tool_call(self, request, handler):
-    result = await handler(request)
-    
-    if request.args.get("subagent_type") == "visualizer_agent":
-        chart_path = f"/data/workspace/artifacts/{analysis_id}/chart.json"
-        with open(chart_path) as f:
-            chart_data = json.load(f)
-        return ToolMessage(
-            content=result.content,
-            tool_call_id=result.tool_call_id,
-            artifact={"type": "chart", "data": chart_data}
-        )
-    return result
+# visualizer_agent 的 format_output 节点
+def viz_format_final_output(state, config):
+    chart_message = json.dumps({"type": "chart", "data": chart_data}, ensure_ascii=False)
+    return {"messages": [AIMessage(content=f"VISUALIZER_AGENT_COMPLETE: {chart_message}")]}
+```
+
+```javascript
+// 前端解析
+if (content.startsWith('VISUALIZER_AGENT_COMPLETE:')) {
+    const jsonStr = content.substring('VISUALIZER_AGENT_COMPLETE:'.length).trim()
+    const parsed = JSON.parse(jsonStr)
+    chartConfig.value = parsed.data.option || parsed.data
+}
 ```
 
 ### 常用 Middleware
 - **ThinkingLoggerMiddleware**: 记录思维链和工具调用
-- **SubAgentHITLMiddleware**: 拦截 Sub-Agent 完成事件，触发用户审核
+- **SubAgentHITLMiddleware**: 在 Sub-Agent 完成后触发中断，等待用户审核
 
 ## 7. Command 模式 (动态路由)
 
@@ -118,41 +118,51 @@ def step_execute(state: State) -> Command[Literal["generate", "output"]]:
 
 ## 8. Human-in-the-Loop (HITL)
 
-### 后端: 使用 interrupt
+### 后端: SubAgentHITLMiddleware
 ```python
 from langgraph.types import interrupt
 
-user_decision = interrupt({
-    "type": "report",
-    "content": report,
-    "action": "请审核报告"
-})
-
-if user_decision.get("type") == "reject":
-    feedback = user_decision.get("message")
-    # 根据反馈重新生成
+class SubAgentHITLMiddleware(AgentMiddleware):
+    async def awrap_tool_call(self, request, handler):
+        if tool_name == 'task' and subagent_type in ["visualizer_agent", "report_agent"]:
+            # 1. 先执行 subagent
+            response = await handler(request)
+            
+            # 2. 触发中断，等待用户审核
+            interrupt_res = interrupt({"action_requests": [...], "review_configs": [...]})
+            
+            # 3. 处理用户决策
+            if decision.get("type") == "reject":
+                return f"USER_INTERRUPT: 用户反馈: {feedback}。请根据反馈修改。"
+            
+            # 4. 批准时返回明确消息，防止重复调用
+            return "USER_APPROVED: 用户已批准。请继续下一步，不要再次调用。"
+        return await handler(request)
 ```
 
-### 前端: 处理中断
+### 前端: 处理中断与恢复
 ```javascript
-if (event.type === 'interrupt') {
-    showReviewOverlay(event.data);
+// 检测 interrupt
+if (data.__interrupt__) {
+    hitlState.value = { isInterrupted: true, threadId, interruptData: data.__interrupt__[0].value }
+    return
 }
 
-async function handleDecision(type, message) {
-    await client.runs.resume(threadId, runId, {
-        decisions: [{ type, message }]
-    });
-}
+// resume 时发送 decisions
+await fetch(`/api/agents/data/threads/${threadId}/runs/stream`, {
+    method: 'POST',
+    body: JSON.stringify({
+        command: { resume: { decisions: [{ type: decision, message: feedbackMessage }] } },
+        stream_subgraphs: true
+    })
+})
 ```
 
 ### Main Agent 反馈透传
-```python
-# ❌ 错误：模糊描述
-task(description='根据用户反馈修改报告')
-
-# ✅ 正确：包含具体反馈
-task(description='用户反馈：去掉数据概览章节。请根据此反馈修改报告。')
+Middleware 返回 `USER_INTERRUPT` 消息，Main Agent 自动将反馈包含在下次调用中：
+```
+USER_INTERRUPT: 用户反馈: 去掉标签。请根据反馈修改。
+→ task(description='用户反馈：去掉标签。请根据此反馈修改图表。')
 ```
 
 ## 9. 防错与自愈

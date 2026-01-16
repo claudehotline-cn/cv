@@ -15,8 +15,8 @@
 
 | 模式 | 实现类 | 适用场景 | 示例 |
 | :--- | :--- | :--- | :--- |
-| **LLM 驱动模式** | `CompiledSubAgent` | 任务灵活、步骤不固定、强依赖语义理解。 | `sql_agent`, `planner_agent`, `researcher_agent` |
-| **固化流模式 (StateGraph)** | `StateGraph` | 步骤严格固定、对数据准确性要求极高、容易幻觉的场景。 | `python_agent`, `visualizer_agent`, `report_agent` |
+| **LLM 驱动模式** | `CompiledSubAgent` | 任务灵活、步骤不固定、强依赖语义理解。 | `planner_agent`, `researcher_agent` |
+| **固化流模式 (StateGraph + Command)** | `StateGraph` | 步骤严格固定、对数据准确性要求极高、容易幻觉的场景。 | `sql_agent`, `python_agent`, `visualizer_agent`, `report_agent` |
 
 > **最佳实践**: 对于关键的数据处理流程（如"先看数据再写代码"），不要依赖 LLM 自行决定调用顺序，应使用 `StateGraph` 将流程固化为代码逻辑（Code-First），仅在需要生成的环节调用 LLM。这能彻底解决幻觉和步骤跳过问题。
 
@@ -264,57 +264,55 @@ class MyMiddleware(AgentMiddleware):
 *   **Result Bubbling**: (`ArticleContentMiddleware`, `StructuredOutputToTextMiddleware`) 将 Sub-Agent 的复杂执行结果（如生成的长文、图表数据）提取并"冒泡"给 Main Agent 或前端，防止被 LLM 总结时丢失细节。
 *   **Logging & Debug**: (`ThinkingLoggerMiddleware`) 记录思维链和工具调用参数，便于调试。
 *   **Validation**: (`IllustratorValidationMiddleware`) 在 Agent 返回结果前拦截并校验（如检查生成图片路径是否存在），自动修复错误。
-*   **Artifact Injection**: (`FileContentInjectionMiddleware`) 拦截 Sub-Agent 的 Tool 返回，从文件系统读取生成的内容（如 `chart.json`, `report.md`），注入到 `ToolMessage.artifact` 字段。前端可直接渲染，无需 LLM 中转。
+*   **HITL Interrupt**: (`SubAgentHITLMiddleware`) 在指定 Sub-Agent 完成后触发中断，等待用户审核。
 
-#### FileContentInjectionMiddleware 模式
+#### Subgraph Streaming 模式（推荐）
 
-当 Sub-Agent 生成文件型产物（图表、报告）时，使用此中间件将内容直接注入到消息流中：
+当 Sub-Agent 生成文件型产物（图表、报告）时，**推荐使用 subgraph streaming** 而非 Middleware 注入。Sub-Agent 直接在输出消息中包含结构化数据：
 
 ```python
-class FileContentInjectionMiddleware(AgentMiddleware):
-    async def awrap_tool_call(self, request, handler):
-        result = await handler(request)
-        
-        # 只处理 task 工具（调用 Sub-Agent）
-        if request.name != "task":
-            return result
-            
-        subagent_type = request.args.get("subagent_type")
-        
-        if subagent_type == "visualizer_agent":
-            chart_path = f"/data/workspace/artifacts/{analysis_id}/chart.json"
-            with open(chart_path, 'r') as f:
-                chart_data = json.load(f)
-            return ToolMessage(
-                content=result.content + "\n[System: Chart artifact loaded]",
-                tool_call_id=result.tool_call_id,
-                artifact={"type": "chart", "data": chart_data}  # 前端直接读取
-            )
-        elif subagent_type == "report_agent":
-            report_path = f"/data/workspace/artifacts/{analysis_id}/report.md"
-            with open(report_path, 'r') as f:
-                report_content = f.read()
-            return ToolMessage(
-                content=result.content + "\n[System: Report artifact loaded]",
-                tool_call_id=result.tool_call_id,
-                artifact={"type": "report", "content": report_content}
-            )
-        return result
+# visualizer_agent 的 format_output 节点
+def viz_format_final_output(state, config):
+    # ... 生成图表后 ...
+    chart_message = json.dumps({"type": "chart", "data": chart_data}, ensure_ascii=False)
+    return {"messages": [AIMessage(content=f"VISUALIZER_AGENT_COMPLETE: {chart_message}")]}
+
+# report_agent 的 format_output 节点  
+def report_format_output(state, config):
+    # ... 生成报告后 ...
+    report_message = json.dumps({"type": "report", "content": content}, ensure_ascii=False)
+    return {"messages": [AIMessage(content=f"REPORT_AGENT_COMPLETE: {report_message}")]}
 ```
 
-**前端处理**:
+**前端处理** (从 stream 中解析):
 ```javascript
-if (msg.type === 'tool' && msg.artifact) {
-    if (msg.artifact.type === 'chart') {
-        chartConfig.value = msg.artifact.data
-        renderChart()
-    } else if (msg.artifact.type === 'report') {
-        analysisResult.value = msg.artifact.content
+// 在 stream 处理循环中
+const content = msg.content
+if (content && typeof content === 'string') {
+    // 解析 VISUALIZER_AGENT_COMPLETE
+    if (content.startsWith('VISUALIZER_AGENT_COMPLETE:')) {
+        const jsonStr = content.substring('VISUALIZER_AGENT_COMPLETE:'.length).trim()
+        const parsed = JSON.parse(jsonStr)
+        if (parsed.type === 'chart' && parsed.data) {
+            chartConfig.value = parsed.data.option || parsed.data
+            renderChart()
+        }
+    }
+    // 解析 REPORT_AGENT_COMPLETE
+    if (content.startsWith('REPORT_AGENT_COMPLETE:')) {
+        const jsonStr = content.substring('REPORT_AGENT_COMPLETE:'.length).trim()
+        const parsed = JSON.parse(jsonStr)
+        if (parsed.type === 'report') {
+            analysisResult.value = parsed.content
+        }
     }
 }
 ```
 
-> **优势**: LLM 无需输出大段 JSON/Markdown，只需生成文件即可。Middleware 负责读取和分发，前端直接渲染结构化数据。
+> **优势**: 
+> 1. 无需额外 Middleware，代码更简洁
+> 2. 前端实时收到数据，无需等待整个工具调用完成
+> 3. 利用 `stream_subgraphs: true` 的原生能力
 
 ### Middleware 同步/异步 Hook
 LangChain AgentMiddleware 同时支持同步和异步版本的 hook 方法：
@@ -371,50 +369,95 @@ def step_execute(state: State) -> Command[Literal["generate", "output"]]:
 
 ## 8. Human-in-the-Loop (HITL) 集成
 
-对于需要用户审核的关键步骤（如图表生成、报告生成），使用 `interrupt` 暂停执行并等待用户反馈。
+对于需要用户审核的关键步骤（如图表生成、报告生成），使用 **`SubAgentHITLMiddleware`** 在 Middleware 层实现中断。
 
-### 后端：使用 `interrupt`
+### 后端：SubAgentHITLMiddleware
+
 ```python
 from langgraph.types import interrupt
 
-def generate_report(state):
-    report = llm.generate(state["data"])
+class SubAgentHITLMiddleware(AgentMiddleware):
+    def __init__(self):
+        self.interrupt_subagents = ["visualizer_agent", "report_agent"]
+        self.allowed_decisions = ["approve", "reject"]
     
-    # 暂停并等待用户审核
-    user_decision = interrupt({
-        "type": "report",
-        "content": report,
-        "action": "请审核报告，批准或提供修改意见"
-    })
-    
-    if user_decision.get("type") == "reject":
-        feedback = user_decision.get("message")
-        # 根据反馈重新生成...
+    async def awrap_tool_call(self, request, handler):
+        tool_name = request.tool_call.get('name', '')
+        args = request.tool_call.get('args', {})
+        
+        if tool_name == 'task':
+            subagent_type = args.get('subagent_type', '')
+            
+            if subagent_type in self.interrupt_subagents:
+                # 1. 先执行 subagent
+                response = await handler(request)
+                
+                # 2. 触发中断，等待用户审核
+                interrupt_res = interrupt({
+                    "action_requests": [{"name": subagent_type, "args": args}],
+                    "review_configs": [{"action_name": subagent_type, "allowed_decisions": self.allowed_decisions}]
+                })
+                
+                # 3. 处理用户决策
+                if isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
+                    decision = interrupt_res["decisions"][0]
+                    if decision.get("type") == "reject":
+                        feedback = decision.get("message", "用户拒绝")
+                        return f"USER_INTERRUPT: 用户反馈: {feedback}。请根据反馈修改后再次调用 {subagent_type}。"
+                
+                # 4. 用户批准，返回明确的批准消息
+                if subagent_type == "visualizer_agent":
+                    return "USER_APPROVED: 用户已批准图表。请继续执行下一步任务（如生成分析报告）。不要再次调用 visualizer_agent。"
+                elif subagent_type == "report_agent":
+                    return "USER_APPROVED: 用户已批准分析报告。任务结束。不要再次调用 report_agent。"
+        
+        return await handler(request)
 ```
 
-### 前端：处理中断
+> **关键点**：approve 时返回 `USER_APPROVED` 消息而非原始 response，明确告知 Main Agent 继续下一步，防止重复调用同一个 subagent。
+
+### 前端：处理中断与恢复
+
 ```javascript
-// 监听 interrupt 事件
-if (event.type === 'interrupt') {
-    showReviewOverlay(event.data);
+// 1. 检测 interrupt 事件
+if (data.__interrupt__) {
+    hitlState.value = {
+        isInterrupted: true,
+        threadId: threadId,
+        interruptData: data.__interrupt__[0].value
+    }
+    return
 }
 
-// 用户决策后 resume
-async function handleDecision(type, message) {
-    await client.runs.resume(threadId, runId, {
-        decisions: [{ type, message }]
-    });
+// 2. 用户决策后 resume
+async function resumeWithDecision(decision: 'approve' | 'reject') {
+    const decisions = [{ type: decision, message: feedbackMessage }]
+    
+    const response = await fetch(`/api/agents/data/threads/${threadId}/runs/stream`, {
+        method: 'POST',
+        body: JSON.stringify({
+            assistant_id: 'data_deep_agent',
+            command: { resume: { decisions } },
+            config: { configurable: { ... } },
+            stream_mode: ["updates", "values"],
+            stream_subgraphs: true
+        })
+    })
+    
+    // 处理 resume 后的 stream，包括新的 VISUALIZER_AGENT_COMPLETE 消息
 }
 ```
 
 ### Main Agent 反馈透传
-当用户拒绝后，Main Agent 必须将**用户原话反馈**包含在重新调用 Sub-Agent 的 `description` 中：
-```python
-# ❌ 错误：模糊描述
-task(subagent_type='report_agent', description='根据用户反馈修改报告')
 
-# ✅ 正确：包含具体反馈
-task(subagent_type='report_agent', description='用户反馈：去掉数据概览章节。请根据此反馈修改报告。')
+当用户拒绝后，Middleware 返回的 `USER_INTERRUPT` 消息会包含用户反馈。Main Agent 会自动将反馈包含在重新调用 Sub-Agent 的 `description` 中：
+
+```
+# Middleware 返回
+USER_INTERRUPT: 用户反馈: 去掉折线上的标签。请根据反馈修改后再次调用 visualizer_agent。
+
+# Main Agent 调用 Sub-Agent
+task(subagent_type='visualizer_agent', description='用户反馈：去掉折线上的标签。请根据此反馈修改图表。')
 ```
 
 ---
