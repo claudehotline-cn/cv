@@ -154,7 +154,7 @@ def build_chat_llm(task_name: str = "generic") -> Any:
                 temperature=0.6,   # 🚀 启用流式输出（由外部参数控制）
                 output_version="v1",  # 🚀 LangChain v1 标准化 content_blocks，分离 <think> 到 ReasoningContentBlock
                 streaming=True,
-                max_tokens=8192,      # 🚀 增加最大 Token 数，防止 CoT 被截断
+                max_tokens=28000,    # 🚀 调整为 28k (适配物理显存限制 ~29k)
                 extra_body={
                     "chat_template_kwargs": {
                         "enable_thinking": True,  # 🚀 启用 Qwen3 思维模式

@@ -4,20 +4,20 @@ services:
       dockerfile: docker/va/Dockerfile.gpu
       args:
         ORT_VERSION: "1.23.2"
-        ORT_REBUILD: "0"                # 默认不重建 ORT（需要时可临时改为 1）
+        ORT_REBUILD: "0" # 默认不重建 ORT（需要时可临时改为 1）
         ORT_BUILD_TAG: "ort-1.23.2-cuda13-sm120-trt"
-        UBUNTU_VER: "22.04"                    # 与 NGC 镜像 ubuntu 版本一致
+        UBUNTU_VER: "22.04" # 与 NGC 镜像 ubuntu 版本一致
         # TensorRT 基础镜像（与 25.08 对齐）
         NGC_TRT_TAG: "${NGC_TRT_TAG:-25.08-py3}"
         # Triton Runtime & Client SDK tag（25.08，对齐 CUDA13 按你环境）
         TRITON_TAG: "${TRITON_TAG:-25.08-py3}"
         TRITON_CLIENT_TAG: "${TRITON_CLIENT_TAG:-25.08-py3-sdk}"
-        EXPECTED_CUDA_MAJOR: "13"               # 对齐 CUDA 13.0
+        EXPECTED_CUDA_MAJOR: "13" # 对齐 CUDA 13.0
         EXPECTED_CUDA_MINOR: "0"
-        EXPECTED_CUDNN_MAJOR: "9"               # 严格版本校验：cuDNN 主版本
-        STRICT_VERSION: "ON"                    # 不匹配直接失败
-        STRICT_TRT: "ON"                        # 缺少 TRT 头/库直接失败
-        STRICT_CUDA_MINOR: "OFF"                 # 如需锁死 13.0，可临时改为 ON
+        EXPECTED_CUDNN_MAJOR: "9" # 严格版本校验：cuDNN 主版本
+        STRICT_VERSION: "ON" # 不匹配直接失败
+        STRICT_TRT: "ON" # 缺少 TRT 头/库直接失败
+        STRICT_CUDA_MINOR: "OFF" # 如需锁死 13.0，可临时改为 ON
         # 启用 In-Process Triton（libtritonserver）构建
         VA_USE_TRT_INPROC: "ON"
     image: cv/va:latest-gpu
@@ -66,8 +66,8 @@ services:
       - ../../.trt_native_cache:/app/.trt_native_cache
       # 使用 S3 仓库后，本地 /models 映射可选（保留为空以避免混淆）
     ports:
-      - "8001:8001"   # Triton gRPC
-      - "8000:8000"   # Triton HTTP
+      - "8001:8001" # Triton gRPC
+      - "8000:8000" # Triton HTTP
   # triton 服务已并入 va 容器，由 va 的 entrypoint.sh 启动
 
   trainer:
@@ -87,7 +87,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
   # vLLM GPU 配置
   vllm:
@@ -96,8 +96,8 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["0"]
-              capabilities: [gpu]
+              device_ids: [ "0" ]
+              capabilities: [ gpu ]
     environment:
       - NVIDIA_VISIBLE_DEVICES=0
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -109,8 +109,8 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["0"]
-              capabilities: [gpu]
+              device_ids: [ "0" ]
+              capabilities: [ gpu ]
     environment:
       - NVIDIA_VISIBLE_DEVICES=0
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

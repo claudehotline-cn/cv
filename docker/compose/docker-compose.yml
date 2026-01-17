@@ -387,17 +387,27 @@ services:
 
   agent-chat-ui:
     build:
-      context: ../../rag-ui
-      dockerfile: Dockerfile
+      # 切换构上下文为 third-party/agent-chat-ui (Next.js 版本)
+      context: ../..
+      dockerfile: docker/agent-chat-ui/Dockerfile
+      # ✅ 关键：Next.js 需要构建时注入 NEXT_PUBLIC 变量
+      args:
+        NEXT_PUBLIC_API_URL: /api
+        NEXT_PUBLIC_ASSISTANT_ID: data_deep_agent
     image: cv/agent-chat-ui:latest
     container_name: agent-chat-ui
+    environment:
+      # Runtime 变量 (Server Side)
+      - NEXT_PUBLIC_API_URL=/api
+      - LANGGRAPH_API_URL=http://agent-langchain:8100
+      - NEXT_PUBLIC_ASSISTANT_ID=data_deep_agent
     depends_on:
       agent-langchain:
         condition: service_started
     ports:
-      - "18120:80"
+      - "18120:3000" # Next.js 默认端口 3000
     volumes:
-      # 挂载 article-agent 导出的 Markdown/图片目录，供下载路由使用 (注意：Nginx 静态服务需要配置，或者前端通过 API 获取)
+      # 挂载 article-agent 导出的 Markdown/图片目录 (可选)
       # 这里暂时保留挂载，虽然纯前端静态包可能无法直接像 Next.js SSR 那样直接读文件系统，
       # 但通常是前端请求后端 API，后端返回 URL。
       # 如果 rag-ui 有 nginx 配置反代 /articles 到本地文件系统，则需要挂载到 nginx 目录。
@@ -548,9 +558,9 @@ services:
       - "--port"
       - "8000"
       - "--max-model-len"
-      - "24576"
+      - "65536"
       - "--gpu-memory-utilization"
-      - "0.70"
+      - "0.80"
       - "--max-num-seqs"
       - "16"
       - "--kv-cache-dtype"
@@ -561,8 +571,8 @@ services:
       - "--enable-auto-tool-choice"
       - "--tool-call-parser"
       - "hermes"
-      - "--reasoning-parser"
-      - "qwen3"
+      # - "--reasoning-parser"
+      # - "qwen3"
       - "--swap-space"
       - "16"
     healthcheck:

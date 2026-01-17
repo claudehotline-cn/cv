@@ -213,9 +213,28 @@ Strictly result ONLY the SQL code.
     
     _LOGGER.info("[SQL Agent] Extracted SQL: %s", extracted_sql[:100])
     
+    # 🚀 提取思维链内容，确保在流式传输结束后仍可显示
+    import re as _re
+    thinking_content = ""
+    think_match = _re.search(r'<think>([\s\S]*?)</think>', sql_content, _re.IGNORECASE)
+    if think_match:
+        thinking_content = think_match.group(1).strip()
+        _LOGGER.info("[SQL Agent] Extracted thinking content: %d chars", len(thinking_content))
+    
     # 将生成的 SQL 添加到 messages，以便通过 subgraph streaming 流式传输给前端
     from langchain_core.messages import AIMessage
-    sql_preview_msg = AIMessage(content=f"生成的 SQL 查询:\n```sql\n{extracted_sql}\n```")
+    
+    # 构建消息内容：如果有思维链，包含 <think> 标签以便前端提取
+    if thinking_content:
+        msg_content = f"<think>{thinking_content}</think>\n\n生成的 SQL 查询:\n```sql\n{extracted_sql}\n```"
+    else:
+        msg_content = f"生成的 SQL 查询:\n```sql\n{extracted_sql}\n```"
+    
+    # 同时将 reasoning_content 放入 additional_kwargs (标准 LangChain 格式)
+    sql_preview_msg = AIMessage(
+        content=msg_content,
+        additional_kwargs={"reasoning_content": thinking_content} if thinking_content else {}
+    )
     
     return {"generated_sql": extracted_sql, "messages": [sql_preview_msg]}
 
