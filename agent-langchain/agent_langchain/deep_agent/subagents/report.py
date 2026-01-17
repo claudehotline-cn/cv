@@ -142,7 +142,7 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
 - 用户的反馈是最高优先级，务必完全按照反馈执行
 """
     # 获取 LLM
-    llm = build_chat_llm(task_name="data_deep_subagent")
+    llm = build_chat_llm(task_name="report_agent")
     
     # Use Standard Content Block
     from ...utils.message_utils import extract_text_from_message
@@ -151,11 +151,14 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
         {"type": "text", "text": prompt}
     ])]
     
-    response = llm.invoke(messages)
-    
-    # 🚀 流式输出思维链（不进入 state）
-    from ...utils.message_utils import stream_reasoning
-    stream_reasoning(response, "reasoning")
+    # 🚀 使用流式输出 + with_config 设置 tags，让 metadata 包含 agent 名称
+    full_response = None
+    for chunk in llm.with_config({"tags": ["agent:report_agent"]}).stream(messages):
+        if full_response is None:
+            full_response = chunk
+        else:
+            full_response += chunk
+    response = full_response
     
     content = extract_text_from_message(response)
     _LOGGER.info("[Report Agent] LLM generated report content length: %d", len(content))

@@ -148,6 +148,7 @@ def build_chat_llm(task_name: str = "generic") -> Any:
         try:
             return ChatOpenAI(
                 model=settings.llm_model,
+                name=task_name,  # 🚀 添加 name 参数，用于在 messages 模式中区分不同 agent
                 base_url=vllm_base_url,
                 api_key="EMPTY",  # vLLM 不需要真正的 API key
                 temperature=0.6,   # 🚀 启用流式输出（由外部参数控制）

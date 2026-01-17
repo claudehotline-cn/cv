@@ -140,7 +140,7 @@ Strictly result ONLY the SQL code.
     # ---------------------------------------------
     
     # 重新获取 LLM (因为不在闭包中)
-    llm = build_chat_llm(task_name="data_deep_subagent")
+    llm = build_chat_llm(task_name="sql_agent")
     
     # 使用 System + Human 结构，明确角色防止 "Assistant" 幻觉
     messages = [
@@ -165,16 +165,18 @@ Strictly result ONLY the SQL code.
     from langgraph.config import get_stream_writer
     writer = get_stream_writer()
     
-    for chunk in llm.stream(messages):
+    # 🚀 使用 with_config 设置 tags，让 metadata 包含 agent 名称标签
+    _LOGGER.info("[SQL Agent] Starting LLM stream with tags=['agent:sql_agent']")
+    for chunk in llm.with_config({"tags": ["agent:sql_agent"]}).stream(messages):
         # 1. Accumulate response
         if full_response is None:
             full_response = chunk
+            _LOGGER.info("[SQL Agent] First chunk received, run_name should be in metadata")
         else:
             full_response += chunk
             
-        # 2. Extract and stream reasoning (CoT) delta
-        # Using shared utility which handles both content_blocks and additional_kwargs
-        stream_reasoning(chunk, "reasoning")
+        # 2. 已禁用 custom 模式的 stream_reasoning，改用 messages 模式统一处理
+        # stream_reasoning(chunk, "reasoning")
              
     response = full_response
     

@@ -83,7 +83,7 @@ def _review_sql_logic(sql: str, schema_info: str, user_requirement: str = "") ->
             ])
         ]
         
-        response = llm.invoke(messages)
+        response = llm.with_config({"tags": ["agent:sql_agent"]}).invoke(messages)
         
         from ...utils.message_utils import extract_text_from_message
         content = extract_text_from_message(response).strip()

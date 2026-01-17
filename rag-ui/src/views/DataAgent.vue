@@ -279,7 +279,7 @@ const runAnalysis = async () => {
       body: JSON.stringify({
         assistant_id: graphId,
         input: input,
-        stream_mode: ["updates", "values", "custom", "messages"],  // messages 模式流式输出 LLM token
+        stream_mode: ["updates", "values", "custom", "messages-tuple"],  // messages-tuple 模式返回 2-tuple (message, metadata)，metadata 包含 langgraph_node
         stream_subgraphs: true,  // 启用子图流式输出，让前端看到 sub-agent 中间步骤
         config: {
           configurable: {
@@ -325,60 +325,84 @@ const runAnalysis = async () => {
               handleInterrupt(data.__interrupt__, thread.thread_id)
               return  // 中断流式处理，等待用户决策
             }
-            
-            // 🚀 处理 messages 模式的流式输出（Main Agent 的思维链）
-            // 实际格式: [{content:[], additional_kwargs:{reasoning_content:"<think>\n..."}}]
-            // 注意: reasoning_content 是累积的完整内容，需要转换为增量显示
-            if (Array.isArray(data) && data.length > 0 && data[0]?.additional_kwargs?.reasoning_content) {
-              const reasoningContent = data[0].additional_kwargs.reasoning_content
-              // 移除 <think> 标签
-              const cleanContent = reasoningContent.replace(/<\/?think>/g, '').trim()
+            // 🚀 处理 messages-tuple 模式的流式输出
+            // 格式: [message_chunk, metadata] 其中 metadata 包含 run_name 和 langgraph_checkpoint_ns
+            // 重要: reasoning_content 是增量的（每次只有新增的 token），不是累积的！
+            if (Array.isArray(data) && data.length >= 1 && data[0]?.additional_kwargs?.reasoning_content) {
+              const messageChunk = data[0]
+              const metadata = data[1] || {}  // messages-tuple 模式第二个元素是 metadata
               
-              // 计算增量：只显示新增的部分
-              const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
-              if (lastEvent && lastEvent.toolName === 'main_agent' && lastEvent.content.startsWith('🧠')) {
-                // 获取上次的内容长度（去掉 emoji 前缀）
-                const prevContent = lastEvent.content.slice(2).trim()  // 去掉 "🧠 "
-                if (cleanContent.length > prevContent.length) {
-                  // 只追加新增的部分
-                  const delta = cleanContent.slice(prevContent.length)
-                  lastEvent.content += delta
+              // 从 metadata 提取 agent 信息
+              // 优先使用 tags（如 ["agent:sql_agent"]）或 run_name
+              // 如果都没有，使用 checkpoint_ns 判断是否在子图中
+              const runName = metadata?.run_name || ''
+              const tags = metadata?.tags || []
+              const checkpointNs = metadata?.langgraph_checkpoint_ns || ''
+              const isSubAgent = checkpointNs.includes('|')
+              
+              // 从 tags 中提取 agent 名称（格式：agent:xxx_agent）
+              let agentFromTags = ''
+              for (const tag of tags) {
+                if (typeof tag === 'string' && tag.startsWith('agent:')) {
+                  agentFromTags = tag.replace('agent:', '')
+                  break
                 }
-              } else if (cleanContent) {
+              }
+              
+              // DEBUG: 打印前3条，避免日志过多卡死
+              const win = window as any
+              if (!win._debugCount) win._debugCount = 0
+              if (win._debugCount < 3) {
+                console.log('MESSAGES-TUPLE - tags:', tags, 'agentFromTags:', agentFromTags, 'isSubAgent:', isSubAgent, 'metadata keys:', Object.keys(metadata))
+                win._debugCount++
+              }
+              
+              // 确定 agent 名称：优先 tags > run_name > checkpoint_ns 判断
+              let agentName = 'main_agent'
+              if (agentFromTags) {
+                agentName = agentFromTags
+              } else if (runName) {
+                agentName = runName
+              } else if (isSubAgent) {
+                agentName = 'sub_agent'
+              }
+              
+              // 根据 agent 类型选择 emoji
+              const emoji = agentName === 'main_agent' ? '🧠' : '💭'
+              
+              // 增量内容
+              let delta = messageChunk.additional_kwargs.reasoning_content
+              
+              // 过滤掉 <think> 和 </think> 标签
+              delta = delta.replace(/<think>/g, '').replace(/<\/think>/g, '')
+              
+              // 跳过只有换行或空白的内容
+              if (!delta || !delta.trim()) {
+                continue
+              }
+              
+              // 增量追加：找到同一 agent 的最后一个事件，追加内容
+              const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
+              if (lastEvent && lastEvent.toolName === agentName && lastEvent.content.startsWith(emoji)) {
+                // 追加增量内容
+                lastEvent.content += delta
+              } else {
                 // 第一次，创建新事件
-                addThinkingEvent('step', `🧠 ${cleanContent}`, 'main_agent')
+                addThinkingEvent('step', `${emoji} ${delta}`, agentName)
               }
               continue  // 已处理，跳过后续逻辑
             }
             
-            // 🚀 解析 custom streaming events (get_stream_writer 发送的思维链)
-            // 兼容旧版 (*_reasoning) 和标准版 (reasoning)
+            // 🚀 已禁用 custom 模式的 reasoning 处理，统一使用 messages 模式
+            // 原因：Sub-Agents 已移除 stream_reasoning() 调用，改用 messages 模式
+            /*
             const isLegacyReasoning = data.type && data.type.endsWith('_reasoning') && data.content
             const isStandardReasoning = data.type === 'reasoning' && data.reasoning
             
             if (isLegacyReasoning || isStandardReasoning) {
-              const content = isStandardReasoning ? data.reasoning : data.content
-              const typeLabel = isStandardReasoning ? 'reasoning' : data.type.replace('_reasoning', '')
-              console.log('REASONING:', typeLabel, content.slice(0, 100))
-              
-              // 🚀 Aggregation Logic: Append to last event if it matches
-              try {
-                  const hasEvents = thinkingEvents.value.length > 0
-                  const lastEvent = hasEvents ? thinkingEvents.value[thinkingEvents.value.length - 1] : null
-                  const isStep = lastEvent?.type === 'step'
-                  const isSameTool = lastEvent?.toolName === typeLabel
-                  const isThinking = lastEvent?.content && typeof lastEvent.content === 'string' && lastEvent.content.startsWith('💭')
-                  
-                  if (lastEvent && isStep && isSameTool && isThinking) {
-                      lastEvent.content += content
-                  } else {
-                      addThinkingEvent('step', `💭 ${content}`, typeLabel)
-                  }
-              } catch (e) {
-                  console.error('Aggregation error:', e)
-                  addThinkingEvent('step', `💭 ${content}`, typeLabel)
-              }
+              // ... 已禁用
             }
+            */
             
             // Deep Agent 返回 messages 数组
             if (data.messages && Array.isArray(data.messages)) {
@@ -789,7 +813,7 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
             analysis_id: currentAnalysisId.value
           }
         },
-        stream_mode: ["updates", "values", "custom"],  // updates 模式才能看到子图输出，custom 模式看到思维链 CoT
+        stream_mode: ["updates", "values", "custom", "messages-tuple"],  // 🚀 添加 messages-tuple 确保 resume 后也能收到思维链
         stream_subgraphs: true  // 启用子图流式输出
       })
     })
@@ -824,7 +848,41 @@ const resumeWithDecision = async (decision: 'approve' | 'reject') => {
           // 🔍 DEBUG: 打印收到的原始数据结构
           console.log('RESUME STREAM DATA:', JSON.stringify(data).slice(0, 500))
           
-          // 🚀 解析 custom streaming events (兼容 resume 后的思维链)
+          // 🚀 处理 messages-tuple 模式（从 tags 中提取 agent 名称）
+          if (Array.isArray(data) && data.length >= 1 && data[0]?.additional_kwargs?.reasoning_content) {
+            const messageChunk = data[0]
+            const metadata = data[1] || {}
+            
+            // 从 tags 中提取 agent 名称
+            const tags = metadata?.tags || []
+            let agentFromTags = ''
+            for (const tag of tags) {
+              if (typeof tag === 'string' && tag.startsWith('agent:')) {
+                agentFromTags = tag.replace('agent:', '')
+                break
+              }
+            }
+            
+            const checkpointNs = metadata?.langgraph_checkpoint_ns || ''
+            const isSubAgent = checkpointNs.includes('|')
+            let agentName = agentFromTags || (isSubAgent ? 'sub_agent' : 'main_agent')
+            const emoji = agentName === 'main_agent' ? '🧠' : '💭'
+            
+            let delta = messageChunk.additional_kwargs.reasoning_content
+            delta = delta.replace(/<think>/g, '').replace(/<\/think>/g, '')
+            
+            if (delta && delta.trim()) {
+              const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
+              if (lastEvent && lastEvent.toolName === agentName && lastEvent.content.startsWith(emoji)) {
+                lastEvent.content += delta
+              } else {
+                addThinkingEvent('step', `${emoji} ${delta}`, agentName)
+              }
+            }
+            continue
+          }
+          
+          // 🚀 解析 custom streaming events (兼容 resume 后的思维链 - 备用模式)
           const isLegacyReasoning = data.type && data.type.endsWith('_reasoning') && data.content
           const isStandardReasoning = data.type === 'reasoning' && data.reasoning
             

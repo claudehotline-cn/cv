@@ -4,9 +4,9 @@
   },
   "dependencies": [
     "agent-langchain",
-    "langgraph==1.0.4",
+    "langgraph==1.0.6",
     "langgraph-cli[inmem]",
-    "langgraph-prebuilt==1.0.5",
-    "langchain==1.2.3"
+    "langgraph-prebuilt==1.0.6",
+    "langchain==1.2.6"
   ]
 }
