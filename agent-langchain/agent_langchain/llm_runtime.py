@@ -150,8 +150,9 @@ def build_chat_llm(task_name: str = "generic") -> Any:
                 model=settings.llm_model,
                 base_url=vllm_base_url,
                 api_key="EMPTY",  # vLLM 不需要真正的 API key
-                temperature=0.6,  # 🚀 Thinking Mode 推荐使用 0.6, 防止 suppression
+                temperature=0.6,   # 🚀 启用流式输出（由外部参数控制）
                 output_version="v1",  # 🚀 LangChain v1 标准化 content_blocks，分离 <think> 到 ReasoningContentBlock
+                streaming=True,
                 max_tokens=8192,      # 🚀 增加最大 Token 数，防止 CoT 被截断
                 extra_body={
                     "chat_template_kwargs": {

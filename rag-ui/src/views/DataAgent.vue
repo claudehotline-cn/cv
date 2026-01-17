@@ -279,7 +279,7 @@ const runAnalysis = async () => {
       body: JSON.stringify({
         assistant_id: graphId,
         input: input,
-        stream_mode: ["updates", "values", "custom"],  // updates 模式才能看到子图输出，custom 模式看到思维链 CoT
+        stream_mode: ["updates", "values", "custom", "messages"],  // messages 模式流式输出 LLM token
         stream_subgraphs: true,  // 启用子图流式输出，让前端看到 sub-agent 中间步骤
         config: {
           configurable: {
@@ -324,6 +324,31 @@ const runAnalysis = async () => {
               console.log('HITL INTERRUPT DETECTED:', data.__interrupt__)
               handleInterrupt(data.__interrupt__, thread.thread_id)
               return  // 中断流式处理，等待用户决策
+            }
+            
+            // 🚀 处理 messages 模式的流式输出（Main Agent 的思维链）
+            // 实际格式: [{content:[], additional_kwargs:{reasoning_content:"<think>\n..."}}]
+            // 注意: reasoning_content 是累积的完整内容，需要转换为增量显示
+            if (Array.isArray(data) && data.length > 0 && data[0]?.additional_kwargs?.reasoning_content) {
+              const reasoningContent = data[0].additional_kwargs.reasoning_content
+              // 移除 <think> 标签
+              const cleanContent = reasoningContent.replace(/<\/?think>/g, '').trim()
+              
+              // 计算增量：只显示新增的部分
+              const lastEvent = thinkingEvents.value[thinkingEvents.value.length - 1]
+              if (lastEvent && lastEvent.toolName === 'main_agent' && lastEvent.content.startsWith('🧠')) {
+                // 获取上次的内容长度（去掉 emoji 前缀）
+                const prevContent = lastEvent.content.slice(2).trim()  // 去掉 "🧠 "
+                if (cleanContent.length > prevContent.length) {
+                  // 只追加新增的部分
+                  const delta = cleanContent.slice(prevContent.length)
+                  lastEvent.content += delta
+                }
+              } else if (cleanContent) {
+                // 第一次，创建新事件
+                addThinkingEvent('step', `🧠 ${cleanContent}`, 'main_agent')
+              }
+              continue  // 已处理，跳过后续逻辑
             }
             
             // 🚀 解析 custom streaming events (get_stream_writer 发送的思维链)

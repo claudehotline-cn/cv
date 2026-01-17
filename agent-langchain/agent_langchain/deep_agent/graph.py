@@ -34,11 +34,7 @@ def get_data_deep_agent_graph() -> Any:
     # 创建主 Deep Agent
     # ============================================================================
     from ..schemas import MainAgentOutput
-    try:
-        from langchain.agents.structured_output import ToolStrategy
-        response_format = ToolStrategy(MainAgentOutput)
-    except ImportError:
-        response_format = MainAgentOutput
+    response_format = None
 
     graph = create_deep_agent(
         model=main_llm,
