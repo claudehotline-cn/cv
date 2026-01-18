@@ -104,6 +104,38 @@ class Settings(BaseSettings):
         alias="AGENT_DB_SQL_TIMEOUT_SEC",
     )
 
+    # PostgreSQL (长期记忆 Store / Checkpointer)
+    postgres_host: str = Field(
+        default="pgvector",
+        description="PostgreSQL 主机名（用于长期记忆存储）",
+        alias="POSTGRES_HOST",
+    )
+    postgres_port: int = Field(
+        default=5432,
+        description="PostgreSQL 端口",
+        alias="POSTGRES_PORT",
+    )
+    postgres_user: str = Field(
+        default="cv_kb",
+        description="PostgreSQL 用户名",
+        alias="POSTGRES_USER",
+    )
+    postgres_password: str = Field(
+        default="cv_kb_pass",
+        description="PostgreSQL 密码",
+        alias="POSTGRES_PASSWORD",
+    )
+    postgres_db: str = Field(
+        default="cv_kb",
+        description="PostgreSQL 数据库名",
+        alias="POSTGRES_DB",
+    )
+
+    @property
+    def postgres_uri(self) -> str:
+        """PostgreSQL 连接 URI"""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -7,11 +7,10 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.store.memory import InMemoryStore
 
 from ..llm_runtime import build_chat_llm
 from ..middleware import SubAgentHITLMiddleware
+from ..postgres_store import get_postgres_store, get_postgres_checkpointer
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -56,10 +55,10 @@ def get_data_deep_agent_graph() -> Any:
             default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
             routes={"/_shared/": StoreBackend(rt)},
         ),
-        store=lambda: InMemoryStore(),  # Use factory for fresh store per instance/run
-        checkpointer=InMemorySaver(),   # Required for HITL
+        # 使用 PostgreSQL 持久化存储（长期记忆 + 会话检查点）
+        store=get_postgres_store,  # deepagents 接受工厂函数
+        checkpointer=get_postgres_checkpointer(),  # 需要传递实例
         response_format=response_format,
     )
     
     return graph
-

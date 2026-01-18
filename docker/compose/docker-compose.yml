@@ -38,6 +38,21 @@ services:
       interval: 10s
       timeout: 3s
       retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: langgraph-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - langgraph-redis-data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -348,13 +363,13 @@ services:
       retries: 5
 
   agent-langchain:
-    build:
-      context: ../..
-      dockerfile: docker/agent-langchain/Dockerfile
-    image: cv/agent-langchain:latest
+    # 使用 langgraph build 构建的生产镜像（支持 PostgreSQL 线程持久化）
+    # 重建命令: cd agent-langchain && langgraph build -t cv/agent-langchain-prod:latest -c langgraph.json
+    image: cv/agent-langchain-prod:latest
     container_name: agent-langchain
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
       # LLM 配置：使用 vLLM
       - AGENT_LLM_PROVIDER=vllm
       - AGENT_OPENAI_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
@@ -370,11 +385,25 @@ services:
       # Excel 相关配置：如需在容器内分析本地文件，可通过挂载卷调整基础目录
       - AGENT_EXCEL_FILE_BASE_DIR=/data/excel
       - AGENT_EXCEL_MAX_CHART_ROWS=500
+      # PostgreSQL (长期记忆 Store)
+      - POSTGRES_HOST=pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=cv_kb
+      - POSTGRES_PASSWORD=cv_kb_pass
+      - POSTGRES_DB=cv_kb
+      # LangGraph API 生产模式数据库（线程、运行持久化）
+      - POSTGRES_URI=postgresql://cv_kb:cv_kb_pass@pgvector:5432/cv_kb
+      # Redis (LangGraph API pub/sub)
+      - REDIS_URI=redis://langgraph-redis:6379
     depends_on:
       mysql:
         condition: service_healthy
+      pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
-      - "18110:8100"
+      - "18110:8000" # langgraph-api 生产镜像默认监听 8000
     volumes:
       # 可选：挂载 Excel 文件目录，供 Excel 图表 Agent 使用
       - ../../logs:/logs:rw
@@ -399,7 +428,7 @@ services:
     environment:
       # Runtime 变量 (Server Side)
       - NEXT_PUBLIC_API_URL=/api
-      - LANGGRAPH_API_URL=http://agent-langchain:8100
+      - LANGGRAPH_API_URL=http://agent-langchain:8000 # 生产镜像监听 8000
       - NEXT_PUBLIC_ASSISTANT_ID=data_deep_agent
     depends_on:
       agent-langchain:
@@ -598,3 +627,4 @@ volumes:
   rag-model-cache:
   ollama-vl-data:
   rag-ui-node-modules:
+  langgraph-redis-data:

@@ -2,8 +2,8 @@ FROM node:22-slim AS base
 
 ENV NODE_ENV=production
 # Agent Chat UI 默认连接 article-agent（可在构建时通过 --build-arg 覆盖）
-ARG NEXT_PUBLIC_API_URL=http://localhost:18130
-ARG NEXT_PUBLIC_ASSISTANT_ID=content-chat-agent
+ARG NEXT_PUBLIC_API_URL=/api
+ARG NEXT_PUBLIC_ASSISTANT_ID=data_deep_agent
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_ASSISTANT_ID=${NEXT_PUBLIC_ASSISTANT_ID}
 

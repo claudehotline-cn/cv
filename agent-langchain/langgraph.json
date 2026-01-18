@@ -3,10 +3,6 @@
     "data_deep_agent": "agent_langchain.deep_agent.graph:get_data_deep_agent_graph"
   },
   "dependencies": [
-    "agent-langchain",
-    "langgraph==1.0.6",
-    "langgraph-cli[inmem]",
-    "langgraph-prebuilt==1.0.6",
-    "langchain==1.2.6"
+    "."
   ]
 }
