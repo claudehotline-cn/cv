@@ -47,6 +47,13 @@ class Settings(BaseSettings):
         alias="REDIS_URL",
     )
 
+    # Task Queue Settings
+    task_result_retention_hours: int = Field(
+        default=24,
+        description="Hours to retain task results before cleanup",
+        alias="TASK_RESULT_RETENTION_HOURS",
+    )
+
 
 
     # Database Settings (Common)
