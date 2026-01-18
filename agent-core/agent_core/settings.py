@@ -1,0 +1,125 @@
+from functools import lru_cache
+from typing import Dict, Optional
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Runtime configuration for Agent Core."""
+
+    # LLM / provider settings
+    llm_provider: str = Field(
+        default="openai",
+        description="LLM Provider: openai | ollama | vllm",
+        alias="AGENT_LLM_PROVIDER",
+    )
+    openai_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for OpenAI-compatible chat models",
+        alias="OPENAI_API_KEY",
+    )
+    llm_model: str = Field(
+        default="gpt-4o-mini",
+        description="Model name for the chat LLM",
+        alias="AGENT_OPENAI_MODEL",
+    )
+    ollama_base_url: str = Field(
+        default="http://host.docker.internal:11434",
+        description="Ollama Base URL",
+        alias="AGENT_OLLAMA_BASE_URL",
+    )
+    vllm_base_url: str = Field(
+        default="http://vllm:8000/v1",
+        description="vLLM OpenAI-compatible API URL",
+        alias="AGENT_VLLM_BASE_URL",
+    )
+
+    installed_agents: list[str] = Field(
+        default=["data_agent"],
+        description="List of installed agent plugins",
+        alias="INSTALLED_AGENTS",
+    )
+
+    redis_url: str = Field(
+        default="redis://redis:6379",
+        description="Redis Connection URL",
+        alias="REDIS_URL",
+    )
+
+
+
+    # Database Settings (Common)
+    postgres_host: str = Field(
+        default="pgvector",
+        description="PostgreSQL Host (for Platform Infra)",
+        alias="POSTGRES_HOST",
+    )
+    postgres_port: int = Field(
+        default=5432,
+        description="PostgreSQL Port",
+        alias="POSTGRES_PORT",
+    )
+    postgres_user: str = Field(
+        default="cv_kb",
+        description="PostgreSQL User",
+        alias="POSTGRES_USER",
+    )
+    postgres_password: str = Field(
+        default="cv_kb_pass",
+        description="PostgreSQL Password",
+        alias="POSTGRES_PASSWORD",
+    )
+    postgres_db: str = Field(
+        default="cv_kb",
+        description="PostgreSQL Database Name",
+        alias="POSTGRES_DB",
+    )
+
+    # External Data Source (Optional)
+    db_host: str = Field(
+        default="mysql",
+        description="MySQL Host (Target Data Source)",
+        alias="AGENT_DB_HOST",
+    )
+    db_port: int = Field(
+        default=3306,
+        description="MySQL Port",
+        alias="AGENT_DB_PORT",
+    )
+    db_user: str = Field(
+        default="root",
+        description="MySQL User",
+        alias="AGENT_DB_USER",
+    )
+    db_password: str = Field(
+        default="123456",
+        description="MySQL Password",
+        alias="AGENT_DB_PASSWORD",
+    )
+    db_default_name: str = Field(
+        default="cv_cp",
+        description="Default MySQL Database Name",
+        alias="AGENT_DB_DEFAULT_NAME",
+    )
+    
+    # LLM & HTTP Timeouts
+    request_timeout_sec: float = Field(
+        default=30.0,
+        alias="AGENT_REQUEST_TIMEOUT",
+    )
+
+    @property
+    def postgres_uri(self) -> str:
+        """PostgreSQL Connection URI"""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = False
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

@@ -414,6 +414,112 @@ services:
       # 工作区目录：用于持久化分析结果（DataFrame、图表、报告）
       - ../../agent-langchain/workspace:/data/workspace:rw
 
+  # ============================================================================
+  # Agent Chat API (FastAPI 版本，替代 langgraph-cli)
+  # ============================================================================
+  # ============================================================================
+  # Agent Platform API (Unified)
+  # ============================================================================
+  agent-api:
+    build:
+      context: ../../agent-platform-api
+      dockerfile: Dockerfile
+    image: cv/agent-platform-api:latest
+    container_name: agent-api
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://cv_kb:cv_kb_pass@pgvector:5432/cv_kb
+      - REDIS_URL=redis://langgraph-redis:6379
+      # LLM
+      - AGENT_LLM_PROVIDER=vllm
+      - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
+      - AGENT_OPENAI_MODEL=qwen3:30b
+      # MySQL (Target Data Source)
+      - AGENT_DB_HOST=mysql
+      - AGENT_DB_PORT=3306
+      - AGENT_DB_USER=root
+      - AGENT_DB_PASSWORD=123456
+      - AGENT_DB_DEFAULT_NAME=cv_cp
+      # Postgres (Platform Infra)
+      - POSTGRES_HOST=pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=cv_kb
+      - POSTGRES_PASSWORD=cv_kb_pass
+      - POSTGRES_DB=cv_kb
+    depends_on:
+      mysql:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "18111:8000"
+    volumes:
+      - ../../logs:/logs:rw
+      - ../../agent-core:/app/agent-core:ro
+      - ../../agent-plugins:/app/agent-plugins:ro
+      # Workspaces
+      - ../../agent-langchain/workspace:/data/workspace:rw
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:8000/health > /dev/null || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  agent-worker:
+    build:
+      context: ../../agent-platform-api
+      dockerfile: Dockerfile
+    image: cv/agent-platform-api:latest
+    container_name: agent-worker
+    command: [ "arq", "app.worker.WorkerSettings" ]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://cv_kb:cv_kb_pass@pgvector:5432/cv_kb
+      - REDIS_URL=redis://langgraph-redis:6379
+      - AGENT_LLM_PROVIDER=vllm
+      - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
+      - POSTGRES_HOST=pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=cv_kb
+      - POSTGRES_PASSWORD=cv_kb_pass
+      - POSTGRES_DB=cv_kb
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../../logs:/logs:rw
+      - ../../agent-core:/app/agent-core:ro
+      - ../../agent-plugins:/app/agent-plugins:ro
+      - ../../agent-langchain/workspace:/data/workspace:rw
+
+  # ============================================================================
+  # Agent Chat Vue (新 Vue 前端，连接 agent-chat-api)
+  # ============================================================================
+  agent-chat-vue:
+    build:
+      context: ../..
+      dockerfile: docker/agent-chat-vue/Dockerfile
+    image: cv/agent-chat-vue:latest
+    container_name: agent-chat-vue
+    environment:
+      - VITE_API_URL=/api
+    depends_on:
+      agent-api:
+        condition: service_healthy
+    ports:
+      - "18122:3000" # Vite dev server
+    volumes:
+      # 源码热重载
+      - ../../agent-chat-vue/src:/app/src:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:3000/ > /dev/null || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # 旧前端 (Next.js agent-chat-ui，依赖 langgraph-cli)
+  # ============================================================================
   agent-chat-ui:
     build:
       # 切换构上下文为 third-party/agent-chat-ui (Next.js 版本)

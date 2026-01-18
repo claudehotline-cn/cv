@@ -21,7 +21,7 @@ RUN corepack enable && corepack prepare pnpm@10.5.1 --activate
 COPY third-party/agent-chat-ui/package.json third-party/agent-chat-ui/pnpm-lock.yaml ./
 
 # 在项目目录下安装依赖，确保 next 等二进制在本目录 node_modules 中
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # 再拷贝完整源码（避免因源码变更重复安装依赖）
 COPY third-party/agent-chat-ui ./

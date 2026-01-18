@@ -21,3 +21,9 @@ scikit-learn>=1.5
 scipy>=1.14
 tabulate
 langgraph-checkpoint-postgres>=2.0.0
+
+# Agent Chat API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+asyncpg>=0.30.0
+sse-starlette>=2.0.0

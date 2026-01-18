@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-core"
+version = "0.1.0"
+description = "Core SDK for Agent Platform"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain>=0.2.0",
+    "langchain-core>=0.2.0",
+    "langchain-community>=0.2.0",
+    "langchain-openai>=0.1.7",
+    "langgraph>=0.0.51",
+    "langchain-ollama>=0.2.0",
+    "pydantic>=2.7.2",
+    "pydantic-settings>=2.3.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["agent_core*"]
