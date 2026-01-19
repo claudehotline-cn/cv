@@ -1,172 +1,175 @@
 <template>
-  <div class="chat-view">
-    <!-- Top Right Controls -->
-    <div class="top-right-controls">
-      <el-button circle text @click="toggleTheme" class="theme-toggle-btn">
-        <el-icon v-if="isDark" class="theme-icon"><Moon /></el-icon>
-        <el-icon v-else class="theme-icon"><Sunny /></el-icon>
-      </el-button>
-    </div>
-
-    <!-- Chat Header (Only show if session active or chatting) -->
-    <div v-if="chatStore.currentSessionId" class="chat-header glass-panel">
-      <div class="header-info">
-        <h3>{{ chatStore.currentSession?.title || '新对话' }}</h3>
-        <el-tag size="small" type="success" effect="dark" round>{{ currentAgentName }}</el-tag>
-      </div>
-    </div>
-
-    <!-- Messages Area (Only show if session active) -->
-    <el-scrollbar v-if="chatStore.currentSessionId" ref="messageListRef" class="message-list-container">
-      <div class="message-list-inner">
-        <MessageItem
-          v-for="msg in chatStore.messages"
-          :key="msg.id"
-          :message="msg"
-        />
-        
-        <!-- Streaming Message -->
-        <div v-if="chatStore.isStreaming" class="message assistant streaming-message">
-          <div class="avatar-container">
-            <el-avatar :size="36" class="ai-avatar">AI</el-avatar>
+  <div class="chat-layout">
+    <!-- Center Panel: Chat -->
+    <main class="chat-main">
+      <!-- Chat Header -->
+      <header class="chat-header">
+        <div class="header-left">
+          <div class="agent-icon-square">
+            <el-icon><DataAnalysis /></el-icon>
           </div>
-          <div class="message-body">
-            <ThinkingBlock
-              v-if="chatStore.streamingThinking"
-              :content="chatStore.streamingThinking"
-              :isStreaming="true"
-            />
-            <ToolCallBlock 
-               :toolCalls="chatStore.streamingToolCalls"
-            />
-            <div class="content-wrapper glass-panel">
-              <MarkdownRenderer :content="chatStore.streamingContent || '思考中...'" />
+          <div>
+            <h2 class="header-title">Data Analyst Agent</h2>
+            <div class="header-subtitle">
+              <span class="status-dot">
+                <span class="animate-ping"></span>
+                <span class="dot-inner"></span>
+              </span>
+              <span>Online • Model v4.0</span>
             </div>
           </div>
         </div>
         
-        <!-- HITL Panel -->
-        <div v-if="chatStore.isInterrupted" class="hitl-wrapper">
-          <HITLPanel
-            :interruptData="chatStore.interruptData"
-            @approve="handleApprove"
-            @reject="handleReject"
-          />
+        <div class="header-right">
+           <div class="jobs-pill">
+              <div class="loading-bars">
+                 <span></span><span></span><span></span>
+              </div>
+              <span class="pill-text">2 Jobs Running</span>
+           </div>
+           
+           <button class="icon-btn" @click="toggleTheme" title="Toggle Theme">
+              <el-icon v-if="isDark"><Moon /></el-icon>
+              <el-icon v-else><Sunny /></el-icon>
+           </button>
+           
+           <button class="icon-btn">
+              <el-icon><Search /></el-icon>
+           </button>
+           <button class="icon-btn lg-hidden" @click="toggleRightSidebar">
+              <el-icon><info-filled /></el-icon>
+           </button>
         </div>
-
-        <!-- Chart -->
-        <div v-if="chatStore.currentChart" class="chart-wrapper">
-          <ChartRenderer :chartData="chatStore.currentChart" />
-        </div>
-        
-        <div class="bottom-spacer"></div>
-      </div>
-    </el-scrollbar>
-
-    <!-- Input Area (Handle both Center and Bottom positions) -->
-    <div 
-      class="input-container" 
-      :class="{ 'centered-input': !chatStore.currentSessionId }"
-    >
-      <div v-if="!chatStore.currentSessionId" class="welcome-section">
-        <div class="logo-box">
-          <el-icon class="logo-icon"><Cpu /></el-icon>
-        </div>
-        <h1 class="welcome-title">有什么可以帮你的吗?</h1>
-      </div>
-
-      <div class="input-box glass-panel">
-        <div v-if="chatStore.isStreaming" class="stop-btn-wrapper">
-          <el-button round size="small" @click="handleStop">
-            <el-icon><VideoPause /></el-icon> 停止生成
-          </el-button>
-        </div>
-        
-        <el-input
-          v-model="inputMessage"
-          type="textarea"
-          :autosize="{ minRows: 1, maxRows: 8 }"
-          placeholder="输入消息，或者上传图片/文件..."
-          resize="none"
-          class="custom-textarea"
-          :disabled="chatStore.isStreaming || chatStore.isInterrupted"
-          @keydown.enter.exact.prevent="handleSend"
-        />
-        
-        <div class="input-footer">
-          <div class="tools-btn">
-            <el-tooltip content="上传图片" placement="top">
-              <el-button circle text :icon="Picture" />
-            </el-tooltip>
-            <el-tooltip content="上传文件" placement="top">
-              <el-button circle text :icon="Document" />
-            </el-tooltip>
-            <el-tooltip content="增强模式" placement="top">
-              <el-button circle text :icon="MagicStick" />
-            </el-tooltip>
-          </div>
-          <el-button
-            type="primary"
-            circle
-            :disabled="!inputMessage.trim() || chatStore.isInterrupted"
-            :loading="chatStore.isStreaming"
-            @click="handleSend"
-            class="send-btn"
-          >
-            <el-icon v-if="!chatStore.isStreaming"><Position /></el-icon>
-          </el-button>
-        </div>
+      </header>
+      
+      <!-- Messages Area -->
+      <div class="messages-container" ref="scrollContainer">
+         <div class="messages-content">
+            <!-- Date Divider -->
+            <div class="date-divider">
+               <span>Today, 2:30 PM</span>
+            </div>
+            
+            <MessageItem
+              v-for="msg in chatStore.messages"
+              :key="msg.id"
+              :message="msg"
+            />
+            
+            <!-- Streaming Message -->
+            <div v-if="chatStore.isStreaming" class="message assistant streaming-message">
+              <div class="avatar-container">
+                <div class="ai-avatar-square">
+                   <el-icon><DataAnalysis /></el-icon>
+                </div>
+              </div>
+              <div class="message-body">
+                <ThinkingBlock
+                  v-if="chatStore.streamingThinking"
+                  :content="chatStore.streamingThinking"
+                  :isStreaming="true"
+                />
+                <ToolCallBlock 
+                   :toolCalls="chatStore.streamingToolCalls"
+                />
+                <div class="content-wrapper">
+                  <MarkdownRenderer :content="chatStore.streamingContent || 'Thinking...'" />
+                </div>
+              </div>
+            </div>
+            
+            <!-- Bottom Spacer for Floating Input -->
+            <div class="bottom-spacer"></div>
+         </div>
       </div>
       
-      <div class="footer-text">
-        AI 可能会犯错，请核对重要信息。
+      <!-- Floating Input Area -->
+      <div class="input-layer">
+         <div class="input-wrapper">
+            <div class="input-box">
+               <button class="attach-btn">
+                  <el-icon><CirclePlusFilled /></el-icon>
+               </button>
+               
+               <textarea
+                  v-model="inputMessage"
+                  class="chat-input"
+                  placeholder="Message Data Analyst..."
+                  rows="1"
+                  @keydown.enter.exact.prevent="handleSend"
+                  @input="autoResize"
+                  ref="textareaRef"
+               ></textarea>
+               
+               <button 
+                  class="send-btn" 
+                  :disabled="!inputMessage.trim() || chatStore.isStreaming"
+                  @click="handleSend"
+               >
+                  <el-icon v-if="!chatStore.isStreaming"><Top /></el-icon>
+                  <el-icon v-else class="is-loading"><Loading /></el-icon>
+               </button>
+            </div>
+         </div>
       </div>
-    </div>
+    </main>
+
+    <!-- Right Sidebar (Desktop) -->
+    <AgentRightSidebar class="hidden-mobile" />
+    
+    <!-- Right Drawer (Mobile) -->
+    <el-drawer
+      v-model="showRightDrawer"
+      size="320px"
+      :with-header="false"
+      direction="rtl"
+    >
+       <AgentRightSidebar />
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { 
-  Cpu, Position, VideoPause, Moon, Sunny,
-  Picture, Document, MagicStick
+  DataAnalysis, Search, InfoFilled, 
+  CirclePlusFilled, Top, Loading,
+  Moon, Sunny
 } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import ThinkingBlock from '@/components/chat/ThinkingBlock.vue'
 import ToolCallBlock from '@/components/chat/ToolCallBlock.vue'
 import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
-import HITLPanel from '@/components/chat/HITLPanel.vue'
-import ChartRenderer from '@/components/chat/ChartRenderer.vue'
-import apiClient from '@/api/client'
+import AgentRightSidebar from '@/components/chat/AgentRightSidebar.vue'
 
 const chatStore = useChatStore()
 const inputMessage = ref('')
-const messageListRef = ref()
+const scrollContainer = ref<HTMLElement>()
+const textareaRef = ref<HTMLTextAreaElement>()
+const showRightDrawer = ref(false)
 const isDark = ref(true)
-const agentName = ref('')
 
-const currentAgentName = computed(() => {
-  // Can be enhanced to fetch agent name based on ID
-  return 'qwen3:30b' 
-})
+// Auto resize textarea
+function autoResize() {
+   const el = textareaRef.value
+   if (el) {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+   }
+}
 
-onMounted(async () => {
-  if (document.documentElement.classList.contains('light')) {
-    isDark.value = false
-  }
-})
+function scrollToBottom() {
+   nextTick(() => {
+     if (scrollContainer.value) {
+       scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight
+     }
+   })
+}
 
-watch(
-  () => [chatStore.messages.length, chatStore.streamingContent],
-  async () => {
-    await nextTick()
-    if (messageListRef.value) {
-      const wrap = messageListRef.value.wrapRef
-      wrap.scrollTop = wrap.scrollHeight
-    }
-  }
-)
+function toggleRightSidebar() {
+   showRightDrawer.value = !showRightDrawer.value
+}
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -182,271 +185,421 @@ function toggleTheme() {
 
 async function handleSend() {
   const msg = inputMessage.value.trim()
-  if (!msg) return
+  if (!msg || chatStore.isStreaming) return
   
   if (!chatStore.currentSessionId) {
-    try {
-      const title = msg.slice(0, 20) || '新对话'
-      await chatStore.createSession(title)
-    } catch (e) {
-      console.error('Failed to create session automatically', e)
-      return
-    }
+     await chatStore.createSession(msg.slice(0, 20))
   }
-
+  
   chatStore.sendMessage(msg)
   inputMessage.value = ''
+  if (textareaRef.value) textareaRef.value.style.height = 'auto'
 }
 
-function handleStop() {
-  chatStore.stopStream()
-}
+watch(
+  () => [chatStore.messages.length, chatStore.streamingContent],
+  scrollToBottom
+)
 
-function handleApprove() {
-  chatStore.sendFeedback('approve')
-}
-
-function handleReject(message: string) {
-  chatStore.sendFeedback('reject', message)
-}
+onMounted(() => {
+   if (document.documentElement.classList.contains('light')) {
+      isDark.value = false
+   }
+   scrollToBottom()
+})
 </script>
 
 <style scoped>
-.chat-view {
-  height: 100%;
+.chat-layout {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  background: var(--bg-primary); /* background-light */
+}
+
+.chat-main {
+  flex: 1;
   display: flex;
   flex-direction: column;
   position: relative;
-}
-
-.top-right-controls {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  z-index: 100;
-  display: flex;
-  gap: 8px;
-}
-
-.theme-toggle-btn {
-  width: 40px;
-  height: 40px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.theme-toggle-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.theme-icon {
-  font-size: 20px;
-}
-
-.chat-header {
-  padding: 16px 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--glass-bg);
-  z-index: 10;
-}
-
-.header-info h3 {
-  font-size: 16px;
-  margin: 0 0 4px 0;
-  color: var(--text-primary);
-}
-
-/* Message List */
-.message-list-container {
-  flex: 1;
-}
-
-.message-list-inner {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-.streaming-message {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.ai-avatar {
-  background: var(--accent-gradient);
-  font-weight: 600;
-  font-size: 14px;
-  color: white;
-}
-
-.message-body {
-  flex: 1;
   min-width: 0;
 }
 
-.content-wrapper {
-  padding: 16px 24px;
-  border-radius: 12px;
-  border-top-left-radius: 2px;
+/* Header */
+.chat-header {
+  height: 64px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+/* Dark mode header background fix */
+:deep(.dark) .chat-header {
+    background: rgba(34, 38, 42, 0.5);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.agent-icon-square {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 20px;
+}
+
+.header-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.header-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary); /* Text secondary */
+}
+
+/* Updated Status Dot styles */
+.status-dot {
+  position: relative;
+  display: flex;
+  height: 8px;
+  width: 8px;
+}
+
+.status-dot .dot-inner {
+  position: relative;
+  display: inline-flex;
+  border-radius: 9999px;
+  height: 8px;
+  width: 8px;
+  background-color: #22c55e;
+}
+
+.status-dot .animate-ping {
+  position: absolute;
+  display: inline-flex;
+  height: 100%;
+  width: 100%;
+  border-radius: 9999px;
+  background-color: #4ade80;
+  opacity: 0.75;
+  animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.jobs-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 99px;
+  background: #fdf2f8; /* amber-50 equivalent but generic */
+  border: 1px solid #f9a8d4;
+  color: #db2777; /* pink-600 */
+}
+
+/* Dark mode jobs pill override via variables */
+.jobs-pill {
+    background: rgba(245, 158, 11, 0.05); /* amber-500/5 */
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    color: #b45309; /* amber-700 */
+}
+
+.loading-bars {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+}
+
+.loading-bars span {
+  width: 2px;
+  background: currentColor;
+  border-radius: 2px;
+  animation: barHeight 1s ease-in-out infinite;
+}
+
+.loading-bars span:nth-child(2) { animation-delay: 0.2s; }
+.loading-bars span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes barHeight {
+  0%, 100% { height: 100%; }
+  50% { height: 50%; }
+}
+
+.pill-text {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.icon-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+}
+
+/* Messages Area */
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 16px;
+  scroll-behavior: smooth;
+}
+
+.messages-content {
+  max-width: 768px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.date-divider {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.date-divider span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  padding: 4px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--border-color);
 }
 
 .bottom-spacer {
-  height: 160px;
+  height: 120px;
+}
+
+/* Streaming Message Styles (Partial Duplication of MessageItem logic for Stream) */
+.streaming-message {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.avatar-container {
+   flex-shrink: 0;
+}
+
+.ai-avatar-square {
+   width: 32px;
+   height: 32px;
+   border-radius: 8px;
+   background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   color: white;
+   font-size: 16px;
+   margin-top: 4px;
+   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.message-body {
+   display: flex;
+   flex-direction: column;
+   gap: 4px;
+   min-width: 0; /* Text truncate fix */
+   flex: 1;
+   align-items: flex-start;
+}
+
+.content-wrapper {
+   background: var(--bg-primary); /* white */
+   border: 1px solid var(--border-color);
+   padding: 16px 20px;
+   border-radius: 16px;
+   border-top-left-radius: 2px;
+   color: var(--text-primary);
+   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+   max-width: 100%;
 }
 
 /* Input Styles */
-.input-container {
+.input-layer {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 24px;
-  background: linear-gradient(to top, var(--bg-primary) 50%, transparent);
-  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 10;
+  padding: 24px 16px 40px; /* Reduced vertical padding */
+  background: linear-gradient(to top, var(--bg-primary) 20%, transparent); /* Fade out */
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  justify-content: center;
+  pointer-events: none; /* Allow clicking through upper transparent part */
+}
+
+.input-wrapper {
+  width: 100%;
+  max-width: 768px;
+  pointer-events: auto; /* Re-enable pointer events for input */
 }
 
 .input-box {
-  width: 100%;
-  max-width: 900px;
-  border-radius: 24px;
-  padding: 16px;
-  position: relative;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  background: var(--glass-bg);
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--bg-primary); /* white/dark */
   border: 1px solid var(--border-color);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 24px;
+  padding: 8px;
+  padding-left: 16px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  /* Ring focus equivalent */
+  transition: all 0.2s;
 }
 
 .input-box:focus-within {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2), 0 8px 40px rgba(0, 0, 0, 0.2);
-  transform: translateY(-2px);
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
 }
 
-/* Centered Input State */
-.input-container.centered-input {
-  top: 0;
-  bottom: 0;
+.attach-btn {
+  color: var(--text-secondary);
   background: transparent;
-  justify-content: center;
-  padding-bottom: 20vh;
-}
-
-.welcome-section {
-  text-align: center;
-  margin-bottom: 40px;
-  animation: fadeIn 0.8s ease-out;
-}
-
-.logo-box {
-  width: 80px;
-  height: 80px;
-  border-radius: 20px;
-  background: linear-gradient(135deg, #2e2a5e 0%, #1e1b4b 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 24px;
-  font-size: 40px;
-  color: var(--accent-primary);
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
-}
-
-.welcome-title {
-  font-size: 32px;
-  font-weight: 700;
-  background: linear-gradient(to right, var(--text-primary), var(--text-secondary));
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.stop-btn-wrapper {
-  position: absolute;
-  top: -46px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.custom-textarea :deep(.el-textarea__inner) {
   border: none;
-  background: transparent !important;
-  padding: 8px 12px;
-  font-size: 16px;
-  line-height: 1.6;
-}
-
-.custom-textarea :deep(.el-textarea__inner:focus) {
-  box-shadow: none;
-}
-
-.input-footer {
+  width: 40px;
+  height: 40px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px 16px 4px;
-  margin-top: 4px;
+  justify-content: center;
+  font-size: 24px;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background 0.2s;
+  flex-shrink: 0;
+  margin-bottom: 2px; /* Alignment fix */
 }
 
-.tools-btn {
-  display: flex;
-  gap: 8px;
+.attach-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+}
+
+.chat-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 16px;
+  padding: 10px 0;
+  max-height: 200px;
+  resize: none;
+  color: var(--text-primary);
+  min-height: 24px;
+}
+
+.chat-input:focus {
+  outline: none;
 }
 
 .send-btn {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  padding: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-primary);
+  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  background: var(--accent-gradient);
-  border: none;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  cursor: pointer;
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.3);
+  margin-bottom: 2px;
 }
 
-.send-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
+.send-btn:hover:not(:disabled) {
+  background: #1a8599; /* dark accent */
+  transform: translateY(-1px);
 }
 
-.send-btn:active {
+.send-btn:active:not(:disabled) {
   transform: scale(0.95);
 }
 
-.send-btn.is-disabled {
-  background: var(--btn-disabled-bg) !important;
-  color: var(--btn-disabled-color) !important;
-  box-shadow: none;
+.send-btn:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
-.footer-text {
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-top: 16px;
-  opacity: 0.8;
+.is-loading {
+  animation: spin 1s linear infinite;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Response for Mobile */
+@media (max-width: 1280px) {
+  .hidden-mobile {
+    display: none;
+  }
+}
+
+.lg-hidden {
+   display: none;
+}
+
+@media (max-width: 1280px) {
+  .lg-hidden {
+    display: flex;
+  }
 }
 </style>

@@ -5,20 +5,24 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
   /* Colors - Dark Mode Default */
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-tertiary: #334155;
+  /* Nexus Hub Colors (Dark Default) */
+  --accent-primary: #1f96ad;
+  --accent-secondary: #538893;
+  --accent-gradient: linear-gradient(135deg, #1f96ad 0%, #1a8599 100%);
 
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-tertiary: #64748b;
+  --bg-primary: #22262a;
+  /* background-dark */
+  --bg-secondary: #1a1d21;
+  /* sidebar-dark */
+  --bg-tertiary: #2f343a;
+  /* border/surface */
 
-  --accent-primary: #6366f1;
-  --accent-secondary: #8b5cf6;
-  --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --text-primary: #e0e0e0;
+  --text-secondary: #9aaeb3;
+  --text-tertiary: #5c6b73;
 
-  --border-color: rgba(255, 255, 255, 0.1);
-  --glass-bg: rgba(30, 41, 59, 0.7);
+  --border-color: #2f343a;
+  --glass-bg: rgba(34, 38, 42, 0.8);
   --glass-border: rgba(255, 255, 255, 0.05);
 
   --message-user-bg: var(--bg-tertiary);
@@ -52,29 +56,23 @@
 
 /* Light Mode Overrides */
 :root.light {
-  --bg-primary: #f8fafc;
-  /* slate-50 */
-  --bg-secondary: #ffffff;
-  /* white */
-  --bg-tertiary: #f1f5f9;
-  /* slate-100 */
+  --bg-primary: #ffffff;
+  /* background-light */
+  --bg-secondary: #f8fbfb;
+  /* sidebar-light */
+  --bg-tertiary: #eff4f5;
+  /* border/surface */
 
-  --text-primary: #0f172a;
-  /* slate-900 */
-  --text-secondary: #475569;
-  /* slate-600 */
-  --text-tertiary: #94a3b8;
-  /* slate-400 */
+  --text-primary: #0f181a;
+  --text-secondary: #538893;
+  --text-tertiary: #9aaeb3;
 
-  --border-color: #e2e8f0;
-  /* slate-200 */
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-border: rgba(255, 255, 255, 0.5);
+  --border-color: #eff4f5;
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(239, 244, 245, 0.5);
 
-  --message-user-bg: #eff6ff;
-  /* blue-50 */
-  --message-user-text: #1e3a8a;
-  /* blue-900 */
+  --message-user-bg: #1f96ad;
+  --message-user-text: #ffffff;
 
   --el-fill-color-light: rgba(0, 0, 0, 0.05);
   --el-fill-color-lighter: rgba(0, 0, 0, 0.02);
