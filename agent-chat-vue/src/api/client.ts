@@ -24,18 +24,59 @@ class ApiClient {
         this.baseUrl = baseUrl
     }
 
-    // Session 操作
-    async createSession(title?: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/sessions`, {
+    // Agent 操作
+    async listAgents(): Promise<any[]> {
+        const response = await fetch(`${this.baseUrl}/agents/`)
+        return response.json()
+    }
+
+    async getAgent(agentId: string): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/agents/${agentId}`)
+        return response.json()
+    }
+
+    async createAgent(config: any): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/agents/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: title || '新对话' }),
+            body: JSON.stringify(config),
+        })
+        return response.json()
+    }
+
+    async updateAgent(agentId: string, config: any): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/agents/${agentId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config),
+        })
+        return response.json()
+    }
+
+    async deleteAgent(agentId: string): Promise<void> {
+        await fetch(`${this.baseUrl}/agents/${agentId}`, { method: 'DELETE' })
+    }
+
+    async getAgentSchema(agentId: string): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/agents/${agentId}/config-schema`)
+        return response.json()
+    }
+
+    // Session 操作
+    async createSession(title?: string, agentId?: string): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/sessions/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: title || '新对话',
+                agent_id: agentId
+            }),
         })
         return response.json()
     }
 
     async listSessions(limit = 50): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/sessions?limit=${limit}`)
+        const response = await fetch(`${this.baseUrl}/sessions/?limit=${limit}`)
         return response.json()
     }
 
@@ -59,7 +100,7 @@ class ApiClient {
 
         const fetchStream = async () => {
             try {
-                const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/stream`, {
+                const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message }),

@@ -432,7 +432,7 @@ services:
       # LLM
       - AGENT_LLM_PROVIDER=vllm
       - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
-      - AGENT_OPENAI_MODEL=qwen3:30b
+      - AGENT_OPENAI_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
       # MySQL (Target Data Source)
       - AGENT_DB_HOST=mysql
       - AGENT_DB_PORT=3306
@@ -458,6 +458,7 @@ services:
       - ../../logs:/logs:rw
       - ../../agent-core:/app/agent-core:ro
       - ../../agent-plugins:/app/agent-plugins:ro
+      - ../../agent-platform-api/app:/app/app:rw # Hot reload for API code
       # Workspaces
       - ../../agent-langchain/workspace:/data/workspace:rw
     healthcheck:
@@ -503,6 +504,7 @@ services:
     container_name: agent-chat-vue
     environment:
       - VITE_API_URL=/api
+      - API_PROXY_TARGET=http://agent-api:8000
     depends_on:
       agent-api:
         condition: service_healthy

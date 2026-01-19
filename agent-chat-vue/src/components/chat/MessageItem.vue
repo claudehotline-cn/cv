@@ -19,23 +19,7 @@
         </div>
         
         <!-- Tool Calls -->
-        <div v-if="message.toolCalls?.length" class="tool-calls">
-          <div v-for="(tool, idx) in message.toolCalls" :key="idx" class="tool-call">
-            <el-icon><Setting /></el-icon>
-            <span class="tool-name">使用了 {{ tool.name }}</span>
-            <el-popover placement="top" :width="400" trigger="hover">
-              <template #reference>
-                <el-icon class="info-icon"><InfoFilled /></el-icon>
-              </template>
-              <div class="tool-details">
-                <h4>输入:</h4>
-                <pre>{{ tool.args }}</pre>
-                <h4>结果:</h4>
-                <pre>{{ tool.result }}</pre>
-              </div>
-            </el-popover>
-          </div>
-        </div>
+        <ToolCallBlock :toolCalls="message.toolCalls" />
 
         <!-- Chart -->
         <ChartRenderer v-if="message.chartData" :chartData="message.chartData" />
@@ -48,9 +32,9 @@
 </template>
 
 <script setup lang="ts">
-import { Setting, InfoFilled } from '@element-plus/icons-vue'
 import type { Message } from '@/types'
 import ThinkingBlock from './ThinkingBlock.vue'
+import ToolCallBlock from './ToolCallBlock.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ChartRenderer from './ChartRenderer.vue'
 
@@ -98,6 +82,13 @@ defineProps<{
 /* User Message Specifics */
 .message-row.user {
   flex-direction: row-reverse;
+  justify-content: flex-start;
+}
+
+.message-row.user .message-body {
+  text-align: right;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .message-row.user .message-bubble {
@@ -113,43 +104,5 @@ defineProps<{
   width: 100%; /* AI answers often take full width */
 }
 
-/* Tool Calls */
-.tool-calls {
-  margin-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tool-call {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.tool-name {
-  font-family: var(--font-mono);
-}
-
-.info-icon {
-  cursor: pointer;
-  margin-left: 4px;
-}
-
-.info-icon:hover {
-  color: var(--text-primary);
-}
-
-.tool-details pre {
-  background: var(--bg-primary);
-  padding: 8px;
-  border-radius: 4px;
-  overflow-x: auto;
-  font-size: 12px;
-}
+/* Tool Calls styles removed - moved to ToolCallBlock.vue */
 </style>

@@ -13,11 +13,13 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
+    allowedHosts: true,
     proxy: {
       '/api': {
-        // In Docker: agent-chat-api, in local dev: localhost
-        target: process.env.API_PROXY_TARGET || 'http://agent-chat-api:8000',
+        // In Docker: agent-api, in local dev: localhost
+        target: process.env.API_PROXY_TARGET || 'http://agent-api:8000',
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },

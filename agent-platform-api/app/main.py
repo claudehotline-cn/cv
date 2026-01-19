@@ -10,10 +10,18 @@ async def lifespan(app: FastAPI):
     # Startup
     print("Agent Platform API Starting...")
     await init_db()
+    
+    # Initialize async checkpointer/store for LangGraph
+    from agent_core.store import get_async_checkpointer, get_async_store, cleanup_stores
+    await get_async_checkpointer()
+    await get_async_store()
+    print("Async checkpointer and store initialized.")
+    
     async with AsyncSessionLocal() as session:
         await registry.sync_plugins(session)
     yield
     # Shutdown
+    await cleanup_stores()
     print("Agent Platform API Shutting down...")
 
 app = FastAPI(

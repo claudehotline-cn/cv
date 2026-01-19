@@ -10,7 +10,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBacken
 
 from agent_core.runtime import build_chat_llm
 from agent_core.middleware import SubAgentHITLMiddleware
-from agent_core.store import get_postgres_store, get_postgres_checkpointer
+from agent_core.store import get_async_store, get_checkpointer
 from .prompts import MAIN_AGENT_PROMPT
 
 # Import Refactored Sub-Agents
@@ -56,8 +56,8 @@ def get_data_deep_agent_graph() -> Any:
             routes={"/_shared/": StoreBackend(rt)},
         ),
         # 使用 PostgreSQL 持久化存储（长期记忆 + 会话检查点）
-        store=get_postgres_store,  # deepagents 接受工厂函数
-        checkpointer=get_postgres_checkpointer(),  # 需要传递实例
+        store=get_async_store,  # deepagents 接受工厂函数
+        checkpointer=get_checkpointer(),  # 传递预初始化的实例
         response_format=response_format,
     )
     

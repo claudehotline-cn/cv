@@ -3,7 +3,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Message, Session, ChartData } from '@/types'
+import type { Message, Session, ChartData, ToolCall } from '@/types'
 import apiClient from '@/api/client'
 
 export const useChatStore = defineStore('chat', () => {
@@ -15,9 +15,11 @@ export const useChatStore = defineStore('chat', () => {
     const isStreaming = ref(false)
     const streamingContent = ref('')
     const streamingThinking = ref('')
+    const streamingToolCalls = ref<ToolCall[]>([])
     const isInterrupted = ref(false)
     const interruptData = ref<any>(null)
     const currentChart = ref<ChartData | null>(null)
+    const currentAgentId = ref<string | null>(null)
 
     // 当前 abort 控制器
     let abortStream: (() => void) | null = null
@@ -39,11 +41,16 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     async function createSession(title?: string) {
-        const session = await apiClient.createSession(title)
+        const agentId = currentAgentId.value
+        const session = await apiClient.createSession(title, agentId || undefined)
         sessions.value.unshift(session)
         currentSessionId.value = session.id
         messages.value = []
         return session
+    }
+
+    function setCurrentAgent(agentId: string) {
+        currentAgentId.value = agentId
     }
 
     async function selectSession(sessionId: string) {
@@ -52,6 +59,15 @@ export const useChatStore = defineStore('chat', () => {
         messages.value = session.messages || []
         isInterrupted.value = session.is_interrupted || false
         interruptData.value = session.interrupt_data
+        interruptData.value = session.interrupt_data
+    }
+
+    function resetSession() {
+        currentSessionId.value = null
+        messages.value = []
+        isInterrupted.value = false
+        interruptData.value = null
+        currentChart.value = null
     }
 
     async function deleteSession(sessionId: string) {
@@ -79,6 +95,7 @@ export const useChatStore = defineStore('chat', () => {
         isStreaming.value = true
         streamingContent.value = ''
         streamingThinking.value = ''
+        streamingToolCalls.value = []
         currentChart.value = null
 
         // 开始流式请求
@@ -91,25 +108,60 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     function handleSSEEvent(eventType: string, data: any) {
-        switch (eventType) {
+        // Handle new API event types (type field) or legacy (event field)
+        const type = data.type || eventType
+
+        switch (type) {
             case 'message_start':
                 // 消息开始
                 break
 
+            case 'content':
             case 'content_delta':
-                streamingContent.value += data.delta || ''
+                // Handle nested content array format from vLLM: [{type: 'text', text: '...'}]
+                if (Array.isArray(data.content)) {
+                    const textContent = data.content
+                        .filter((c: any) => c.type === 'text')
+                        .map((c: any) => c.text)
+                        .join('')
+                    streamingContent.value += textContent
+                } else {
+                    streamingContent.value += data.content || data.delta || ''
+                }
                 break
 
             case 'thinking_start':
                 streamingThinking.value = ''
                 break
 
+            case 'thinking':
             case 'thinking_delta':
-                streamingThinking.value += data.delta || ''
+                // Handle both legacy 'thinking_delta' and new 'thinking' event
+                streamingThinking.value += data.content || data.delta || ''
                 break
 
             case 'tool_start':
-                // 可以在这里添加工具调用状态
+                // Legacy
+                break
+
+            case 'tool_call':
+                if (data.tool) {
+                    streamingToolCalls.value.push({
+                        id: data.id,
+                        name: data.tool,
+                        args: data.args || {},
+                        result: undefined
+                    })
+                }
+                break
+
+            case 'tool_output':
+                if (data.id) {
+                    const call = streamingToolCalls.value.find(c => c.id === data.id)
+                    if (call) {
+                        call.result = data.output
+                    }
+                }
                 break
 
             case 'chart':
@@ -121,6 +173,7 @@ export const useChatStore = defineStore('chat', () => {
                 interruptData.value = data
                 break
 
+            case 'done':
             case 'message_end':
                 // 消息结束，保存到消息列表
                 const aiMessage: Message = {
@@ -128,6 +181,7 @@ export const useChatStore = defineStore('chat', () => {
                     role: 'assistant',
                     content: streamingContent.value,
                     thinking: streamingThinking.value || undefined,
+                    toolCalls: streamingToolCalls.value.length > 0 ? [...streamingToolCalls.value] : undefined,
                     chartData: currentChart.value || undefined,
                     createdAt: new Date(),
                 }
@@ -137,10 +191,11 @@ export const useChatStore = defineStore('chat', () => {
                 isStreaming.value = false
                 streamingContent.value = ''
                 streamingThinking.value = ''
+                streamingToolCalls.value = []
                 break
 
             case 'error':
-                console.error('Stream error:', data.message)
+                console.error('Stream error:', data.message || data.error)
                 isStreaming.value = false
                 break
         }
@@ -182,6 +237,7 @@ export const useChatStore = defineStore('chat', () => {
         isStreaming,
         streamingContent,
         streamingThinking,
+        streamingToolCalls,
         isInterrupted,
         interruptData,
         currentChart,
@@ -194,5 +250,8 @@ export const useChatStore = defineStore('chat', () => {
         sendMessage,
         sendFeedback,
         stopStream,
+        setCurrentAgent,
+        resetSession,
+        currentAgentId,
     }
 })
