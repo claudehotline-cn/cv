@@ -143,12 +143,14 @@ import ToolCallBlock from '@/components/chat/ToolCallBlock.vue'
 import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
 import AgentRightSidebar from '@/components/chat/AgentRightSidebar.vue'
 
+import { useTheme } from '@/composables/useTheme'
+
+const { isDark, toggleTheme } = useTheme()
 const chatStore = useChatStore()
 const inputMessage = ref('')
 const scrollContainer = ref<HTMLElement>()
 const textareaRef = ref<HTMLTextAreaElement>()
 const showRightDrawer = ref(false)
-const isDark = ref(true)
 
 // Auto resize textarea
 function autoResize() {
@@ -171,18 +173,6 @@ function toggleRightSidebar() {
    showRightDrawer.value = !showRightDrawer.value
 }
 
-function toggleTheme() {
-  isDark.value = !isDark.value
-  const html = document.documentElement
-  if (isDark.value) {
-    html.classList.add('dark')
-    html.classList.remove('light')
-  } else {
-    html.classList.add('light')
-    html.classList.remove('dark')
-  }
-}
-
 async function handleSend() {
   const msg = inputMessage.value.trim()
   if (!msg || chatStore.isStreaming) return
@@ -202,9 +192,6 @@ watch(
 )
 
 onMounted(() => {
-   if (document.documentElement.classList.contains('light')) {
-      isDark.value = false
-   }
    scrollToBottom()
 })
 </script>

@@ -109,6 +109,11 @@ class Settings(BaseSettings):
         description="Default MySQL Database Name",
         alias="AGENT_DB_DEFAULT_NAME",
     )
+    db_extra_databases: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra database aliases mapping (e.g., {'reporting': 'cv_reporting'})",
+        alias="AGENT_DB_EXTRA_DATABASES",
+    )
     
     # LLM & HTTP Timeouts
     request_timeout_sec: float = Field(

@@ -43,7 +43,7 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
     # Constants
     START_THINK = "<think>"
     END_THINK = "</think>"
-    START_TOOL = "<tool_call>"
+    START_TOOL = "<tool_call"  # Match prefix (works for <tool_call> and <tool_call\n)
     END_TOOL = "</tool_call>"
     
     try:
@@ -55,12 +55,17 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
 
             # --- 2. Handle Structured Tool Calls (AIMessage) ---
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                 for tool_call in msg.tool_calls:
-                     # Emit structural tool call event
-                     yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_call.get('name'), 'args': tool_call.get('args'), 'id': tool_call.get('id')})}\n\n"
+                has_valid_tool_call = False
+                for tool_call in msg.tool_calls:
+                    tool_name = tool_call.get('name')
+                    # Only emit if we have a valid tool name (not empty string)
+                    if tool_name:
+                        has_valid_tool_call = True
+                        yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'args': tool_call.get('args'), 'id': tool_call.get('id')})}\n\n"
                  
-                 # Optimization: specific check to avoid leaking raw xml if structural parsing succeeded
-                 continue
+                # Only skip content processing if we actually had valid tool calls
+                if has_valid_tool_call:
+                    continue
 
             if not hasattr(msg, 'content'):
                 continue

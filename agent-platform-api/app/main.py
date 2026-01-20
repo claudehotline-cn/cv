@@ -1,6 +1,12 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
+# Configure global logging level
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("uvicorn").setLevel(logging.INFO)  # Keep uvicorn less verbose
+logging.getLogger("httpx").setLevel(logging.WARNING)  # Suppress httpx debug noise
 
 from app.db import init_db, AsyncSessionLocal
 from app.core.agent_registry import registry
