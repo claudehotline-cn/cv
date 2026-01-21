@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import json
 import logging
 import os
@@ -23,7 +23,7 @@ class SubAgentHITLMiddleware(AgentMiddleware):
         self, 
         interrupt_subagents: List[str] = None,
         allowed_decisions: List[str] = None,
-        description: str = "Please confirm to proceed"
+        description: Union[str, Dict[str, str]] = "Please confirm to proceed"
     ):
         super().__init__()
         self.interrupt_subagents = interrupt_subagents or ["visualizer_agent", "report_agent"]
@@ -49,19 +49,43 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 
                 response = await handler(request)
                 
+                # Extract content for preview
+                preview_content = None
+                if isinstance(response, str):
+                    preview_content = response
+                elif hasattr(response, 'update') and isinstance(response.update, dict):
+                    # Handle Command object
+                    msgs = response.update.get("messages", [])
+                    if msgs:
+                        last_msg = msgs[-1]
+                        if isinstance(last_msg, ToolMessage):
+                            preview_content = last_msg.content
+                        elif hasattr(last_msg, 'content'):
+                            preview_content = last_msg.content
+                
+                # Determine description based on subagent_type
+                if isinstance(self.description, dict):
+                    desc = self.description.get(subagent_type, self.description.get("default", "操作完成，请确认是否继续"))
+                else:
+                    desc = self.description
+
                 interrupt_value = {
                     "action_requests": [{
                         "name": subagent_type,
                         "args": args,
-                        "description": f"{self.description}\n\n{subagent_type} completed."
+                        "description": desc
                     }],
                     "review_configs": [{
                         "action_name": subagent_type,
                         "allowed_decisions": self.allowed_decisions
-                    }]
+                    }],
+                    "preview": preview_content
                 }
                 
                 interrupt_res = interrupt(interrupt_value)
+                
+                # Get tool_call_id for ToolMessage
+                tool_call_id = tool_call.get('id', '') if isinstance(tool_call, dict) else getattr(tool_call, 'id', '')
                 
                 if isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
                     decisions = interrupt_res["decisions"]
@@ -69,13 +93,15 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                         decision = decisions[0]
                         if decision.get("type") == "reject":
                             feedback = decision.get("message", f"User rejected {subagent_type}")
-                            return f"USER_INTERRUPT: {feedback}"
+                            return ToolMessage(content=f"USER_INTERRUPT: {feedback}", tool_call_id=tool_call_id)
 
                 if subagent_type == "visualizer_agent":
-                    return f"USER_APPROVED: Chart approved."
+                    content = "USER_APPROVED: Chart approved."
                 elif subagent_type == "report_agent":
-                    return f"USER_APPROVED: Report approved."
+                    content = "USER_APPROVED: Report approved."
                 else:
-                    return f"USER_APPROVED: {subagent_type} approved."
+                    content = f"USER_APPROVED: {subagent_type} approved."
+                
+                return ToolMessage(content=content, tool_call_id=tool_call_id)
         
         return await handler(request)

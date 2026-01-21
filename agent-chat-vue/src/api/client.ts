@@ -149,10 +149,10 @@ class ApiClient {
         return () => controller.abort()
     }
 
-    // HITL 反馈
-    streamFeedback(
+    // HITL Resume
+    resumeChat(
         sessionId: string,
-        feedback: FeedbackRequest,
+        request: { decision: string, feedback: string },
         onEvent: (event: string, data: any) => void,
         onError?: (error: Error) => void
     ): () => void {
@@ -160,12 +160,16 @@ class ApiClient {
 
         const fetchStream = async () => {
             try {
-                const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/feedback`, {
+                const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/resume`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(feedback),
+                    body: JSON.stringify(request),
                     signal: controller.signal,
                 })
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`)
+                }
 
                 const reader = response.body?.getReader()
                 if (!reader) throw new Error('No response body')
@@ -184,8 +188,13 @@ class ApiClient {
                     for (const line of lines) {
                         if (line.startsWith('data:')) {
                             try {
-                                const data = JSON.parse(line.substring(5).trim())
-                                onEvent(data.event || 'unknown', data)
+                                const jsonStr = line.substring(5).trim()
+                                if (!jsonStr) continue
+                                const data = JSON.parse(jsonStr)
+                                // SSE data usually array [msg, meta] or simple object {type: ...}
+                                // Dispatch as event 'message' or use data.type
+                                const eventType = Array.isArray(data) ? 'message' : (data.type || 'unknown')
+                                onEvent(eventType, data)
                             } catch (e) {
                                 console.warn('Failed to parse SSE data:', line)
                             }

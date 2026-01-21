@@ -32,7 +32,7 @@ const props = defineProps<{
   subgraphName?: string  // Optional subgraph identifier
 }>()
 
-const isOpen = ref(!!props.isStreaming)
+const isOpen = ref(false)
 
 function toggle() {
   isOpen.value = !isOpen.value

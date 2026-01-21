@@ -121,14 +121,19 @@ export const useChatStore = defineStore('chat', () => {
         )
     }
 
-    function sendFeedback(decision: 'approve' | 'reject', message?: string) {
+    function resumeChat(decision: 'approve' | 'reject', feedback: string) {
         if (!currentSessionId.value) return
 
+        // Clear interrupt state
+        isInterrupted.value = false
+        interruptData.value = null
+
+        // Reset stream state
         streamParser.reset()
 
-        abortStream = apiClient.streamFeedback(
+        abortStream = apiClient.resumeChat(
             currentSessionId.value,
-            { decision, message },
+            { decision, feedback },
             streamParser.handleEvent,
             streamParser.handleError
         )
@@ -158,7 +163,7 @@ export const useChatStore = defineStore('chat', () => {
         selectSession,
         deleteSession,
         sendMessage,
-        sendFeedback,
+        resumeChat,
         stopStream,
         setCurrentAgent,
         resetSession,

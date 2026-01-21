@@ -4,6 +4,7 @@ import traceback
 from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -198,6 +199,30 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
                     flush_data = {"type": "AIMessageChunk", "content": event["data"]}
                 yield f"data: {json.dumps([flush_data, {'subgraph': sg_key}])}\n\n"
         
+        # Check for interrupt state after stream ends
+        try:
+            state = await graph.aget_state(config)
+            # LangGraph stores interrupt data in state.tasks or as __interrupt__ depending on version
+            interrupt_data = None
+            
+            # Check state.tasks for interrupt (LangGraph 0.2+)
+            if hasattr(state, 'tasks') and state.tasks:
+                for task in state.tasks:
+                    if hasattr(task, 'interrupts') and task.interrupts:
+                        interrupt_data = [i.value if hasattr(i, 'value') else i for i in task.interrupts]
+                        break
+            
+            # Fallback: check state.values for __interrupt__ (older LangGraph or custom)
+            if not interrupt_data and hasattr(state, 'values') and state.values:
+                if '__interrupt__' in state.values:
+                    interrupt_data = state.values['__interrupt__']
+            
+            if interrupt_data:
+                _LOGGER.info(f"Detected interrupt: {interrupt_data}")
+                yield f"data: {json.dumps({'type': 'interrupt', '__interrupt__': interrupt_data})}\n\n"
+        except Exception as e:
+            _LOGGER.warning(f"Failed to check interrupt state: {e}")
+        
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         yield ": keep-alive\n\n"
 
@@ -243,5 +268,58 @@ async def chat_stream(
     inputs = {"messages": [HumanMessage(content=message)]}
     return StreamingResponse(
         event_generator(graph, inputs, config),
+        media_type="text/event-stream"
+    )
+
+
+class ResumeRequest(BaseModel):
+    """Resume request for interrupted chat."""
+    decision: str  # "approve" or "reject"
+    feedback: str = ""
+
+
+@router.post("/{session_id}/resume")
+async def resume_chat(
+    session_id: str,
+    request: ResumeRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Resume interrupted chat with user decision.
+    Uses LangGraph Command(resume=...) to continue execution.
+    """
+    from langgraph.types import Command
+    
+    # Load Session + Agent
+    stmt = select(SessionModel).options(selectinload(SessionModel.agent)).where(SessionModel.id == session_id)
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    # Get Plugin
+    agent_key = session.agent.builtin_key
+    if not agent_key or not registry.get_plugin(agent_key):
+        raise HTTPException(status_code=500, detail=f"Agent plugin '{agent_key}' not loaded")
+        
+    plugin = registry.get_plugin(agent_key)
+    graph = plugin.get_graph()
+    
+    # Config for LangGraph
+    config = {
+        "configurable": {
+            "thread_id": str(session.id),
+            "user_id": "mock_user",
+            "analysis_id": str(session.id)
+        }
+    }
+
+    # Build resume command with user decision
+    decisions = [{"type": request.decision, "message": request.feedback}]
+    resume_input = Command(resume=decisions)
+    
+    return StreamingResponse(
+        event_generator(graph, resume_input, config),
         media_type="text/event-stream"
     )

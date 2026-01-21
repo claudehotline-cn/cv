@@ -47,7 +47,11 @@ def get_data_deep_agent_graph() -> Any:
             SubAgentHITLMiddleware(
                 interrupt_subagents=["visualizer_agent", "report_agent"],
                 allowed_decisions=["approve", "reject"],
-                description="图表/报告生成完成，请确认是否继续",
+                description={
+                    "visualizer_agent": "图表生成完成，请确认是否继续",
+                    "report_agent": "报告生成完成，请确认是否继续",
+                    "default": "操作完成，请确认是否继续"
+                },
             ),
             # FileContentInjectionMiddleware 已移除，改用 subgraph streaming 直接传输数据
         ],

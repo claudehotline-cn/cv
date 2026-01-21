@@ -155,6 +155,22 @@ export function useStreamParser(options: StreamParserOptions = {}): StreamParser
                 })
             }
         }
+        // 5. 处理中断 (Interrupt)
+        if (msg.__interrupt__ || msg.type === 'interrupt') {
+            const intData = msg.__interrupt__ || msg.data || msg
+
+            // Avoid duplicate interrupt
+            if (isInterrupted.value) return
+
+            isInterrupted.value = true
+            interruptData.value = intData
+            blocks.value.push({
+                type: 'interrupt',
+                data: intData
+            })
+            onInterrupt?.(intData)
+            return
+        }
     }
 
     /**

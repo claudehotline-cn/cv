@@ -57,9 +57,11 @@
                       />
                       
                      <!-- Interrupt Block -->
-                     <div v-else-if="block.type === 'interrupt'" class="interrupt-block">
-                        <p>Waiting for user approval...</p>
-                     </div>
+                     <InterruptBlock
+                        v-else-if="block.type === 'interrupt'"
+                        :interrupt-data="block.data"
+                        @resume="handleResume"
+                     />
                    </template>
                 </template>
                 
@@ -80,7 +82,8 @@ import { DataAnalysis } from '@element-plus/icons-vue'
 import type { Message, ContentBlock } from '@/types'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallBlock from './ToolCallBlock.vue'
-import ToolOutputBlock from './ToolOutputBlock.vue' // New
+import ToolOutputBlock from './ToolOutputBlock.vue'
+import InterruptBlock from './InterruptBlock.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ChartRenderer from './ChartRenderer.vue'
 import dayjs from 'dayjs'
@@ -94,9 +97,17 @@ function formatTime(date: Date | string) {
 }
 
 function getUserContent(message: Message): string {
-    if (!message.blocks) return ''
     const contentBlock = message.blocks.find(b => b.type === 'content') as ContentBlock | undefined
     return contentBlock ? contentBlock.content : ''
+}
+
+import { useChatStore } from '@/stores/chat'
+const chatStore = useChatStore()
+
+async function handleResume(decision: 'approve' | 'reject', feedback: string) {
+  // Use session ID from message (if available) or current session
+  // Usually the current active session
+  await chatStore.resumeChat(decision, feedback)
 }
 </script>
 

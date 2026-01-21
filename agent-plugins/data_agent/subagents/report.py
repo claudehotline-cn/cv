@@ -163,6 +163,16 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     content = extract_text_from_message(response)
     _LOGGER.info("[Report Agent] LLM generated report content length: %d", len(content))
     
+    # 🚀 过滤思考内容：移除 <think>...</think> 标签及其内容
+    # 支持多种格式：<think>, </think>, 以及可能的变体
+    think_pattern = r'<think>.*?</think>'
+    content = re.sub(think_pattern, '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 清理多余的空行
+    content = re.sub(r'\n{3,}', '\n\n', content).strip()
+    
+    _LOGGER.info("[Report Agent] Filtered thinking content, final length: %d", len(content))
+    
     # 持久化报告到文件
     analysis_id = state.get("analysis_id", "")
     user_id = "anonymous"
