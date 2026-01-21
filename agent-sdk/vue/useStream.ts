@@ -20,20 +20,28 @@ export interface UseStreamOptions extends Omit<AgentClientOptions, 'onBlock' | '
 }
 
 export interface UseStreamResult {
-    /** 消息块列表 (只读) */
-    blocks: Readonly<Ref<MessageBlock[]>>
+    /** 消息块列表 */
+    blocks: Ref<MessageBlock[]>
     /** 是否正在流式传输 */
-    isStreaming: Readonly<Ref<boolean>>
+    isStreaming: Ref<boolean>
     /** 是否被中断 */
-    isInterrupted: Readonly<Ref<boolean>>
+    isInterrupted: Ref<boolean>
     /** 中断数据 */
-    interruptData: Readonly<Ref<any>>
+    interruptData: Ref<any>
     /** 发送消息 */
     submit: (sessionId: string, message: string) => Promise<void>
     /** 恢复中断 */
     resume: (sessionId: string, decision: 'approve' | 'reject', feedback?: string) => Promise<void>
     /** 重置状态 */
     reset: () => void
+    /** 停止当前流 */
+    stop: () => void
+    /** 设置中断状态（用于从服务端恢复状态） */
+    setInterruptState: (interrupted: boolean, data?: any) => void
+    /** 处理单个事件（用于外部流控制） */
+    handleEvent: (event: any) => void
+    /** 处理错误 */
+    handleError: (error: Error) => void
 }
 
 /**
@@ -129,13 +137,48 @@ export function useStream(options: UseStreamOptions): UseStreamResult {
         client.reset()
     }
 
+    /**
+     * 停止当前流
+     */
+    function stop(): void {
+        client.abort()
+        isStreaming.value = false
+    }
+
+    /**
+     * 设置中断状态（用于从服务端恢复状态）
+     */
+    function setInterruptState(interrupted: boolean, data?: any): void {
+        isInterrupted.value = interrupted
+        interruptData.value = data ?? null
+    }
+
+    /**
+     * 处理单个事件（用于外部流控制）
+     */
+    function handleEvent(event: any): void {
+        client.processEvent(event)
+    }
+
+    /**
+     * 处理错误
+     */
+    function handleError(error: Error): void {
+        isStreaming.value = false
+        options.onError?.(error)
+    }
+
     return {
-        blocks: readonly(blocks),
-        isStreaming: readonly(isStreaming),
-        isInterrupted: readonly(isInterrupted),
-        interruptData: readonly(interruptData),
+        blocks,
+        isStreaming,
+        isInterrupted,
+        interruptData,
         submit,
         resume,
-        reset
+        reset,
+        stop,
+        setInterruptState,
+        handleEvent,
+        handleError
     }
 }

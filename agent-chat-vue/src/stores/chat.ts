@@ -1,11 +1,13 @@
 /**
  * Chat Store - 管理聊天状态
+ * 
+ * 使用 agent-sdk 的 useStream 进行流式聊天
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Message, Session } from '@/types'
 import apiClient from '@/api/client'
-import { useStreamParser } from '@/composables/useStreamParser'
+import { useStream } from '@agent-sdk/vue'
 
 export const useChatStore = defineStore('chat', () => {
     // 状态
@@ -15,8 +17,9 @@ export const useChatStore = defineStore('chat', () => {
     const isLoading = ref(false)
     const currentAgentId = ref<string | null>(null)
 
-    // Stream parser instance
-    const streamParser = useStreamParser({
+    // 使用 SDK 的 useStream
+    const stream = useStream({
+        baseUrl: import.meta.env.VITE_API_URL || '/api',
         onDone: (blocks) => {
             // 流结束时，将 blocks 转换为消息
             const aiMessage: Message = {
@@ -26,7 +29,7 @@ export const useChatStore = defineStore('chat', () => {
                 createdAt: new Date(),
             }
             messages.value.push(aiMessage)
-            streamParser.reset()
+            stream.reset()
         },
         onError: (error) => {
             console.error('Stream error:', error)
@@ -34,21 +37,18 @@ export const useChatStore = defineStore('chat', () => {
         debug: false
     })
 
-    // 从 parser 导出响应式状态
-    const streamingBlocks = streamParser.blocks
-    const isStreaming = streamParser.isStreaming
-    const isInterrupted = streamParser.isInterrupted
-    const interruptData = streamParser.interruptData
-
-    // 当前 abort 控制器
-    let abortStream: (() => void) | null = null
+    // 从 stream 导出响应式状态
+    const streamingBlocks = stream.blocks
+    const isStreaming = stream.isStreaming
+    const isInterrupted = stream.isInterrupted
+    const interruptData = stream.interruptData
 
     // 计算属性
     const currentSession = computed(() =>
         sessions.value.find(s => s.id === currentSessionId.value)
     )
 
-    // 操作
+    // Session 管理（使用 apiClient）
     async function loadSessions() {
         isLoading.value = true
         try {
@@ -76,16 +76,16 @@ export const useChatStore = defineStore('chat', () => {
         const session = await apiClient.getSession(sessionId)
         currentSessionId.value = sessionId
         messages.value = session.messages || []
-        isInterrupted.value = session.is_interrupted || false
-        interruptData.value = session.interrupt_data
+        stream.setInterruptState(
+            session.is_interrupted || false,
+            session.interrupt_data
+        )
     }
 
     function resetSession() {
         currentSessionId.value = null
         messages.value = []
-        isInterrupted.value = false
-        interruptData.value = null
-        streamingBlocks.value = []
+        stream.reset()
     }
 
     async function deleteSession(sessionId: string) {
@@ -97,7 +97,8 @@ export const useChatStore = defineStore('chat', () => {
         }
     }
 
-    function sendMessage(content: string) {
+    // 聊天功能（完全使用 SDK）
+    async function sendMessage(content: string) {
         if (!currentSessionId.value || isStreaming.value) return
 
         // 添加用户消息
@@ -109,42 +110,27 @@ export const useChatStore = defineStore('chat', () => {
         }
         messages.value.push(userMessage)
 
-        // 重置流状态
-        streamParser.reset()
-
-        // 开始流式请求
-        abortStream = apiClient.streamChat(
-            currentSessionId.value,
-            content,
-            streamParser.handleEvent,
-            streamParser.handleError
-        )
+        // 使用 SDK 发送消息
+        try {
+            await stream.submit(currentSessionId.value, content)
+        } catch (error) {
+            console.error('Failed to send message:', error)
+        }
     }
 
-    function resumeChat(decision: 'approve' | 'reject', feedback: string) {
+    async function resumeChat(decision: 'approve' | 'reject', feedback: string) {
         if (!currentSessionId.value) return
 
-        // Clear interrupt state
-        isInterrupted.value = false
-        interruptData.value = null
-
-        // Reset stream state
-        streamParser.reset()
-
-        abortStream = apiClient.resumeChat(
-            currentSessionId.value,
-            { decision, feedback },
-            streamParser.handleEvent,
-            streamParser.handleError
-        )
+        // 使用 SDK 恢复会话
+        try {
+            await stream.resume(currentSessionId.value, decision, feedback)
+        } catch (error) {
+            console.error('Failed to resume chat:', error)
+        }
     }
 
     function stopStream() {
-        if (abortStream) {
-            abortStream()
-            abortStream = null
-            isStreaming.value = false
-        }
+        stream.stop()
     }
 
     return {

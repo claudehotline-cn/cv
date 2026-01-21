@@ -17,6 +17,7 @@ export class AgentClient {
     private headers: Record<string, string>
     private debug: boolean
     private parser: StreamParser
+    private abortController: AbortController | null = null
 
     constructor(options: AgentClientOptions) {
         this.baseUrl = options.baseUrl.replace(/\/$/, '')  // 移除尾部斜杠
@@ -54,18 +55,50 @@ export class AgentClient {
     }
 
     /**
+     * 中止当前请求
+     */
+    abort(): void {
+        if (this.abortController) {
+            this.abortController.abort()
+            this.abortController = null
+            this.parser.end()
+            this.log('Stream aborted')
+        }
+    }
+
+    /**
+     * 是否正在请求中
+     */
+    isActive(): boolean {
+        return this.abortController !== null
+    }
+
+    /**
+     * 处理外部传入的事件
+     */
+    processEvent(event: any): void {
+        this.parser.parse(event)
+    }
+
+    /**
      * 发送聊天消息并处理流式响应
      */
     async chat(sessionId: string, message: string): Promise<ChatState> {
         this.log('chat:', { sessionId, message })
+
+        // 中止之前的请求
+        this.abort()
+
         this.parser.reset()
         this.parser.start()
+        this.abortController = new AbortController()
 
         try {
             const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/chat`, {
                 method: 'POST',
                 headers: this.headers,
-                body: JSON.stringify({ message })
+                body: JSON.stringify({ message }),
+                signal: this.abortController.signal
             })
 
             if (!response.ok) {
@@ -78,8 +111,14 @@ export class AgentClient {
 
             await this.consumeStream(response.body)
         } catch (error) {
-            this.parser.end()
-            throw error
+            if ((error as Error).name === 'AbortError') {
+                this.log('Request aborted')
+            } else {
+                this.parser.end()
+                throw error
+            }
+        } finally {
+            this.abortController = null
         }
 
         return this.parser.getState()
@@ -91,12 +130,12 @@ export class AgentClient {
     async resume(sessionId: string, options: ResumeOptions): Promise<ChatState> {
         this.log('resume:', { sessionId, ...options })
 
-        // 清除中断状态但保留已有 blocks
-        const state = this.parser.getState()
-        this.parser.reset()
-        // 恢复之前的 blocks (可选，取决于业务需求)
+        // 中止之前的请求
+        this.abort()
 
+        this.parser.reset()
         this.parser.start()
+        this.abortController = new AbortController()
 
         try {
             const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/resume`, {
@@ -105,7 +144,8 @@ export class AgentClient {
                 body: JSON.stringify({
                     decision: options.decision,
                     feedback: options.feedback || ''
-                })
+                }),
+                signal: this.abortController.signal
             })
 
             if (!response.ok) {
@@ -118,8 +158,14 @@ export class AgentClient {
 
             await this.consumeStream(response.body)
         } catch (error) {
-            this.parser.end()
-            throw error
+            if ((error as Error).name === 'AbortError') {
+                this.log('Request aborted')
+            } else {
+                this.parser.end()
+                throw error
+            }
+        } finally {
+            this.abortController = null
         }
 
         return this.parser.getState()

@@ -1229,3 +1229,137 @@ async for chunk in graph.astream(...):
   :isStreaming="isStreaming"
 />
 ```
+
+---
+
+## 15. Agent SDK (前端流式聊天封装)
+
+Agent SDK 是一个框架无关的前端库，封装了与 Agent API 的流式通信逻辑。
+
+### 架构
+
+```
+agent-sdk/
+├── core/                    # 框架无关核心
+│   ├── types.ts            # 类型定义
+│   ├── stream-parser.ts    # SSE 流解析器
+│   ├── client.ts           # HTTP/SSE 客户端
+│   └── index.ts
+├── vue/                     # Vue 3 适配器
+│   ├── useStream.ts        # 组合式 API hook
+│   └── index.ts
+└── index.ts
+```
+
+### 核心 API
+
+#### useStream (Vue 3)
+
+```typescript
+import { useStream } from '@agent-sdk/vue'
+
+const stream = useStream({
+  baseUrl: '/api',
+  onDone: (blocks) => { /* 流结束回调 */ },
+  onError: (error) => { /* 错误处理 */ }
+})
+```
+
+| 属性/方法 | 类型 | 说明 |
+|-----------|------|------|
+| `blocks` | `Ref<MessageBlock[]>` | 消息块列表 |
+| `isStreaming` | `Ref<boolean>` | 流传输状态 |
+| `isInterrupted` | `Ref<boolean>` | HITL 中断状态 |
+| `interruptData` | `Ref<any>` | 中断数据 |
+| `submit(sessionId, message)` | `Promise<void>` | 发送消息 |
+| `resume(sessionId, decision, feedback?)` | `Promise<void>` | HITL 恢复 |
+| `stop()` | `void` | 停止当前流 (AbortController) |
+| `reset()` | `void` | 重置状态 |
+| `setInterruptState(interrupted, data?)` | `void` | 设置中断状态 |
+
+### Docker 配置
+
+SDK 位于项目根目录 `agent-sdk/`，在 Docker 中需要额外挂载：
+
+```yaml
+# docker-compose.yml
+agent-chat-vue:
+  environment:
+    - DOCKER_ENV=true  # 用于路径检测
+  volumes:
+    - ../../agent-chat-vue/src:/app/src:ro
+    - ../../agent-sdk:/agent-sdk:ro  # 挂载 SDK
+```
+
+```typescript
+// vite.config.ts
+resolve: {
+  alias: {
+    '@': resolve(__dirname, 'src'),
+    '@agent-sdk': process.env.DOCKER_ENV 
+      ? '/agent-sdk'                        // Docker
+      : resolve(__dirname, '../agent-sdk'), // Local
+  },
+},
+```
+
+```json
+// tsconfig.app.json
+{
+  "compilerOptions": {
+    "paths": {
+      "@agent-sdk/*": ["../agent-sdk/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "../agent-sdk/**/*.ts"]
+}
+```
+
+### 使用示例
+
+```typescript
+// stores/chat.ts
+import { useStream } from '@agent-sdk/vue'
+import apiClient from '@/api/client'
+
+export const useChatStore = defineStore('chat', () => {
+  const stream = useStream({
+    baseUrl: import.meta.env.VITE_API_URL || '/api',
+    onDone: (blocks) => {
+      messages.value.push({ role: 'assistant', blocks })
+      stream.reset()
+    }
+  })
+
+  // Session 管理 (业务层)
+  async function createSession(title?: string) {
+    return await apiClient.createSession(title)
+  }
+
+  // 流式聊天 (SDK)
+  async function sendMessage(content: string) {
+    if (!currentSessionId.value || stream.isStreaming.value) return
+    messages.value.push({ role: 'user', blocks: [{ type: 'content', content }] })
+    await stream.submit(currentSessionId.value, content)
+  }
+
+  // HITL 恢复 (SDK)
+  async function resumeChat(decision: 'approve' | 'reject', feedback: string) {
+    if (!currentSessionId.value) return
+    await stream.resume(currentSessionId.value, decision, feedback)
+  }
+
+  function stopStream() {
+    stream.stop()
+  }
+
+  return { ...stream, sendMessage, resumeChat, stopStream, createSession }
+})
+```
+
+### 设计原则
+
+1. **职责分离**: SDK 只负责流式聊天，Session/Agent 管理由业务层 (apiClient) 处理
+2. **框架无关**: 核心逻辑在 `core/`，适配器 (Vue/React) 仅做响应式封装
+3. **可取消**: 使用 `AbortController` 支持流中断
+4. **HITL 友好**: 内置中断状态管理和恢复机制

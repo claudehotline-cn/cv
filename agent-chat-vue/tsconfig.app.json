@@ -26,6 +26,9 @@
     "paths": {
       "@/*": [
         "src/*"
+      ],
+      "@agent-sdk/*": [
+        "../agent-sdk/*"
       ]
     },
     "types": [
@@ -36,6 +39,7 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
-    "src/**/*.vue"
+    "src/**/*.vue",
+    "../agent-sdk/**/*.ts"
   ]
 }

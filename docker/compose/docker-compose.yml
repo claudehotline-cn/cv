@@ -505,6 +505,7 @@ services:
     environment:
       - VITE_API_URL=/api
       - API_PROXY_TARGET=http://agent-api:8000
+      - DOCKER_ENV=true
     depends_on:
       agent-api:
         condition: service_healthy
@@ -513,6 +514,8 @@ services:
     volumes:
       # 源码热重载
       - ../../agent-chat-vue/src:/app/src:ro
+      # SDK
+      - ../../agent-sdk:/agent-sdk:ro
     healthcheck:
       test: [ "CMD-SHELL", "curl -fsS http://localhost:3000/ > /dev/null || exit 1" ]
       interval: 10s

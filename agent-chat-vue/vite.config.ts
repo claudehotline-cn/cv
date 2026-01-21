@@ -8,6 +8,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
+      // Docker: /agent-sdk, Local: ../agent-sdk
+      '@agent-sdk': process.env.DOCKER_ENV
+        ? '/agent-sdk'
+        : resolve(__dirname, '../agent-sdk'),
     },
   },
   server: {
