@@ -279,10 +279,33 @@ def viz_format_final_output(state, config):
 
 # report_agent 的 format_output 节点  
 def report_format_output(state, config):
-    # ... 生成报告后 ...
+    # ... 生成报告后 ...\
     report_message = json.dumps({"type": "report", "content": content}, ensure_ascii=False)
     return {"messages": [AIMessage(content=f"REPORT_AGENT_COMPLETE: {report_message}")]}
 ```
+
+#### 思考内容过滤 (无 `--reasoning-parser` 场景)
+
+当 vLLM 未启用 `--reasoning-parser`（如 Qwen3 存在兼容性问题时），模型的思考过程会以 `<think>...</think>` 标签形式包含在原始文本中。需要在后端过滤：
+
+```python
+import re
+
+def report_step2_generate(state, config):
+    # ... LLM 生成报告 ...
+    content = extract_text_from_message(response)
+    
+    # 🚀 过滤思考内容：移除 <think>...</think> 标签及其内容
+    think_pattern = r'<think>.*?</think>'
+    content = re.sub(think_pattern, '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 清理多余的空行
+    content = re.sub(r'\n{3,}', '\n\n', content).strip()
+    
+    # ... 保存报告并返回 ...
+```
+
+> **适用场景**：当无法使用服务端 reasoning parser 时，使用正则表达式在后端过滤思考内容，确保前端预览只显示最终报告。
 
 **前端处理** (从 stream 中解析):
 ```javascript
@@ -374,16 +397,27 @@ def step_execute(state: State) -> Command[Literal["generate", "output"]]:
 ### 后端：SubAgentHITLMiddleware
 
 ```python
+from typing import Dict, List, Union
 from langgraph.types import interrupt
+from langchain_core.messages import ToolMessage
 
 class SubAgentHITLMiddleware(AgentMiddleware):
-    def __init__(self):
-        self.interrupt_subagents = ["visualizer_agent", "report_agent"]
-        self.allowed_decisions = ["approve", "reject"]
+    def __init__(
+        self,
+        interrupt_subagents: List[str] = None,
+        allowed_decisions: List[str] = None,
+        description: Union[str, Dict[str, str]] = "Please confirm to proceed"  # ✅ 支持动态描述
+    ):
+        super().__init__()
+        self.interrupt_subagents = interrupt_subagents or ["visualizer_agent", "report_agent"]
+        self.allowed_decisions = allowed_decisions or ["approve", "reject"]
+        self.description = description
     
     async def awrap_tool_call(self, request, handler):
-        tool_name = request.tool_call.get('name', '')
-        args = request.tool_call.get('args', {})
+        tool_call = request.tool_call
+        tool_name = tool_call.get('name', '') if isinstance(tool_call, dict) else getattr(tool_call, 'name', '')
+        args = tool_call.get('args', {}) if isinstance(tool_call, dict) else getattr(tool_call, 'args', {})
+        tool_call_id = tool_call.get('id', '') if isinstance(tool_call, dict) else getattr(tool_call, 'id', '')
         
         if tool_name == 'task':
             subagent_type = args.get('subagent_type', '')
@@ -392,60 +426,175 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 # 1. 先执行 subagent
                 response = await handler(request)
                 
-                # 2. 触发中断，等待用户审核
+                # 2. 提取预览内容 (用于前端展示)
+                preview_content = None
+                if isinstance(response, str):
+                    preview_content = response
+                elif hasattr(response, 'content'):
+                    preview_content = response.content
+                
+                # 3. 动态获取描述 (支持 Dict 按 agent 类型配置)
+                if isinstance(self.description, dict):
+                    desc = self.description.get(subagent_type, self.description.get("default", "操作完成，请确认是否继续"))
+                else:
+                    desc = self.description
+                
+                # 4. 触发中断，等待用户审核
                 interrupt_res = interrupt({
-                    "action_requests": [{"name": subagent_type, "args": args}],
-                    "review_configs": [{"action_name": subagent_type, "allowed_decisions": self.allowed_decisions}]
+                    "action_requests": [{"name": subagent_type, "args": args, "description": desc}],
+                    "review_configs": [{"action_name": subagent_type, "allowed_decisions": self.allowed_decisions}],
+                    "preview": preview_content  # ✅ 包含 subagent 输出供前端预览
                 })
                 
-                # 3. 处理用户决策
+                # 5. 处理用户决策
                 if isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
                     decision = interrupt_res["decisions"][0]
                     if decision.get("type") == "reject":
                         feedback = decision.get("message", "用户拒绝")
-                        return f"USER_INTERRUPT: 用户反馈: {feedback}。请根据反馈修改后再次调用 {subagent_type}。"
+                        # ✅ 必须返回 ToolMessage，否则 deepagents.FilesystemBackend 会报错
+                        return ToolMessage(content=f"USER_INTERRUPT: {feedback}", tool_call_id=tool_call_id)
                 
-                # 4. 用户批准，返回明确的批准消息
+                # 6. 用户批准，返回 ToolMessage
                 if subagent_type == "visualizer_agent":
-                    return "USER_APPROVED: 用户已批准图表。请继续执行下一步任务（如生成分析报告）。不要再次调用 visualizer_agent。"
+                    content = "USER_APPROVED: Chart approved."
                 elif subagent_type == "report_agent":
-                    return "USER_APPROVED: 用户已批准分析报告。任务结束。不要再次调用 report_agent。"
+                    content = "USER_APPROVED: Report approved."
+                else:
+                    content = f"USER_APPROVED: {subagent_type} approved."
+                
+                return ToolMessage(content=content, tool_call_id=tool_call_id)
         
         return await handler(request)
 ```
 
-> **关键点**：approve 时返回 `USER_APPROVED` 消息而非原始 response，明确告知 Main Agent 继续下一步，防止重复调用同一个 subagent。
+> **⚠️ 关键点**：
+> 1. **返回 `ToolMessage`**：`deepagents.FilesystemBackend` 的 `_intercept_large_tool_result` 方法期望工具返回 `ToolMessage` 类型，返回普通字符串会抛出 `AssertionError`。
+> 2. **动态 description**：支持传入 `Dict[str, str]`，为不同 subagent 配置不同的提示语。
+> 3. **preview 字段**：将 subagent 的输出包含在 interrupt payload 中，供前端预览。
 
-### 前端：处理中断与恢复
+### 配置示例 (graph.py)
 
-```javascript
-// 1. 检测 interrupt 事件
-if (data.__interrupt__) {
-    hitlState.value = {
-        isInterrupted: true,
-        threadId: threadId,
-        interruptData: data.__interrupt__[0].value
+```python
+from agent_core.middleware import SubAgentHITLMiddleware
+
+graph = create_deep_agent(
+    # ...
+    middleware=[
+        SubAgentHITLMiddleware(
+            interrupt_subagents=["visualizer_agent", "report_agent"],
+            allowed_decisions=["approve", "reject"],
+            description={
+                "visualizer_agent": "图表生成完成，请确认是否继续",
+                "report_agent": "报告生成完成，请确认是否继续",
+                "default": "操作完成，请确认是否继续"
+            },
+        ),
+    ],
+)
+```
+
+### 前端：InterruptBlock 组件
+
+Vue 组件需要处理嵌套的 interrupt payload 结构，并区分图表预览和报告预览。
+
+#### 核心：数据解包 (unwrapData)
+
+interrupt payload 可能被多层包装（如 `{type: "interrupt", __interrupt__: [...]}`），需要递归解包：
+
+```typescript
+function unwrapData(data: any): any {
+  if (!data) return null
+  
+  // 找到目标字段即返回
+  if (data.action_requests || data.preview || data.review_configs) {
+      return data
+  }
+  
+  // 解包 .interrupt 或 .__interrupt__
+  if (data.interrupt && Array.isArray(data.interrupt)) {
+      return unwrapData(data.interrupt[0])
+  }
+  if (data.__interrupt__ && Array.isArray(data.__interrupt__)) {
+      return unwrapData(data.__interrupt__[0])
+  }
+  
+  // 解包数组
+  if (Array.isArray(data)) {
+      return unwrapData(data[0])
+  }
+
+  return data
+}
+```
+
+#### 预览类型检测与渲染
+
+```typescript
+const previewContent = computed(() => {
+  const data = unwrapData(props.interruptData)
+  if (!data?.preview) return null
+  
+  if (typeof data.preview === 'string') {
+    let jsonStr = data.preview
+    
+    // 移除前缀
+    if (jsonStr.includes('VISUALIZER_AGENT_COMPLETE:')) {
+      jsonStr = jsonStr.replace('VISUALIZER_AGENT_COMPLETE:', '').trim()
+    } else if (jsonStr.includes('REPORT_AGENT_COMPLETE:')) {
+      jsonStr = jsonStr.replace('REPORT_AGENT_COMPLETE:', '').trim()
     }
-    return
-}
+    
+    try {
+      const parsed = JSON.parse(jsonStr)
+      
+      // 图表类型：返回 chart data 供 ChartRenderer 渲染
+      if (parsed.type === 'chart' && parsed.data) {
+        return parsed.data
+      }
+      
+      // 报告类型：返回 markdown content 供 MarkdownRenderer 渲染
+      if (parsed.type === 'report' && parsed.content) {
+        return parsed.content
+      }
+    } catch { }
+  }
+  
+  return data.preview
+})
 
-// 2. 用户决策后 resume
-async function resumeWithDecision(decision: 'approve' | 'reject') {
-    const decisions = [{ type: decision, message: feedbackMessage }]
+const previewType = computed(() => {
+  // ... 类似逻辑判断返回 'chart' | 'text'
+})
+```
+
+#### 模板结构
+
+```vue
+<template>
+  <div class="interrupt-block">
+    <div class="interrupt-header">
+      <el-icon class="status-icon warning"><Warning /></el-icon>
+      <span class="label">等待用户审核</span>
+    </div>
     
-    const response = await fetch(`/api/agents/data/threads/${threadId}/runs/stream`, {
-        method: 'POST',
-        body: JSON.stringify({
-            assistant_id: 'data_deep_agent',
-            command: { resume: { decisions } },
-            config: { configurable: { ... } },
-            stream_mode: ["updates", "values"],
-            stream_subgraphs: true
-        })
-    })
+    <!-- 描述区域 -->
+    <div v-if="interruptDescription" class="description-section">
+      <MarkdownRenderer :content="interruptDescription" />
+    </div>
+
+    <!-- 预览区域 -->
+    <div v-if="previewContent" class="preview-section">
+      <ChartRenderer v-if="previewType === 'chart'" :chartData="previewContent" />
+      <MarkdownRenderer v-else :content="previewContent" />
+    </div>
     
-    // 处理 resume 后的 stream，包括新的 VISUALIZER_AGENT_COMPLETE 消息
-}
+    <!-- 操作按钮 -->
+    <div class="action-buttons">
+      <el-button type="success" @click="handleApprove">批准</el-button>
+      <el-button type="danger" @click="handleReject">拒绝</el-button>
+    </div>
+  </div>
+</template>
 ```
 
 ### Main Agent 反馈透传
