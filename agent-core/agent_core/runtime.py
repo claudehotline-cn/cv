@@ -111,9 +111,9 @@ def build_chat_llm(task_name: str = "generic") -> Any:
                     "enable_thinking": True,
                 },
             },
-            model_kwargs={
-                "stop": ["<|im_end|>", "<|endoftext|>"],
-            },
+            # model_kwargs={
+            #     "stop": ["<|im_end|>", "<|endoftext|>"]
+            # },
         )
 
     # OpenAI Default

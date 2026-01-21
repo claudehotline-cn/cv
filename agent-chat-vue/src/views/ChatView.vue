@@ -50,11 +50,12 @@
                <span>Today, 2:30 PM</span>
             </div>
             
-            <MessageItem
-              v-for="msg in chatStore.messages"
-              :key="msg.id"
-              :message="msg"
-            />
+            <template v-for="msg in chatStore.messages" :key="msg.id">
+              <MessageItem
+                v-if="isValidMessage(msg)"
+                :message="msg"
+              />
+            </template>
             
             <!-- Streaming Message -->
             <div v-if="chatStore.isStreaming" class="message assistant streaming-message">
@@ -284,6 +285,19 @@ watch(
 onMounted(() => {
    scrollToBottom()
 })
+
+function isValidMessage(msg: any): boolean {
+  if (!msg.blocks || msg.blocks.length === 0) return false
+  
+  // 检查是否包含有效内容
+  return msg.blocks.some((block: any) => {
+    if (block.type === 'content') {
+      return block.content && block.content.trim().length > 0
+    }
+    // 其他类型的块 (thinking, tool_call, tool_output, chart) 都视为有效
+    return true
+  })
+}
 </script>
 
 <style scoped>

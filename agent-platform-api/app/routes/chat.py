@@ -110,7 +110,10 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
                     parsed_reasoning = ""
                     for event in events:
                         if event["type"] == "content":
-                            parsed_content += event["data"]
+                            content_data = event["data"]
+                            if not content_data or not content_data.strip():
+                                continue  # Skip empty content
+                            parsed_content += content_data
                         elif event["type"] == "thinking":
                             parsed_reasoning += event["data"]
                     
@@ -167,6 +170,15 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
                                 # Args still not valid JSON, keep waiting
                                 pass
                 
+                # Prevent yielding empty updates caused by filtering
+                has_content = bool(msg_data.get('content'))
+                has_reasoning = bool(msg_data.get('additional_kwargs', {}).get('reasoning_content'))
+                has_tool_chunks = bool(msg_data.get('tool_call_chunks'))
+                has_tool_calls = bool(msg_data.get('tool_calls'))
+                
+                if not (has_content or has_reasoning or has_tool_chunks or has_tool_calls):
+                    continue
+
                 payload = [msg_data, metadata]
                 yield f"data: {json.dumps(payload)}\n\n"
                 

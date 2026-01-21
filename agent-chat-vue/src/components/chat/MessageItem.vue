@@ -22,7 +22,7 @@
           <div class="content-col">
              <div class="message-card">
                 <template v-if="message.blocks && message.blocks.length">
-                   <div v-for="(block, idx) in message.blocks" :key="idx" class="message-block">
+                   <template v-for="(block, idx) in message.blocks" :key="idx">
                       <!-- Thinking Block -->
                       <ThinkingBlock
                          v-if="block.type === 'thinking'"
@@ -46,7 +46,7 @@
                       />
                       
                       <!-- Content Block -->
-                      <div v-else-if="block.type === 'content'" class="text-content">
+                      <div v-else-if="block.type === 'content' && block.content && block.content.trim()" class="text-content">
                          <MarkdownRenderer :content="block.content" />
                       </div>
                       
@@ -60,7 +60,7 @@
                      <div v-else-if="block.type === 'interrupt'" class="interrupt-block">
                         <p>Waiting for user approval...</p>
                      </div>
-                   </div>
+                   </template>
                 </template>
                 
                 <!-- Fallback/Empty State -->
