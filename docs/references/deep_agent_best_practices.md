@@ -1122,14 +1122,110 @@ think_pattern = r'<think>.*?</think>'
 content = re.sub(think_pattern, '', content, flags=re.DOTALL | re.IGNORECASE)
 ```
 
-#### 4. 前端思考内容处理
+#### 4. 前端思考内容处理 (QwenStreamParser)
 
-`chat.py` 中的 `QwenStreamParser` 会解析 `<think>` 标签，将其转换为 `reasoning_content` 放入 `additional_kwargs`：
+由于 `--reasoning-parser` 未启用，`<think>` 标签会作为原始文本混在 `content` 中。我们使用 `QwenStreamParser` 在后端流式解析，将其分离为 `reasoning_content`。
+
+##### 核心解析逻辑
+
+```python
+# app/utils/stream_parser.py
+class QwenStreamParser:
+    """解析 Qwen 模型的流式输出，分离思维链 (<think>) 和正常内容。"""
+    
+    def __init__(self):
+        self.in_think_block = False
+        self.buffer = ""  # 处理标签截断的缓冲区
+    
+    def _parse_tags(self, new_text: str) -> List[Dict]:
+        """解析 <think> 标签，处理标签截断的情况。"""
+        self.buffer += new_text
+        events = []
+        
+        while True:
+            if not self.in_think_block:
+                # 寻找 <think> 开始标签
+                match = re.search(r"<think>", self.buffer)
+                if match:
+                    # 标签前的内容是普通回复
+                    pre_text = self.buffer[:match.start()]
+                    if pre_text:
+                        events.append({"type": "content", "data": pre_text})
+                    
+                    self.in_think_block = True
+                    self.buffer = self.buffer[match.end():]
+                    continue
+                else:
+                    # 检查是否有截断风险 (如 buffer 结尾是 "<th")
+                    if self._is_truncated_tag(self.buffer):
+                        break  # 暂停处理，等待下一个 chunk
+                    else:
+                        if self.buffer:
+                            events.append({"type": "content", "data": self.buffer})
+                        self.buffer = ""
+                        break
+            else:
+                # 寻找 </think> 结束标签
+                match = re.search(r"</think>", self.buffer)
+                if match:
+                    think_text = self.buffer[:match.start()]
+                    if think_text:
+                        events.append({"type": "thinking", "data": think_text})
+                    
+                    self.in_think_block = False
+                    self.buffer = self.buffer[match.end():]
+                    continue
+                else:
+                    if self._is_truncated_tag(self.buffer):
+                        break
+                    else:
+                        if self.buffer:
+                            events.append({"type": "thinking", "data": self.buffer})
+                        self.buffer = ""
+                        break
+        
+        return events
+```
+
+##### 在 chat.py 中使用
 
 ```python
 # app/routes/chat.py - event_generator
-if parsed_reasoning:
-    msg_data['additional_kwargs']['reasoning_content'] = parsed_reasoning
+# 每个 subgraph 独立的 parser (隔离 buffer 状态)
+subgraph_parsers: dict = {}
+
+async for chunk in graph.astream(...):
+    # ...
+    if is_ai_message and isinstance(content, str) and content:
+        sg_key = subgraph_name or "__main__"
+        if sg_key not in subgraph_parsers:
+            subgraph_parsers[sg_key] = QwenStreamParser()
+        parser = subgraph_parsers[sg_key]
+        
+        events = parser._parse_tags(content)
+        
+        parsed_content = ""
+        parsed_reasoning = ""
+        for event in events:
+            if event["type"] == "content":
+                parsed_content += event["data"]
+            elif event["type"] == "thinking":
+                parsed_reasoning += event["data"]
+        
+        # 更新消息数据
+        msg_data['content'] = parsed_content
+        if parsed_reasoning:
+            msg_data['additional_kwargs']['reasoning_content'] = parsed_reasoning
 ```
 
-前端的 `ThinkingBlock.vue` 组件会渲染这些思考内容（默认折叠状态）。
+##### 前端渲染
+
+`ThinkingBlock.vue` 组件读取 `additional_kwargs.reasoning_content` 并渲染思考过程（默认折叠状态）：
+
+```vue
+<ThinkingBlock 
+  v-if="block.type === 'thinking'" 
+  :content="block.content" 
+  :isStreaming="isStreaming"
+/>
+```
