@@ -1,12 +1,15 @@
 <template>
-  <div class="thinking-wrapper">
+  <div class="thinking-wrapper" :class="{ 'subgraph-thinking': subgraphName }">
     <div class="thinking-header" @click="toggle">
       <div class="header-left">
         <el-icon class="status-icon" :class="{ rotating: isStreaming }">
           <Loading v-if="isStreaming" />
           <Cpu v-else />
         </el-icon>
-        <span class="label">思考过程</span>
+        <span class="label">
+          <span v-if="subgraphName" class="subgraph-badge">{{ formatSubgraphName(subgraphName) }}</span>
+          {{ subgraphName ? '思考过程' : '思考过程' }}
+        </span>
       </div>
       <el-icon class="arrow" :class="{ expanded: isOpen }"><ArrowRight /></el-icon>
     </div>
@@ -26,12 +29,25 @@ import { Loading, Cpu, ArrowRight } from '@element-plus/icons-vue'
 const props = defineProps<{
   content: string
   isStreaming?: boolean
+  subgraphName?: string  // Optional subgraph identifier
 }>()
 
 const isOpen = ref(!!props.isStreaming)
 
 function toggle() {
   isOpen.value = !isOpen.value
+}
+
+function formatSubgraphName(name: string): string {
+  // Convert snake_case to readable format
+  const readable: Record<string, string> = {
+    'sql_agent': 'SQL Agent',
+    'python_agent': 'Python Agent',
+    'visualizer_agent': 'Visualizer',
+    'report_agent': 'Report Agent',
+    'reviewer_agent': 'Reviewer',
+  }
+  return readable[name] || name.replace(/_/g, ' ')
 }
 </script>
 
@@ -99,6 +115,24 @@ function toggle() {
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Subgraph-specific styling */
+.subgraph-thinking {
+  border-left: 3px solid var(--accent-primary, #6366f1);
+  margin-left: 8px;
+}
+
+.subgraph-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-right: 6px;
+  background: var(--accent-primary, #6366f1);
+  color: white;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 @keyframes spin {

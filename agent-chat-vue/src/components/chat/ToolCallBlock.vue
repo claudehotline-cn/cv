@@ -1,33 +1,60 @@
 <template>
-  <div v-if="toolCalls && toolCalls.length" class="tool-calls-container">
-    <div v-for="(tool, idx) in toolCalls" :key="tool.id || idx" class="tool-call-item">
-      <el-icon class="tool-icon"><Setting /></el-icon>
-      <span class="tool-name">使用了 {{ tool.name }}</span>
-      
-      <el-popover placement="top" :width="400" trigger="hover" popper-class="tool-popover">
-        <template #reference>
-          <el-icon class="info-icon"><InfoFilled /></el-icon>
-        </template>
-        <div class="tool-details">
-          <div class="detail-section">
-            <h4>输入参数</h4>
-            <div class="code-block">{{ formatJson(tool.args) }}</div>
+  <div v-if="(toolCalls && toolCalls.length) || toolCall" class="tool-calls-container" :class="{ 'vertical-layout': !!toolCall, 'subgraph-tool': !!subgraphName }">
+    <!-- Single Tool Call Mode -->
+    <template v-if="toolCall">
+      <div class="tool-call-item single-mode">
+        <el-icon class="tool-icon"><Setting /></el-icon>
+        <span class="tool-name">
+            <span v-if="subgraphName" class="subgraph-badge">{{ formatSubgraphName(subgraphName) }}</span>
+            使用了 {{ toolCall.name }}
+        </span>
+        
+        <!-- Inline Details for Single Mode (Always visible or toggleable, here using popover for consistency but could be changed) -->
+        <el-popover placement="top" :width="500" trigger="hover" popper-class="tool-popover">
+          <template #reference>
+            <el-icon class="info-icon"><InfoFilled /></el-icon>
+          </template>
+          <div class="tool-details">
+            <div class="detail-section">
+              <h4>输入参数</h4>
+              <div class="code-block">{{ formatJson(toolCall.args) }}</div>
+            </div>
           </div>
-          
-          <div class="detail-section">
-            <h4>执行结果</h4>
-            <template v-if="tool.result">
-               <div class="code-block result">{{ formatResult(tool.result) }}</div>
-            </template>
-            <template v-else>
-               <span class="status-running">
-                 <el-icon class="is-loading"><Loading /></el-icon> 执行中...
-               </span>
-            </template>
+        </el-popover>
+      </div>
+    </template>
+
+    <!-- Multiple Tool Calls Mode (Legacy) -->
+    <template v-else>
+      <div v-for="(tool, idx) in toolCalls" :key="tool.id || idx" class="tool-call-item">
+        <el-icon class="tool-icon"><Setting /></el-icon>
+        <span class="tool-name">使用了 {{ tool.name }}</span>
+        
+        <el-popover placement="top" :width="400" trigger="hover" popper-class="tool-popover">
+          <template #reference>
+            <el-icon class="info-icon"><InfoFilled /></el-icon>
+          </template>
+          <div class="tool-details">
+            <div class="detail-section">
+              <h4>输入参数</h4>
+              <div class="code-block">{{ formatJson(tool.args) }}</div>
+            </div>
+            
+            <div class="detail-section">
+              <h4>执行结果</h4>
+              <template v-if="tool.result">
+                 <div class="code-block result">{{ formatResult(tool.result) }}</div>
+              </template>
+              <template v-else>
+                 <span class="status-running">
+                   <el-icon class="is-loading"><Loading /></el-icon> 执行中...
+                 </span>
+              </template>
+            </div>
           </div>
-        </div>
-      </el-popover>
-    </div>
+        </el-popover>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -36,8 +63,19 @@ import { Setting, InfoFilled, Loading } from '@element-plus/icons-vue'
 import type { ToolCall } from '@/types'
 
 defineProps<{
-  toolCalls: ToolCall[] | undefined
+  toolCalls?: ToolCall[]
+  toolCall?: ToolCall  // Single tool call mode
+  subgraphName?: string
 }>()
+
+function formatSubgraphName(name: string): string {
+    const readable: Record<string, string> = {
+        'sql_agent': 'SQL',
+        'python_agent': 'Python',
+        'visualizer_agent': 'Viz',
+    }
+    return readable[name] || name
+}
 
 function formatJson(val: any) {
   try {

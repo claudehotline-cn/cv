@@ -2,13 +2,52 @@
  * API 类型定义
  */
 
+export type MessageBlock =
+    | ThinkingBlock
+    | ToolCallBlock
+    | ToolOutputBlock
+    | ContentBlock
+    | ChartBlock
+    | InterruptBlock
+
+export interface ThinkingBlock {
+    type: 'thinking'
+    content: string
+    subgraph?: string
+}
+
+export interface ToolCallBlock {
+    type: 'tool_call'
+    call: ToolCall
+    subgraph?: string
+}
+
+export interface ToolOutputBlock {
+    type: 'tool_output'
+    callId: string
+    output: string
+    subgraph?: string
+}
+
+export interface ContentBlock {
+    type: 'content'
+    content: string
+}
+
+export interface ChartBlock {
+    type: 'chart'
+    data: ChartData
+}
+
+export interface InterruptBlock {
+    type: 'interrupt'
+    data: InterruptData
+}
+
 export interface Message {
     id: string
     role: 'user' | 'assistant' | 'system' | 'tool'
-    content: string
-    thinking?: string
-    toolCalls?: ToolCall[]
-    chartData?: ChartData
+    blocks: MessageBlock[]
     createdAt: Date
 }
 

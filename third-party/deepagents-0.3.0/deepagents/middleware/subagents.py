@@ -314,10 +314,19 @@ def _create_task_tool(
 
     def _return_command_with_state_update(result: dict, tool_call_id: str) -> Command:
         state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
+        
+        # 优先从 final_output 取值，避免重复流式输出
+        # SubAgent 应在 format_output 中设置 final_output 字段
+        if "final_output" in result:
+            tool_content = result["final_output"]
+        else:
+            # 降级：从 messages[-1] 取值（向后兼容）
+            tool_content = result["messages"][-1].text if result.get("messages") else ""
+        
         return Command(
             update={
                 **state_update,
-                "messages": [ToolMessage(result["messages"][-1].text, tool_call_id=tool_call_id)],
+                "messages": [ToolMessage(tool_content, tool_call_id=tool_call_id)],
             }
         )
 

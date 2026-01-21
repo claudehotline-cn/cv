@@ -43,7 +43,7 @@
       </header>
       
       <!-- Messages Area -->
-      <div class="messages-container" ref="scrollContainer">
+      <div class="messages-container" ref="scrollContainer" @scroll="handleScroll">
          <div class="messages-content">
             <!-- Date Divider -->
             <div class="date-divider">
@@ -64,16 +64,50 @@
                 </div>
               </div>
               <div class="message-body">
-                <ThinkingBlock
-                  v-if="chatStore.streamingThinking"
-                  :content="chatStore.streamingThinking"
-                  :isStreaming="true"
-                />
-                <ToolCallBlock 
-                   :toolCalls="chatStore.streamingToolCalls"
-                />
-                <div class="content-wrapper">
-                  <MarkdownRenderer :content="chatStore.streamingContent || 'Thinking...'" />
+                <template v-for="(block, idx) in chatStore.streamingBlocks" :key="idx">
+                   <!-- Thinking Block -->
+                   <ThinkingBlock
+                     v-if="block.type === 'thinking'"
+                     :content="block.content"
+                     :subgraph-name="block.subgraph"
+                     :isStreaming="true"
+                   />
+                   
+                   <!-- Tool Call Block -->
+                   <ToolCallBlock
+                     v-else-if="block.type === 'tool_call'"
+                     :tool-call="block.call"
+                     :subgraph-name="block.subgraph"
+                   />
+                   
+                   <!-- Tool Output Block -->
+                   <ToolOutputBlock
+                     v-else-if="block.type === 'tool_output'"
+                     :call-id="block.callId"
+                     :output="block.output"
+                     :subgraph-name="block.subgraph"
+                   />
+                   
+                   <!-- Content Block -->
+                   <div v-else-if="block.type === 'content'" class="content-wrapper">
+                      <MarkdownRenderer :content="block.content" />
+                   </div>
+                   
+                   <!-- Chart Block -->
+                   <ChartRenderer 
+                     v-else-if="block.type === 'chart'" 
+                     :chartData="block.data" 
+                   />
+                   
+                   <!-- Interrupt Block -->
+                   <div v-else-if="block.type === 'interrupt'" class="interrupt-block">
+                      <!-- TODO: Add Interrupt Component -->
+                      <p>Waiting for user approval...</p>
+                   </div>
+                </template>
+                
+                <div v-if="chatStore.isLoading && chatStore.streamingBlocks.length === 0" class="content-wrapper">
+                   Thinking...
                 </div>
               </div>
             </div>
@@ -102,16 +136,34 @@
                ></textarea>
                
                <button 
+                  v-if="chatStore.isStreaming"
+                  class="stop-btn" 
+                  @click="chatStore.stopStream"
+               >
+                  <el-icon><VideoPause /></el-icon>
+               </button>
+               <button 
+                  v-else
                   class="send-btn" 
-                  :disabled="!inputMessage.trim() || chatStore.isStreaming"
+                  :disabled="!inputMessage.trim()"
                   @click="handleSend"
                >
-                  <el-icon v-if="!chatStore.isStreaming"><Top /></el-icon>
-                  <el-icon v-else class="is-loading"><Loading /></el-icon>
+                  <el-icon><Top /></el-icon>
                </button>
             </div>
          </div>
       </div>
+      <!-- Scroll to Bottom Button -->
+      <transition name="fade">
+        <button 
+          v-show="userHasScrolledUp" 
+          class="scroll-bottom-btn"
+          @click="manualScrollToBottom"
+        >
+          <el-icon><ArrowDownBold /></el-icon>
+        </button>
+      </transition>
+
     </main>
 
     <!-- Right Sidebar (Desktop) -->
@@ -133,14 +185,16 @@
 import { ref, onMounted, nextTick, watch } from 'vue'
 import { 
   DataAnalysis, Search, InfoFilled, 
-  CirclePlusFilled, Top, Loading,
-  Moon, Sunny
+  CirclePlusFilled, Top, VideoPause,
+  Moon, Sunny, ArrowDownBold
 } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import ThinkingBlock from '@/components/chat/ThinkingBlock.vue'
 import ToolCallBlock from '@/components/chat/ToolCallBlock.vue'
+import ToolOutputBlock from '@/components/chat/ToolOutputBlock.vue' // New
 import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
+import ChartRenderer from '@/components/chat/ChartRenderer.vue' // New
 import AgentRightSidebar from '@/components/chat/AgentRightSidebar.vue'
 
 import { useTheme } from '@/composables/useTheme'
@@ -161,12 +215,44 @@ function autoResize() {
    }
 }
 
+// 智能滚动：用户向上滚动时停止跟随，回到底部时恢复
+const userHasScrolledUp = ref(false)
+
 function scrollToBottom() {
+   // 只有当用户没有向上滚动时才自动滚动
+   if (userHasScrolledUp.value) return
+   
    nextTick(() => {
      if (scrollContainer.value) {
        scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight
      }
    })
+}
+
+function handleScroll() {
+   const el = scrollContainer.value
+   if (!el) return
+   
+   // 计算距离底部的距离
+   const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+   
+   // 如果距离底部小于 50px，认为用户回到了底部
+   if (distanceFromBottom < 50) {
+      userHasScrolledUp.value = false
+   } else {
+      userHasScrolledUp.value = true
+   }
+}
+
+function manualScrollToBottom() {
+   const el = scrollContainer.value
+   if (!el) return
+   
+   el.scrollTo({
+     top: el.scrollHeight,
+     behavior: 'smooth'
+   })
+   userHasScrolledUp.value = false
 }
 
 function toggleRightSidebar() {
@@ -181,14 +267,18 @@ async function handleSend() {
      await chatStore.createSession(msg.slice(0, 20))
   }
   
+  // 发送消息时重置滚动状态，自动跟随新消息
+  userHasScrolledUp.value = false
+  
   chatStore.sendMessage(msg)
   inputMessage.value = ''
   if (textareaRef.value) textareaRef.value.style.height = 'auto'
 }
 
 watch(
-  () => [chatStore.messages.length, chatStore.streamingContent],
-  scrollToBottom
+  () => [chatStore.messages.length, chatStore.streamingBlocks],
+  scrollToBottom,
+  { deep: true }
 )
 
 onMounted(() => {
@@ -549,6 +639,33 @@ onMounted(() => {
   margin-bottom: 2px;
 }
 
+.stop-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: #ef4444;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.3);
+  margin-bottom: 2px;
+}
+
+.stop-btn:hover {
+  background: #dc2626;
+  transform: translateY(-1px);
+}
+
+.stop-btn:active {
+  transform: scale(0.95);
+}
+
 .send-btn:hover:not(:disabled) {
   background: #1a8599; /* dark accent */
   transform: translateY(-1px);
@@ -588,5 +705,45 @@ onMounted(() => {
   .lg-hidden {
     display: flex;
   }
+}
+
+/* Scroll to Bottom Button */
+.scroll-bottom-btn {
+  position: absolute;
+  bottom: 8rem; /* Closer to input area (was 15rem) */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 15;
+  transition: all 0.2s;
+}
+
+.scroll-bottom-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+  transform: translateX(-50%) translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+}
+
+/* Fade Transition */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px);
 }
 </style>

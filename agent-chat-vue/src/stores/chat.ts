@@ -3,8 +3,9 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Message, Session, ChartData, ToolCall } from '@/types'
+import type { Message, Session } from '@/types'
 import apiClient from '@/api/client'
+import { useStreamParser } from '@/composables/useStreamParser'
 
 export const useChatStore = defineStore('chat', () => {
     // 状态
@@ -12,14 +13,32 @@ export const useChatStore = defineStore('chat', () => {
     const currentSessionId = ref<string | null>(null)
     const messages = ref<Message[]>([])
     const isLoading = ref(false)
-    const isStreaming = ref(false)
-    const streamingContent = ref('')
-    const streamingThinking = ref('')
-    const streamingToolCalls = ref<ToolCall[]>([])
-    const isInterrupted = ref(false)
-    const interruptData = ref<any>(null)
-    const currentChart = ref<ChartData | null>(null)
     const currentAgentId = ref<string | null>(null)
+
+    // Stream parser instance
+    const streamParser = useStreamParser({
+        onDone: (blocks) => {
+            // 流结束时，将 blocks 转换为消息
+            const aiMessage: Message = {
+                id: `ai-${Date.now()}`,
+                role: 'assistant',
+                blocks: [...blocks],
+                createdAt: new Date(),
+            }
+            messages.value.push(aiMessage)
+            streamParser.reset()
+        },
+        onError: (error) => {
+            console.error('Stream error:', error)
+        },
+        debug: false
+    })
+
+    // 从 parser 导出响应式状态
+    const streamingBlocks = streamParser.blocks
+    const isStreaming = streamParser.isStreaming
+    const isInterrupted = streamParser.isInterrupted
+    const interruptData = streamParser.interruptData
 
     // 当前 abort 控制器
     let abortStream: (() => void) | null = null
@@ -59,7 +78,6 @@ export const useChatStore = defineStore('chat', () => {
         messages.value = session.messages || []
         isInterrupted.value = session.is_interrupted || false
         interruptData.value = session.interrupt_data
-        interruptData.value = session.interrupt_data
     }
 
     function resetSession() {
@@ -67,7 +85,7 @@ export const useChatStore = defineStore('chat', () => {
         messages.value = []
         isInterrupted.value = false
         interruptData.value = null
-        currentChart.value = null
+        streamingBlocks.value = []
     }
 
     async function deleteSession(sessionId: string) {
@@ -86,137 +104,33 @@ export const useChatStore = defineStore('chat', () => {
         const userMessage: Message = {
             id: `temp-${Date.now()}`,
             role: 'user',
-            content,
+            blocks: [{ type: 'content', content }],
             createdAt: new Date(),
         }
         messages.value.push(userMessage)
 
         // 重置流状态
-        isStreaming.value = true
-        streamingContent.value = ''
-        streamingThinking.value = ''
-        streamingToolCalls.value = []
-        currentChart.value = null
+        streamParser.reset()
 
         // 开始流式请求
         abortStream = apiClient.streamChat(
             currentSessionId.value,
             content,
-            handleSSEEvent,
-            handleSSEError
+            streamParser.handleEvent,
+            streamParser.handleError
         )
-    }
-
-    function handleSSEEvent(eventType: string, data: any) {
-        // Handle new API event types (type field) or legacy (event field)
-        const type = data.type || eventType
-
-        switch (type) {
-            case 'message_start':
-                // 消息开始
-                break
-
-            case 'content':
-            case 'content_delta':
-                // Handle nested content array format from vLLM: [{type: 'text', text: '...'}]
-                if (Array.isArray(data.content)) {
-                    const textContent = data.content
-                        .filter((c: any) => c.type === 'text')
-                        .map((c: any) => c.text)
-                        .join('')
-                    streamingContent.value += textContent
-                } else {
-                    streamingContent.value += data.content || data.delta || ''
-                }
-                break
-
-            case 'thinking_start':
-                streamingThinking.value = ''
-                break
-
-            case 'thinking':
-            case 'thinking_delta':
-                // Handle both legacy 'thinking_delta' and new 'thinking' event
-                streamingThinking.value += data.content || data.delta || ''
-                break
-
-            case 'tool_start':
-                // Legacy
-                break
-
-            case 'tool_call':
-                if (data.tool) {
-                    streamingToolCalls.value.push({
-                        id: data.id,
-                        name: data.tool,
-                        args: data.args || {},
-                        result: undefined
-                    })
-                }
-                break
-
-            case 'tool_output':
-                if (data.id) {
-                    const call = streamingToolCalls.value.find(c => c.id === data.id)
-                    if (call) {
-                        call.result = data.output
-                    }
-                }
-                break
-
-            case 'chart':
-                currentChart.value = data as ChartData
-                break
-
-            case 'interrupt':
-                isInterrupted.value = true
-                interruptData.value = data
-                break
-
-            case 'done':
-            case 'message_end':
-                // 消息结束，保存到消息列表
-                const aiMessage: Message = {
-                    id: data.id || `ai-${Date.now()}`,
-                    role: 'assistant',
-                    content: streamingContent.value,
-                    thinking: streamingThinking.value || undefined,
-                    toolCalls: streamingToolCalls.value.length > 0 ? [...streamingToolCalls.value] : undefined,
-                    chartData: currentChart.value || undefined,
-                    createdAt: new Date(),
-                }
-                messages.value.push(aiMessage)
-
-                // 重置流状态
-                isStreaming.value = false
-                streamingContent.value = ''
-                streamingThinking.value = ''
-                streamingToolCalls.value = []
-                break
-
-            case 'error':
-                console.error('Stream error:', data.message || data.error)
-                isStreaming.value = false
-                break
-        }
-    }
-
-    function handleSSEError(error: Error) {
-        console.error('SSE error:', error)
-        isStreaming.value = false
     }
 
     function sendFeedback(decision: 'approve' | 'reject', message?: string) {
         if (!currentSessionId.value) return
 
-        isStreaming.value = true
-        streamingContent.value = ''
+        streamParser.reset()
 
         abortStream = apiClient.streamFeedback(
             currentSessionId.value,
             { decision, message },
-            handleSSEEvent,
-            handleSSEError
+            streamParser.handleEvent,
+            streamParser.handleError
         )
     }
 
@@ -229,20 +143,16 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     return {
-        // 状态
         sessions,
         currentSessionId,
         messages,
         isLoading,
         isStreaming,
-        streamingContent,
-        streamingThinking,
-        streamingToolCalls,
+        streamingBlocks,
         isInterrupted,
         interruptData,
-        currentChart,
         currentSession,
-        // 操作
+        currentAgentId,
         loadSessions,
         createSession,
         selectSession,
@@ -252,6 +162,5 @@ export const useChatStore = defineStore('chat', () => {
         stopStream,
         setCurrentAgent,
         resetSession,
-        currentAgentId,
     }
 })

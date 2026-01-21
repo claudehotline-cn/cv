@@ -4,7 +4,7 @@
     <template v-if="message.role === 'user'">
        <div class="message-container user">
           <div class="message-bubble user-bubble">
-             <MarkdownRenderer :content="message.content" />
+             <MarkdownRenderer :content="getUserContent(message)" />
           </div>
           <span class="message-meta">Alex • {{ formatTime(message.createdAt) }}</span>
        </div>
@@ -21,19 +21,52 @@
           
           <div class="content-col">
              <div class="message-card">
-                <!-- Thinking Process -->
-                <ThinkingBlock v-if="message.thinking" :content="message.thinking" />
+                <template v-if="message.blocks && message.blocks.length">
+                   <div v-for="(block, idx) in message.blocks" :key="idx" class="message-block">
+                      <!-- Thinking Block -->
+                      <ThinkingBlock
+                         v-if="block.type === 'thinking'"
+                         :content="block.content"
+                         :subgraph-name="block.subgraph"
+                      />
+                      
+                      <!-- Tool Call Block -->
+                      <ToolCallBlock
+                         v-else-if="block.type === 'tool_call'"
+                         :tool-call="block.call"
+                         :subgraph-name="block.subgraph"
+                      />
+                      
+                      <!-- Tool Output Block -->
+                      <ToolOutputBlock
+                         v-else-if="block.type === 'tool_output'"
+                         :call-id="block.callId"
+                         :output="block.output"
+                         :subgraph-name="block.subgraph"
+                      />
+                      
+                      <!-- Content Block -->
+                      <div v-else-if="block.type === 'content'" class="text-content">
+                         <MarkdownRenderer :content="block.content" />
+                      </div>
+                      
+                      <!-- Chart Block -->
+                      <ChartRenderer 
+                         v-else-if="block.type === 'chart'"
+                         :chartData="block.data" 
+                      />
+                      
+                     <!-- Interrupt Block -->
+                     <div v-else-if="block.type === 'interrupt'" class="interrupt-block">
+                        <p>Waiting for user approval...</p>
+                     </div>
+                   </div>
+                </template>
                 
-                <!-- Tool Calls -->
-                <ToolCallBlock :toolCalls="message.toolCalls" />
-                
-                <!-- Main Content -->
-                <div class="text-content">
-                   <MarkdownRenderer :content="message.content" />
+                <!-- Fallback/Empty State -->
+                <div v-else-if="!message.blocks || message.blocks.length === 0" class="text-content">
+                    <p class="text-gray-400 italic">Empty message</p>
                 </div>
-                
-                <!-- Charts -->
-                <ChartRenderer v-if="message.chartData" :chartData="message.chartData" />
              </div>
              <span class="message-meta pl-1">Data Analyst • {{ formatTime(message.createdAt) }}</span>
           </div>
@@ -44,9 +77,10 @@
 
 <script setup lang="ts">
 import { DataAnalysis } from '@element-plus/icons-vue'
-import type { Message } from '@/types'
+import type { Message, ContentBlock } from '@/types'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallBlock from './ToolCallBlock.vue'
+import ToolOutputBlock from './ToolOutputBlock.vue' // New
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ChartRenderer from './ChartRenderer.vue'
 import dayjs from 'dayjs'
@@ -57,6 +91,12 @@ defineProps<{
 
 function formatTime(date: Date | string) {
    return dayjs(date).format('h:mm A')
+}
+
+function getUserContent(message: Message): string {
+    if (!message.blocks) return ''
+    const contentBlock = message.blocks.find(b => b.type === 'content') as ContentBlock | undefined
+    return contentBlock ? contentBlock.content : ''
 }
 </script>
 

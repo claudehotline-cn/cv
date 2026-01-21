@@ -5,6 +5,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/atom-one-dark.css'
 
 const props = defineProps<{
   content: string
@@ -15,6 +17,18 @@ const md = new MarkdownIt({
   linkify: true,
   typographer: true,
   breaks: true,
+  highlight: function (str, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        return hljs.highlight(str, { language: lang }).value
+      } catch (__) {}
+    }
+    // 自动检测语言
+    try {
+      return hljs.highlightAuto(str).value
+    } catch (__) {}
+    return '' // 使用外部默认 escaping
+  }
 })
 
 // Configure renderer rules for better styling
@@ -124,6 +138,13 @@ const renderedContent = computed(() => {
 .markdown-body :deep(code) {
   font-family: var(--font-mono);
   font-size: 13px;
+}
+
+/* Code block specific styles */
+.markdown-body :deep(pre code) {
+  background: transparent;
+  color: #abb2bf; /* Atom One Dark default foreground */
+  padding: 0;
 }
 
 /* Inline code */

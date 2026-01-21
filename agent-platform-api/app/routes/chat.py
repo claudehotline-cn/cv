@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 import traceback
 from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, Body
@@ -12,213 +11,188 @@ from sqlalchemy.orm import selectinload
 from ..db import get_db
 from ..models.db_models import SessionModel, AgentModel
 from ..core.agent_registry import registry
+from ..utils.stream_parser import QwenStreamParser
 from langchain_core.messages import HumanMessage, ToolMessage
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
 _LOGGER = logging.getLogger(__name__)
 
-# Compiled regex for tag stripping
-_THINK_TAG_RE = re.compile(r'</?think>')
-_TOOL_TAG_RE = re.compile(r'</?tool_call>')
-
 async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[str, None]:
-    """Generate SSE events from LangGraph stream using high-level messages mode.
+    """Generate SSE events from LangGraph stream.
     
-    Robust Parsing Strategy:
-    1. Handle ToolMessage (outputs) -> Emit tool_output.
-    2. Handle AIMessage structured tool_calls -> Emit tool_call.
-    3. Prefer `reasoning_content` from kwargs if available (strip <think>).
-    4. Fallback: Parse `msg.content` as a raw stream that may contain mixed thinking/content/tool_xml.
-       - Use a State Machine (Content -> Thinking -> ToolSkipping -> Content).
-       - Detect <think> to enter Thinking state.
-       - Detect </think> to enter Content state.
-       - Detect <tool_call> to enter ToolSkipping state (suppress raw XML).
+    Uses QwenStreamParser to parse <think>...</think> tags from Qwen model output,
+    separating reasoning content from regular content.
+    
+    Emits: [msg_data, metadata] tuples as SSE data events.
     """
     
-    # State
-    buffer = ""
-    is_thinking = False
-    is_tool_skipping = False
+    # Per-subgraph parsers (isolate buffer state between agents)
+    subgraph_parsers: dict = {}
     
-    # Constants
-    START_THINK = "<think>"
-    END_THINK = "</think>"
-    START_TOOL = "<tool_call"  # Match prefix (works for <tool_call> and <tool_call\n)
-    END_TOOL = "</tool_call>"
+    # Tool call accumulator for streaming chunks
+    tool_call_accumulators: dict = {}
+    emitted_tool_call_ids: set = set()
     
     try:
-        async for msg, metadata in graph.astream(inputs, config=config, stream_mode="messages"):
-            # --- 1. Handle Tool Outputs (ToolMessage) ---
-            if isinstance(msg, ToolMessage):
-                yield f"data: {json.dumps({'type': 'tool_output', 'id': msg.tool_call_id, 'output': str(msg.content)})}\n\n"
-                continue
-
-            # --- 2. Handle Structured Tool Calls (AIMessage) ---
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                has_valid_tool_call = False
-                for tool_call in msg.tool_calls:
-                    tool_name = tool_call.get('name')
-                    # Only emit if we have a valid tool name (not empty string)
-                    if tool_name:
-                        has_valid_tool_call = True
-                        yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'args': tool_call.get('args'), 'id': tool_call.get('id')})}\n\n"
-                 
-                # Only skip content processing if we actually had valid tool calls
-                if has_valid_tool_call:
-                    continue
-
-            if not hasattr(msg, 'content'):
-                continue
-
-            # --- 3. Handle Explicit Reasoning (kwargs from vLLM) ---
-            reasoning_chunk = ""
-            if hasattr(msg, 'additional_kwargs'):
-                reasoning_chunk = msg.additional_kwargs.get('reasoning_content') or msg.additional_kwargs.get('reasoning') or ""
-                
-            if not reasoning_chunk and hasattr(msg, 'content_blocks') and msg.content_blocks:
-                 for block in msg.content_blocks:
-                    if isinstance(block, dict) and block.get("type") == "reasoning":
-                        reasoning_chunk = block.get("reasoning", "")
-                        break
-            
-            if reasoning_chunk:
-                clean_reasoning = reasoning_chunk.replace("<think>", "").replace("</think>", "")
-                if clean_reasoning:
-                    yield f"data: {json.dumps({'type': 'thinking', 'content': clean_reasoning})}\n\n"
-
-            # --- 4. Handle Content Stream ---
-            text_chunk = ""
-            if isinstance(msg.content, str):
-                text_chunk = msg.content
-            elif isinstance(msg.content, list):
-                for block in msg.content:
-                    if isinstance(block, str):
-                         text_chunk += block
-                    elif isinstance(block, dict) and "text" in block:
-                         text_chunk += block["text"]
-                    elif hasattr(block, "text"):
-                         text_chunk += block.text
-            
-            if not text_chunk:
-                continue
-            
-            buffer += text_chunk
-            
-            # State Machine Loop
-            while True:
-                if is_thinking:
-                    # In Thinking State
-                    end_idx = buffer.find(END_THINK)
-                    if end_idx != -1:
-                        if end_idx > 0:
-                            yield f"data: {json.dumps({'type': 'thinking', 'content': buffer[:end_idx]})}\n\n"
-                        is_thinking = False
-                        buffer = buffer[end_idx + len(END_THINK):]
-                    else:
-                         partial_len = 0
-                         for i in range(1, len(END_THINK)):
-                            if i > len(buffer): break
-                            if END_THINK.startswith(buffer[-i:]):
-                                partial_len = i
-                        
-                         if partial_len > 0:
-                             safe_len = len(buffer) - partial_len
-                             if safe_len > 0:
-                                 yield f"data: {json.dumps({'type': 'thinking', 'content': buffer[:safe_len]})}\n\n"
-                             buffer = buffer[-partial_len:]
-                             break
-                         else:
-                             if buffer:
-                                 yield f"data: {json.dumps({'type': 'thinking', 'content': buffer})}\n\n"
-                             buffer = ""
-                             break
-
-                elif is_tool_skipping:
-                    # In Tool Skipping State - Suppress RAW XML
-                    end_idx = buffer.find(END_TOOL)
-                    if end_idx != -1:
-                        # Found end of tool block. Resume content.
-                        is_tool_skipping = False
-                        buffer = buffer[end_idx + len(END_TOOL):]
-                    else:
-                        # Still inside tool block. Discard safe content (it's garbage raw xml).
-                        partial_len = 0
-                        for i in range(1, len(END_TOOL)):
-                            if i > len(buffer): break
-                            if END_TOOL.startswith(buffer[-i:]):
-                                partial_len = i
-                        
-                        if partial_len > 0:
-                            buffer = buffer[-partial_len:] # Keep potential end tag
-                        else:
-                            buffer = "" # Discard all raw XML
-                        break
-
+        # Stream with subgraphs=True: yields (namespace, (msg, metadata))
+        async for chunk in graph.astream(inputs, config=config, stream_mode="messages", subgraphs=True):
+            # Unpack chunk: (namespace, (msg, metadata))
+            subgraph_name = None
+            if isinstance(chunk, tuple) and len(chunk) == 2:
+                namespace, inner = chunk
+                if isinstance(inner, tuple) and len(inner) == 2:
+                    msg, metadata = inner
+                    if namespace:
+                        subgraph_name = namespace[-1] if namespace else None
                 else:
-                    # Content State
-                    next_think_idx = buffer.find(START_THINK)
-                    next_tool_idx = buffer.find(START_TOOL)
+                    msg, metadata = chunk
+            else:
+                _LOGGER.warning(f"Unexpected chunk format: {type(chunk)}")
+                continue
+            
+            try:
+                # Serialize message to dict
+                msg_data = msg.dict()
+                msg_type = msg_data.get('type', type(msg).__name__)
+                is_ai_message = msg_type in ['ai', 'AIMessageChunk', 'AIMessage']
+                
+                # 从 metadata 获取节点信息
+                langgraph_node = metadata.get('langgraph_node', '') if isinstance(metadata, dict) else ''
+                
+                # 跳过 format_output 节点的 AIMessage（避免与 ToolMessage 重复）
+                # SubAgent 的 format_output 返回的 AIMessage 会被框架读取并作为 ToolMessage 发送
+                if is_ai_message and langgraph_node == 'format_output':
+                    continue
+                
+                # Remove incomplete tool_calls from LangChain serialization
+                if 'tool_calls' in msg_data:
+                    del msg_data['tool_calls']
+                
+                # ToolMessage: 直接发送，不做内容处理，前端会单独处理为 tool_output
+                is_tool_message = msg_type in ['tool', 'ToolMessage']
+                
+                content = msg_data.get('content', '')
+                
+                # Normalize array content to string (LangChain structured format)
+                # Format: [{'type': 'text', 'text': '...'}, {'type': 'tool_call_chunk', ...}]
+                original_has_chunks = 'tool_call_chunks' in msg_data and msg_data['tool_call_chunks']
+                if isinstance(content, list):
+                    text_parts = []
+                    for block in content:
+                        if isinstance(block, dict):
+                            if block.get('type') == 'text':
+                                text_parts.append(block.get('text', ''))
+                            elif block.get('type') == 'tool_call_chunk' and not original_has_chunks:
+                                if 'tool_call_chunks' not in msg_data:
+                                    msg_data['tool_call_chunks'] = []
+                                msg_data['tool_call_chunks'].append({
+                                    'index': block.get('index', 0),
+                                    'name': block.get('name'),
+                                    'args': block.get('args') or '',
+                                    'id': block.get('id')
+                                })
+                    content = ''.join(text_parts)
+                    msg_data['content'] = content
+                
+                # Only apply parser to AI messages (skip ToolMessage)
+                if is_ai_message and not is_tool_message and isinstance(content, str) and content:
+                    # Get or create per-subgraph parser
+                    sg_key = subgraph_name or "__main__"
+                    if sg_key not in subgraph_parsers:
+                        subgraph_parsers[sg_key] = QwenStreamParser()
+                    parser = subgraph_parsers[sg_key]
                     
-                    found_tag = None
-                    idx = -1
+                    # Use parser to process content
+                    events = parser._parse_tags(content)
                     
-                    if next_think_idx != -1 and next_tool_idx != -1:
-                        if next_think_idx < next_tool_idx:
-                            found_tag = 'think'; idx = next_think_idx
-                        else:
-                            found_tag = 'tool'; idx = next_tool_idx
-                    elif next_think_idx != -1:
-                        found_tag = 'think'; idx = next_think_idx
-                    elif next_tool_idx != -1:
-                        found_tag = 'tool'; idx = next_tool_idx
+                    # Accumulate parsed content and reasoning from events
+                    parsed_content = ""
+                    parsed_reasoning = ""
+                    for event in events:
+                        if event["type"] == "content":
+                            parsed_content += event["data"]
+                        elif event["type"] == "thinking":
+                            parsed_reasoning += event["data"]
+                    
+                    # Update msg_data with parsed content
+                    msg_data['content'] = parsed_content
+                    
+                    if parsed_reasoning:
+                        if 'additional_kwargs' not in msg_data:
+                            msg_data['additional_kwargs'] = {}
+                        msg_data['additional_kwargs']['reasoning_content'] = parsed_reasoning
+                
+                # Accumulate tool_call_chunks
+                if msg_data.get('tool_call_chunks'):
+                    for chunk in msg_data['tool_call_chunks']:
+                        chunk_index = chunk.get('index', 0)
+                        chunk_name = chunk.get('name')
+                        chunk_args = chunk.get('args') or ''
+                        chunk_id = chunk.get('id')
                         
-                    if found_tag:
-                         # Emit content before tag
-                        if idx > 0:
-                            yield f"data: {json.dumps({'type': 'content', 'content': buffer[:idx]})}\n\n"
-                        
-                        if found_tag == 'think':
-                            is_thinking = True
-                            buffer = buffer[idx + len(START_THINK):]
-                        else:
-                            is_tool_skipping = True
-                            buffer = buffer[idx + len(START_TOOL):]
-                    else:
-                         # No tags found, partial check
-                         max_partial = 0
-                         for tag in [START_THINK, START_TOOL]:
-                             for i in range(1, len(tag)):
-                                 if i > len(buffer): break
-                                 if tag.startswith(buffer[-i:]):
-                                     if i > max_partial: max_partial = i
-                         
-                         if max_partial > 0:
-                             safe_len = len(buffer) - max_partial
-                             if safe_len > 0:
-                                 yield f"data: {json.dumps({'type': 'content', 'content': buffer[:safe_len]})}\n\n"
-                             buffer = buffer[-max_partial:]
-                             break
-                         else:
-                             if buffer:
-                                 yield f"data: {json.dumps({'type': 'content', 'content': buffer})}\n\n"
-                             buffer = ""
-                             break
-
-        if buffer:
-            event_type = "thinking" if is_thinking else "content"
-            clean = buffer.replace(START_THINK, "").replace(END_THINK, "")
-            if clean:
-                yield f"data: {json.dumps({'type': event_type, 'content': clean})}\n\n"
-
+                        key = f"{chunk_index}"
+                        if chunk_name:
+                            # New tool call starting
+                            tool_call_accumulators[key] = {
+                                'name': chunk_name,
+                                'args_str': chunk_args,
+                                'id': chunk_id or '',
+                                'subgraph': subgraph_name
+                            }
+                        elif key in tool_call_accumulators:
+                            # Continue accumulating args
+                            tool_call_accumulators[key]['args_str'] += chunk_args
+                            if chunk_id:
+                                tool_call_accumulators[key]['id'] = chunk_id
+                    
+                    # Just accumulate, don't emit yet - will emit when no more chunks
+                else:
+                    # No tool_call_chunks in this message - check if we have accumulated tool_calls to emit
+                    for key, acc in list(tool_call_accumulators.items()):
+                        if acc.get('id') and acc['id'] not in emitted_tool_call_ids:
+                            try:
+                                parsed_args = json.loads(acc['args_str']) if acc['args_str'] else {}
+                                emitted_tool_call_ids.add(acc['id'])
+                                
+                                # Add completed tool_call to msg_data
+                                if 'tool_calls' not in msg_data:
+                                    msg_data['tool_calls'] = []
+                                msg_data['tool_calls'].append({
+                                    'id': acc['id'],
+                                    'name': acc['name'],
+                                    'args': parsed_args
+                                })
+                                del tool_call_accumulators[key]
+                            except json.JSONDecodeError:
+                                # Args still not valid JSON, keep waiting
+                                pass
+                
+                payload = [msg_data, metadata]
+                yield f"data: {json.dumps(payload)}\n\n"
+                
+            
+            except Exception as e:
+                _LOGGER.error(f"Failed to serialize tuple payload: {e}")
+                _LOGGER.error(traceback.format_exc())
+                continue
+        
+        # Flush any remaining buffer content from all parsers
+        for sg_key, parser in subgraph_parsers.items():
+            flush_events = parser.flush()
+            for event in flush_events:
+                if event["type"] == "thinking":
+                    flush_data = {"type": "AIMessageChunk", "content": "", "additional_kwargs": {"reasoning_content": event["data"]}}
+                else:
+                    flush_data = {"type": "AIMessageChunk", "content": event["data"]}
+                yield f"data: {json.dumps([flush_data, {'subgraph': sg_key}])}\n\n"
+        
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        # Padding to flush buffer
         yield ": keep-alive\n\n"
 
     except Exception as e:
         _LOGGER.error(f"Stream error: {e}")
         _LOGGER.error(traceback.format_exc())
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-
 
 @router.post("/{session_id}/chat")
 async def chat_stream(
