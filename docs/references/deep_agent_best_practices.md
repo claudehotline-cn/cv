@@ -1075,30 +1075,61 @@ await fetch(`/api/threads/${threadId}/runs/stream`, {
 
 ### 17. Qwen3 Thinking 模式配置 (Qwen3 Integration)
 
-整合 Qwen3-Thinking 模型时，需要解决 **XML 思维链 (`<think>`)** 与 **vLLM 工具调用解析** 之间的冲突。
+整合 Qwen3-Thinking 模型时，需要处理 **思维链 (`<think>`)** 输出与 **工具调用** 的兼容问题。
 
-### 核心冲突
-*   **Qwen3**: 输出 `<think>...</think>` + JSON Tool Call。
-*   **vLLM (hermes/pythonic parser)**: 看到 `<think>` 标签会认为是无效的 Tool Call 甚至 XML 注入，抛出 `Invalid JSON` 错误。
+### 当前配置方案
 
-### 解决方案：Prompt 约束 + 透传模式
+由于 vLLM 的 `--reasoning-parser qwen3` 存在兼容性问题，我们采用以下配置：
 
-1.  **vLLM 配置**: **移除** `--tool-call-parser` 和 `--enable-auto-tool-choice`。
-    *   *目的*: 让 vLLM 放弃解析，只做透传（Pass-through）。
+#### 1. vLLM 配置
 
-2.  **LangChain 配置**: 
-    *   启用 `output_version="v1"` (兼容 OpenAI SDK)。
-    *   启用 `enable_thinking=True`。
+```bash
+# docker-compose.yml - vllm service command
+--enable-auto-tool-choice          # ✅ 保留：启用工具自动选择
+--tool-call-parser hermes          # ✅ 保留：使用 hermes 解析器
+# --reasoning-parser qwen3         # ❌ 禁用：Qwen3 reasoning parser 有 bug
+```
 
-3.  **Prompt 工程 (关键)**: 
-    *   在 System Prompt 中**严禁** XML 格式的 Tool Call，强制要求标准 JSON。
+> **说明**：保留 `hermes` tool parser 以正确解析 JSON 格式的 Tool Call，但不启用 `reasoning-parser`。
+
+#### 2. LangChain 配置
 
 ```python
-# prompts.py
-QWEN_THINKING_INSTRUCTION = """
-IMPORTANT: 
-1. You may use <think> tags for reasoning.
-2. But for TOOL CALLS, you MUST use standard JSON format.
-3. DO NOT use <tool_code> or XML tags for tools.
-"""
+# agent_core/runtime.py
+ChatOpenAI(
+    model=settings.llm_model,
+    base_url=settings.vllm_base_url,
+    temperature=0.6,
+    output_version="v1",              # ✅ 启用 content_blocks 解析
+    streaming=True,
+    extra_body={
+        "chat_template_kwargs": {
+            "enable_thinking": True   # ✅ 告知模型启用思考模式
+        },
+    },
+)
 ```
+
+#### 3. 后端思考内容过滤
+
+由于 `--reasoning-parser` 未启用，`<think>` 标签会作为原始文本输出。需要在业务代码中过滤：
+
+```python
+import re
+
+# 在生成报告或其他需要展示给用户的内容时过滤
+think_pattern = r'<think>.*?</think>'
+content = re.sub(think_pattern, '', content, flags=re.DOTALL | re.IGNORECASE)
+```
+
+#### 4. 前端思考内容处理
+
+`chat.py` 中的 `QwenStreamParser` 会解析 `<think>` 标签，将其转换为 `reasoning_content` 放入 `additional_kwargs`：
+
+```python
+# app/routes/chat.py - event_generator
+if parsed_reasoning:
+    msg_data['additional_kwargs']['reasoning_content'] = parsed_reasoning
+```
+
+前端的 `ThinkingBlock.vue` 组件会渲染这些思考内容（默认折叠状态）。
