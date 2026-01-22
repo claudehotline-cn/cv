@@ -19,6 +19,7 @@ from agent_core.runtime import build_chat_llm
 from ..tools import (
     df_profile_tool, python_execute_tool
 )
+from ..utils.artifacts import load_chart, save_chart
 from ..prompts import (
     VISUALIZER_AGENT_DESCRIPTION
 )
@@ -77,18 +78,12 @@ def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableCon
     user_id = config.get("configurable", {}).get("user_id", "mock_user_from_tool_call_999")
     analysis_id = config.get("configurable", {}).get("analysis_id", "")
     
-    # 尝试读取现有的 chart.json 作为参考
     previous_chart = ""
     if analysis_id:
-        chart_path = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/chart.json"
-        try:
-            import os
-            if os.path.exists(chart_path):
-                with open(chart_path, "r", encoding="utf-8") as f:
-                    previous_chart = f.read().strip()
-                    _LOGGER.info(f"[Visualizer Agent] Found previous chart: {len(previous_chart)} chars")
-        except Exception as e:
-            _LOGGER.warning(f"[Visualizer Agent] Failed to read previous chart: {e}")
+        chart_data = load_chart(analysis_id, user_id=user_id)
+        if chart_data:
+            previous_chart = json.dumps(chart_data, ensure_ascii=False)
+            _LOGGER.info(f"[Visualizer Agent] Found previous chart: {len(previous_chart)} chars")
 
     _LOGGER.info(f"[Visualizer Agent] Generating code for task: {task}")
     
@@ -323,14 +318,11 @@ def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig)
             _LOGGER.info("[Visualizer Agent] Extracted chart data: %s", chart_data_str[:100])
             
             # 持久化图表数据到文件
+            # 持久化图表数据到文件
             if analysis_id:
                 try:
-                    chart_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}"
-                    os.makedirs(chart_dir, exist_ok=True)
-                    chart_path = os.path.join(chart_dir, "chart.json")
-                    with open(chart_path, "w", encoding="utf-8") as f:
-                        f.write(chart_data_str)
-                    _LOGGER.info("[Visualizer Agent] Chart saved to: %s", chart_path)
+                    saved_path = save_chart(chart_data_str, analysis_id, user_id=user_id)
+                    _LOGGER.info("[Visualizer Agent] Chart saved to: %s", saved_path)
                 except Exception as e:
                     _LOGGER.error("[Visualizer Agent] Failed to save chart: %s", e)
             

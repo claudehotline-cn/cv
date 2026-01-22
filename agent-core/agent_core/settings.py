@@ -41,6 +41,12 @@ class Settings(BaseSettings):
         alias="INSTALLED_AGENTS",
     )
 
+    workspace_root: str = Field(
+        default="/data/workspace",
+        description="Root workspace directory for all agents",
+        alias="WORKSPACE_ROOT",
+    )
+
     redis_url: str = Field(
         default="redis://redis:6379",
         description="Redis Connection URL",

@@ -496,9 +496,10 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     if config:
          configurable = config.get("configurable", {})
          task_id = configurable.get("task_id", "main")
+         user_id = configurable.get("user_id", "default")
          
     # 2. Get article_dir - pass task_id explicitly
-    from ..config import get_article_dir
+    from ..utils.artifacts import get_article_dir
     
     _LOGGER.info(f"Using passed article_id: '{article_id}', task_id: '{task_id}'")
     article_dir = get_article_dir(article_id, task_id)
@@ -700,7 +701,7 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
 
     # 4. 创建目录 (doc_id 现在已生成) - 使用 artifacts.py 的异步函数
     from ..utils.artifacts import ensure_corpus_dir
-    corpus_dir, parsed_dir = await ensure_corpus_dir(article_id, doc_id)
+    corpus_dir, parsed_dir = await ensure_corpus_dir(article_id, doc_id, task_id, user_id)
     assets_dir = os.path.join(corpus_dir, "assets")
     await asyncio.to_thread(os.makedirs, assets_dir, exist_ok=True)
 

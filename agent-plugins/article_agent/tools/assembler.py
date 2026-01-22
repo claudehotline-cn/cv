@@ -6,8 +6,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
-from ..utils.artifacts import get_drafts_dir, get_final_article_dir, load_article_artifact
-from ..config import get_article_dir
+from ..utils.artifacts import get_drafts_dir, get_final_article_dir, get_article_dir, load_article_artifact
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.assembler")
 
@@ -55,7 +54,7 @@ def assemble_article_tool(
     
     # 自动发现逻辑：如果没有传入路径，尝试自动查找
     # 自动发现逻辑：强制从 drafts 目录发现并合并 section_*.md
-    drafts_dir = get_drafts_dir(article_id, task_id)
+    drafts_dir = get_drafts_dir(article_id, task_id, user_id)
     
     # 尝试合并所有 section_*.md
     import glob

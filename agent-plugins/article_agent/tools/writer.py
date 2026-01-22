@@ -20,7 +20,7 @@ from .prompts import WRITER_SECTION_REVIEW_FEEDBACK, WRITER_SECTION_SYSTEM_PROMP
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.writer")
 
 
-def _merge_drafts_to_single_file(article_id: str, outline: Optional[Dict[str, Any]] = None) -> str:
+def _merge_drafts_to_single_file(article_id: str, outline: Optional[Dict[str, Any]] = None, user_id: str = "default") -> str:
     """
     将所有章节草稿合并为单一 draft.md 文件。
     
@@ -31,10 +31,10 @@ def _merge_drafts_to_single_file(article_id: str, outline: Optional[Dict[str, An
     Returns:
         合并后的 draft.md 路径
     """
-    from ..config import get_article_dir
+    from ..utils.artifacts import get_article_dir
     
-    drafts_dir = get_drafts_dir(article_id)
-    article_dir = get_article_dir(article_id)
+    drafts_dir = get_drafts_dir(article_id, user_id=user_id)
+    article_dir = get_article_dir(article_id, user_id=user_id)
     draft_output_dir = os.path.join(article_dir, "draft")
     os.makedirs(draft_output_dir, exist_ok=True)
     merged_draft_path = os.path.join(draft_output_dir, "draft.md")
@@ -195,7 +195,7 @@ def write_section_tool(
                 # _merge_drafts_to_single_file needs to support task_id too, let's update it later or inline fix
                 # For now let's hope merge tool is called separately or we fix merge helper
                 pass 
-                # merged_path = _merge_drafts_to_single_file(article_id, outline) 
+                merged_path = _merge_drafts_to_single_file(article_id, outline, user_id=user_id) 
             except Exception as merge_err:
                 _LOGGER.warning(f"Failed to re-merge draft after revision: {merge_err}")
         
@@ -526,7 +526,7 @@ def merge_draft_tool(article_id: str = "", config: Dict[str, Any] = None) -> Dic
         # merged_path = _merge_drafts_to_single_file(article_id, outline, task_id)
         
         # Inline logic for merge since helper is not updated yet
-        from ..config import get_article_dir, get_drafts_dir
+        from ..utils.artifacts import get_article_dir, get_drafts_dir
         
         drafts_dir = get_drafts_dir(article_id, task_id)
         article_dir = get_article_dir(article_id, task_id)

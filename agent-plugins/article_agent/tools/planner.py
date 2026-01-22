@@ -286,10 +286,11 @@ def read_sources_tool(sources_file: str = "", article_id: str = "", config: Dict
     if config:
          configurable = config.get("configurable", {})
          task_id = configurable.get("task_id", "main")
+         user_id = configurable.get("user_id", "default")
          
     if not sources_file and article_id:
-        from ..config import get_article_dir
-        article_dir = get_article_dir(article_id, task_id)
+        from ..utils.artifacts import get_article_dir
+        article_dir = get_article_dir(article_id, task_id, user_id)
         _LOGGER.info(f"[DEBUG] read_sources_tool: article_id='{article_id}', article_dir='{article_dir}'")
         sources_file = os.path.join(article_dir, "sources.json")
     
@@ -362,8 +363,8 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
     from ..config import get_settings
     settings = get_settings()
     # Use get_article_dir to locate corpus correctly with task_id
-    from ..config import get_article_dir
-    article_dir = get_article_dir(save_article_id, task_id)
+    from ..utils.artifacts import get_article_dir
+    article_dir = get_article_dir(save_article_id, task_id, user_id)
     corpus_dir = os.path.join(article_dir, "corpus")
     
     overview_parts = []
@@ -486,8 +487,8 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
             outline_file = "" 
             try:
                if save_article_id:
-                    from ..config import get_article_dir
-                    save_dir = get_article_dir(save_article_id)
+                    from ..utils.artifacts import get_article_dir
+                    save_dir = get_article_dir(save_article_id, user_id=user_id)
                     outline_file = os.path.join(save_dir, "outline.json")
             except Exception as e:
                 _LOGGER.warning(f"Failed to get outline path: {e}")
@@ -515,7 +516,9 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
             section_plan_file = ""
             try:
                 if save_article_id:
-                    section_plan_file = save_article_artifact(save_article_id, "section_plan.json", section_plan)
+                    section_plan_file = save_article_artifact(save_article_id, "section_plan.json", section_plan, task_id, user_id)
+                    # Also save outline with task_id and user_id
+                    save_article_artifact(save_article_id, "outline.json", result, task_id, user_id)
                     _LOGGER.info(f"Section plan saved to: {section_plan_file}")
             except Exception as e:
                 _LOGGER.warning(f"Failed to save section_plan: {e}")

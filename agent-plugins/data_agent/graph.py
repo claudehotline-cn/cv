@@ -23,6 +23,22 @@ from .subagents.report import report_agent
 
 _LOGGER = logging.getLogger("agent_langchain.data_deep_graph")
 
+
+def _get_graph_root_dir(rt) -> str:
+    """Helper to calculate root directory using WorkspaceBackend."""
+    from .config import get_backend
+    
+    # User feedback: rt has context, not config
+    # deepagents Runtime.context typically holds the configurable parameters
+    ctx = getattr(rt, "context", {})
+    
+    user_id = ctx.get("user_id", "anonymous")
+    analysis_id = ctx.get("analysis_id", "default")
+    
+    # Match logic in subagents: session_id="default", task_id="data_analysis_{analysis_id}"
+    backend = get_backend(user_id=user_id, session_id="default", task_id=f"data_analysis_{analysis_id}")
+    return backend.artifacts_dir
+
 def get_data_deep_agent_graph() -> Any:
     """构造并返回统一的数据分析 Deep Agent (Multi-Agent 架构)。"""
     
@@ -57,7 +73,7 @@ def get_data_deep_agent_graph() -> Any:
         ],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(
-                root_dir=f"/data/workspace/{rt.config.get('configurable', {}).get('session_id', 'default')}/{rt.config.get('configurable', {}).get('task_id', 'main')}", 
+                root_dir=_get_graph_root_dir(rt), 
                 virtual_mode=True
             ),
             routes={"/_shared/": StoreBackend(rt)},

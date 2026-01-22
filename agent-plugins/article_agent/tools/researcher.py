@@ -14,8 +14,7 @@ from langchain_core.runnables import RunnableConfig
 from agent_core.runtime import build_chat_llm
 from ..utils.text_utils import extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response
-from ..utils.artifacts import load_article_artifact, save_article_artifact
-from ..config import get_article_dir
+from ..utils.artifacts import load_article_artifact, save_article_artifact, get_article_dir
 from .prompts import RESEARCHER_SECTION_SYSTEM_PROMPT, RESEARCHER_SECTION_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.researcher")

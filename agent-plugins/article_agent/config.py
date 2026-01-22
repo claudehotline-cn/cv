@@ -1,22 +1,27 @@
+"""Article Agent Configuration.
+
+This module provides article-specific configuration and path helpers
+built on top of agent_core.WorkspaceBackend.
+"""
 from __future__ import annotations
 
-import os
 from functools import lru_cache
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
+from agent_core import WorkspaceBackend
+
+
+# Agent name constant for this plugin
+AGENT_NAME = "article_agent"
+
+
 class Settings(BaseSettings):
     """Article Agent Configuration"""
 
-    workspace_root: str = Field(
-        default="/data/workspace",
-        description="Root workspace directory",
-        alias="WORKSPACE_ROOT",
-    )
-    
-    # Keep legacy content settings
+    # Article-specific settings (not filesystem)
     articles_base_url: str = Field(
         default="/articles",
         alias="ARTICLE_AGENT_ARTICLES_BASE_URL",
@@ -32,37 +37,29 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
-def get_article_dir(article_id: str, task_id: str = "main") -> str:
-    """
-    Get article artifacts directory.
-    Path: /data/workspace/{session_id}/{task_id}/artifacts/article_{article_id}
-    Assumes article_id == session_id.
-    """
-    settings = get_settings()
+
+def get_backend(session_id: str, task_id: Optional[str] = None, user_id: str = "default") -> WorkspaceBackend:
+    """Get WorkspaceBackend instance for article_agent.
     
+    Args:
+        session_id: Session/article ID (article_id is used as session_id)
+        task_id: Optional task ID for async tasks
+        user_id: User identifier (default: "default")
+        
+    Returns:
+        WorkspaceBackend configured for article_agent
+    """
     # Strip prefix if present
-    clean_id = article_id
+    clean_id = session_id
     if clean_id.startswith("article_"):
         clean_id = clean_id[len("article_"):]
-        
-    return os.path.join(
-        settings.workspace_root,
-        clean_id,  # session_id
-        task_id,   # task_id
-        "artifacts", 
-        f"article_{clean_id}"
-    )
+    
+    return WorkspaceBackend(AGENT_NAME, user_id, clean_id, task_id)
 
-def get_drafts_dir(article_id: str, task_id: str = "main") -> str:
-    return os.path.join(get_article_dir(article_id, task_id), "drafts")
-
-def get_final_article_dir(article_id: str, task_id: str = "main") -> str:
-    return os.path.join(get_article_dir(article_id, task_id), "article")
 
 __all__ = [
+    "AGENT_NAME",
     "Settings",
     "get_settings",
-    "get_article_dir",
-    "get_drafts_dir",
-    "get_final_article_dir",
+    "get_backend",
 ]

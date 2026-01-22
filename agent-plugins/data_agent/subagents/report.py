@@ -17,6 +17,7 @@ from agent_core.runtime import build_chat_llm
 from ..tools import (
     df_profile_tool
 )
+from ..utils.artifacts import load_report, save_report, get_dataframe
 from ..prompts import (
     REPORT_AGENT_DESCRIPTION
 )
@@ -56,7 +57,7 @@ def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> 
         profile_json = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=config)
         
         # 2. 增强：加载完整数据并转换为 Markdown 表格供给 LLM
-        from ..utils.dataframe_store import get_dataframe
+        # from ..utils.dataframe_store import get_dataframe # IMPORTED ABOVE
         
         full_data_str = "（数据加载失败）"
         try:
@@ -99,22 +100,16 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     prev_report = ""
     prev_report_section = ""
     if analysis_id and user_id:
-        report_path = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/report.md"
-        if os.path.exists(report_path):
-            try:
-                with open(report_path, "r", encoding="utf-8") as f:
-                    prev_report = f.read().strip()
-                if prev_report:
-                    _LOGGER.info("[Report Agent] Loaded previous report (%d chars) for incremental modification", len(prev_report))
-                    prev_report_section = f"""
+        prev_report = load_report(analysis_id, user_id=user_id)
+        if prev_report:
+            _LOGGER.info("[Report Agent] Loaded previous report (%d chars) for incremental modification", len(prev_report))
+            prev_report_section = f"""
 【上一个版本的报告】
 以下是之前生成的报告，用户可能对此有反馈。请根据任务描述中的用户反馈进行修改。
 
 {prev_report}
 
 """
-            except Exception as e:
-                _LOGGER.warning("[Report Agent] Failed to load previous report: %s", e)
     
     prompt = f"""你是 Report Agent，负责生成数据分析报告。
 
@@ -181,12 +176,8 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     
     if analysis_id:
         try:
-            report_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}"
-            os.makedirs(report_dir, exist_ok=True)
-            report_path = os.path.join(report_dir, "report.md")
-            with open(report_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            _LOGGER.info("[Report Agent] Report saved to: %s", report_path)
+            saved_path = save_report(content, analysis_id, user_id=user_id)
+            _LOGGER.info("[Report Agent] Report saved to: %s", saved_path)
         except Exception as e:
             _LOGGER.error("[Report Agent] Failed to save report: %s", e)
     

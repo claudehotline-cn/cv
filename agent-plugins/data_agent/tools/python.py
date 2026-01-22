@@ -13,7 +13,13 @@ from langchain_core.tools import tool
 
 from agent_core.runtime import build_chat_llm
 from data_agent.schemas import PythonResultSchema, ValidationResultSchema
-from data_agent.utils.dataframe_store import store_dataframe, get_dataframe
+from data_agent.utils.artifacts import (
+    store_dataframe, 
+    get_dataframe, 
+    list_dataframes, 
+    save_chart, 
+    get_backend_from_config
+)
 from .visualizer import validate_chart_option
 from datetime import datetime, date
 from decimal import Decimal
@@ -81,7 +87,7 @@ def _create_safe_globals(analysis_id: Optional[str], user_id: str = "anonymous")
             pass
     
     # 提供 load_dataframe / list_dataframes 函数供代码加载数据
-    from data_agent.utils.dataframe_store import get_dataframe as _get_df, list_dataframes as _list_dfs
+    from data_agent.utils.artifacts import get_dataframe as _get_df, list_dataframes as _list_dfs
     
     def load_dataframe(name: str) -> pd.DataFrame:
         """从工作区加载指定的 DataFrame。"""
@@ -123,18 +129,7 @@ def _review_python_code(code: str) -> Dict[str, Any]:
 
 def _persist_chart(chart_json_str: str, analysis_id: str, user_id: str = "anonymous") -> str:
     """保存 Chart JSON"""
-    if not analysis_id:
-        return ""
-    try:
-        base_dir = f"/data/workspace/{user_id}/artifacts/data_analysis_{analysis_id}/charts"
-        os.makedirs(base_dir, exist_ok=True)
-        filepath = os.path.join(base_dir, f"chart_{uuid.uuid4().hex[:8]}.json")
-        with open(filepath, 'w') as f:
-            json.dump(json.loads(chart_json_str), f, ensure_ascii=False, indent=2)
-        return filepath
-    except Exception as e:
-        _LOGGER.error("Failed to persist chart: %s", e)
-        return ""
+    return save_chart(chart_json_str, analysis_id, user_id=user_id)
 
 
 from langchain_core.runnables import RunnableConfig
