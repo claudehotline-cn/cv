@@ -87,20 +87,27 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 # Get tool_call_id for ToolMessage
                 tool_call_id = tool_call.get('id', '') if isinstance(tool_call, dict) else getattr(tool_call, 'id', '')
                 
-                if isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
+                _LOGGER.info(f"[HITL] interrupt_res type: {type(interrupt_res)}, value: {interrupt_res}")
+                
+                # interrupt() returns the exact value passed to Command(resume=...)
+                # Backend passes: [{"type": "approve"|"reject", "message": "..."}]
+                decisions = None
+                if isinstance(interrupt_res, list):
+                    decisions = interrupt_res
+                elif isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
                     decisions = interrupt_res["decisions"]
-                    if decisions and isinstance(decisions, list):
-                        decision = decisions[0]
-                        if decision.get("type") == "reject":
-                            feedback = decision.get("message", f"User rejected {subagent_type}")
-                            return ToolMessage(content=f"USER_INTERRUPT: {feedback}", tool_call_id=tool_call_id)
+                
+                if decisions and isinstance(decisions, list) and len(decisions) > 0:
+                    decision = decisions[0]
+                    if decision.get("type") == "reject":
+                        feedback = decision.get("message", "")
+                        content = f"USER_INTERRUPT: 用户拒绝了 {subagent_type} 的输出。反馈: {feedback}。请根据反馈重新调用 {subagent_type}。"
+                        _LOGGER.info(f"[HITL] User rejected, returning: {content}")
+                        return ToolMessage(content=content, tool_call_id=tool_call_id)
 
-                if subagent_type == "visualizer_agent":
-                    content = "USER_APPROVED: Chart approved."
-                elif subagent_type == "report_agent":
-                    content = "USER_APPROVED: Report approved."
-                else:
-                    content = f"USER_APPROVED: {subagent_type} approved."
+                # Generic approval message with subagent_type
+                content = f"USER_APPROVED: {subagent_type} approved."
+                _LOGGER.info(f"[HITL] User approved or no decision, returning: {content}")
                 
                 return ToolMessage(content=content, tool_call_id=tool_call_id)
         
