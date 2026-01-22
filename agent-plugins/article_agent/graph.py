@@ -14,6 +14,7 @@ from langchain_core.runnables import RunnableLambda
 from agent_core.runtime import build_chat_llm
 from agent_core.store import get_async_store, get_checkpointer
 from agent_core.middleware import SubAgentHITLMiddleware, FileAttachmentMiddleware
+from .middleware import TaskContextMiddleware
 
 from .prompts import (
     MAIN_AGENT_PROMPT,
@@ -25,12 +26,14 @@ from .prompts import (
     WRITER_AGENT_DESCRIPTION,
     REVIEWER_AGENT_PROMPT,
     REVIEWER_AGENT_DESCRIPTION,
-    ASSEMBLER_AGENT_PROMPT,
-    ASSEMBLER_AGENT_DESCRIPTION,
     INGEST_AGENT_PROMPT,
     INGEST_AGENT_DESCRIPTION,
 )
 from .schemas import ArticleAgentOutput, AssemblerOutput, IngestOutput
+
+# Import Refactored Sub-Agents
+from .subagents.assembler import assembler_agent
+
 from .tools import (
     load_file_tool,
     ingest_documents_tool,
@@ -148,22 +151,9 @@ def get_article_deep_agent_graph() -> Any:
     )
 
     # 5. Assembler Agent - 组装输出
-    assembler_llm = build_chat_llm(task_name="assembler")
-    assembler_tools = [assemble_article_tool]
-    assembler_llm_forced = assembler_llm.bind_tools(
-        assembler_tools,
-        tool_choice={"type": "function", "function": {"name": "assemble_article_tool"}}
-    )
-    assembler_runnable = create_agent(
-        model=assembler_llm_forced,
-        tools=assembler_tools,
-        system_prompt=ASSEMBLER_AGENT_PROMPT,
-    )
-    assembler_agent = CompiledSubAgent(
-        name="assembler_agent",
-        description=ASSEMBLER_AGENT_DESCRIPTION,
-        runnable=assembler_runnable,
-    )
+    # 已重构为 StateGraph SubAgent (see subagents/assembler.py)
+    # assembler_agent 已导入
+
 
     # ============================================================================
     # 创建主 Deep Agent
@@ -189,6 +179,8 @@ def get_article_deep_agent_graph() -> Any:
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
+            # 上下文同步
+            TaskContextMiddleware(),
             # 文件上传处理
             FileAttachmentMiddleware(),
             # HITL: 在 assembler 输出时触发审核
@@ -203,7 +195,7 @@ def get_article_deep_agent_graph() -> Any:
         ],
         backend=lambda rt: CompositeBackend(
             default=FilesystemBackend(
-                root_dir="/data/workspace",
+                root_dir=f"/data/workspace/{rt.config.get('configurable', {}).get('session_id', 'default')}/{rt.config.get('configurable', {}).get('task_id', 'main')}",
                 virtual_mode=True
             ),
             routes={

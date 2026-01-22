@@ -260,8 +260,9 @@ async def chat_stream(
     config = {
         "configurable": {
             "thread_id": str(session.id),
+            "session_id": str(session.id), # New standard ID
             "user_id": "mock_user", # TODO: Get from auth
-            "analysis_id": str(session.id) # Re-use session ID for now
+            "analysis_id": str(session.id) # Legacy support
         }
     }
 

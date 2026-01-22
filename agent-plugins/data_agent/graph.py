@@ -56,7 +56,10 @@ def get_data_deep_agent_graph() -> Any:
             # FileContentInjectionMiddleware 已移除，改用 subgraph streaming 直接传输数据
         ],
         backend=lambda rt: CompositeBackend(
-            default=FilesystemBackend(root_dir="/data/workspace", virtual_mode=True),
+            default=FilesystemBackend(
+                root_dir=f"/data/workspace/{rt.config.get('configurable', {}).get('session_id', 'default')}/{rt.config.get('configurable', {}).get('task_id', 'main')}", 
+                virtual_mode=True
+            ),
             routes={"/_shared/": StoreBackend(rt)},
         ),
         # 使用 PostgreSQL 持久化存储（长期记忆 + 会话检查点）
