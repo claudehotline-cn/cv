@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 import time
 from urllib.parse import urljoin
 
-from ...config.config import get_settings
+from agent_core.settings import get_settings
 
 
 def fetch_url_with_images(url: str, max_images: int = 5, max_text_chars: int = 60000) -> Dict[str, Any]:

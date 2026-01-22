@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable, Type, TypeVar
 
 from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
 from langchain_core.messages import AIMessage, AIMessageChunk
+from pydantic import BaseModel
+
+TModel = TypeVar("TModel", bound=BaseModel)
 
 from .settings import get_settings
 
@@ -110,10 +113,7 @@ def build_chat_llm(task_name: str = "generic") -> Any:
                 "chat_template_kwargs": {
                     "enable_thinking": True,
                 },
-            },
-            # model_kwargs={
-            #     "stop": ["<|im_end|>", "<|endoftext|>"]
-            # },
+            }
         )
 
     # OpenAI Default
@@ -122,3 +122,5 @@ def build_chat_llm(task_name: str = "generic") -> Any:
 
     _LOGGER.info(f"llm.init provider=openai task={task_name} model={settings.llm_model}")
     return ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
+
+

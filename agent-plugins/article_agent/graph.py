@@ -12,7 +12,6 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBacken
 from agent_core.runtime import build_chat_llm
 from agent_core.store import get_async_store, get_checkpointer
 from agent_core.middleware import SubAgentHITLMiddleware, FileAttachmentMiddleware
-from .middleware import TaskContextMiddleware
 
 from .prompts import MAIN_AGENT_PROMPT
 from .schemas import ArticleAgentOutput
@@ -58,8 +57,6 @@ def get_article_deep_agent_graph() -> Any:
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
-            # 上下文同步
-            TaskContextMiddleware(),
             # 文件上传处理
             FileAttachmentMiddleware(),
             # HITL: 在 assembler 输出时触发审核
@@ -72,23 +69,48 @@ def get_article_deep_agent_graph() -> Any:
                 },
             ),
         ],
-        backend=lambda rt: CompositeBackend(
-            default=FilesystemBackend(
-                root_dir=f"/data/workspace/{rt.config.get('configurable', {}).get('session_id', 'default')}/{rt.config.get('configurable', {}).get('task_id', 'main')}",
-                virtual_mode=True
-            ),
-            routes={
-                "/_shared/": StoreBackend(rt),
-            }
-        ),
+        backend=_create_backend_factory,
         store=get_async_store,
         checkpointer=get_checkpointer(),
         response_format=response_format,
     )
     
     _LOGGER.info("Article Deep Agent graph created with 6 SubAgents")
-    
     return graph
+
+def _create_backend_factory(rt):
+    # Try to extract configuration from Runtime
+    config = {}
+    
+    # helper to check known attributes
+    if hasattr(rt, "config"):
+        config = rt.config
+    elif hasattr(rt, "context") and hasattr(rt.context, "config"):
+        config = rt.context.config
+    
+    configurable = config.get("configurable", {})
+    
+    session_id = configurable.get("session_id", "default")
+    task_id = configurable.get("task_id", "main")
+    
+    # If still default, try to inspect if it's a ToolRuntime with different structure
+    if session_id == "default" and hasattr(rt, "metadata"):
+         meta_session = rt.metadata.get("session_id")
+         if meta_session:
+             session_id = meta_session
+             task_id = rt.metadata.get("task_id", "main")
+    
+    root_path = f"/data/workspace/{session_id}/{task_id}"
+
+    return CompositeBackend(
+            default=FilesystemBackend(
+                root_dir=root_path,
+                virtual_mode=True
+            ),
+            routes={
+                "/_shared/": StoreBackend(rt),
+            }
+        )
 
 
 __all__ = ["get_article_deep_agent_graph"]

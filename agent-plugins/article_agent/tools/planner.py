@@ -10,9 +10,10 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ...config.llm_runtime import build_chat_llm, extract_text_content
+from agent_core.runtime import build_chat_llm
+from ..utils.text_utils import extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response, log_tool_output, _LOGGER as COMMON_LOGGER
-from ..utils.artifacts import get_current_article_id, save_article_artifact, load_article_artifact
+from ..utils.artifacts import save_article_artifact, load_article_artifact
 from .prompts import PLANNER_OUTLINE_SYSTEM_PROMPT, PLANNER_OUTLINE_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.planner")
@@ -132,12 +133,14 @@ async def load_file_tool(file_path: str, max_text_chars: int = 60000) -> Dict[st
 async def collect_all_sources_tool(
     urls: List[str],
     file_paths: List[str],
+    config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """收集所有素材来源，返回 CollectorOutput。
     
     Args:
         urls: URL 列表
         file_paths: 文件路径列表
+        config: RunnableConfig injection
         
     Returns:
         CollectorOutput 字典
@@ -156,6 +159,12 @@ async def collect_all_sources_tool(
     overview_parts = []
     total_text_chars = 0
     total_images = 0
+
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
     
     # 处理 URLs
     for idx, url in enumerate(urls or []):
@@ -221,16 +230,18 @@ async def collect_all_sources_tool(
     overview = "## 素材概览\n\n" + "\n".join(overview_parts) + f"\n\n**总计**: {total_text_chars} 字符, {total_images} 图片"
     
     # 落盘：保存素材到文件供其他 SubAgent 读取
-    
-    # 落盘：保存素材到文件供其他 SubAgent 读取
-    article_id = await asyncio.to_thread(get_current_article_id)
+    # Note: article_id should be passed by caller or extracted from URLs
+    # For now, generate a UUID if not available from context
+    article_id = str(uuid.uuid4())[:8]  # Simple random ID for legacy calls
     
     # 保存完整素材到 JSON 文件 (包含 full_text)
     sources_data = {
         "sources": sources,
         "overview": overview
     }
-    sources_file = await asyncio.to_thread(save_article_artifact, article_id, "sources.json", sources_data)
+    
+    # Use explicit task_id
+    sources_file = await asyncio.to_thread(save_article_artifact, article_id, "sources.json", sources_data, task_id)
         
     _LOGGER.info(f"Sources saved to: {sources_file}")
     
@@ -258,24 +269,29 @@ async def collect_all_sources_tool(
 
 
 @tool
-def read_sources_tool(sources_file: str = "") -> Dict[str, Any]:
+def read_sources_tool(sources_file: str = "", article_id: str = "", config: Dict[str, Any] = None) -> Dict[str, Any]:
     """读取之前收集的素材（供 Researcher 和 Writer 使用）。
     
     Args:
         sources_file: 素材文件路径（可选，如果为空则自动查找）
+        article_id: 文章 ID（如果没有提供 sources_file）
+        config: RunnableConfig injection
         
     Returns:
         包含 sources, overview, total_text_chars, total_images 的字典
     """
     
-    # 如果没有指定文件，尝试从环境变量获取当前文章目录
-    if not sources_file:
-        article_id = get_current_article_id()
-        if article_id:
-            from ...config import get_article_dir
-            article_dir = get_article_dir(article_id)
-            _LOGGER.info(f"[DEBUG] read_sources_tool: article_id='{article_id}', article_dir='{article_dir}'")
-            sources_file = os.path.join(article_dir, "sources.json")
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
+    if not sources_file and article_id:
+        from ..config import get_article_dir
+        article_dir = get_article_dir(article_id, task_id)
+        _LOGGER.info(f"[DEBUG] read_sources_tool: article_id='{article_id}', article_dir='{article_dir}'")
+        sources_file = os.path.join(article_dir, "sources.json")
     
     if not sources_file or not os.path.exists(sources_file):
         _LOGGER.warning(f"Sources file not found: {sources_file}")
@@ -308,20 +324,24 @@ def read_sources_tool(sources_file: str = "") -> Dict[str, Any]:
 # ============================================================================
 
 @tool
-def generate_outline_tool(instruction: str, target_word_count: int = 3000, article_id: str = "") -> Dict[str, Any]:
+def generate_outline_tool(instruction: str, target_word_count: int = 3000, article_id: str = "", config: Dict[str, Any] = None) -> Dict[str, Any]:
     """根据用户指令和素材内容生成文章大纲。素材概览会自动从 manifest.json 文件读取。
     
     Args:
         instruction: 用户写作指令
         target_word_count: 目标总字数
         article_id: 文章 ID (必须与 collect_all_sources_tool 返回的一致)
-        
-    Returns:
-        OutlineOutput 字典
+        config: RunnableConfig injection
     """
     
     _LOGGER.info(f"generate_outline_tool called with target_word_count: {target_word_count}")
     
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
     # ========== 始终从 manifest.json 自动读取素材概览 ==========
     # 素材概览直接从实际的 manifest.json 文件读取，确保使用真实的文档内容
     _LOGGER.info("Auto-reading overview from manifest files...")
@@ -339,9 +359,12 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
         }
     
     # 读取 corpus 目录下所有 manifest.json
-    from ...config.config import get_settings
+    from ..config import get_settings
     settings = get_settings()
-    corpus_dir = os.path.join(settings.artifacts_dir, f"article_{save_article_id}", "corpus")
+    # Use get_article_dir to locate corpus correctly with task_id
+    from ..config import get_article_dir
+    article_dir = get_article_dir(save_article_id, task_id)
+    corpus_dir = os.path.join(article_dir, "corpus")
     
     overview_parts = []
     overview = ""  # 初始化 overview 变量
@@ -438,14 +461,13 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
             
             # 落盘：保存大纲到文件
             try:
-                # 如果参数没传，从环境变量获取
-                save_article_id = get_current_article_id(article_id)
-                _LOGGER.info(f"[DEBUG] generate_outline_tool: save_article_id = '{save_article_id}'")
+                # use save_article_id derived above which is explicitly passed
+                _LOGGER.info(f"[DEBUG] generate_outline_tool: save_article_id = '{save_article_id}', task_id='{task_id}'")
                 
                 if save_article_id:
                     # 添加 article_id 到大纲（符合架构设计规范）
                     result["article_id"] = save_article_id
-                    outline_file = save_article_artifact(save_article_id, "outline.json", result)
+                    outline_file = save_article_artifact(save_article_id, "outline.json", result, task_id)
                     _LOGGER.info(f"Outline saved to: {outline_file}")
                 else:
                     _LOGGER.warning("[DEBUG] generate_outline_tool: article_id is EMPTY, cannot save outline!")
@@ -464,7 +486,7 @@ def generate_outline_tool(instruction: str, target_word_count: int = 3000, artic
             outline_file = "" 
             try:
                if save_article_id:
-                    from ...config import get_article_dir
+                    from ..config import get_article_dir
                     save_dir = get_article_dir(save_article_id)
                     outline_file = os.path.join(save_dir, "outline.json")
             except Exception as e:

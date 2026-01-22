@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import os
-import contextvars
 from functools import lru_cache
 from typing import Literal, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
-
-# ContextVar for task_id (defaults to 'main')
-_TASK_ID_CTX = contextvars.ContextVar("task_id", default="main")
 
 class Settings(BaseSettings):
     """Article Agent Configuration"""
@@ -36,21 +32,13 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
-def set_current_task_id(task_id: str):
-    """Set the current task ID for path generation."""
-    _TASK_ID_CTX.set(task_id)
-
-def get_current_task_id() -> str:
-    return _TASK_ID_CTX.get()
-
-def get_article_dir(article_id: str) -> str:
+def get_article_dir(article_id: str, task_id: str = "main") -> str:
     """
     Get article artifacts directory.
     Path: /data/workspace/{session_id}/{task_id}/artifacts/article_{article_id}
     Assumes article_id == session_id.
     """
     settings = get_settings()
-    task_id = get_current_task_id()
     
     # Strip prefix if present
     clean_id = article_id
@@ -65,17 +53,15 @@ def get_article_dir(article_id: str) -> str:
         f"article_{clean_id}"
     )
 
-def get_drafts_dir(article_id: str) -> str:
-    return os.path.join(get_article_dir(article_id), "drafts")
+def get_drafts_dir(article_id: str, task_id: str = "main") -> str:
+    return os.path.join(get_article_dir(article_id, task_id), "drafts")
 
-def get_final_article_dir(article_id: str) -> str:
-    return os.path.join(get_article_dir(article_id), "article")
+def get_final_article_dir(article_id: str, task_id: str = "main") -> str:
+    return os.path.join(get_article_dir(article_id, task_id), "article")
 
 __all__ = [
     "Settings",
     "get_settings",
-    "set_current_task_id",
-    "get_current_task_id",
     "get_article_dir",
     "get_drafts_dir",
     "get_final_article_dir",

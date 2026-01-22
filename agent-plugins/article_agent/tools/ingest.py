@@ -12,8 +12,9 @@ import base64
 from langchain_core.messages import HumanMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from ...config.llm_runtime import build_chat_llm, extract_text_content
-from ...config.config import get_settings
+from agent_core.runtime import build_chat_llm
+from ..utils.text_utils import extract_text_content
+from ..config import get_settings
 from .ingest_media_helper import _describe_media_file_with_vlm
 
 async def _describe_image_with_vlm(image_bytes: bytes, document_context: str = "") -> str:
@@ -472,13 +473,14 @@ def chunk_text(text: str, chunk_size: int = 1200, chunk_overlap: int = 200) -> L
     )
     return splitter.split_text(text)
 
-async def ingest_documents_tool(article_id: str, source_type: str, source_path: str) -> str:
+async def ingest_documents_tool(article_id: str, source_type: str, source_path: str, config: Dict[str, Any] = None) -> str:
     """Ingest a document: fetch -> parse -> chunk -> persist -> manifest.
     
     Args:
         article_id: 文章 ID，由系统自动注入，不需要手动填写
         source_type: 来源类型，'minio' 或 'url'
         source_path: MinIO 路径或 HTTP URL
+        config: RunnableConfig injection
     """
     import hashlib
     import json
@@ -489,11 +491,17 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     doc_id = ""
     pages = 0
     
-    # 2. Get article_dir - 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
-    from ...config.config import get_article_dir
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
+    # 2. Get article_dir - pass task_id explicitly
+    from ..config import get_article_dir
     
-    _LOGGER.info(f"Using passed article_id: '{article_id}'")
-    article_dir = get_article_dir(article_id)
+    _LOGGER.info(f"Using passed article_id: '{article_id}', task_id: '{task_id}'")
+    article_dir = get_article_dir(article_id, task_id)
     
     # 3. Fetch & Parse
     full_text = ""
@@ -503,7 +511,7 @@ async def ingest_documents_tool(article_id: str, source_type: str, source_path: 
     extracted_images = []  # List of dicts: {data (bytes), ext, alt, page/index, element_id, src (if URL)}
     
     # Get settings at function start to avoid UnboundLocalError in conditional branches
-    from ...config.config import get_settings
+    from ..config import get_settings
     settings = get_settings()
     
     try:

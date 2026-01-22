@@ -11,10 +11,11 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from ...config.llm_runtime import build_chat_llm, extract_text_content
+from agent_core.runtime import build_chat_llm
+from ..utils.text_utils import extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response
-from ..utils.artifacts import get_current_article_id, load_article_artifact, save_article_artifact
-from ...config.config import get_article_dir
+from ..utils.artifacts import load_article_artifact, save_article_artifact
+from ..config import get_article_dir
 from .prompts import RESEARCHER_SECTION_SYSTEM_PROMPT, RESEARCHER_SECTION_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.researcher")
@@ -165,7 +166,8 @@ def research_section_tool(
 def research_all_sections_tool(
     outline: Dict[str, Any],
     sources: List[Dict[str, Any]] = None,
-    article_id: str = "",  # 新增：接收 article_id
+    article_id: str = "",
+    config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """为所有章节整理资料笔记。
     
@@ -173,15 +175,22 @@ def research_all_sections_tool(
         outline: 文章大纲
         sources: (可选) 自动从 sources.json 读取
         article_id: 文章 ID (必须传入，用于定位文件)
+        config: RunnableConfig injection
         
     Returns:
         ResearcherOutput 字典
     """
     
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
     # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
-    _LOGGER.info(f"[DEBUG] research_all_sections_tool: article_id = '{article_id}'")
+    _LOGGER.info(f"[DEBUG] research_all_sections_tool: article_id = '{article_id}', task_id = '{task_id}'")
     
-    loaded_outline = load_article_artifact(article_id, "outline.json")
+    loaded_outline = load_article_artifact(article_id, "outline.json", task_id)
     if loaded_outline:
          _LOGGER.info(f"Loaded outline from artifacts")
     else:
@@ -194,7 +203,7 @@ def research_all_sections_tool(
         return {"section_notes": [], "error": "Missing outline"}
     
     # NEW: 加载 section_plan.json 以获取 required_evidence
-    section_plan = load_article_artifact(article_id, "section_plan.json")
+    section_plan = load_article_artifact(article_id, "section_plan.json", task_id)
     section_plan_map = {}
     if section_plan and section_plan.get("sections"):
         for sp in section_plan.get("sections", []):
@@ -206,7 +215,7 @@ def research_all_sections_tool(
     _LOGGER.info(f"research_all_sections_tool called. Outline sections: {len(outline.get('sections', []))}")
 
     # NEW: Try loading Chunks (Docling artifact)
-    article_dir = get_article_dir(article_id)
+    article_dir = get_article_dir(article_id, task_id)
     corpus_pattern = os.path.join(article_dir, "corpus", "*", "chunks.jsonl")
     chunk_files = glob.glob(corpus_pattern)
     
@@ -252,7 +261,7 @@ def research_all_sections_tool(
     else:
         # Fallback: strict legacy mode
         _LOGGER.info("No chunks.jsonl found, trying sources.json")
-        loaded_sources_data = load_article_artifact(article_id, "sources.json")
+        loaded_sources_data = load_article_artifact(article_id, "sources.json", task_id)
         loaded_sources = loaded_sources_data.get("sources", []) if loaded_sources_data else []
         
         if loaded_sources:
@@ -360,7 +369,7 @@ def research_all_sections_tool(
     
     try:
         if article_id:
-            notes_file = save_article_artifact(article_id, "research_notes.json", full_output)
+            notes_file = save_article_artifact(article_id, "research_notes.json", full_output, task_id)
             full_output["notes_file"] = notes_file
             _LOGGER.info(f"Research notes saved to: {notes_file}")
     except Exception as exc:

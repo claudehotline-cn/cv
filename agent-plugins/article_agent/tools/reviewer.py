@@ -9,9 +9,10 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ...config.llm_runtime import build_chat_llm, extract_text_content
+from agent_core.runtime import build_chat_llm
+from ..utils.text_utils import extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response
-from ..utils.artifacts import get_current_article_id, load_article_artifact, save_article_artifact, get_drafts_dir
+from ..utils.artifacts import load_article_artifact, save_article_artifact, get_drafts_dir
 from .prompts import REVIEWER_DRAFT_SYSTEM_PROMPT, REVIEWER_DRAFT_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.reviewer")

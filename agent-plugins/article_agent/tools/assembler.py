@@ -6,7 +6,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
-from ..utils.artifacts import get_current_article_id, get_drafts_dir, get_article_dir, get_final_article_dir, load_article_artifact
+from ..utils.artifacts import get_drafts_dir, get_final_article_dir, load_article_artifact
+from ..config import get_article_dir
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.assembler")
 
@@ -15,6 +16,7 @@ def assemble_article_tool(
     article_id: str,
     title: str,
     final_markdown_path: str,
+    config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """组装最终文章并保存。
     
@@ -22,6 +24,7 @@ def assemble_article_tool(
         article_id: 文章 ID
         title: 文章标题
         final_markdown_path: 最终 Markdown 文件路径
+        config: RunnableConfig injection
         
     Returns:
         AssemblerOutput 字典
@@ -29,15 +32,21 @@ def assemble_article_tool(
     
     _LOGGER.info(f"assemble_article_tool called for: {article_id}, path: {final_markdown_path}")
     
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
     # 初始化变量
     final_markdown = ""
     # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
-    _LOGGER.info(f"Using passed article_id: '{article_id}'")
+    _LOGGER.info(f"Using passed article_id: '{article_id}', task_id: '{task_id}'")
 
     # 修复：如果标题是占位符，尝试从 outline.json 加载真实标题
     if title in ["最终文章标题", "Article Title", "文章标题", ""] and article_id:
         try:
-            outline_data = load_article_artifact(article_id, "outline.json")
+            outline_data = load_article_artifact(article_id, "outline.json", task_id)
             if outline_data and outline_data.get("title"):
                 title = outline_data.get("title")
                 _LOGGER.info(f"Recovered real title from outline: {title}")
@@ -46,7 +55,7 @@ def assemble_article_tool(
     
     # 自动发现逻辑：如果没有传入路径，尝试自动查找
     # 自动发现逻辑：强制从 drafts 目录发现并合并 section_*.md
-    drafts_dir = get_drafts_dir(article_id)
+    drafts_dir = get_drafts_dir(article_id, task_id)
     
     # 尝试合并所有 section_*.md
     import glob
@@ -82,9 +91,12 @@ def assemble_article_tool(
     # 1. Build Global Image Map from all manifests/elements
     image_map = {}
     try:
-        from ...config.config import get_settings
-        settings = get_settings()
-        corpus_dir = os.path.join(settings.artifacts_dir, f"article_{article_id}", "corpus")
+        from ..config import get_settings, get_article_dir
+        
+        # Use task_id for get_article_dir
+        article_dir = get_article_dir(article_id, task_id)
+        corpus_dir = os.path.join(article_dir, "corpus")
+        
         if os.path.exists(corpus_dir):
             for doc_name in os.listdir(corpus_dir):
                 doc_path = os.path.join(corpus_dir, doc_name)
@@ -138,7 +150,7 @@ def assemble_article_tool(
 
     
     # ========== 消费 citations_map.json ==========
-    citations_map = load_article_artifact(article_id, "citations_map.json")
+    citations_map = load_article_artifact(article_id, "citations_map.json", task_id)
     if citations_map and citations_map.get("anchors"):
         _LOGGER.info(f"Found {len(citations_map.get('anchors', []))} citations in citations_map")
         # 可以在这里添加脚注处理逻辑
@@ -160,7 +172,7 @@ def assemble_article_tool(
     
     # 落盘：保存最终文章
     # 修正逻辑：最终文章保存到 artifacts/article_{id}/article/article.md
-    article_dir = get_final_article_dir(article_id) # artifacts/article_{id}/article
+    article_dir = get_final_article_dir(article_id, task_id) # artifacts/article_{id}/article
     os.makedirs(article_dir, exist_ok=True)
     
     # 始终命名为 article.md 以便统一

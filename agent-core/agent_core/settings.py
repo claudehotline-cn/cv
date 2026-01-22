@@ -54,6 +54,62 @@ class Settings(BaseSettings):
         alias="TASK_RESULT_RETENTION_HOURS",
     )
 
+    # HTTP / Scraping Settings
+    http_user_agent: str = Field(
+        default="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        alias="HTTP_USER_AGENT",
+    )
+    http_max_attempts: int = Field(
+        default=3,
+        alias="HTTP_MAX_ATTEMPTS",
+    )
+    http_timeout_sec: float = Field(
+        default=30.0,
+        alias="HTTP_TIMEOUT_SEC",
+    )
+    http_retry_backoff_sec: float = Field(
+        default=1.0,
+        alias="HTTP_RETRY_BACKOFF_SEC",
+    )
+    enable_playwright_fetch: bool = Field(
+        default=False,
+        description="Enable Playwright for JS rendering",
+        alias="ENABLE_PLAYWRIGHT",
+    )
+    playwright_timeout_sec: int = Field(
+        default=30,
+        alias="PLAYWRIGHT_TIMEOUT_SEC",
+    )
+    use_trafilatura: bool = Field(
+        default=True,
+        description="Use trafilatura for content extraction",
+        alias="USE_TRAFILATURA",
+    )
+
+    # MinIO / S3 Settings
+    minio_endpoint: str = Field(
+        default="minio:9000",
+        description="MinIO Endpoint (host:port)",
+        alias="AWS_ENDPOINT_URL_S3",
+    )
+    minio_access_key: str = Field(
+        default="minioadmin",
+        alias="AWS_ACCESS_KEY_ID",
+    )
+    minio_secret_key: str = Field(
+        default="minioadmin123",
+        alias="AWS_SECRET_ACCESS_KEY",
+    )
+    minio_secure: bool = Field(
+        default=False,
+        description="Use HTTPS for MinIO",
+        alias="AWS_USE_HTTPS", # or inferred
+    )
+    minio_bucket: str = Field(
+        default="article", # Default bucket for articles
+        alias="ARTICLE_S3_BUCKET",
+    )
+
 
 
     # Database Settings (Common)

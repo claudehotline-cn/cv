@@ -5,7 +5,8 @@ import json
 
 from langchain_core.messages import HumanMessage
 
-from ...config.llm_runtime import build_chat_llm, extract_text_content
+from agent_core.runtime import build_chat_llm
+from ..utils.text_utils import extract_text_content
 
 _LOGGER = logging.getLogger(__name__)
 

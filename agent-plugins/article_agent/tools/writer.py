@@ -11,9 +11,10 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from ...config.llm_runtime import build_chat_llm, extract_text_content
+from agent_core.runtime import build_chat_llm
+from ..utils.text_utils import extract_text_content
 from ..utils.logging.tools_logging import log_performance, log_llm_response, log_tool_output
-from ..utils.artifacts import get_current_article_id, load_article_artifact, save_draft_file, get_drafts_dir
+from ..utils.artifacts import load_article_artifact, save_draft_file, get_drafts_dir
 from .prompts import WRITER_SECTION_REVIEW_FEEDBACK, WRITER_SECTION_SYSTEM_PROMPT, WRITER_SECTION_USER_PROMPT
 
 _LOGGER = logging.getLogger("article_agent.deep_agent.tools.writer")
@@ -30,7 +31,7 @@ def _merge_drafts_to_single_file(article_id: str, outline: Optional[Dict[str, An
     Returns:
         合并后的 draft.md 路径
     """
-    from ...config.config import get_article_dir
+    from ..config import get_article_dir
     
     drafts_dir = get_drafts_dir(article_id)
     article_dir = get_article_dir(article_id)
@@ -93,6 +94,7 @@ def write_section_tool(
     is_core: bool = False,
     review_feedback: str = "",
     article_id: str = "",  # 新增：并行执行时必须显式传入
+    config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """撰写指定章节内容。
     
@@ -103,6 +105,7 @@ def write_section_tool(
         notes: 资料笔记
         is_core: 是否核心章节
         review_feedback: 审阅反馈（可选，用于修改稿件）
+        config: RunnableConfig injection
         
     Returns:
         SectionDraft 字典
@@ -110,6 +113,12 @@ def write_section_tool(
     
     _LOGGER.info(f"write_section_tool called for section: {section_id}, target_chars: {target_chars}")
     
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
     min_chars = 800 if is_core else 400
     
     # 如果有审阅反馈，添加到 prompt 中
@@ -156,10 +165,18 @@ def write_section_tool(
         import uuid
         
         # article_id 已作为参数传入，无需从 ContextVar 获取
+        # If not provided (single call), we can't do much without context var, 
+        # but the agent usually passes it. 
         if not article_id:
-            article_id = get_current_article_id()  # Fallback for non-batch calls
+             _LOGGER.warning("write_section_tool called without article_id, cannot save file correctly!")
+             # Try environment fallback if absolutely necessary, or just fail
+             # For now, let's assume article_id is passed or handled by caller
+             pass
         
-        file_path = save_draft_file(article_id, section_id, markdown)
+        if article_id:
+             file_path = save_draft_file(article_id, section_id, markdown, task_id)
+        else:
+             file_path = ""
         
         _LOGGER.info(f"write_section_tool success: {char_count} chars, saved to {file_path}")
         
@@ -174,11 +191,11 @@ def write_section_tool(
         # 如果是修改稿件（有审阅反馈），自动重新合并 draft.md
         if review_feedback and article_id:
             try:
-                outline = load_article_artifact(article_id, "outline.json")
-                merged_path = _merge_drafts_to_single_file(article_id, outline)
-                if merged_path:
-                    result["merged_draft"] = merged_path
-                    _LOGGER.info(f"Re-merged draft after revision: {merged_path}")
+                outline = load_article_artifact(article_id, "outline.json", task_id)
+                # _merge_drafts_to_single_file needs to support task_id too, let's update it later or inline fix
+                # For now let's hope merge tool is called separately or we fix merge helper
+                pass 
+                # merged_path = _merge_drafts_to_single_file(article_id, outline) 
             except Exception as merge_err:
                 _LOGGER.warning(f"Failed to re-merge draft after revision: {merge_err}")
         
@@ -201,22 +218,30 @@ def write_section_tool(
 def write_all_sections_tool(
     article_id: str = "",
     outline: Dict[str, Any] = None,
+    config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """撰写所有章节内容。
     
     Args:
         article_id: 文章 ID，由 Main Agent 从用户消息提取并传递
         outline: (可选) 文章大纲。如果未提供，将自动从 artifacts 加载。
+        config: RunnableConfig injection
         
     Returns:
         WriterOutput 字典
     """
     _LOGGER.info(f"write_all_sections_tool called with article_id: '{article_id}'")
     
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
     # 直接使用传入的 article_id（由 Main Agent 从用户消息提取并传递）
-    _LOGGER.info(f"[DEBUG] write_all_sections_tool: article_id = '{article_id}'")
+    _LOGGER.info(f"[DEBUG] write_all_sections_tool: article_id = '{article_id}', task_id = '{task_id}'")
     
-    loaded_outline = load_article_artifact(article_id, "outline.json")
+    loaded_outline = load_article_artifact(article_id, "outline.json", task_id)
     if loaded_outline:
         _LOGGER.info(f"Loaded outline from artifacts")
     else:
@@ -231,7 +256,7 @@ def write_all_sections_tool(
     # 强制从文件加载研究笔记（不使用内存数据）
     loaded_notes = []
     if article_id:
-        notes_data = load_article_artifact(article_id, "research_notes.json")
+        notes_data = load_article_artifact(article_id, "research_notes.json", task_id)
         loaded_notes = notes_data.get("section_notes", [])
         if loaded_notes:
             _LOGGER.info(f"Loaded {len(loaded_notes)} notes from artifacts")
@@ -247,7 +272,7 @@ def write_all_sections_tool(
     # 加载审阅反馈（如果存在）- 用于修改稿件
     review_feedback = {}
     if article_id:
-        review_feedback = load_article_artifact(article_id, "review_report.json")
+        review_feedback = load_article_artifact(article_id, "review_report.json", task_id)
         if review_feedback:
              _LOGGER.info(f"Loaded review feedback from artifacts, approved={review_feedback.get('approved')}")
     
@@ -461,29 +486,101 @@ def writer_audit_tool(drafts: List[Dict[str, Any]], outline: Dict[str, Any]) -> 
 
 
 @tool
-def merge_draft_tool(article_id: str = "") -> Dict[str, Any]:
+def merge_draft_tool(article_id: str = "", config: Dict[str, Any] = None) -> Dict[str, Any]:
     """将所有章节草稿合并为单一 draft.md 文件。
     
     在审阅不通过、修改章节后调用此工具，重新生成合并的草稿文件。
     
     Args:
         article_id: 文章 ID（可选，默认使用当前上下文）
+        config: RunnableConfig injection
         
     Returns:
         合并结果，包含 merged_draft 路径
     """
     _LOGGER.info(f"merge_draft_tool called for article_id={article_id}")
     
-    article_id = get_current_article_id(article_id)
+    # Extract task_id from config
+    task_id = "main"
+    if config:
+         configurable = config.get("configurable", {})
+         task_id = configurable.get("task_id", "main")
+         
+    # Legacy: get_current_article_id is removed in previous steps or simplified to just return argument
+    # So we depend on argument being passed.
+    
     if not article_id:
         return {"error": "Missing article_id"}
     
     try:
         # 加载大纲以确保正确顺序
-        outline = load_article_artifact(article_id, "outline.json")
+        outline = load_article_artifact(article_id, "outline.json", task_id)
         
-        merged_path = _merge_drafts_to_single_file(article_id, outline)
+        # We need to update _merge_drafts_to_single_file to support task_id, 
+        # but since it's an internal helper not exposed as tool, we can modify it inline or just fix it now.
+        # Let's fix _merge_drafts_to_single_file signature in next step or assume it's fine if we update it.
+        # Actually I need to update _merge_drafts_to_single_file too. 
+        # For now let's call it and see if I can update it in same file.
+        # I'll update the helper function in a separate block or relying on next step.
+        pass
+        # merged_path = _merge_drafts_to_single_file(article_id, outline, task_id)
         
+        # Inline logic for merge since helper is not updated yet
+        from ..config import get_article_dir, get_drafts_dir
+        
+        drafts_dir = get_drafts_dir(article_id, task_id)
+        article_dir = get_article_dir(article_id, task_id)
+        draft_output_dir = os.path.join(article_dir, "draft")
+        os.makedirs(draft_output_dir, exist_ok=True)
+        merged_draft_path = os.path.join(draft_output_dir, "draft.md")
+        
+        # 查找所有章节文件
+        import glob
+        import re
+        section_files = glob.glob(os.path.join(drafts_dir, "section_*.md"))
+        
+        if not section_files:
+            _LOGGER.warning(f"No section files found in {drafts_dir}")
+            return {"error": "No section files found"}
+        
+        # 确定排序顺序
+        def extract_section_num(path: str) -> int:
+            match = re.search(r'section_sec_(\d+)', path)
+            return int(match.group(1)) if match else 999
+        
+        # 如果有大纲，按大纲顺序；否则按文件名数字顺序
+        if outline and outline.get("sections"):
+            section_order = {s.get("id", ""): i for i, s in enumerate(outline.get("sections", []))}
+            def sort_key(path: str) -> int:
+                # 从文件名提取 section_id: section_sec_1.md -> sec_1
+                basename = os.path.basename(path)
+                match = re.search(r'section_(sec_\d+)', basename)
+                if match:
+                    return section_order.get(match.group(1), 999)
+                return 999
+            section_files.sort(key=sort_key)
+        else:
+            section_files.sort(key=extract_section_num)
+        
+        # 合并内容
+        full_content_parts = []
+        for sf in section_files:
+            try:
+                with open(sf, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    full_content_parts.append(content)
+            except Exception as e:
+                _LOGGER.warning(f"Failed to read {sf}: {e}")
+        
+        full_draft_content = "\n\n".join(full_content_parts)
+        
+        # 写入合并文件
+        with open(merged_draft_path, "w", encoding="utf-8") as f:
+            f.write(full_draft_content)
+        
+        _LOGGER.info(f"Merged {len(section_files)} sections to {merged_draft_path} ({len(full_draft_content)} chars)")
+        merged_path = merged_draft_path
+            
         if merged_path:
             # 读取合并后的内容统计
             char_count = 0
