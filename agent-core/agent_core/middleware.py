@@ -112,3 +112,119 @@ class SubAgentHITLMiddleware(AgentMiddleware):
                 return ToolMessage(content=content, tool_call_id=tool_call_id)
         
         return await handler(request)
+
+
+class FileAttachmentMiddleware(AgentMiddleware):
+    """
+    Generic middleware to extract file attachments from user messages and save to workspace.
+    
+    Supports: PDF, Excel (xlsx/xls), CSV, images (png/jpg/gif/webp), and other common file types.
+    
+    When users upload files via frontend, they come as ContentBlocks with:
+    - type: "file"
+    - mimeType: "application/pdf" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | ...
+    - data: base64-encoded content
+    - metadata.filename: original filename
+    """
+    
+    # Supported MIME types and their extensions
+    SUPPORTED_TYPES = {
+        # Documents
+        "application/pdf": ".pdf",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/vnd.ms-excel": ".xls",
+        "text/csv": ".csv",
+        # Images
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        # Text
+        "text/plain": ".txt",
+        "text/markdown": ".md",
+    }
+    
+    def __init__(self, upload_dir: str = "/data/workspace/uploads"):
+        super().__init__()
+        self.upload_dir = upload_dir
+    
+    def before_agent(self, state: Dict[str, Any], runtime: Runtime[Any]) -> Optional[Dict[str, Any]]:
+        """Process input messages to extract file attachments."""
+        import base64
+        
+        messages = state.get("messages", [])
+        if not messages:
+            return None
+        
+        # Find the last human message
+        last_human_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
+                last_human_idx = i
+                break
+        
+        if last_human_idx is None:
+            return None
+        
+        last_msg = messages[last_human_idx]
+        content = getattr(last_msg, 'content', None)
+        
+        # Check if content is a list (multimodal message)
+        if not isinstance(content, list):
+            return None
+        
+        file_paths = []
+        text_parts = []
+        
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            
+            block_type = block.get('type', '')
+            mime_type = block.get('mimeType', '')
+            
+            # Extract text parts
+            if block_type == 'text':
+                text_parts.append(block.get('text', ''))
+            
+            # Extract file attachments
+            elif block_type == 'file' and mime_type in self.SUPPORTED_TYPES:
+                file_data = block.get('data', '')
+                filename = block.get('metadata', {}).get('filename', f'uploaded{self.SUPPORTED_TYPES[mime_type]}')
+                
+                if file_data:
+                    try:
+                        # Decode and save file
+                        file_bytes = base64.b64decode(file_data)
+                        os.makedirs(self.upload_dir, exist_ok=True)
+                        
+                        # Sanitize filename
+                        safe_filename = re.sub(r'[^\w\-_\.]', '_', filename)
+                        file_path = os.path.join(self.upload_dir, f"{uuid.uuid4().hex[:8]}_{safe_filename}")
+                        
+                        with open(file_path, 'wb') as f:
+                            f.write(file_bytes)
+                        
+                        file_paths.append(file_path)
+                        _LOGGER.info(f"[FileAttachmentMiddleware] Saved file to {file_path}")
+                    except Exception as e:
+                        _LOGGER.error(f"[FileAttachmentMiddleware] Failed to save file: {e}")
+        
+        # If we found files, update the message
+        if file_paths:
+            original_text = '\n'.join(text_parts)
+            file_info = "\n\n[系统提示] 用户上传了以下文件，请使用相应工具处理：\n"
+            file_info += "\n".join([f"- {path}" for path in file_paths])
+            
+            new_text = original_text + file_info
+            new_msg = HumanMessage(content=new_text)
+            
+            new_messages = list(messages)
+            new_messages[last_human_idx] = new_msg
+            
+            _LOGGER.info(f"[FileAttachmentMiddleware] Processed {len(file_paths)} file attachments")
+            return {"messages": new_messages}
+        
+        return None
+
