@@ -29,6 +29,7 @@ export class AgentClient {
 
         this.parser = new StreamParser({
             onBlock: options.onBlock,
+            onUpdate: options.onUpdate,
             onDone: options.onDone,
             onInterrupt: options.onInterrupt,
             onError: options.onError,

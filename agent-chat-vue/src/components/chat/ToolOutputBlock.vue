@@ -14,20 +14,8 @@
       </button>
     </div>
     
-    <div v-if="isExpanded || hasPreview" class="output-body">
-      <!-- Chart Preview -->
-      <div v-if="hasChartPreview" class="chart-preview">
-        <div class="chart-bars">
-          <div class="bar" style="height: 40%"></div>
-          <div class="bar" style="height: 70%"></div>
-          <div class="bar highlight" style="height: 95%"></div>
-          <div class="bar" style="height: 60%"></div>
-          <div class="bar" style="height: 35%"></div>
-        </div>
-      </div>
-      
-      <!-- Text Output -->
-      <div v-else-if="isExpanded" class="text-output">
+    <div v-if="isExpanded" class="output-body">
+      <div class="text-output">
         <pre>{{ output }}</pre>
       </div>
     </div>
@@ -56,13 +44,6 @@ const title = computed(() => {
   if (text.includes('success') || text.includes('成功')) return 'Task Completed'
   return 'Execution Complete'
 })
-
-const hasChartPreview = computed(() => {
-  const text = props.output.toLowerCase()
-  return text.includes('chart') || text.includes('图表') || text.includes('visualization')
-})
-
-const hasPreview = computed(() => hasChartPreview.value)
 </script>
 
 <style scoped>
@@ -149,38 +130,6 @@ const hasPreview = computed(() => hasChartPreview.value)
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.chart-preview {
-  width: 100%;
-}
-
-.chart-bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  height: 96px;
-  padding: 0 16px;
-}
-
-.bar {
-  flex: 1;
-  background: rgb(199, 210, 254);
-  border-radius: 4px 4px 0 0;
-  transition: all 0.3s;
-}
-
-.dark .bar {
-  background: rgba(99, 102, 241, 0.4);
-}
-
-.bar.highlight {
-  background: rgb(99, 102, 241);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-}
-
-.dark .bar.highlight {
-  background: rgb(99, 102, 241);
 }
 
 .text-output {

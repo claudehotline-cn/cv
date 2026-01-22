@@ -3,6 +3,7 @@
     <button class="thinking-header" @click="toggle">
       <div class="header-left">
         <span class="thinking-icon">🧠</span>
+        <span v-if="subgraphName" class="subgraph-badge">{{ formatSubgraphName(subgraphName) }}</span>
         <span class="label">THINKING PROCESS</span>
         <span v-if="isStreaming" class="streaming-indicator"></span>
       </div>
@@ -22,16 +23,27 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   content: string
   isStreaming?: boolean
   subgraphName?: string
 }>()
 
-const isOpen = ref(true)
+const isOpen = ref(false)
 
 function toggle() {
   isOpen.value = !isOpen.value
+}
+
+function formatSubgraphName(name: string): string {
+  const readable: Record<string, string> = {
+    'sql_agent': 'SQL',
+    'python_agent': 'Python',
+    'visualizer_agent': 'Viz',
+    'report_agent': 'Report',
+    'reviewer_agent': 'Reviewer',
+  }
+  return readable[name] || name.replace(/_/g, ' ')
 }
 </script>
 
@@ -82,6 +94,18 @@ function toggle() {
 
 .dark .label {
   color: rgb(192, 132, 252);
+}
+
+.subgraph-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgb(147, 51, 234);
+  color: white;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .streaming-indicator {
