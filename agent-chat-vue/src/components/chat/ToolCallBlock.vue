@@ -1,186 +1,183 @@
 <template>
-  <div v-if="(toolCalls && toolCalls.length) || toolCall" class="tool-calls-container" :class="{ 'vertical-layout': !!toolCall, 'subgraph-tool': !!subgraphName }">
-    <!-- Single Tool Call Mode -->
-    <template v-if="toolCall">
-      <div class="tool-call-item single-mode">
-        <el-icon class="tool-icon"><Setting /></el-icon>
-        <span class="tool-name">
-            <span v-if="subgraphName" class="subgraph-badge">{{ formatSubgraphName(subgraphName) }}</span>
-            使用了 {{ toolCall.name }}
-        </span>
-        
-        <!-- Inline Details for Single Mode (Always visible or toggleable, here using popover for consistency but could be changed) -->
-        <el-popover placement="top" :width="500" trigger="hover" popper-class="tool-popover">
-          <template #reference>
-            <el-icon class="info-icon"><InfoFilled /></el-icon>
-          </template>
-          <div class="tool-details">
-            <div class="detail-section">
-              <h4>输入参数</h4>
-              <div class="code-block">{{ formatJson(toolCall.args) }}</div>
-            </div>
-          </div>
-        </el-popover>
+  <div class="tool-call-wrapper">
+    <div class="tool-header">
+      <div class="header-left">
+        <span class="terminal-icon">⌨️</span>
+        <span class="tool-label">Using Tool: <strong>{{ toolName }}</strong></span>
       </div>
-    </template>
-
-    <!-- Multiple Tool Calls Mode (Legacy) -->
-    <template v-else>
-      <div v-for="(tool, idx) in toolCalls" :key="tool.id || idx" class="tool-call-item">
-        <el-icon class="tool-icon"><Setting /></el-icon>
-        <span class="tool-name">使用了 {{ tool.name }}</span>
-        
-        <el-popover placement="top" :width="400" trigger="hover" popper-class="tool-popover">
-          <template #reference>
-            <el-icon class="info-icon"><InfoFilled /></el-icon>
-          </template>
-          <div class="tool-details">
-            <div class="detail-section">
-              <h4>输入参数</h4>
-              <div class="code-block">{{ formatJson(tool.args) }}</div>
-            </div>
-            
-            <div class="detail-section">
-              <h4>执行结果</h4>
-              <template v-if="tool.result">
-                 <div class="code-block result">{{ formatResult(tool.result) }}</div>
-              </template>
-              <template v-else>
-                 <span class="status-running">
-                   <el-icon class="is-loading"><Loading /></el-icon> 执行中...
-                 </span>
-              </template>
-            </div>
-          </div>
-        </el-popover>
-      </div>
-    </template>
+      <span class="lang-badge">JSON</span>
+    </div>
+    
+    <div class="tool-body">
+      <pre class="code-content"><code v-html="highlightedJson"></code></pre>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { Setting, InfoFilled, Loading } from '@element-plus/icons-vue'
+import { computed } from 'vue'
 import type { ToolCall } from '@/types'
 
-defineProps<{
+const props = defineProps<{
+  toolCall?: ToolCall
   toolCalls?: ToolCall[]
-  toolCall?: ToolCall  // Single tool call mode
   subgraphName?: string
 }>()
 
-function formatSubgraphName(name: string): string {
-    const readable: Record<string, string> = {
-        'sql_agent': 'SQL',
-        'python_agent': 'Python',
-        'visualizer_agent': 'Viz',
-    }
-    return readable[name] || name
-}
+const toolName = computed(() => {
+  if (props.toolCall) return props.toolCall.name
+  if (props.toolCalls?.length) return props.toolCalls[0].name
+  return 'unknown'
+})
 
-function formatJson(val: any) {
+const toolArgs = computed(() => {
+  if (props.toolCall) return props.toolCall.args
+  if (props.toolCalls?.length) return props.toolCalls[0].args
+  return {}
+})
+
+const highlightedJson = computed(() => {
   try {
-      if (typeof val === 'string') return val
-      return JSON.stringify(val, null, 2)
+    const json = typeof toolArgs.value === 'string' 
+      ? toolArgs.value 
+      : JSON.stringify(toolArgs.value, null, 2)
+    
+    // Syntax highlighting
+    return json
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      // Keys (quoted strings before colon)
+      .replace(/"([^"]+)"(?=\s*:)/g, '<span class="json-key">"$1"</span>')
+      // String values
+      .replace(/:\s*"([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+      // Numbers
+      .replace(/:\s*(\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
+      // Booleans
+      .replace(/:\s*(true|false)/g, ': <span class="json-boolean">$1</span>')
+      // Null
+      .replace(/:\s*(null)/g, ': <span class="json-null">$1</span>')
   } catch {
-      return String(val)
+    return String(toolArgs.value)
   }
-}
-
-function formatResult(val: any) {
-    let str = String(val)
-    if (str.length > 800) {
-        return str.slice(0, 800) + '... (truncated)'
-    }
-    return str
-}
+})
 </script>
 
 <style scoped>
-.tool-calls-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 8px 0;
-}
-
-.tool-call-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--bg-tertiary, #f3f4f6);
-  border: 1px solid var(--border-color, #e5e7eb);
+.tool-call-wrapper {
+  margin: 16px 0;
   border-radius: 8px;
-  font-size: 13px;
-  color: var(--text-secondary, #6b7280);
-  transition: all 0.2s;
-  user-select: none;
+  overflow: hidden;
+  border: 1px solid rgb(226, 232, 240);
+  background: rgb(248, 250, 252);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
 }
 
-.dark .tool-call-item {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
+.dark .tool-call-wrapper {
+  border-color: rgb(51, 65, 85);
+  background: rgb(15, 23, 42);
 }
 
-.tool-call-item:hover {
-    background: var(--bg-secondary);
-    border-color: var(--accent-primary, #6366f1);
-    color: var(--text-primary);
+.tool-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgb(241, 245, 249);
+  border-bottom: 1px solid rgb(226, 232, 240);
 }
 
-.tool-name {
-  font-family: var(--font-mono, monospace);
-  font-weight: 500;
+.dark .tool-header {
+  background: rgb(30, 41, 59);
+  border-bottom-color: rgb(51, 65, 85);
 }
 
-.info-icon {
-  margin-left: 4px;
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgb(71, 85, 105);
+}
+
+.dark .header-left {
+  color: rgb(148, 163, 184);
+}
+
+.terminal-icon {
+  font-size: 14px;
+}
+
+.tool-label {
+  font-size: 12px;
+}
+
+.tool-label strong {
+  color: rgb(15, 23, 42);
+  font-weight: 600;
+}
+
+.dark .tool-label strong {
+  color: rgb(226, 232, 240);
+}
+
+.lang-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgb(148, 163, 184);
   opacity: 0.6;
-  cursor: help;
 }
 
-.info-icon:hover {
-    opacity: 1;
-    color: var(--accent-primary);
+.tool-body {
+  padding: 12px;
+  overflow-x: auto;
 }
 
-.tool-details {
-    max-height: 400px;
-    overflow-y: auto;
+.code-content {
+  margin: 0;
+  line-height: 1.6;
+  color: rgb(71, 85, 105);
 }
 
-.detail-section {
-    margin-bottom: 12px;
+.dark .code-content {
+  color: rgb(203, 213, 225);
 }
 
-.detail-section h4 {
-    margin: 0 0 6px 0;
-    font-size: 12px;
-    color: var(--text-secondary);
-    font-weight: 600;
+/* JSON Syntax Highlighting */
+:deep(.json-key) {
+  color: rgb(147, 51, 234);
 }
 
-.code-block {
-    background: var(--bg-primary, #ffffff);
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-all;
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
+.dark :deep(.json-key) {
+  color: rgb(192, 132, 252);
 }
 
-.dark .code-block {
-    background: #1e1e2e;
+:deep(.json-string) {
+  color: rgb(217, 119, 6);
 }
 
-.status-running {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--accent-primary);
-    font-size: 12px;
+.dark :deep(.json-string) {
+  color: rgb(251, 191, 36);
+}
+
+:deep(.json-number) {
+  color: rgb(5, 150, 105);
+}
+
+.dark :deep(.json-number) {
+  color: rgb(52, 211, 153);
+}
+
+:deep(.json-boolean) {
+  color: rgb(59, 130, 246);
+}
+
+.dark :deep(.json-boolean) {
+  color: rgb(96, 165, 250);
+}
+
+:deep(.json-null) {
+  color: rgb(156, 163, 175);
 }
 </style>

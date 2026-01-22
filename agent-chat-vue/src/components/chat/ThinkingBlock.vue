@@ -1,62 +1,46 @@
 <template>
-  <div class="thinking-wrapper" :class="{ 'subgraph-thinking': subgraphName }">
-    <div class="thinking-header" @click="toggle">
+  <div class="thinking-wrapper">
+    <button class="thinking-header" @click="toggle">
       <div class="header-left">
-        <el-icon class="status-icon" :class="{ rotating: isStreaming }">
-          <Loading v-if="isStreaming" />
-          <Cpu v-else />
-        </el-icon>
-        <span class="label">
-          <span v-if="subgraphName" class="subgraph-badge">{{ formatSubgraphName(subgraphName) }}</span>
-          {{ subgraphName ? '思考过程' : '思考过程' }}
-        </span>
+        <span class="thinking-icon">🧠</span>
+        <span class="label">THINKING PROCESS</span>
+        <span v-if="isStreaming" class="streaming-indicator"></span>
       </div>
-      <el-icon class="arrow" :class="{ expanded: isOpen }"><ArrowRight /></el-icon>
-    </div>
+      <span class="arrow" :class="{ expanded: isOpen }">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </span>
+    </button>
     
     <div v-show="isOpen" class="thinking-body">
-      <div class="thinking-content">
-        {{ content }}
-      </div>
+      <div class="thinking-content">{{ content }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Loading, Cpu, ArrowRight } from '@element-plus/icons-vue'
 
-const props = defineProps<{
+defineProps<{
   content: string
   isStreaming?: boolean
-  subgraphName?: string  // Optional subgraph identifier
+  subgraphName?: string
 }>()
 
-const isOpen = ref(false)
+const isOpen = ref(true)
 
 function toggle() {
   isOpen.value = !isOpen.value
-}
-
-function formatSubgraphName(name: string): string {
-  // Convert snake_case to readable format
-  const readable: Record<string, string> = {
-    'sql_agent': 'SQL Agent',
-    'python_agent': 'Python Agent',
-    'visualizer_agent': 'Visualizer',
-    'report_agent': 'Report Agent',
-    'reviewer_agent': 'Reviewer',
-  }
-  return readable[name] || name.replace(/_/g, ' ')
 }
 </script>
 
 <style scoped>
 .thinking-wrapper {
   margin-bottom: 16px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.05) 0%, rgba(168, 85, 247, 0.08) 100%);
+  border: 1px solid rgba(147, 51, 234, 0.15);
   overflow: hidden;
 }
 
@@ -64,79 +48,82 @@ function formatSubgraphName(name: string): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
+  width: 100%;
+  padding: 12px 16px;
   cursor: pointer;
   transition: background 0.2s;
   user-select: none;
+  background: transparent;
+  border: none;
+  text-align: left;
 }
 
 .thinking-header:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(147, 51, 234, 0.08);
 }
 
 .header-left {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
 }
 
-.status-icon {
-  font-size: 14px;
+.thinking-icon {
+  font-size: 18px;
 }
 
-.status-icon.rotating {
-  animation: spin 1s linear infinite;
-  color: var(--accent-primary);
+.label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgb(107, 33, 168);
+}
+
+.dark .label {
+  color: rgb(192, 132, 252);
+}
+
+.streaming-indicator {
+  width: 8px;
+  height: 8px;
+  background: rgb(147, 51, 234);
+  border-radius: 50%;
+  animation: pulse 1.2s ease-in-out infinite;
+  margin-left: 4px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 .arrow {
-  font-size: 12px;
-  color: var(--text-tertiary);
+  color: rgba(147, 51, 234, 0.6);
   transition: transform 0.2s;
+  display: flex;
+  align-items: center;
 }
 
 .arrow.expanded {
-  transform: rotate(90deg);
+  transform: rotate(180deg);
 }
 
 .thinking-body {
-  border-top: 1px solid var(--border-color);
-  background: rgba(0, 0, 0, 0.1);
+  border-top: 1px solid rgba(147, 51, 234, 0.1);
+  background: rgba(147, 51, 234, 0.03);
 }
 
 .thinking-content {
   padding: 12px 16px;
-  font-family: var(--font-mono);
   font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
+  line-height: 1.7;
+  color: rgb(83, 136, 147);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-/* Subgraph-specific styling */
-.subgraph-thinking {
-  border-left: 3px solid var(--accent-primary, #6366f1);
-  margin-left: 8px;
-}
-
-.subgraph-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  margin-right: 6px;
-  background: var(--accent-primary, #6366f1);
-  color: white;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.dark .thinking-content {
+  color: rgba(192, 132, 252, 0.85);
 }
 </style>

@@ -52,6 +52,8 @@ export interface ClientConfig {
 export interface StreamCallbacks {
     /** 每个 block 解析完成时回调 */
     onBlock?: (block: MessageBlock) => void
+    /** block 内容更新时回调 (用于 Vue 等框架检测变化) */
+    onUpdate?: (block: MessageBlock, index: number) => void
     /** 流结束时回调 */
     onDone?: (blocks: MessageBlock[]) => void
     /** 发生中断时回调 */

@@ -27,6 +27,7 @@ export class StreamParser {
     constructor(options: StreamParserOptions = {}) {
         this.callbacks = {
             onBlock: options.onBlock,
+            onUpdate: options.onUpdate,
             onDone: options.onDone,
             onInterrupt: options.onInterrupt,
             onError: options.onError
@@ -141,6 +142,8 @@ export class StreamParser {
             const lastBlock = this.blocks[this.blocks.length - 1]
             if (lastBlock && lastBlock.type === 'thinking' && lastBlock.subgraph === subgraphName) {
                 lastBlock.content = (lastBlock.content || '') + reasoningDelta
+                // 通知 Vue 等框架该 block 已更新
+                this.callbacks.onUpdate?.(lastBlock, this.blocks.length - 1)
             } else {
                 this.addBlock({
                     type: 'thinking',
@@ -180,6 +183,8 @@ export class StreamParser {
             const lastBlock = this.blocks[this.blocks.length - 1]
             if (lastBlock && lastBlock.type === 'content') {
                 lastBlock.content = (lastBlock.content || '') + rawText
+                // 通知 Vue 等框架该 block 已更新
+                this.callbacks.onUpdate?.(lastBlock, this.blocks.length - 1)
             } else {
                 this.addBlock({
                     type: 'content',

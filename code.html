@@ -27,6 +27,12 @@
                         'soft': '0 10px 40px -10px rgba(0,0,0,0.05)',
                         'float': '0 20px 40px -10px rgba(31, 150, 173, 0.1)',
                         'card': '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)',
+                    },
+                    keyframes: {
+                        shimmer: {
+                            '0%': { transform: 'translateX(-100%)' },
+                            '100%': { transform: 'translateX(100%)' }
+                        }
                     }
                 },
             },
@@ -154,9 +160,6 @@
 <button class="flex h-8 w-8 items-center justify-center rounded-lg text-[#538893] hover:bg-[#f0f9fa] hover:text-primary transition-colors">
 <span class="material-symbols-outlined text-[20px]">search</span>
 </button>
-<button class="lg:hidden flex h-8 w-8 items-center justify-center rounded-lg text-[#538893] hover:bg-[#f0f9fa] hover:text-primary transition-colors">
-<span class="material-symbols-outlined text-[20px]">dock_to_left</span>
-</button>
 </div>
 </header>
 <div class="flex flex-1 flex-col overflow-y-auto px-4 pb-4 pt-6 scroll-smooth">
@@ -173,70 +176,103 @@
 </div>
 </div>
 <div class="flex w-full justify-start">
-<div class="flex max-w-[85%] items-start gap-3">
+<div class="flex max-w-[90%] items-start gap-3">
 <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm text-white mt-1">
 <span class="material-symbols-outlined text-[16px]">analytics</span>
 </div>
-<div class="flex flex-col gap-1">
-<div class="rounded-2xl rounded-tl-sm border border-[#eff4f5] dark:border-[#2f343a] bg-white dark:bg-[#1e2226] px-5 py-4 shadow-sm text-[#0f181a] dark:text-[#e0e0e0]">
-<p class="text-sm leading-relaxed mb-3">Certainly. I'll start by processing the Q3 dataset. I will filter for regional performance metrics and then compile the summary report for you.</p>
-<p class="text-sm leading-relaxed">I've initiated the background task to handle the large dataset processing.</p>
+<div class="flex flex-col gap-1 w-full">
+<div class="rounded-2xl rounded-tl-sm border border-[#eff4f5] dark:border-[#2f343a] bg-white dark:bg-[#1e2226] px-5 py-4 shadow-sm text-[#0f181a] dark:text-[#e0e0e0] w-full">
+<p class="text-sm leading-relaxed mb-4">I'm processing the Q3 dataset now. I will analyze regional performance and create the visualizations you requested.</p>
+<div class="mb-4 overflow-hidden rounded-xl border border-purple-100 bg-[#fbfaff] dark:bg-purple-900/10 dark:border-purple-900/30">
+<button class="flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors hover:bg-purple-50/50 dark:hover:bg-purple-900/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-purple-500">psychology</span>
+<span class="text-xs font-bold uppercase tracking-wider text-purple-800 dark:text-purple-200">Thinking Process</span>
 </div>
-<span class="text-[10px] text-[#9aaeb3] pl-1">Data Analyst • 2:31 PM</span>
-</div>
-</div>
-</div>
-<div class="flex w-full justify-start pl-11">
-<div class="w-full max-w-md overflow-hidden rounded-xl border border-indigo-100 dark:border-indigo-900/30 bg-white dark:bg-[#1e2226] shadow-md shadow-indigo-500/5">
-<div class="flex items-center justify-between border-b border-[#f0f4f6] dark:border-[#2f343a] bg-[#fcfdfe] dark:bg-[#252a30] px-4 py-3">
-<div class="flex items-center gap-2.5">
-<div class="flex h-6 w-6 items-center justify-center rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400">
-<span class="material-symbols-outlined text-[16px] animate-spin">sync</span>
-</div>
-<span class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Processing Task</span>
-</div>
-<span class="text-xs font-mono text-[#538893]">ID: #T-8842</span>
-</div>
-<div class="p-4">
-<h4 class="mb-1 text-sm font-bold text-[#0f181a] dark:text-white">Generating Regional Performance Report</h4>
-<p class="mb-4 text-xs text-[#538893] dark:text-[#8baab1]">Analyzing 45,200 records from sales_q3_2023.csv...</p>
-<div class="relative h-2 w-full overflow-hidden rounded-full bg-[#f0f4f6] dark:bg-[#2f343a]">
-<div class="absolute left-0 top-0 h-full w-[65%] rounded-full bg-indigo-500 transition-all duration-500 ease-out"></div>
-<div class="absolute left-0 top-0 h-full w-full bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent)] animate-[shimmer_1.5s_infinite]"></div>
-</div>
-<div class="mt-2 flex justify-between text-[10px] font-medium text-[#538893]">
-<span>Step 3 of 5: Aggregating Region Data</span>
-<span>65%</span>
+<span class="material-symbols-outlined text-[18px] text-purple-400">expand_less</span>
+</button>
+<div class="border-t border-purple-100 dark:border-purple-900/30 px-4 py-3 bg-purple-50/30 dark:bg-transparent">
+<ul class="space-y-2.5">
+<li class="flex items-center gap-2.5 text-xs text-[#538893] dark:text-purple-200/70">
+<span class="material-symbols-outlined text-[16px] text-green-500">check_circle</span>
+<span>Analyzing dataset schema for 'sales_q3_2023.csv'</span>
+</li>
+<li class="flex items-center gap-2.5 text-xs text-[#538893] dark:text-purple-200/70">
+<span class="material-symbols-outlined text-[16px] text-green-500">check_circle</span>
+<span>Identifying key metrics: Region, Revenue, Units Sold</span>
+</li>
+<li class="flex items-center gap-2.5 text-xs text-[#538893] dark:text-purple-200/70">
+<span class="material-symbols-outlined text-[16px] text-green-500">check_circle</span>
+<span>Selecting visualization type: Bar Chart</span>
+</li>
+</ul>
 </div>
 </div>
-<div class="flex justify-end border-t border-[#f0f4f6] dark:border-[#2f343a] p-2 bg-[#fcfdfe] dark:bg-[#252a30]">
-<button class="rounded px-3 py-1.5 text-xs font-semibold text-[#538893] hover:bg-[#e8f0f2] hover:text-[#0f181a] dark:hover:bg-[#2f343a] transition-colors">
-                                    View Details
-                                </button>
+<div class="mb-4 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#15171a] font-mono text-xs">
+<div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-[#1a1d21] px-3 py-1.5 text-slate-600 dark:text-slate-400">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">terminal</span>
+<span class="font-bold text-[#0f181a] dark:text-slate-200">Using Tool: chart_generator</span>
+</div>
+<span class="text-[10px] uppercase tracking-wider opacity-60">JSON</span>
+</div>
+<div class="p-3 text-slate-700 dark:text-slate-300 overflow-x-auto">
+<pre><code>{
+  <span class="text-purple-600 dark:text-purple-400">"type"</span>: <span class="text-amber-600 dark:text-amber-400">"bar_chart"</span>,
+  <span class="text-purple-600 dark:text-purple-400">"data_source"</span>: <span class="text-amber-600 dark:text-amber-400">"sales_q3_filtered"</span>,
+  <span class="text-purple-600 dark:text-purple-400">"x_axis"</span>: <span class="text-amber-600 dark:text-amber-400">"region"</span>,
+  <span class="text-purple-600 dark:text-purple-400">"y_axis"</span>: <span class="text-amber-600 dark:text-amber-400">"revenue"</span>,
+  <span class="text-purple-600 dark:text-purple-400">"title"</span>: <span class="text-amber-600 dark:text-amber-400">"Revenue by Region"</span>
+}</code></pre>
+</div>
+</div>
+<div class="mb-5 flex w-full max-w-sm flex-col gap-0 rounded-xl border border-[#eff4f5] dark:border-[#2f343a] bg-white dark:bg-[#1e2226] shadow-card overflow-hidden">
+<div class="flex items-center justify-between px-3 py-2 bg-[#fcfdfe] dark:bg-[#252a30] border-b border-[#f0f4f6] dark:border-[#2f343a]">
+<div class="flex items-center gap-2">
+<span class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
+<span class="material-symbols-outlined text-[14px]">check</span>
+</span>
+<span class="text-xs font-bold text-[#0f181a] dark:text-white">Success: Chart Generated</span>
+</div>
+<button class="text-xs font-medium text-[#538893] hover:text-primary">Expand</button>
+</div>
+<div class="p-4 flex items-center justify-center bg-white dark:bg-[#1e2226]">
+<div class="flex h-24 items-end gap-2 w-full px-4">
+<div class="w-full rounded-t bg-indigo-200 dark:bg-indigo-900/40" style="height: 40%"></div>
+<div class="w-full rounded-t bg-indigo-300 dark:bg-indigo-800/60" style="height: 70%"></div>
+<div class="w-full rounded-t bg-indigo-500 dark:bg-indigo-500 shadow-lg shadow-indigo-500/20" style="height: 95%"></div>
+<div class="w-full rounded-t bg-indigo-300 dark:bg-indigo-800/60" style="height: 60%"></div>
+<div class="w-full rounded-t bg-indigo-200 dark:bg-indigo-900/40" style="height: 35%"></div>
 </div>
 </div>
 </div>
-<div class="flex w-full justify-end">
-<div class="flex max-w-[80%] flex-col items-end gap-1">
-<div class="rounded-2xl rounded-tr-sm bg-primary px-5 py-3 text-white shadow-sm shadow-primary/20">
-<p class="text-sm leading-relaxed">Great, also create a chart for the top 5 products.</p>
+<div class="w-full max-w-lg rounded-xl border-l-4 border-l-amber-500 border-y border-r border-r-[#eff4f5] dark:border-r-[#2f343a] dark:border-y-[#2f343a] bg-white dark:bg-[#1e2226] shadow-lg shadow-amber-500/5">
+<div class="p-5">
+<div class="flex items-start gap-4 mb-4">
+<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-500">
+<span class="material-symbols-outlined text-[20px]">verified_user</span>
 </div>
-<span class="text-[10px] text-[#9aaeb3] pr-1">Alex • 2:32 PM</span>
-</div>
-</div>
-<div class="flex w-full justify-start">
-<div class="flex max-w-[85%] items-start gap-3">
-<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm text-white mt-1">
-<span class="material-symbols-outlined text-[16px]">analytics</span>
-</div>
-<div class="flex flex-col gap-1">
-<div class="rounded-2xl rounded-tl-sm border border-[#eff4f5] dark:border-[#2f343a] bg-white dark:bg-[#1e2226] px-4 py-3 shadow-sm">
-<div class="flex gap-1">
-<span class="h-2 w-2 rounded-full bg-[#9aaeb3] animate-bounce"></span>
-<span class="h-2 w-2 rounded-full bg-[#9aaeb3] animate-bounce [animation-delay:0.2s]"></span>
-<span class="h-2 w-2 rounded-full bg-[#9aaeb3] animate-bounce [animation-delay:0.4s]"></span>
+<div>
+<h4 class="text-base font-bold text-[#0f181a] dark:text-white">Confirm Data Export?</h4>
+<p class="mt-1 text-sm text-[#538893]">The summary report contains sensitive revenue data. Please confirm you want to proceed with the PDF export.</p>
 </div>
 </div>
+<div class="mb-4">
+<label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-[#9aaeb3]">Feedback / Reason for rejection</label>
+<input class="w-full rounded-lg border border-[#eff4f5] dark:border-[#2f343a] bg-[#f8fbfb] dark:bg-[#252a30] px-3.5 py-2.5 text-sm text-[#0f181a] dark:text-white placeholder:text-[#9aaeb3] focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all" placeholder="e.g., 'Filter out the East region first' (Optional)" type="text"/>
+</div>
+<div class="flex gap-3 pt-1">
+<button class="flex-1 rounded-lg bg-[#0f181a] dark:bg-white py-2.5 text-xs font-bold text-white dark:text-[#0f181a] hover:bg-black hover:shadow-lg transition-all active:scale-[0.98]">
+                Approve Export
+            </button>
+<button class="flex-1 rounded-lg border border-[#eff4f5] dark:border-[#2f343a] bg-white dark:bg-[#1e2226] py-2.5 text-xs font-bold text-[#538893] hover:text-red-600 hover:bg-red-50 hover:border-red-100 dark:hover:bg-red-900/10 dark:hover:text-red-400 dark:hover:border-red-900/30 transition-all">
+                Reject
+            </button>
+</div>
+</div>
+</div>
+</div>
+<span class="text-[10px] text-[#9aaeb3] pl-1">Data Analyst • 2:32 PM</span>
 </div>
 </div>
 </div>

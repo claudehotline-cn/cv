@@ -4,13 +4,15 @@
  * Vue 3 Composition API 封装
  */
 
-import { ref, type Ref, readonly } from 'vue'
+import { ref, type Ref } from 'vue'
 import { AgentClient, type AgentClientOptions } from '../core/client'
 import type { MessageBlock, ChatState, ResumeOptions } from '../core/types'
 
-export interface UseStreamOptions extends Omit<AgentClientOptions, 'onBlock' | 'onDone' | 'onInterrupt' | 'onError'> {
+export interface UseStreamOptions extends Omit<AgentClientOptions, 'onBlock' | 'onUpdate' | 'onDone' | 'onInterrupt' | 'onError'> {
     /** 每个 block 解析完成时回调 */
     onBlock?: (block: MessageBlock) => void
+    /** block 内容更新时回调 */
+    onUpdate?: (block: MessageBlock, index: number) => void
     /** 流结束时回调 */
     onDone?: (blocks: MessageBlock[]) => void
     /** 发生中断时回调 */
@@ -50,7 +52,7 @@ export interface UseStreamResult {
  * @example
  * ```vue
  * <script setup>
- * import { useStream } from '@/agent-sdk/vue'
+ * import { useStream } from '@agent-sdk/vue'
  * 
  * const { blocks, isStreaming, submit, resume } = useStream({
  *   baseUrl: '/api'
@@ -75,6 +77,12 @@ export function useStream(options: UseStreamOptions): UseStreamResult {
         onBlock: (block) => {
             blocks.value.push(block)
             options.onBlock?.(block)
+        },
+        onUpdate: (_block, _index) => {
+            // 触发 Vue 响应式更新：重新赋值数组引用
+            // 不能用 splice+spread 因为 StreamParser 持有原对象引用
+            blocks.value = [...blocks.value]
+            options.onUpdate?.(_block, _index)
         },
         onDone: (allBlocks) => {
             isStreaming.value = false
