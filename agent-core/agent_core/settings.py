@@ -1,12 +1,18 @@
 from functools import lru_cache
 from typing import Dict, Optional
 
-from pydantic import Field
+from pydantic import Field, ConfigDict
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     """Runtime configuration for Agent Core."""
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False
+    )
 
     # LLM / provider settings
     llm_provider: str = Field(
@@ -187,11 +193,6 @@ class Settings(BaseSettings):
     def postgres_uri(self) -> str:
         """PostgreSQL Connection URI"""
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
 
 
 @lru_cache(maxsize=1)
