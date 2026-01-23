@@ -83,3 +83,58 @@ def test_python_execute_tool():
     assert output["success"] is True
     assert output["result_type"] == "int"
     assert output["result"] == "2"
+
+def test_trajectory_evaluator_functional():
+    """Test functionality of Trajectory Match Evaluator."""
+    from agent_test.evaluators import get_trajectory_match_evaluator
+    from langchain_core.messages import AIMessage, HumanMessage
+    
+    # 1. Initialize Evaluator (strict mode)
+    evaluator = get_trajectory_match_evaluator(mode="strict")
+    
+    # 2. Define Trajectories
+    # Scenario: Agent calls python_agent to calculate 1+1
+    input_query = "Calculate 1+1"
+    
+    # The 'actual' run trajectory (simulated)
+    # Simple list of dicts
+    trajectory_list = [
+        {"role": "user", "content": input_query}
+    ]
+    
+    reference_trajectory_list = [
+        {"role": "user", "content": input_query}
+    ]
+
+    print(f"Evaluator type: {type(evaluator)}")
+    import inspect
+    print(f"Evaluator signature: {inspect.signature(evaluator) if callable(evaluator) else 'Not callable'}")
+
+    # 3. Evaluate
+    # Try calling with minimal arguments first
+    try:
+        # Try passing as single dict if it's a Runnable-like function wrapper
+        result = evaluator({
+            "trajectory": trajectory_list, 
+            "reference_trajectory": reference_trajectory_list,
+            "outputs": {"result": "100"},
+            "reference_outputs": {"result": "100"}
+        })
+    except Exception as e:
+        print(f"Call with single dict failed: {e}")
+        # Try kwargs again with list of messages for all arguments
+        result = evaluator(
+            trajectory=trajectory_list, 
+            reference_trajectory=reference_trajectory_list,
+            outputs=[{"role": "assistant", "content": "100", "type": "ai"}],
+            reference_outputs=[{"role": "assistant", "content": "100", "type": "ai"}]
+        )
+            
+    print(f"Evaluator Result: {result}")
+    
+    print(f"Evaluator Result: {result}")
+    
+    # 4. Assert
+    # Expecting a perfect match score (1.0) or boolean True
+    # Adjust assertion based on actual return type (usually dict with 'score')
+    assert result.get("score") == 1.0 or result.get("score") is True
