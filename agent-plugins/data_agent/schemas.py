@@ -28,6 +28,7 @@ class PythonResultSchema(BaseModel):
     stdout: str = Field(default="", description="Standard output from execution")
     stderr: str = Field(default="", description="Standard error from execution")
     result_type: Optional[str] = Field(default=None, description="Type of result variable (e.g., DataFrame)")
+    result: Optional[str] = Field(default=None, description="String representation of result")
     result_shape: Optional[str] = Field(default=None, description="Shape of result if DataFrame")
     result_columns: Optional[List[str]] = Field(default=None, description="Columns of result if DataFrame")
     result_preview: Optional[List[Dict[str, Any]]] = Field(default=None, description="Preview of result data (first rows)")

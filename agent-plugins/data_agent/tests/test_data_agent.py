@@ -62,3 +62,24 @@ async def test_data_agent_invocation_mock():
     # For this smoke test, we'll try to just compile and maybe check initial state.
     
     assert graph is not None
+
+def test_python_execute_tool():
+    """Test functionality of Python execution tool."""
+    from data_agent.tools.python import python_execute_tool
+    
+    code = "1 + 1"
+    analysis_id = "test-analysis-func"
+    config = {"configurable": {"user_id": "test-user", "analysis_id": analysis_id}}
+    
+    # Run the tool
+    # Tool output is a JSON string
+    import json
+    output_str = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=config)
+    
+    # Parse output
+    output = json.loads(output_str)
+    print(f"Tool Output: {json.dumps(output, indent=2)}")
+    
+    assert output["success"] is True
+    assert output["result_type"] == "int"
+    assert output["result"] == "2"
