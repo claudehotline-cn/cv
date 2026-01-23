@@ -76,7 +76,8 @@ async def create_execute_task(
         str(session_id),
         agent_key,
         request.message,
-        request.config
+        request.config,
+        "default" # user_id TODO: Extract from session or request
     )
     await redis_pool.close()
     
@@ -133,37 +134,25 @@ async def stream_task_progress(task_id: UUID):
     """SSE 流式获取任务进度"""
     
     async def event_generator():
-        redis = aioredis.from_url(settings.redis_url)
+
+        from agent_core.events import RedisEventBus
+        event_bus = RedisEventBus(settings.redis_url)
         stream_key = f"task:{task_id}:stream"
-        last_id = "0"
         
         try:
-            while True:
-                # 读取 Redis Stream
-                messages = await redis.xread(
-                    {stream_key: last_id},
-                    count=10,
-                    block=1000  # 阻塞 1 秒
-                )
+            async for event in event_bus.subscribe(stream_key):
+                # RedisEventBus yields dicts directly
+                # Ensure type and data structure matches frontend expectation
+                # Existing frontend expects: {"type": ..., "data": ...}
+                yield f"data: {json.dumps(event)}\n\n"
                 
-                if messages:
-                    for stream_name, entries in messages:
-                        for entry_id, data in entries:
-                            last_id = entry_id
-                            event_data = {
-                                "type": data.get(b"type", b"").decode(),
-                                "data": data.get(b"data", b"").decode()
-                            }
-                            yield f"data: {json.dumps(event_data)}\n\n"
-                
-                # 检查任务是否完成
-                # 简化处理：前端通过 status 端点主动查询最终状态
-                await asyncio.sleep(0.1)
+                # Check for completion via DB or event type?
+                # For now infinite stream or until client disconnect
                 
         except asyncio.CancelledError:
             pass
         finally:
-            await redis.close()
+            await event_bus.close()
     
     return StreamingResponse(
         event_generator(),

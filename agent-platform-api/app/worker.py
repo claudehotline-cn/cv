@@ -20,8 +20,10 @@ async def agent_execute_task(
     task_id: str,
     session_id: str,
     agent_key: str,
+
     input_message: str,
-    config: Dict[str, Any] = None
+    config: Dict[str, Any] = None,
+    user_id: str = "default"
 ) -> Dict[str, Any]:
     """执行 Agent 任务
     
@@ -38,7 +40,10 @@ async def agent_execute_task(
     from app.core.plugin_loader import get_agent_class
     
     _LOGGER.info(f"[Worker] Starting task {task_id} for agent {agent_key}")
-    redis: ArqRedis = ctx.get("redis")
+    
+    # Init EventBus
+    from agent_core.events import RedisEventBus
+    event_bus = RedisEventBus(settings.redis_url)
     
     async with async_session_maker() as db:
         task_service = TaskService(db)
@@ -75,9 +80,15 @@ async def agent_execute_task(
             result_chunks = []
             progress = 20
             
+            # Inject task_id and user_id into config
+            config = config or {}
+            config.setdefault("configurable", {})
+            config["configurable"]["task_id"] = task_id
+            config["configurable"]["user_id"] = user_id
+
             async for chunk in graph.astream(
                 {"messages": [{"role": "user", "content": input_message}]},
-                config=config or {}
+                config=config
             ):
                 result_chunks.append(chunk)
                 
@@ -85,13 +96,11 @@ async def agent_execute_task(
                 progress = min(90, progress + 5)
                 await task_service.update_progress(UUID(task_id), progress, "执行中...")
                 
-                # 发布到 Redis Stream 供前端 SSE 消费
-                if redis:
-                    await redis.xadd(
-                        f"task:{task_id}:stream",
-                        {"type": "chunk", "data": str(chunk)[:1000]},
-                        maxlen=1000
-                    )
+                # 发布到 Redis Stream (Event Bus)
+                await event_bus.publish(f"task:{task_id}:stream", {
+                    "type": "chunk", 
+                    "data": str(chunk)[:1000]
+                })
                 
                 # 检查取消
                 if await task_service.is_cancel_requested(UUID(task_id)):
@@ -124,6 +133,8 @@ async def agent_execute_task(
                 error=str(e)
             )
             return {"error": str(e)}
+        finally:
+            await event_bus.close()
 
 
 async def startup(ctx: Dict[str, Any]):

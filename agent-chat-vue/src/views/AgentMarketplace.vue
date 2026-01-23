@@ -79,7 +79,7 @@ async function loadAgents() {
 
 function handleSelectAgent(agent: any) {
   chatStore.setCurrentAgent(agent.id)
-  chatStore.createSession(`Chat with ${agent.name}`, agent.id)
+  chatStore.createSession(`Chat with ${agent.name}`)
   router.push('/')
 }
 

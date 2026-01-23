@@ -123,7 +123,6 @@ class ApiClient {
 
                     for (const line of lines) {
                         if (line.startsWith('event:')) {
-                            const eventType = line.substring(6).trim()
                             // 下一行应该是 data
                             continue
                         }
@@ -216,6 +215,81 @@ class ApiClient {
     async getState(sessionId: string): Promise<any> {
         const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/state`)
         return response.json()
+    }
+
+    // Async Task 操作
+    async executeTask(sessionId: string, message: string, config?: any): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/tasks/sessions/${sessionId}/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, config }),
+        })
+        return response.json()
+    }
+
+    async getTask(taskId: string): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/tasks/${taskId}`)
+        return response.json()
+    }
+
+    async cancelTask(taskId: string): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/tasks/${taskId}/cancel`, {
+            method: 'POST'
+        })
+        return response.json()
+    }
+
+    streamTask(
+        taskId: string,
+        onEvent: (data: any) => void,
+        onError?: (error: Error) => void
+    ): () => void {
+        const controller = new AbortController()
+
+        const fetchStream = async () => {
+            try {
+                const response = await fetch(`${this.baseUrl}/tasks/${taskId}/stream`, {
+                    signal: controller.signal,
+                })
+
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+
+                const reader = response.body?.getReader()
+                if (!reader) throw new Error('No response body')
+
+                const decoder = new TextDecoder()
+                let buffer = ''
+
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+
+                    buffer += decoder.decode(value, { stream: true })
+                    const lines = buffer.split('\n')
+                    buffer = lines.pop() || ''
+
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            try {
+                                const jsonStr = line.substring(5).trim()
+                                if (!jsonStr) continue
+                                const data = JSON.parse(jsonStr)
+                                onEvent(data)
+                            } catch (e) {
+                                console.warn('Failed to parse SSE data:', line)
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                if ((error as Error).name !== 'AbortError') {
+                    onError?.(error as Error)
+                }
+            }
+        }
+
+        fetchStream()
+        return () => controller.abort()
     }
 }
 

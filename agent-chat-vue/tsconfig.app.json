@@ -29,6 +29,12 @@
       ],
       "@agent-sdk/*": [
         "../agent-sdk/*"
+      ],
+      "vue": [
+        "node_modules/vue"
+      ],
+      "@vue/*": [
+        "node_modules/@vue/*"
       ]
     },
     "types": [

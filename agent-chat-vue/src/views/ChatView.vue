@@ -69,7 +69,7 @@
                    <!-- Thinking Block -->
                    <ThinkingBlock
                      v-if="block.type === 'thinking'"
-                     :content="block.content"
+                     :content="block.content || ''"
                      :subgraph-name="block.subgraph"
                      :isStreaming="true"
                    />
@@ -84,14 +84,14 @@
                    <!-- Tool Output Block -->
                    <ToolOutputBlock
                      v-else-if="block.type === 'tool_output'"
-                     :call-id="block.callId"
-                     :output="block.output"
+                     :call-id="block.callId || ''"
+                     :output="block.output || ''"
                      :subgraph-name="block.subgraph"
                    />
                    
                    <!-- Content Block -->
                    <div v-else-if="block.type === 'content'" class="content-wrapper">
-                      <MarkdownRenderer :content="block.content" />
+                      <MarkdownRenderer :content="block.content || ''" />
                    </div>
                    
                    <!-- Chart Block -->
@@ -105,6 +105,18 @@
                       <!-- TODO: Add Interrupt Component -->
                       <p>Waiting for user approval...</p>
                    </div>
+
+
+                   <!-- Async Task Card -->
+                   <AsyncTaskCard
+                     v-else-if="block.type === 'async_task'"
+                     :progress="block.progress || 0"
+                     :status="block.status || 'pending'"
+                     :statusMessage="block.content || ''"
+                     :taskId="block.taskId || ''"
+                     :taskName="block.content || ''"
+                     @cancel="chatStore.cancelTask"
+                   />
                 </template>
                 
                 <div v-if="chatStore.isLoading && chatStore.streamingBlocks.length === 0" class="content-wrapper">
@@ -142,6 +154,16 @@
                   @click="chatStore.stopStream"
                >
                   <el-icon><VideoPause /></el-icon>
+               </button>
+
+               <button 
+                  v-if="!chatStore.isStreaming"
+                  class="async-toggle-btn"
+                  :class="{ active: chatStore.asyncMode }"
+                  @click="chatStore.asyncMode = !chatStore.asyncMode"
+                  title="Async Mode"
+               >
+                  <el-icon><Timer /></el-icon>
                </button>
                <button 
                   v-else
@@ -187,15 +209,16 @@ import { ref, onMounted, nextTick, watch } from 'vue'
 import { 
   DataAnalysis, Search, InfoFilled, 
   CirclePlusFilled, Top, VideoPause,
-  Moon, Sunny, ArrowDownBold
+  Moon, Sunny, ArrowDownBold, Timer
 } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import ThinkingBlock from '@/components/chat/ThinkingBlock.vue'
 import ToolCallBlock from '@/components/chat/ToolCallBlock.vue'
-import ToolOutputBlock from '@/components/chat/ToolOutputBlock.vue' // New
+import ToolOutputBlock from '@/components/chat/ToolOutputBlock.vue'
 import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
-import ChartRenderer from '@/components/chat/ChartRenderer.vue' // New
+import ChartRenderer from '@/components/chat/ChartRenderer.vue'
+import AsyncTaskCard from '@/components/chat/AsyncTaskCard.vue' // New
 import AgentRightSidebar from '@/components/chat/AgentRightSidebar.vue'
 
 import { useTheme } from '@/composables/useTheme'
@@ -678,6 +701,34 @@ function isValidMessage(msg: any): boolean {
 
 .stop-btn:active {
   transform: scale(0.95);
+}
+
+.async-toggle-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  margin-bottom: 2px;
+}
+
+.async-toggle-btn.active {
+  background: #f0fdf4; /* green-50 */
+  color: #16a34a; /* green-600 */
+  border-color: #86efac;
+}
+
+.async-toggle-btn:hover {
+  background: var(--bg-tertiary);
+  transform: translateY(-1px);
 }
 
 .send-btn:hover:not(:disabled) {

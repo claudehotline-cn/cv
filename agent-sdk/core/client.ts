@@ -4,7 +4,7 @@
  * 封装后端 API 调用和 SSE 流消费
  */
 
-import { StreamParser, type StreamParserOptions } from './stream-parser'
+import { StreamParser } from './stream-parser'
 import type { ClientConfig, ResumeOptions, ChatState, StreamCallbacks } from './types'
 
 export interface AgentClientOptions extends ClientConfig, StreamCallbacks { }

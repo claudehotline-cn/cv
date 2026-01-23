@@ -6,7 +6,7 @@
 
 import { ref, type Ref } from 'vue'
 import { AgentClient, type AgentClientOptions } from '../core/client'
-import type { MessageBlock, ChatState, ResumeOptions } from '../core/types'
+import type { MessageBlock } from '../core/types'
 
 export interface UseStreamOptions extends Omit<AgentClientOptions, 'onBlock' | 'onUpdate' | 'onDone' | 'onInterrupt' | 'onError'> {
     /** 每个 block 解析完成时回调 */

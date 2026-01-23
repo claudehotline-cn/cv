@@ -68,7 +68,7 @@ function initChart() {
 
 function updateChartTheme() {
   if (!chartInstance) return
-  const currentOption = chartInstance.getOption()
+  chartInstance.getOption()
   chartInstance.dispose()
   initChart()
 }

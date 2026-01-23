@@ -1,0 +1,12 @@
+import pytest
+from ..agent import {{ class_name }}
+
+def test_agent_graph_compile():
+    agent = {{ class_name }}()
+    graph = agent.get_graph()
+    assert graph is not None
+
+def test_agent_config():
+    agent = {{ class_name }}()
+    config = agent.get_config()
+    assert config["key"] == "{{ agent_key }}"

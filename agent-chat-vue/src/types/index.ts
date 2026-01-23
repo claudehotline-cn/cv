@@ -9,6 +9,15 @@ export type MessageBlock =
     | ContentBlock
     | ChartBlock
     | InterruptBlock
+    | AsyncTaskBlock
+
+export interface AsyncTaskBlock {
+    type: 'async_task'
+    taskId: string
+    content: string // task name or description
+    progress: number
+    status: string // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+}
 
 export interface ThinkingBlock {
     type: 'thinking'

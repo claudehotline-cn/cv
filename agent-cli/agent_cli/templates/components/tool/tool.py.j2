@@ -1,0 +1,7 @@
+from langchain_core.tools import tool
+
+@tool
+def {{ tool_name }}(query: str) -> str:
+    """{{ tool_description }}"""
+    # TODO: Implement tool logic
+    return f"Executed {{ tool_name }} with query: {query}"

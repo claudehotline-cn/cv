@@ -35,39 +35,25 @@
       </div>
 
       <!-- Background Tasks -->
-      <div class="section">
+      <div class="section" v-if="chatStore.currentTask">
         <div class="section-header">
           <h4 class="section-title">Background Tasks</h4>
-          <span class="badge active">2 Active</span>
+          <span class="badge active">1 Active</span>
         </div>
         
         <div class="task-list">
           <div class="task-card active">
             <div class="task-header">
               <div class="task-title-row">
-                <el-icon class="task-icon spin"><RefreshRight /></el-icon>
-                <span class="task-name">Report Gen</span>
+                <el-icon class="task-icon spin"><Loading /></el-icon>
+                <span class="task-name">{{ chatStore.currentTask.name }}</span>
               </div>
-              <span class="task-progress-text">65%</span>
+              <span class="task-progress-text">{{ chatStore.currentTask.progress }}%</span>
             </div>
             <div class="progress-bar">
-              <div class="progress-fill" style="width: 65%"></div>
+              <div class="progress-fill" :style="{ width: chatStore.currentTask.progress + '%' }"></div>
             </div>
-            <p class="task-meta">Started 1m ago • ID #T-8842</p>
-          </div>
-
-          <div class="task-card">
-            <div class="task-header">
-              <div class="task-title-row">
-                <el-icon class="task-icon warning"><MoreFilled /></el-icon>
-                <span class="task-name">Data Fetch</span>
-              </div>
-              <span class="task-status">Queued</span>
-            </div>
-            <div class="progress-bar">
-              <div class="progress-fill pending" style="width: 10%"></div>
-            </div>
-            <p class="task-meta">Started 30s ago • ID #T-8845</p>
+            <p class="task-meta">ID #{{ chatStore.currentTask.id.slice(0, 8) }} • {{ chatStore.currentTask.status }}</p>
           </div>
         </div>
       </div>
@@ -93,9 +79,11 @@
 
 <script setup lang="ts">
 import { 
-  MoreFilled, DataAnalysis, RefreshRight, 
-  Monitor, Search, Picture 
+  DataAnalysis, Monitor, Search, Picture, Loading 
 } from '@element-plus/icons-vue'
+import { useChatStore } from '@/stores/chat'
+
+const chatStore = useChatStore()
 </script>
 
 <style scoped>

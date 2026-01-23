@@ -8,7 +8,7 @@
 // Message Block Types
 // =============================================================================
 
-export type BlockType = 'thinking' | 'content' | 'tool_call' | 'tool_output' | 'chart' | 'interrupt'
+export type BlockType = 'thinking' | 'content' | 'tool_call' | 'tool_output' | 'chart' | 'interrupt' | 'async_task'
 
 export interface ToolCall {
     id: string
@@ -30,6 +30,10 @@ export interface MessageBlock {
     callId?: string
     output?: string
     data?: any
+    // Async Task properties
+    taskId?: string
+    progress?: number
+    status?: string
 }
 
 // =============================================================================

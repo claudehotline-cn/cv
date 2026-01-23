@@ -1,0 +1,14 @@
+from typing import Dict, Any
+from agent_core.base import BaseAgent
+from langchain_core.runnables import Runnable
+from .graph import get_graph
+from .config import get_config
+
+class {{ class_name }}(BaseAgent):
+    """{{ agent_description }}"""
+    
+    def get_graph(self) -> Runnable:
+        return get_graph()
+
+    def get_config(self) -> Dict[str, Any]:
+        return get_config()
