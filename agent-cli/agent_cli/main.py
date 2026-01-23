@@ -200,8 +200,37 @@ def test(
     Test the agent (dry run or interactive).
     """
     if not interactive:
-        # Just run checks for now if not interactive
-        check(agent_dir)
+        # Run pytest
+        import subprocess
+        agent_path = Path(agent_dir).resolve()
+        tests_dir = agent_path / "tests"
+        if not tests_dir.exists():
+             console.print(f"[bold red]Error:[/bold red] Tests directory not found at {tests_dir}")
+             raise typer.Exit(code=1)
+             
+        try:
+             console.print(f"[bold blue]Running Tests:[/bold blue] {tests_dir}")
+             # Ensure current project root is in PYTHONPATH so agent-test and agent-plugins can be found
+             env = os.environ.copy()
+             root_dir = Path.cwd()
+             pythonpath = env.get("PYTHONPATH", "")
+             # Add current dir, agent-test, agent-core, and agent-plugins parent
+             # Assuming we run from project root:
+             # agent-test is at ./agent-test
+             # agent-core is at ./agent-core
+             # agent-plugins is at ./agent-plugins
+             paths_to_add = [
+                 str(root_dir / "agent-test"),
+                 str(root_dir / "agent-core"),
+                 str(root_dir / "agent-plugins"),
+                 str(root_dir)
+             ]
+             env["PYTHONPATH"] = ":".join(paths_to_add) + ":" + pythonpath
+             
+             subprocess.run(["pytest", str(tests_dir)], check=True, env=env)
+        except subprocess.CalledProcessError:
+             console.print("[bold red]Tests Failed[/bold red]")
+             raise typer.Exit(code=1)
         return
 
     agent_path = Path(agent_dir).resolve()
