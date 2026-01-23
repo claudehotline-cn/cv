@@ -141,3 +141,11 @@ cd video-analyzer/build/bin/Release
 - 上下文摘要：`docs/context/CONTEXT.md`
 - 路线图：`docs/context/ROADMAP.md`
 - VA→CP REST 迁移指南：`docs/plans/va_rest_迁移指南.md`
+
+## Agent Platform (New)
+新增 Agent 开发平台支持，包含 CLI 脚手架和测试框架。
+
+- **快速开始**: 查看 [Agent Development Guide](docs/agent-development.md)
+- **核心组件**:
+  - `agent-cli`: 命令行工具，用于创建和管理 Agent。
+  - `agent-test`: 基于 LangGraph 的测试框架。
