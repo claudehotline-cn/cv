@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, Optional
 from langchain_core.tools import tool
 
-from data_agent.utils.dataframe_store import store_dataframe
+from data_agent.utils.artifacts import store_dataframe
 
 _LOGGER = logging.getLogger("agent_langchain.tools.excel")
 

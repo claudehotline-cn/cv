@@ -10,7 +10,7 @@ from typing import Optional
 from langchain.tools import tool
 from langchain_core.runnables import RunnableConfig
 
-from data_agent.utils.dataframe_store import get_dataframe
+from data_agent.utils.artifacts import get_dataframe
 
 _LOGGER = logging.getLogger("agent_langchain.tools.reviewer")
 

@@ -39,17 +39,24 @@ def _get_graph_root_dir(rt) -> str:
     backend = get_backend(user_id=user_id, session_id="default", task_id=f"data_analysis_{analysis_id}")
     return backend.artifacts_dir
 
-def get_data_deep_agent_graph() -> Any:
+def get_data_deep_agent_graph(
+    checkpointer: Any = None,
+    llm: Any = None
+) -> Any:
     """构造并返回统一的数据分析 Deep Agent (Multi-Agent 架构)。"""
     
     # 统一使用 qwen3:30b 模型 (Main Agent)
-    main_llm = build_chat_llm(task_name="data_deep_main")
+    # 支持注入 Mock LLM
+    main_llm = llm if llm is not None else build_chat_llm(task_name="data_deep_main")
     
     # ============================================================================
     # 创建主 Deep Agent
     # ============================================================================
     from .schemas import MainAgentOutput
     response_format = None
+
+    # 支持注入 Mock Checkpointer
+    cp = checkpointer if checkpointer is not None else get_checkpointer()
 
     graph = create_deep_agent(
         model=main_llm,
@@ -80,7 +87,7 @@ def get_data_deep_agent_graph() -> Any:
         ),
         # 使用 PostgreSQL 持久化存储（长期记忆 + 会话检查点）
         store=get_async_store,  # deepagents 接受工厂函数
-        checkpointer=get_checkpointer(),  # 传递预初始化的实例
+        checkpointer=cp,  # 使用注入的或预初始化的实例
         response_format=response_format,
     )
     
