@@ -30,7 +30,7 @@ def _get_graph_root_dir(rt) -> str:
     
     # User feedback: rt has context, not config
     # deepagents Runtime.context typically holds the configurable parameters
-    ctx = getattr(rt, "context", {})
+    ctx = getattr(rt, "context", {}) or {}
     
     user_id = ctx.get("user_id", "anonymous")
     analysis_id = ctx.get("analysis_id", "default")
