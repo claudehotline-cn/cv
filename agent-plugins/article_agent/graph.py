@@ -27,11 +27,25 @@ from .subagents.assembler import assembler_agent
 _LOGGER = logging.getLogger("article_agent.article_deep_graph")
 
 
-def get_article_deep_agent_graph() -> Any:
-    """构造并返回 Article Deep Agent (Multi-Agent 架构)。"""
+def get_article_deep_agent_graph(model: Any = None, checkpointer: Any = None) -> Any:
+    """构造并返回 Article Deep Agent (Multi-Agent 架构)。
+    
+    Args:
+        model: Optional LLM instance. If None, builds default using build_chat_llm.
+        checkpointer: Optional Checkpointer instance. If None, uses default global checkpointer.
+    """
     
     # 使用 agent-core 统一 LLM 配置 (Main Agent)
-    main_llm = build_chat_llm(task_name="article_deep_main")
+    if model is None:
+        main_llm = build_chat_llm(task_name="article_deep_main")
+    else:
+        main_llm = model
+        
+    # Checkpointer
+    if checkpointer is None:
+        cp = get_checkpointer()
+    else:
+        cp = checkpointer
     
     # ============================================================================
     # 创建主 Deep Agent
@@ -71,7 +85,7 @@ def get_article_deep_agent_graph() -> Any:
         ],
         backend=_create_backend_factory,
         store=get_async_store,
-        checkpointer=get_checkpointer(),
+        checkpointer=cp,
         response_format=response_format,
     )
     
