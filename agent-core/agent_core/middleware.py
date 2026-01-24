@@ -14,102 +14,99 @@ from deepagents.backends import StoreBackend
 _LOGGER = logging.getLogger(__name__)
 
 
-class SubAgentHITLMiddleware(AgentMiddleware):
+class SensitiveToolMiddleware(AgentMiddleware):
     """
-    Custom HITL Middleware for SubAgent Interruption.
+    Generalized HITL Middleware that interrupts execution when a sensitive tool is called.
     """
     
     def __init__(
         self, 
-        interrupt_subagents: List[str] = None,
+        sensitive_tools: List[str] = None,
         allowed_decisions: List[str] = None,
-        description: Union[str, Dict[str, str]] = "Please confirm to proceed"
+        description: Union[str, Dict[str, str]] = "High risk operation detected, please confirm."
     ):
         super().__init__()
-        self.interrupt_subagents = interrupt_subagents or ["visualizer_agent", "report_agent"]
+        self.sensitive_tools = sensitive_tools or []
         self.allowed_decisions = allowed_decisions or ["approve", "reject"]
         self.description = description
     
     async def awrap_tool_call(self, request, handler):
+        # Extract tool name and args
         tool_call = getattr(request, 'tool_call', {})
         if isinstance(tool_call, dict):
             tool_name = tool_call.get('name', '')
-            args = tool_call.get('args', {})
+            tool_args = tool_call.get('args', {})
+            tool_call_id = tool_call.get('id', '')
         else:
             tool_name = getattr(tool_call, 'name', '')
-            args = getattr(tool_call, 'args', {})
+            tool_args = getattr(tool_call, 'args', {})
+            tool_call_id = getattr(tool_call, 'id', '')
         
-        _LOGGER.info(f"[HITL DEBUG] awrap_tool_call: {tool_name}")
+        # Check if tool is sensitive
+        # Also supports the legacy "task" tool based subagent interruption pattern if configured
+        is_sensitive = tool_name in self.sensitive_tools
         
-        if tool_name == 'task':
-            subagent_type = args.get('subagent_type', '')
+        # Legacy support: if "task" tool and args['subagent_type'] is in sensitive_tools (as a convention)
+        if not is_sensitive and tool_name == 'task':
+            subagent = tool_args.get('subagent_type', '')
+            if subagent in self.sensitive_tools:
+                is_sensitive = True
+        
+        if is_sensitive:
+            _LOGGER.info(f"[HITL] Intercepting sensitive tool: {tool_name}")
             
-            if subagent_type in self.interrupt_subagents:
-                _LOGGER.info(f"[HITL] Executing {subagent_type} first, will interrupt after completion")
-                
-                response = await handler(request)
-                
-                # Extract content for preview
-                preview_content = None
-                if isinstance(response, str):
-                    preview_content = response
-                elif hasattr(response, 'update') and isinstance(response.update, dict):
-                    # Handle Command object
-                    msgs = response.update.get("messages", [])
-                    if msgs:
-                        last_msg = msgs[-1]
-                        if isinstance(last_msg, ToolMessage):
-                            preview_content = last_msg.content
-                        elif hasattr(last_msg, 'content'):
-                            preview_content = last_msg.content
-                
-                # Determine description based on subagent_type
-                if isinstance(self.description, dict):
-                    desc = self.description.get(subagent_type, self.description.get("default", "操作完成，请确认是否继续"))
-                else:
-                    desc = self.description
+            # Determine description
+            if isinstance(self.description, dict):
+                desc = self.description.get(tool_name, self.description.get("default", "Sensitive Action Detected"))
+            else:
+                desc = self.description
 
-                interrupt_value = {
-                    "action_requests": [{
-                        "name": subagent_type,
-                        "args": args,
-                        "description": desc
-                    }],
-                    "review_configs": [{
-                        "action_name": subagent_type,
-                        "allowed_decisions": self.allowed_decisions
-                    }],
-                    "preview": preview_content
-                }
+            # Prepare Interrupt Payload
+            interrupt_value = {
+                "action_requests": [{
+                    "name": tool_name,
+                    "args": tool_args,
+                    "description": desc
+                }],
+                "review_configs": [{
+                    "action_name": tool_name,
+                    "allowed_decisions": self.allowed_decisions
+                }]
+            }
+            
+            # Trigger LangGraph Interrupt
+            # This yields control back to the Runtime/User
+            interrupt_res = interrupt(interrupt_value)
+            
+            _LOGGER.info(f"[HITL] Resumed with decision: {interrupt_res}")
+            
+            # Handle Resume
+            # interrupt() returns the value passed to resume()
+            decisions = None
+            if isinstance(interrupt_res, list):
+                decisions = interrupt_res
+            elif isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
+                decisions = interrupt_res["decisions"]
+            
+            if decisions and isinstance(decisions, list) and len(decisions) > 0:
+                decision = decisions[0]
+                decision_type = decision.get("type")
+                message = decision.get("message", "")
                 
-                interrupt_res = interrupt(interrupt_value)
+                if decision_type == "reject":
+                    content = f"USER_INTERRUPT: Operation '{tool_name}' rejected by user. Feedback: {message}. Stop or modify your plan."
+                    _LOGGER.info(f"[HITL] Rejected: {content}")
+                    return ToolMessage(content=content, tool_call_id=tool_call_id, status="error")
                 
-                # Get tool_call_id for ToolMessage
-                tool_call_id = tool_call.get('id', '') if isinstance(tool_call, dict) else getattr(tool_call, 'id', '')
-                
-                _LOGGER.info(f"[HITL] interrupt_res type: {type(interrupt_res)}, value: {interrupt_res}")
-                
-                # interrupt() returns the exact value passed to Command(resume=...)
-                # Backend passes: [{"type": "approve"|"reject", "message": "..."}]
-                decisions = None
-                if isinstance(interrupt_res, list):
-                    decisions = interrupt_res
-                elif isinstance(interrupt_res, dict) and "decisions" in interrupt_res:
-                    decisions = interrupt_res["decisions"]
-                
-                if decisions and isinstance(decisions, list) and len(decisions) > 0:
-                    decision = decisions[0]
-                    if decision.get("type") == "reject":
-                        feedback = decision.get("message", "")
-                        content = f"USER_INTERRUPT: 用户拒绝了 {subagent_type} 的输出。反馈: {feedback}。请根据反馈重新调用 {subagent_type}。"
-                        _LOGGER.info(f"[HITL] User rejected, returning: {content}")
-                        return ToolMessage(content=content, tool_call_id=tool_call_id)
+                if decision_type == "approve":
+                    _LOGGER.info(f"[HITL] Approved: Proceeding with {tool_name}")
+                    # Validation: check if args were modified?
+                    # For now, we proceed with original request or could allow args override if supported locally
+                    # If we wanted arg modification, decision payload would need "new_args"
+                    return await handler(request)
 
-                # Generic approval message with subagent_type
-                content = f"USER_APPROVED: {subagent_type} approved."
-                _LOGGER.info(f"[HITL] User approved or no decision, returning: {content}")
-                
-                return ToolMessage(content=content, tool_call_id=tool_call_id)
+            # Default if structure unclear but resumed: Assume Approval if not rejected
+            return await handler(request)
         
         return await handler(request)
 
@@ -227,4 +224,84 @@ class FileAttachmentMiddleware(AgentMiddleware):
             return {"messages": new_messages}
         
         return None
+
+
+class PolicyMiddleware(AgentMiddleware):
+    """
+    RBAC Middleware to enforce tool execution permissions based on user roles.
+    
+    Loads policy from `policy.yaml` (default) or config.
+    """
+    
+    def __init__(self, policy_path: str = "policy.yaml"):
+        super().__init__()
+        self.policy_path = policy_path
+        self._policy_cache = None
+        self._load_policy()
+        
+    def _load_policy(self):
+        import yaml
+        if os.path.exists(self.policy_path):
+            try:
+                with open(self.policy_path, "r") as f:
+                    self._policy_cache = yaml.safe_load(f)
+                _LOGGER.info(f"[PolicyMiddleware] Loaded policy from {self.policy_path}")
+            except Exception as e:
+                _LOGGER.error(f"[PolicyMiddleware] Failed to load policy: {e}")
+                self._policy_cache = {}
+        else:
+            _LOGGER.warning(f"[PolicyMiddleware] Policy file not found at {self.policy_path}, defaulting to deny-all for unknown roles.")
+            self._policy_cache = {}
+
+    def _check_permission(self, role: str, tool_name: str) -> bool:
+        if not self._policy_cache:
+            return False # Fail safe
+            
+        roles_config = self._policy_cache.get("roles", {})
+        role_config = roles_config.get(role)
+        
+        if not role_config:
+            return False
+            
+        allowed = role_config.get("allow", [])
+        denied = role_config.get("deny", [])
+        
+        # 1. Check Deny (Explicit deny wins)
+        if "*" in denied or tool_name in denied:
+            return False
+            
+        # 2. Check Allow
+        if "*" in allowed or tool_name in allowed:
+            return True
+            
+        return False
+        
+    async def awrap_tool_call(self, request, handler):
+        """
+        Intercept tool calls and check permissions.
+        """
+        tool_call = getattr(request, 'tool_call', {})
+        if isinstance(tool_call, dict):
+            tool_name = tool_call.get('name', '')
+            # args = tool_call.get('args', {})
+        else:
+            tool_name = getattr(tool_call, 'name', '')
+            # args = getattr(tool_call, 'args', {})
+            
+        if not tool_name:
+            return await handler(request)
+            
+        # Extract user role. 
+        user_role = os.environ.get("AGENT_USER_ROLE", "guest")
+        
+        if not self._check_permission(user_role, tool_name):
+            error_msg = f"PERMISSION DENIED: User role '{user_role}' is not allowed to use tool '{tool_name}'."
+            _LOGGER.warning(f"[PolicyMiddleware] {error_msg}")
+            
+            # Return a ToolMessage indicating failure, preventing execution
+            tool_call_id = tool_call.get('id', '') if isinstance(tool_call, dict) else getattr(tool_call, 'id', '')
+            return ToolMessage(content=error_msg, tool_call_id=tool_call_id, status="error")
+            
+        _LOGGER.info(f"[PolicyMiddleware] ALLOWED: {tool_name} for role {user_role}")
+        return await handler(request)
 

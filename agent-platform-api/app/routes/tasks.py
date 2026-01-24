@@ -163,3 +163,60 @@ async def stream_task_progress(task_id: UUID):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+@router.get("/threads/{thread_id}/history")
+async def get_thread_history(thread_id: str, limit: int = 10, before: Optional[str] = None):
+    """
+    Get state history (checkpoints) for a thread.
+    Useful for visualizing the timeline to pick a rollback point.
+    """
+    from agent_core.store import get_async_checkpointer
+    
+    checkpointer = await get_async_checkpointer()
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    checkpoints = []
+    # Note: list method returns an AsyncIterator
+    async for cp in checkpointer.list(config, limit=limit, before=before):
+        checkpoints.append({
+            "checkpoint_id": cp.checkpoint_id,
+            "checkpoint_ts": cp.checkpoint.get("ts") if cp.checkpoint else None,
+            "parent_checkpoint_id": cp.checkpoint.get("channel_values", {}).get("parent_id") if cp.checkpoint else None,
+            "metadata": cp.metadata
+        })
+        
+    return {"checkpoints": checkpoints}
+
+
+class RollbackRequest(BaseModel):
+    checkpoint_id: str
+
+
+@router.post("/threads/{thread_id}/rollback")
+async def rollback_thread_state(thread_id: str, request: RollbackRequest):
+    """
+    Rollback thread state to a specific checkpoint.
+    """
+    from agent_core.store import get_async_checkpointer
+    
+    checkpointer = await get_async_checkpointer()
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    # Verify checkpoint exists
+    target_cp = await checkpointer.get_tuple(config, checkpoint_id=request.checkpoint_id)
+    if not target_cp:
+        raise HTTPException(status_code=404, detail="Checkpoint not found")
+    
+    # In LangGraph/DeepAgents architecture, rolling back essentially means 
+    # ensuring the NEXT run starts from this checkpoint.
+    # The Frontend/Client should use this checkpoint_id in the next execution config.
+    # We validate it here and return confirmation.
+    
+    return {
+        "message": "Checkpoint validated. Use this checkpoint_id in next execution config to fork.",
+        "checkpoint": {
+            "id": request.checkpoint_id,
+            "ts": target_cp.checkpoint.get("ts") if target_cp.checkpoint else None
+        }
+    }

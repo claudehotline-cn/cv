@@ -11,7 +11,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBacken
 # 使用 agent-core 统一基础设施
 from agent_core.runtime import build_chat_llm
 from agent_core.store import get_async_store, get_checkpointer
-from agent_core.middleware import SubAgentHITLMiddleware, FileAttachmentMiddleware
+from agent_core.middleware import SensitiveToolMiddleware, FileAttachmentMiddleware
 
 from .prompts import MAIN_AGENT_PROMPT
 from .schemas import ArticleAgentOutput
@@ -73,9 +73,9 @@ def get_article_deep_agent_graph(model: Any = None, checkpointer: Any = None) ->
         middleware=[
             # 文件上传处理
             FileAttachmentMiddleware(),
-            # HITL: 在 assembler 输出时触发审核
-            SubAgentHITLMiddleware(
-                interrupt_subagents=["assembler_agent"],
+            # HITL: 在 assembler 输出时触发审核 (Backward Compatibility)
+            SensitiveToolMiddleware(
+                sensitive_tools=["assembler_agent"],
                 allowed_decisions=["approve", "reject"],
                 description={
                     "assembler_agent": "文章生成完成，请确认是否发布",

@@ -11,7 +11,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
     ports:
-      - "9091:9090"  # expose Prometheus UI on host 9091
+      - "9091:9090" # expose Prometheus UI on host 9091
     restart: unless-stopped
 
   grafana:
@@ -29,6 +29,17 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
     restart: unless-stopped
 
 volumes:
