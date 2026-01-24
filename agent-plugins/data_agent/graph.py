@@ -9,7 +9,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
 
 from agent_core.runtime import build_chat_llm
-from agent_core.middleware import SubAgentHITLMiddleware
+from agent_core.middleware import SensitiveToolMiddleware
 from agent_core.store import get_async_store, get_checkpointer
 from .prompts import MAIN_AGENT_PROMPT
 
@@ -67,8 +67,8 @@ def get_data_deep_agent_graph(
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
-            SubAgentHITLMiddleware(
-                interrupt_subagents=["visualizer_agent", "report_agent"],
+            SensitiveToolMiddleware(
+                sensitive_tools=["visualizer_agent", "report_agent"],
                 allowed_decisions=["approve", "reject"],
                 description={
                     "visualizer_agent": "图表生成完成，请确认是否继续",

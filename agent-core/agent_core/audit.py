@@ -32,6 +32,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
         
     def _publish_event(self, event_type: str, payload: Dict[str, Any]):
         """Publish event to Redis Stream (fire and forget)."""
+        _LOGGER.info(f"[AuditCallback] Publishing {event_type} to {self.channel}")
         event = {
             "type": event_type,
             "timestamp": time.time(),
@@ -47,7 +48,15 @@ class AuditCallbackHandler(BaseCallbackHandler):
         try:
             # Check if there is a running loop
             loop = asyncio.get_running_loop()
-            loop.create_task(self.event_bus.publish(self.channel, event))
+            task = loop.create_task(self.event_bus.publish(self.channel, event))
+            # Add done callback to log errors
+            def handle_result(t):
+                try:
+                    t.result()
+                except Exception as e:
+                    _LOGGER.error(f"[AuditCallback] Publish failed: {e}")
+            task.add_done_callback(handle_result)
+            
         except RuntimeError:
             # No running loop (sync context), we might lose events or need sync publish.
             # For Agent Platform, we assume Async Runtime.
@@ -81,3 +90,77 @@ class AuditCallbackHandler(BaseCallbackHandler):
             "error": str(error),
             "run_id": str(kwargs.get("run_id", ""))
         })
+
+    async def on_chain_start(
+        self, serialized: Dict[str, Any], inputs: Dict[str, Any], **kwargs: Any
+    ) -> Any:
+        """Run when chain starts running."""
+        # Filter noise: Only log if it seems like a significant chain or root
+        # logical "Task" start usually has 'messages' or 'input'
+        serialized = serialized or {}
+        chain_name = serialized.get("name") or (serialized.get("id") or [])[-1] if serialized.get("id") else "unknown_chain"
+        
+        self._publish_event("chain_start", {
+            "chain": chain_name,
+            "inputs": self._sanitize_inputs(inputs),
+            "run_id": str(kwargs.get("run_id", ""))
+        })
+
+    async def on_chain_end(self, outputs: Dict[str, Any], **kwargs: Any) -> Any:
+        """Run when chain ends running."""
+        self._publish_event("chain_end", {
+            "outputs": self._sanitize_inputs(outputs), # Re-use sanitize for outputs
+            "run_id": str(kwargs.get("run_id", ""))
+        })
+
+    async def on_llm_start(
+        self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any
+    ) -> Any:
+        """Run when LLM starts running."""
+        self._publish_event("llm_start", {
+            "model": kwargs.get("invocation_params", {}).get("model_name"),
+            "prompts": prompts,
+            "run_id": str(kwargs.get("run_id", ""))
+        })
+
+    async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> Any:
+        """Run when LLM ends running."""
+        text_generations = []
+        if response.generations:
+            for gen_list in response.generations:
+                for gen in gen_list:
+                    text_generations.append(gen.text)
+                    
+        self._publish_event("llm_end", {
+            "generations": text_generations,
+            "usage": response.llm_output.get("token_usage") if response.llm_output else None,
+            "run_id": str(kwargs.get("run_id", ""))
+        })
+
+    def _sanitize_inputs(self, inputs: Any) -> Any:
+        """Helper to sanitize extensive inputs/outputs."""
+        if inputs is None:
+            return None
+        if isinstance(inputs, dict):
+            return {k: self._sanitize_inputs(v) for k, v in inputs.items()}
+        if isinstance(inputs, list):
+            return [self._sanitize_inputs(v) for v in inputs if not isinstance(v, (bytes, bytearray))]
+        if isinstance(inputs, (bytes, bytearray)):
+            return "<binary_data>"
+        # Handle LangChain BaseMessage or Pydantic models
+        if hasattr(inputs, "dict"):
+            return self._sanitize_inputs(inputs.dict())
+        if hasattr(inputs, "to_json"):
+            return inputs.to_json()
+        
+        # Basic trimming for massive strings
+        if isinstance(inputs, str):
+            if len(inputs) > 5000:
+                return inputs[:5000] + "...[TRUNCATED]"
+            return inputs
+            
+        # Fallback for other objects
+        if not isinstance(inputs, (str, int, float, bool)):
+            return str(inputs)
+            
+        return inputs

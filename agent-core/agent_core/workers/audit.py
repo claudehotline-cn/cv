@@ -17,8 +17,9 @@ class AuditWorker:
     In Production, this would write to Postgres 'audit_logs' table.
     """
     
-    def __init__(self, event_bus: EventBus):
+    def __init__(self, event_bus: EventBus, persist_callback=None):
         self.event_bus = event_bus
+        self.persist_callback = persist_callback
         self.running = False
         self.max_retries = 3
         
@@ -74,8 +75,8 @@ class AuditWorker:
             # Prefix with AUDIT_LOG for easy grep
             print(f"AUDIT_LOG: {log_entry}")
             
-            # Simulate DB Write Latency
-            # await asyncio.sleep(0.01)
+            if self.persist_callback:
+                await self.persist_callback(event)
             
         except Exception as e:
             _LOGGER.error(f"[AuditWorker] Failed to process event: {e}, Event: {event}")

@@ -51,3 +51,50 @@ async def test_audit_callback_tool_lifecycle():
     end_event = bus.published[1][1]
     assert end_event["type"] == "tool_end"
     assert end_event["data"]["output"] == "test output"
+
+@pytest.mark.asyncio
+async def test_audit_callback_full_tracing():
+    """Test that AuditCallbackHandler captures Chain and LLM events."""
+    from langchain_core.outputs import LLMResult, Generation
+    
+    bus = MockEventBus()
+    handler = AuditCallbackHandler(event_bus=bus)
+    
+    # 1. Chain Start (Inputs)
+    await handler.on_chain_start(
+        serialized={"name": "test_chain"},
+        inputs={"input": "hello"},
+        run_id="chain_run"
+    )
+    
+    # 2. LLM Start (Prompts)
+    await handler.on_llm_start(
+        serialized={},
+        prompts=["User: hello"],
+        invocation_params={"model_name": "gpt-4"},
+        run_id="llm_run"
+    )
+    
+    # 3. LLM End (Generations)
+    await handler.on_llm_end(
+        response=LLMResult(generations=[[Generation(text="Hi there")]]),
+        run_id="llm_run"
+    )
+    
+    # 4. Chain End (Outputs)
+    await handler.on_chain_end(
+        outputs={"output": "Hi there"},
+        run_id="chain_run"
+    )
+    
+    await asyncio.sleep(0.1)
+    
+    assert len(bus.published) == 4
+    types = [e[1]["type"] for e in bus.published]
+    assert types == ["chain_start", "llm_start", "llm_end", "chain_end"]
+    
+    # Verify Content
+    assert bus.published[0][1]["data"]["inputs"]["input"] == "hello"
+    assert bus.published[1][1]["data"]["prompts"][0] == "User: hello"
+    assert bus.published[2][1]["data"]["generations"][0] == "Hi there"
+

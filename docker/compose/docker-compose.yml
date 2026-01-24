@@ -411,6 +411,7 @@ services:
       # Excel 文件基础目录（可根据实际需要调整/新增挂载）
       - ../../docs/examples:/data/excel:ro
       - ../../agent-langchain:/app/agent-langchain
+      - ../../policy.yaml:/app/policy.yaml:ro
       # 工作区目录：用于持久化分析结果（DataFrame、图表、报告）
       - ../../agent-langchain/workspace:/data/workspace:rw
 
@@ -461,6 +462,7 @@ services:
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for API code
       # Workspaces
       - ../../agent-langchain/workspace:/data/workspace:rw
+      - ../../policy.yaml:/app/policy.yaml:ro
     healthcheck:
       test: [ "CMD-SHELL", "curl -fsS http://localhost:8000/health > /dev/null || exit 1" ]
       interval: 10s
@@ -492,6 +494,7 @@ services:
       - ../../agent-core:/app/agent-core:ro
       - ../../agent-plugins:/app/agent-plugins:ro
       - ../../agent-langchain/workspace:/data/workspace:rw
+      - ../../policy.yaml:/app/policy.yaml:ro
 
   # ============================================================================
   # Agent Chat Vue (新 Vue 前端，连接 agent-chat-api)
@@ -602,6 +605,7 @@ services:
       - ../../docs:/docs:ro
       - ../../article_agent/workspace:/data/workspace:rw
       - ../../article_agent:/app/article_agent:rw
+      - ../../policy.yaml:/app/policy.yaml:ro
       # Persist HuggingFace model cache (Docling models)
       - ../../.hf_cache:/root/.cache/huggingface:rw
     healthcheck:

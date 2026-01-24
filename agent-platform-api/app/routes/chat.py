@@ -257,13 +257,29 @@ async def chat_stream(
     graph = plugin.get_graph()
     
     # Config for LangGraph (Checkpointer uses thread_id)
+    # Config for LangGraph (Checkpointer uses thread_id)
+    # Inject Audit Callback
+    from agent_core.events import RedisEventBus
+    from agent_core.settings import get_settings
+    from agent_core.audit import AuditCallbackHandler
+    
+    # Init bus (lightweight wrapper around redis)
+    settings = get_settings()
+    event_bus = RedisEventBus(settings.redis_url)
+    audit_callback = AuditCallbackHandler(
+        event_bus=event_bus, 
+        user_id="mock_user", # TODO: Auth
+        trace_id=str(session.id)
+    )
+
     config = {
         "configurable": {
             "thread_id": str(session.id),
             "session_id": str(session.id), # New standard ID
-            "user_id": "mock_user", # TODO: Get from auth
-            "analysis_id": str(session.id) # Legacy support
-        }
+            "user_id": "mock_user", 
+            "analysis_id": str(session.id) 
+        },
+        "callbacks": [audit_callback]
     }
 
     inputs = {"messages": [HumanMessage(content=message)]}
