@@ -1,49 +1,7 @@
 <template>
   <div class="h-screen overflow-hidden flex bg-background-light dark:bg-background-dark font-display text-text-main antialiased">
-    <!-- Use same Sidebar as Dashboard for consistency or MainLayout if preferred, but for now copying Dashboard Sidebar structure for standalone view or re-using MainLayout? 
-         Better: Route /audit to use MainLayout or standalone?
-         Let's stick to the requested separate page. I'll include the sidebar to keep it looking integrated like Dashboard.
-    -->
-    <aside class="w-64 bg-surface-light dark:bg-surface-dark flex flex-col border-r border-border-color dark:border-gray-800 z-20 flex-shrink-0">
-      <div class="p-6 flex items-center gap-3">
-        <div class="bg-primary/10 rounded-lg p-2 flex items-center justify-center">
-          <span class="material-symbols-outlined text-primary" style="font-size: 24px;">all_inclusive</span>
-        </div>
-        <h1 class="text-text-main dark:text-white text-lg font-bold tracking-tight">AI Nexus</h1>
-      </div>
-      <nav class="flex-1 px-4 flex flex-col gap-2 overflow-y-auto">
-        <router-link to="/" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors">
-          <span class="material-symbols-outlined">dashboard</span>
-          <span class="text-sm font-medium">Dashboard</span>
-        </router-link>
-        <router-link to="/chat" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors">
-          <span class="material-symbols-outlined">chat</span>
-          <span class="text-sm font-medium">Chat Space</span>
-        </router-link>
-        <a href="#" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors">
-          <span class="material-symbols-outlined">smart_toy</span>
-          <span class="text-sm font-medium">Agents</span>
-        </a>
-        <router-link to="/audit" class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-primary/10 text-primary dark:text-blue-300">
-           <span class="material-symbols-outlined filled" style="font-variation-settings: 'FILL' 1;">article</span>
-           <span class="text-sm font-semibold">Audit</span>
-        </router-link>
-        <a href="#" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors">
-          <span class="material-symbols-outlined">analytics</span>
-          <span class="text-sm font-medium">Analytics</span>
-        </a>
-      </nav>
-      <!-- Footer user profile -->
-      <div class="p-4 border-t border-border-color dark:border-gray-800">
-        <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
-          <div class="size-8 rounded-full bg-gradient-to-tr from-blue-400 to-indigo-500"></div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-text-main dark:text-white truncate">Alex Morgan</p>
-            <p class="text-xs text-text-secondary dark:text-gray-400 truncate">alex@nexus.ai</p>
-          </div>
-        </div>
-      </div>
-    </aside>
+    <!-- Sidebar -->
+    <AppSidebar />
 
     <!-- Main Audit Content -->
     <main class="flex-1 flex flex-col h-full relative overflow-hidden">
@@ -108,6 +66,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import AppSidebar from '@/components/layout/AppSidebar.vue'
 
 const logs = ref([
     { time: '2023-10-24 10:42:05', type: 'Connection', severity: 'Error', description: 'Agent-007 failed to handshake with VectorDB cluster. Retrying in 5s...', initiator: 'System' },

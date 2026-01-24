@@ -1,65 +1,8 @@
 <template>
   <div class="h-screen overflow-hidden flex bg-background-light dark:bg-background-dark font-display text-text-main antialiased">
     <!-- Sidebar -->
-    <aside class="w-64 bg-surface-light dark:bg-surface-dark flex flex-col border-r border-border-color dark:border-gray-800 z-20 flex-shrink-0">
-      <div class="p-6 flex items-center gap-3">
-        <div class="bg-primary/10 rounded-lg p-2 flex items-center justify-center">
-          <span class="material-symbols-outlined text-primary" style="font-size: 24px;">all_inclusive</span>
-        </div>
-        <h1 class="text-text-main dark:text-white text-lg font-bold tracking-tight">AI Nexus</h1>
-      </div>
-      <nav class="flex-1 px-4 flex flex-col gap-2 overflow-y-auto">
-        <router-link 
-          to="/" 
-          class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-primary/10 text-primary dark:text-blue-300"
-        >
-          <span class="material-symbols-outlined filled" style="font-variation-settings: 'FILL' 1;">dashboard</span>
-          <span class="text-sm font-semibold">Dashboard</span>
-        </router-link>
-        
-        <!-- Chat Space Link -->
-        <router-link 
-          to="/chat" 
-          class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors"
-        >
-          <span class="material-symbols-outlined">chat</span>
-          <span class="text-sm font-medium">Chat Space</span>
-        </router-link>
-
-        <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors" href="#">
-          <span class="material-symbols-outlined">smart_toy</span>
-          <span class="text-sm font-medium">Agents</span>
-        </a>
-        <router-link to="/audit" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors">
-          <span class="material-symbols-outlined">article</span>
-          <span class="text-sm font-medium">Audit</span>
-        </router-link>
-        <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors" href="#">
-          <span class="material-symbols-outlined">analytics</span>
-          <span class="text-sm font-medium">Analytics</span>
-        </a>
-        <div class="my-2 border-t border-border-color dark:border-gray-800"></div>
-        <p class="px-3 text-xs font-semibold text-text-secondary dark:text-gray-500 uppercase tracking-wider mb-1">Settings</p>
-        <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors" href="#">
-          <span class="material-symbols-outlined">settings</span>
-          <span class="text-sm font-medium">General</span>
-        </a>
-        <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/50 transition-colors" href="#">
-          <span class="material-symbols-outlined">api</span>
-          <span class="text-sm font-medium">API Keys</span>
-        </a>
-      </nav>
-      <div class="p-4 border-t border-border-color dark:border-gray-800">
-        <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
-          <div class="size-8 rounded-full bg-gradient-to-tr from-blue-400 to-indigo-500" data-alt="User avatar gradient"></div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-text-main dark:text-white truncate">Alex Morgan</p>
-            <p class="text-xs text-text-secondary dark:text-gray-400 truncate">alex@nexus.ai</p>
-          </div>
-          <span class="material-symbols-outlined text-text-secondary" style="font-size: 20px;">unfold_more</span>
-        </div>
-      </div>
-    </aside>
+    <!-- Sidebar -->
+    <AppSidebar />
 
     <!-- Main Content -->
     <main class="flex-1 flex flex-col h-full relative overflow-hidden">
@@ -77,20 +20,20 @@
           </div>
         </div>
         <div class="flex items-center gap-4">
-          <div class="relative group">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <span class="material-symbols-outlined text-text-secondary" style="font-size: 20px;">search</span>
-            </div>
-            <input class="block w-64 pl-10 pr-3 py-2 border-none rounded-lg bg-gray-100 dark:bg-gray-800 text-sm placeholder-text-secondary focus:ring-2 focus:ring-primary/20 focus:bg-white dark:focus:bg-gray-700 transition-all" placeholder="Search agents, logs, or metrics..." type="text" />
-          </div>
-          <button class="size-9 rounded-full bg-white dark:bg-gray-800 border border-border-color dark:border-gray-700 flex items-center justify-center text-text-secondary hover:text-primary hover:border-primary transition-colors relative">
-            <span class="material-symbols-outlined" style="font-size: 20px;">notifications</span>
+          <el-input 
+            v-model="searchQuery"
+            placeholder="Search agents, logs, or metrics..." 
+            class="w-64 search-input"
+            :prefix-icon="Search"
+          />
+          <el-button class="icon-only-btn notification-btn" circle>
+            <el-icon :size="20"><Bell /></el-icon>
             <span class="absolute top-2 right-2 size-2 bg-red-500 rounded-full border-2 border-white dark:border-gray-800"></span>
-          </button>
-          <button class="px-4 py-2 bg-primary hover:bg-blue-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 transition-colors shadow-sm shadow-blue-500/30">
-            <span class="material-symbols-outlined" style="font-size: 18px;">add</span>
+          </el-button>
+          <el-button type="primary" class="new-agent-btn">
+            <el-icon class="mr-2" :size="18"><Plus /></el-icon>
             New Agent
-          </button>
+          </el-button>
         </div>
       </header>
 
@@ -380,9 +323,87 @@
 </template>
 
 <script setup lang="ts">
-// Dashboard logic
+import { ref } from 'vue'
+import { Search, Bell, Plus } from '@element-plus/icons-vue'
+import AppSidebar from '@/components/layout/AppSidebar.vue'
+
+const searchQuery = ref('')
 </script>
 
 <style scoped>
-/* Scoped styles if needed */
+/* Dashboard Specific Deep Overrides for Element Plus */
+
+/* Search Input */
+:deep(.search-input .el-input__wrapper) {
+    background-color: #f3f4f6; /* gray-100 */
+    box-shadow: none;
+    border-radius: 0.5rem; /* rounded-lg */
+    padding-left: 10px;
+}
+:deep(.dark .search-input .el-input__wrapper) {
+    background-color: #1f2937; /* gray-800 */
+}
+:deep(.search-input .el-input__wrapper.is-focus) {
+    box-shadow: 0 0 0 2px rgba(50, 103, 164, 0.2); /* primary/20 ring */
+    background-color: #ffffff;
+}
+:deep(.dark .search-input .el-input__wrapper.is-focus) {
+    background-color: #374151; /* gray-700 */
+}
+:deep(.search-input .el-input__inner) {
+    color: var(--text-main);
+}
+
+/* Notification Button */
+:deep(.notification-btn) {
+    width: 36px; /* size-9 */
+    height: 36px;
+    border-color: var(--border-color);
+    background-color: #ffffff;
+    color: var(--text-secondary);
+    transition: all 0.15s ease;
+}
+:deep(.dark .notification-btn) {
+    background-color: #1f2937; /* gray-800 */
+    border-color: #374151; /* gray-700 */
+}
+:deep(.notification-btn:hover) {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background-color: #ffffff;
+}
+:deep(.dark .notification-btn:hover) {
+    background-color: #1f2937;
+}
+
+/* New Agent Button */
+:deep(.new-agent-btn) {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    border-radius: 0.5rem; /* rounded-lg */
+    font-weight: 500;
+    box-shadow: 0 1px 2px 0 rgba(59, 130, 246, 0.3); /* shadow-blue-500/30 */
+    padding: 8px 16px;
+    height: auto;
+}
+:deep(.new-agent-btn:hover) {
+    background-color: #1d4ed8; /* blue-700 */
+    border-color: #1d4ed8;
+}
+
+/* Scrollbar customization if needed globally or per component */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
 </style>

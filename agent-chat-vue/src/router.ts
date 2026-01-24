@@ -18,11 +18,6 @@ const router = createRouter({
                     component: () => import('./views/ChatView.vue'),
                 },
                 {
-                    path: '/audit',
-                    name: 'audit',
-                    component: () => import('./views/AuditView.vue'),
-                },
-                {
                     path: 'agents',
                     name: 'agent-marketplace',
                     component: () => import('./views/AgentMarketplace.vue'),
@@ -43,7 +38,12 @@ const router = createRouter({
                     component: () => import('./views/custom-agents/AgentEdit.vue'),
                 },
             ]
-        }
+        },
+        {
+            path: '/audit',
+            name: 'audit',
+            component: () => import('./views/AuditView.vue'),
+        },
     ],
 })
 
