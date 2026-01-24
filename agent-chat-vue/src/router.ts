@@ -5,12 +5,22 @@ const router = createRouter({
     routes: [
         {
             path: '/',
+            name: 'dashboard',
+            component: () => import('./views/DashboardView.vue'),
+        },
+        {
+            path: '/chat',
             component: () => import('./components/layout/MainLayout.vue'),
             children: [
                 {
                     path: '',
                     name: 'chat',
                     component: () => import('./views/ChatView.vue'),
+                },
+                {
+                    path: '/audit',
+                    name: 'audit',
+                    component: () => import('./views/AuditView.vue'),
                 },
                 {
                     path: 'agents',

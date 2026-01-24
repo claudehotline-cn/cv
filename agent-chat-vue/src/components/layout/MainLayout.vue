@@ -21,6 +21,10 @@
         <!-- System Section -->
         <div class="nav-group">
           <div class="group-title">System</div>
+          <router-link to="/" class="nav-item">
+             <el-icon class="nav-icon"><HomeFilled /></el-icon>
+             <span class="nav-label">Dashboard</span>
+          </router-link>
           <button class="nav-item">
              <div class="nav-icon-wrapper">
                <el-icon class="nav-icon"><List /></el-icon>
@@ -109,7 +113,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
-  Cpu, Plus, List, Grid, ChatDotRound, Clock, Setting 
+  Cpu, Plus, List, Grid, ChatDotRound, Clock, Setting, HomeFilled
 } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
 import apiClient from '@/api/client'
@@ -131,12 +135,12 @@ onMounted(async () => {
 
 async function handleNewChat() {
   chatStore.resetSession()
-  router.push('/')
+  router.push('/chat')
 }
 
 async function handleSelectSession(sessionId: string) {
   await chatStore.selectSession(sessionId)
-  router.push('/')
+  router.push('/chat')
 }
 
 async function handleSelectAgent(agent: any) {
