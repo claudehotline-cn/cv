@@ -107,7 +107,7 @@ def _save_sql_result_csv(rows: List[Dict], columns: List[str], analysis_id: str,
 
 
 @tool("data_db_list_tables")
-def db_list_tables_tool() -> str:
+def db_list_tables_tool(config: RunnableConfig = None) -> str:
     """列出当前默认数据库中的候选表及其部分列信息。"""
     settings = get_settings()
     raw_db_name = getattr(settings, "db_default_name", None)

@@ -54,7 +54,9 @@ def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> 
     
     try:
         # 1. 强制调用 df_profile 获取基础信息
-        profile_json = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=config)
+        child_config = config.copy() if config else {}
+        child_config.setdefault("metadata", {})["sub_agent"] = "Report Agent"
+        profile_json = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=child_config)
         
         # 2. 增强：加载完整数据并转换为 Markdown 表格供给 LLM
         # from ..utils.dataframe_store import get_dataframe # IMPORTED ABOVE
@@ -147,8 +149,9 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     ])]
     
     # 🚀 使用流式输出 + with_config 设置 tags，让 metadata 包含 agent 名称
+    llm_config = {"tags": ["agent:report_agent"], "metadata": {"sub_agent": "Report Agent"}}
     full_response = None
-    for chunk in llm.with_config({"tags": ["agent:report_agent"]}).stream(messages):
+    for chunk in llm.with_config(llm_config).stream(messages):
         if full_response is None:
             full_response = chunk
         else:

@@ -59,7 +59,9 @@ def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) ->
     
     # 只加载 result（Python Agent 处理后的数据，已转换好类型）
     try:
-        result = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=config)
+        child_config = config.copy() if config else {}
+        child_config.setdefault("metadata", {})["sub_agent"] = "Visualizer Agent"
+        result = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[Visualizer Agent] df_profile(result): %s", result[:500] if len(result) > 500 else result)
         return {"df_profile_result": result, "analysis_id": analysis_id, "task_description": task_description}
     except Exception as e:
@@ -195,8 +197,9 @@ python
     ])]
     
     # 🚀 使用流式输出 + with_config 设置 tags，让 metadata 包含 agent 名称
+    llm_config = {"tags": ["agent:visualizer_agent"], "metadata": {"sub_agent": "Visualizer Agent"}}
     full_response = None
-    for chunk in llm.with_config({"tags": ["agent:visualizer_agent"]}).stream(messages):
+    for chunk in llm.with_config(llm_config).stream(messages):
         if full_response is None:
             full_response = chunk
         else:
@@ -227,7 +230,9 @@ def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig
     retry_count = state.get("retry_count", 0)
     
     try:
-        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=config)
+        child_config = config.copy() if config else {}
+        child_config.setdefault("metadata", {})["sub_agent"] = "Visualizer Agent"
+        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[Visualizer Agent] python_execute result: %s", result[:500] if len(result) > 500 else result)
         
         # 检查执行结果是否包含错误

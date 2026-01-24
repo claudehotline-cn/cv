@@ -37,12 +37,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-from app.routes import agents, sessions, chat, tasks
+from app.routes import agents, sessions, chat, tasks, audit
 
 app.include_router(agents.router)
 app.include_router(sessions.router)
 app.include_router(chat.router)
 app.include_router(tasks.router)
+app.include_router(audit.router)
 
 # CORS
 app.add_middleware(

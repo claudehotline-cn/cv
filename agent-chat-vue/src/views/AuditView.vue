@@ -41,6 +41,9 @@
                             <el-select v-model="selectedType" placeholder="Event Type" clearable class="filter-select">
                                 <el-option v-for="type in eventTypes" :key="type" :label="type" :value="type" />
                             </el-select>
+                            <el-select v-model="selectedInitiator" placeholder="User/Agent" clearable class="filter-select">
+                                <el-option v-for="user in initiators" :key="user" :label="user" :value="user" />
+                            </el-select>
                             <el-select v-model="selectedSeverity" placeholder="Severity" clearable class="filter-select">
                                 <el-option v-for="sev in severities" :key="sev" :label="sev" :value="sev" />
                             </el-select>
@@ -49,7 +52,8 @@
                      </div>
 
                      <el-table 
-                        :data="filteredLogs" 
+                        v-loading="loading"
+                        :data="paginatedLogs" 
                         style="width: 100%" 
                         class="premium-table"
                         :header-cell-style="{ background: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', fontSize: '12px', letterSpacing: '0.05em' }"
@@ -62,6 +66,13 @@
                         </el-table-column>
                         
                         <el-table-column prop="type" label="Event Type" width="150" />
+
+                        <el-table-column prop="node" label="Node" width="160">
+                            <template #default="scope">
+                                <span v-if="scope.row.node && scope.row.node !== '-'" class="font-mono text-xs">{{ scope.row.node }}</span>
+                                <span v-else class="text-secondary">-</span>
+                            </template>
+                        </el-table-column>
                         
                         <el-table-column prop="severity" label="Severity" width="120">
                             <template #default="scope">
@@ -79,14 +90,27 @@
                         
                         <el-table-column prop="description" label="Description" min-width="300" show-overflow-tooltip />
                         
-                        <el-table-column prop="initiator" label="User/Agent" width="180">
+                        <el-table-column prop="initiator" label="User" width="140">
                             <template #default="scope">
                                 <div class="user-cell">
                                     <div class="user-avatar">
                                         {{ scope.row.initiator.substring(0,2).toUpperCase() }}
                                     </div>
-                                    <span>{{ scope.row.initiator }}</span>
+                                    <span class="truncate">{{ scope.row.initiator }}</span>
                                 </div>
+                            </template>
+                        </el-table-column>
+
+                        <el-table-column prop="agent" label="Agent" width="140">
+                             <template #default="scope">
+                                <span v-if="scope.row.agent && scope.row.agent !== '-'" class="font-bold text-primary">{{ scope.row.agent }}</span>
+                                <span v-else class="text-secondary">-</span>
+                            </template>
+                        </el-table-column>
+
+                        <el-table-column width="100" align="right">
+                            <template #default="scope">
+                                <el-button link type="primary" size="small" @click="viewDetails(scope.row)">View</el-button>
                             </template>
                         </el-table-column>
                      </el-table>
@@ -94,13 +118,50 @@
                      <!-- Pagination -->
                      <div class="pagination-container">
                          <el-pagination
+                            v-model:current-page="currentPage"
+                            v-model:page-size="pageSize"
+                            :page-sizes="[10, 20, 50, 100]"
                             background
-                            layout="prev, pager, next"
-                            :total="100"
+                            layout="total, sizes, prev, pager, next, jumper"
+                            :total="filteredLogs.length"
                             class="premium-pagination"
                          />
                      </div>
                 </el-card>
+
+                <!-- Details Drawer -->
+                <el-drawer
+                    v-model="drawerVisible"
+                    title="Audit Log Details"
+                    direction="rtl"
+                    size="40%"
+                    class="premium-drawer"
+                >
+                    <div v-if="selectedLog" class="drawer-content">
+                        <div class="detail-item">
+                            <span class="label">Time</span>
+                            <span class="value">{{ selectedLog.time }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Event Type</span>
+                            <span class="value">{{ selectedLog.type }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Initiator</span>
+                            <span class="value">{{ selectedLog.initiator }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Description</span>
+                            <p class="value description-text">{{ selectedLog.description }}</p>
+                        </div>
+                        
+                        <el-divider content-position="left">Raw Data</el-divider>
+                        
+                        <div class="json-viewer">
+                            <pre>{{ JSON.stringify(selectedLog.details || {}, null, 2) }}</pre>
+                        </div>
+                    </div>
+                </el-drawer>
             </div>
         </el-main>
     </el-container>
@@ -108,28 +169,78 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
+import apiClient from '@/api/client'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 
 const searchQuery = ref('')
 const dateRange = ref([])
 const selectedType = ref('')
 const selectedSeverity = ref('')
+const selectedInitiator = ref('')
+const loading = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(20)
+
+// Drawer State
+const drawerVisible = ref(false)
+const selectedLog = ref<any>(null)
+
+const recursiveParse = (obj: any): any => {
+    if (typeof obj === 'string') {
+        try {
+            // Attempt to parse string as JSON
+            const parsed = JSON.parse(obj)
+            // If result is object/array, recurse
+            if (typeof parsed === 'object' && parsed !== null) {
+                return recursiveParse(parsed)
+            }
+            return parsed
+        } catch (e) {
+            return obj // Return original string if not JSON
+        }
+    } else if (Array.isArray(obj)) {
+        return obj.map(item => recursiveParse(item))
+    } else if (typeof obj === 'object' && obj !== null) {
+        const newObj: any = {}
+        for (const key in obj) {
+            newObj[key] = recursiveParse(obj[key])
+        }
+        return newObj
+    }
+    return obj
+}
+
+const viewDetails = (log: any) => {
+    // Deep copy and parse details
+    const parsedDetails = recursiveParse(log.details || {})
+    selectedLog.value = {
+        ...log,
+        details: parsedDetails
+    }
+    drawerVisible.value = true
+}
 
 // Filter Options
-const eventTypes = ['Connection', 'Batch Job', 'Performance', 'Deployment', 'Security', 'Auth', 'System']
-const severities = ['Success', 'Info', 'Warning', 'Error']
 
-const logs = ref([
-    { time: '2023-10-24 10:42:05', type: 'Connection', severity: 'Error', description: 'Agent-007 failed to handshake with VectorDB cluster. Retrying in 5s...', initiator: 'System' },
-    { time: '2023-10-24 10:40:12', type: 'Batch Job', severity: 'Info', description: 'Successfully processed 1,200 documents for ingest.', initiator: 'DataAgent' },
-    { time: '2023-10-24 10:38:55', type: 'Performance', severity: 'Warning', description: 'Vector DB query latency > 500ms detected in eu-west-1 region.', initiator: 'Monitor' },
-    { time: '2023-10-24 10:15:20', type: 'Deployment', severity: 'Success', description: 'Agent-009 "CreativeWriter" deployed to production successfully.', initiator: 'Alex Morgan' },
-    { time: '2023-10-24 09:55:00', type: 'Security', severity: 'Info', description: 'Scheduled rotation of internal service keys completed.', initiator: 'KeyManager' },
-    { time: '2023-10-24 09:30:11', type: 'Auth', severity: 'Success', description: 'User login from IP 192.168.1.1', initiator: 'Alex Morgan' },
-    { time: '2023-10-24 08:00:00', type: 'System', severity: 'Info', description: 'Daily backup verification completed.', initiator: 'BackupSvc' },
-])
+const eventTypes = ['tool_start', 'tool_end', 'llm_start', 'llm_end', 'chain_start', 'chain_end']
+const severities = ['Success', 'Info', 'Warning', 'Error']
+const initiators = ['User', 'System', 'Claude-3.5-Sonnet', 'Gemini-Pro', 'DeepSeek-V3', 'Router']
+
+const logs = ref<any[]>([])
+
+onMounted(async () => {
+    loading.value = true
+    try {
+        // Fetch a larger dataset for client-side pagination demo
+        logs.value = await apiClient.getAuditLogs(200)
+    } catch (e) {
+        console.error('Failed to fetch audit logs', e)
+    } finally {
+        loading.value = false
+    }
+})
 
 import { computed } from 'vue'
 
@@ -147,6 +258,10 @@ const filteredLogs = computed(() => {
         if (selectedSeverity.value && log.severity !== selectedSeverity.value) {
             return false
         }
+        // Initiator
+        if (selectedInitiator.value && log.initiator !== selectedInitiator.value) {
+            return false
+        }
         // Date Range (Simple string comparison for demo, ideally parse Dates)
         if (dateRange.value && dateRange.value.length === 2) {
             const logDate = new Date(log.time)
@@ -160,11 +275,18 @@ const filteredLogs = computed(() => {
     })
 })
 
+const paginatedLogs = computed(() => {
+    const start = (currentPage.value - 1) * pageSize.value
+    const end = start + pageSize.value
+    return filteredLogs.value.slice(start, end)
+})
+
 const clearFilters = () => {
     searchQuery.value = ''
     dateRange.value = []
     selectedType.value = ''
     selectedSeverity.value = ''
+    selectedInitiator.value = ''
 }
 
 const getSeverityType = (severity: string) => {
@@ -394,5 +516,58 @@ const tableRowClassName = () => {
 :deep(.premium-pagination .el-pagination.is-background .el-pager li:hover) {
     color: var(--accent-primary);
     border-color: var(--accent-primary);
+}
+
+/* Drawer Styles */
+.drawer-content {
+    padding: 0 12px;
+}
+
+.detail-item {
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.detail-item .label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.detail-item .value {
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.description-text {
+    line-height: 1.5;
+    background-color: var(--bg-secondary);
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 4px;
+}
+
+.json-viewer {
+    background-color: #1e1e1e;
+    color: #ce9178;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: 'Fira Code', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+:deep(.premium-drawer .el-drawer__header) {
+    margin-bottom: 0;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color);
+}
+:deep(.premium-drawer .el-drawer__body) {
+    padding: 24px;
+    background-color: var(--bg-primary);
 }
 </style>

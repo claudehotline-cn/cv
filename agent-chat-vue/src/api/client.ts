@@ -1,6 +1,8 @@
 /**
  * API 客户端
  */
+import axios, { type AxiosInstance } from 'axios'
+
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 export interface CreateSessionRequest {
@@ -19,77 +21,73 @@ export interface FeedbackRequest {
 
 class ApiClient {
     private baseUrl: string
+    public http: AxiosInstance
 
     constructor(baseUrl: string = API_BASE) {
         this.baseUrl = baseUrl
+        this.http = axios.create({
+            baseURL: baseUrl,
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+
+        // interceptors can be added here
+        this.http.interceptors.response.use(
+            response => response.data,
+            error => {
+                // handle global errors
+                return Promise.reject(error)
+            }
+        )
     }
 
     // Agent 操作
     async listAgents(): Promise<any[]> {
-        const response = await fetch(`${this.baseUrl}/agents/`)
-        return response.json()
+        return this.http.get('/agents/')
     }
 
     async getAgent(agentId: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/agents/${agentId}`)
-        return response.json()
+        return this.http.get(`/agents/${agentId}`)
     }
 
     async createAgent(config: any): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/agents/`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(config),
-        })
-        return response.json()
+        return this.http.post('/agents/', config)
     }
 
     async updateAgent(agentId: string, config: any): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/agents/${agentId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(config),
-        })
-        return response.json()
+        return this.http.put(`/agents/${agentId}`, config)
     }
 
     async deleteAgent(agentId: string): Promise<void> {
-        await fetch(`${this.baseUrl}/agents/${agentId}`, { method: 'DELETE' })
+        return this.http.delete(`/agents/${agentId}`)
     }
 
     async getAgentSchema(agentId: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/agents/${agentId}/config-schema`)
-        return response.json()
+        return this.http.get(`/agents/${agentId}/config-schema`)
     }
 
     // Session 操作
     async createSession(title?: string, agentId?: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/sessions/`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                title: title || '新对话',
-                agent_id: agentId
-            }),
+        return this.http.post('/sessions/', {
+            title: title || '新对话',
+            agent_id: agentId
         })
-        return response.json()
     }
 
     async listSessions(limit = 50): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/sessions/?limit=${limit}`)
-        return response.json()
+        return this.http.get('/sessions/', { params: { limit } })
     }
 
     async getSession(sessionId: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/sessions/${sessionId}`)
-        return response.json()
+        return this.http.get(`/sessions/${sessionId}`)
     }
 
     async deleteSession(sessionId: string): Promise<void> {
-        await fetch(`${this.baseUrl}/sessions/${sessionId}`, { method: 'DELETE' })
+        return this.http.delete(`/sessions/${sessionId}`)
     }
 
-    // 流式对话
+    // 流式对话 - Fetch is better for streams
     streamChat(
         sessionId: string,
         message: string,
@@ -148,7 +146,7 @@ class ApiClient {
         return () => controller.abort()
     }
 
-    // HITL Resume
+    // HITL Resume - Streaming
     resumeChat(
         sessionId: string,
         request: { decision: string, feedback: string },
@@ -213,30 +211,25 @@ class ApiClient {
     }
 
     async getState(sessionId: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/state`)
-        return response.json()
+        return this.http.get(`/sessions/${sessionId}/state`)
     }
 
     // Async Task 操作
     async executeTask(sessionId: string, message: string, config?: any): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/tasks/sessions/${sessionId}/execute`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, config }),
-        })
-        return response.json()
+        return this.http.post(`/tasks/sessions/${sessionId}/execute`, { message, config })
     }
 
     async getTask(taskId: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/tasks/${taskId}`)
-        return response.json()
+        return this.http.get(`/tasks/${taskId}`)
     }
 
     async cancelTask(taskId: string): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/tasks/${taskId}/cancel`, {
-            method: 'POST'
-        })
-        return response.json()
+        return this.http.post(`/tasks/${taskId}/cancel`)
+    }
+
+    // Audit API
+    async getAuditLogs(limit = 50): Promise<any> {
+        return this.http.get('/audit/', { params: { limit } })
     }
 
     streamTask(

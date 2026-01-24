@@ -5,6 +5,7 @@ import ast
 import re
 from typing import Any, Dict, Union, Optional
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 from data_agent.schemas import ChartResultSchema, ValidationResultSchema
 from agent_core.runtime import build_chat_llm
 
@@ -29,7 +30,8 @@ def validate_chart_option(chart_data: Dict[str, Any]) -> Dict[str, Any]:
 @tool("data_generate_chart")
 def generate_chart_tool(
     option: Union[str, Dict[str, Any]],
-    title: str = "数据图表"
+    title: str = "数据图表",
+    config: RunnableConfig = None
 ) -> str:
     """生成 ECharts 图表。
     """

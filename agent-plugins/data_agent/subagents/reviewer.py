@@ -50,7 +50,9 @@ def reviewer_step1_validate(state: ReviewerAgentState, config: RunnableConfig) -
 
     
     try:
-        result = validate_result_tool.invoke({"data_source": "result", "analysis_id": analysis_id}, config=config)
+        child_config = config.copy() if config else {}
+        child_config.setdefault("metadata", {})["sub_agent"] = "Reviewer Agent"
+        result = validate_result_tool.invoke({"data_source": "result", "analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[Reviewer Agent] validate_result: %s", result[:500] if len(result) > 500 else result)
         return {"validation_result": result, "analysis_id": analysis_id, "task_description": task_description}
     except Exception as e:

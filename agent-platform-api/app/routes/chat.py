@@ -279,7 +279,13 @@ async def chat_stream(
             "user_id": "mock_user", 
             "analysis_id": str(session.id) 
         },
-        "callbacks": [audit_callback]
+        "callbacks": [audit_callback],
+        "tags": [agent_key, "agent_platform"],
+        "metadata": {
+            "agent_key": agent_key,
+            "agent_id": str(session.agent.id),
+            "agent_name": session.agent.name
+        }
     }
 
     inputs = {"messages": [HumanMessage(content=message)]}
