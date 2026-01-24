@@ -59,6 +59,12 @@
                         :header-cell-style="{ background: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', fontSize: '12px', letterSpacing: '0.05em' }"
                         :row-class-name="tableRowClassName"
                      >
+                        <el-table-column prop="session_id" label="Session ID" width="180" fixed="left" show-overflow-tooltip>
+                            <template #default="scope">
+                                <span class="font-mono text-xs text-secondary">{{ scope.row.session_id || '-' }}</span>
+                            </template>
+                        </el-table-column>
+
                         <el-table-column prop="time" label="Time" width="180">
                             <template #default="scope">
                                 <span class="text-secondary">{{ scope.row.time }}</span>
@@ -108,7 +114,7 @@
                             </template>
                         </el-table-column>
 
-                        <el-table-column width="100" align="right">
+                        <el-table-column width="100" align="right" fixed="right">
                             <template #default="scope">
                                 <el-button link type="primary" size="small" @click="viewDetails(scope.row)">View</el-button>
                             </template>

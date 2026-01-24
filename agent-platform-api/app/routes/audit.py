@@ -12,6 +12,7 @@ router = APIRouter(prefix="/audit", tags=["audit"])
 class AuditLog(BaseModel):
     time: str
     session_id: Optional[str] = None
+    trace_id: Optional[str] = None
     user_id: str
     type: str
     severity: str
@@ -62,18 +63,54 @@ async def get_audit_logs(limit: int = 50, db: AsyncSession = Depends(get_db)):
                     return {}
             return {}
 
+        # Helper to safely parse inner data
+        def parse_inner_payload(d):
+            p = d.get("data")
+            if isinstance(p, dict): return p
+            if isinstance(p, str):
+                try:
+                    import json
+                    return json.loads(p)
+                except:
+                    return {}
+            return {}
+
         # Check top-level metadata/tags first (from my core fix)
-        # Note: 'data' is the payload. My core fix puts tags/metadata in 'data'.
-        tags = data.get("tags") or []
-        metadata = data.get("metadata") or {}
+        # log.data is the Full Event. The payload is in log.data['data']
+        payload = parse_inner_payload(data)
+        
+        tags = payload.get("tags") or []
+        metadata = payload.get("metadata") or {}
         
         # Try to detect Agent name from metadata
         if metadata.get("agent_name"):
             agent_name = metadata.get("agent_name")
-        
-        # Sub-agent name from metadata (populated by sub-agents)
+            
+        # Sub-agent name from metadata -> Use as Node Name
         if metadata.get("sub_agent"):
             node_name = metadata.get("sub_agent")
+            
+            # Infer Main Agent from Sub-Agent if not explicitly set
+            if agent_name == "-":
+                sub = node_name.lower()
+                if "sql" in sub or "python" in sub or "data" in sub or "report" in sub or "visualizer" in sub:
+                     agent_name = "Data Agent"
+        
+        # If Agent still not found, check tags for 'agent:name' pattern
+        if agent_name == "-" and tags:
+            for tag in tags:
+                if tag.startswith("agent:"):
+                    raw_agent = tag.split(":", 1)[1]
+                    # Map standard sub-agent tags to Data Agent
+                    if raw_agent in ["sql_agent", "python_agent", "visualizer_agent", "report_agent", "reviewer_agent"]:
+                        agent_name = "Data Agent"
+                    else:
+                        agent_name = raw_agent.replace("_", " ").title()
+                    break
+
+        # Override node_name if explicit node_label exists
+        if metadata.get("node_label"):
+            node_name = metadata.get("node_label")
         
         # Fallback: if user_id is generic, maybe agent_name is better initiator?
         # But we have separate Agent column now.
@@ -129,11 +166,16 @@ async def get_audit_logs(limit: int = 50, db: AsyncSession = Depends(get_db)):
             inner_payload = parse_inner(data.get("data"))
             model = get_name(inner_payload, "model", "LLM")
             if "/" in model: model = model.split("/")[-1]
-            node_name = model
-            description = f"Querying {model}"
+            # Use Model Name but keep it readable. If usually empty/generic, use AI Inference
+            node_name = model if model != "LLM" else "AI Inference"
+            description = f"Querying {node_name}"
             
         elif event_type == "llm_end":
             inner_payload = parse_inner(data.get("data"))
+            # Extracts model name if provided by callback handler
+            model = get_name(inner_payload, "model", "LLM")
+            if "/" in model: model = model.split("/")[-1]
+            node_name = model if model != "LLM" else "AI Inference"
             tokens = 0
             usage = inner_payload.get("usage") or {}
             if isinstance(usage, dict):
@@ -143,11 +185,32 @@ async def get_audit_logs(limit: int = 50, db: AsyncSession = Depends(get_db)):
         elif event_type == "chain_start":
             inner_payload = parse_inner(data.get("data"))
             chain = get_name(inner_payload, "chain", "Chain")
-            node_name = chain
-            description = f"Started {chain}"
+            
+            # Map technical chain names to user-friendly concepts
+            if chain in ["Chain", "unknown_chain", "RunnableSequence", "RunnableParallel"]:
+                 node_name = "Workflow Step"
+            else:
+                 node_name = chain
+            
+            # Use LangGraph specific metadata if available (injected by some runtimes)
+            if metadata.get("langgraph_node"):
+                node_name = metadata.get("langgraph_node").title()
+
+            description = f"Started {node_name}"
             
         elif event_type == "chain_end":
-            description = "Chain execution finished"
+            inner_payload = parse_inner(data.get("data"))
+            chain = get_name(inner_payload, "chain", "Chain")
+            
+            if chain in ["Chain", "unknown_chain", "RunnableSequence", "RunnableParallel"]:
+                 node_name = "Workflow Step"
+            else:
+                 node_name = chain
+
+            if metadata.get("langgraph_node"):
+                node_name = metadata.get("langgraph_node").title()
+
+            description = "Step completed"
         elif event_type == "session_created":
             description = "New session created"
         elif "description" in data:
@@ -176,7 +239,8 @@ async def get_audit_logs(limit: int = 50, db: AsyncSession = Depends(get_db)):
 
         logs.append(AuditLog(
             time=log.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            session_id=log.trace_id, # trace_id is used as session_id context
+            session_id=log.session_id, # Use real session_id column
+            trace_id=log.trace_id,     # Expose trace_id
             user_id=user_id_val,
             type=event_type,
             severity=severity,

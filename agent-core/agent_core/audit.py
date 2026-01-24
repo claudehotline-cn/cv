@@ -30,6 +30,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
         self.user_id = user_id
         self.trace_id = trace_id
         self.channel = "agent:audit_events"
+        self._run_context: Dict[str, Dict[str, Any]] = {}
         
     def _publish_event(self, event_type: str, payload: Dict[str, Any]):
         """Publish event to Redis Stream (fire and forget, thread-safe)."""
@@ -88,23 +89,45 @@ class AuditCallbackHandler(BaseCallbackHandler):
     ) -> Any:
         """Run when tool starts running."""
         tool_name = serialized.get("name")
+        metadata = kwargs.get("metadata")
+        tags = kwargs.get("tags")
+        run_id = str(kwargs.get("run_id", ""))
+        
+        # Cache context for end event
+        if run_id:
+            self._run_context[run_id] = {
+                "metadata": metadata,
+                "tags": tags,
+                "name": tool_name
+            }
+
         self._publish_event("tool_start", {
             "tool": tool_name,
             "input": input_str,
-            "run_id": str(kwargs.get("run_id", "")),
-            "tags": kwargs.get("tags"),
-            "metadata": kwargs.get("metadata"),
+            "run_id": run_id,
+            "tags": tags,
+            "metadata": metadata,
         })
 
     async def on_tool_end(self, output: str, **kwargs: Any) -> Any:
         """Run when tool ends running."""
         tool_name = kwargs.get("name", "unknown_tool")
+        run_id = str(kwargs.get("run_id", ""))
+        
+        # Retrieve context from start event
+        cached_ctx = self._run_context.pop(run_id, {})
+        metadata = kwargs.get("metadata") or cached_ctx.get("metadata")
+        tags = kwargs.get("tags") or cached_ctx.get("tags")
+        # Fallback to cached name if not provided in kwargs
+        if tool_name == "unknown_tool" and cached_ctx.get("name"):
+            tool_name = cached_ctx.get("name")
+
         self._publish_event("tool_end", {
             "tool": tool_name,
             "output": output, 
-            "run_id": str(kwargs.get("run_id", "")),
-            "tags": kwargs.get("tags"),
-            "metadata": kwargs.get("metadata"),
+            "run_id": run_id,
+            "tags": tags,
+            "metadata": metadata,
         })
 
     async def on_tool_error(
@@ -127,33 +150,63 @@ class AuditCallbackHandler(BaseCallbackHandler):
         serialized = serialized or {}
         chain_name = serialized.get("name") or (serialized.get("id") or [])[-1] if serialized.get("id") else "unknown_chain"
         
+        metadata = kwargs.get("metadata")
+        tags = kwargs.get("tags")
+        run_id = str(kwargs.get("run_id", ""))
+        
+        # Cache context
+        if run_id:
+            self._run_context[run_id] = {
+                "metadata": metadata,
+                "tags": tags
+            }
+
         self._publish_event("chain_start", {
             "chain": chain_name,
             "inputs": self._sanitize_inputs(inputs),
-            "run_id": str(kwargs.get("run_id", "")),
-            "tags": kwargs.get("tags"),
-            "metadata": kwargs.get("metadata"),
+            "run_id": run_id,
+            "tags": tags,
+            "metadata": metadata,
         })
 
     async def on_chain_end(self, outputs: Dict[str, Any], **kwargs: Any) -> Any:
         """Run when chain ends running."""
+        # Retrieve context from start event
+        cached_ctx = self._run_context.pop(run_id, {})
+        metadata = kwargs.get("metadata") or cached_ctx.get("metadata")
+        tags = kwargs.get("tags") or cached_ctx.get("tags")
+        chain_name = cached_ctx.get("name") or "unknown_chain"
+
         self._publish_event("chain_end", {
+            "chain": chain_name,
             "outputs": self._sanitize_inputs(outputs), # Re-use sanitize for outputs
-            "run_id": str(kwargs.get("run_id", "")),
-            "tags": kwargs.get("tags"),
-            "metadata": kwargs.get("metadata"),
+            "run_id": run_id,
+            "tags": tags,
+            "metadata": metadata,
         })
 
     async def on_llm_start(
         self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any
     ) -> Any:
         """Run when LLM starts running."""
+        metadata = kwargs.get("metadata")
+        tags = kwargs.get("tags")
+        run_id = str(kwargs.get("run_id", ""))
+        
+        model_name = kwargs.get("invocation_params", {}).get("model_name")
+        if run_id:
+            self._run_context[run_id] = {
+                "metadata": metadata,
+                "tags": tags,
+                "name": model_name
+            }
+
         self._publish_event("llm_start", {
-            "model": kwargs.get("invocation_params", {}).get("model_name"),
+            "model": model_name,
             "prompts": prompts,
-            "run_id": str(kwargs.get("run_id", "")),
-            "tags": kwargs.get("tags"),
-            "metadata": kwargs.get("metadata"),
+            "run_id": run_id,
+            "tags": tags,
+            "metadata": metadata,
         })
 
     async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> Any:
@@ -164,12 +217,19 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 for gen in gen_list:
                     text_generations.append(gen.text)
                     
+        run_id = str(kwargs.get("run_id", ""))
+        cached_ctx = self._run_context.pop(run_id, {})
+        metadata = kwargs.get("metadata") or cached_ctx.get("metadata")
+        tags = kwargs.get("tags") or cached_ctx.get("tags")
+        model = cached_ctx.get("name")
+
         self._publish_event("llm_end", {
+            "model": model, # Add model name to payload
             "generations": text_generations,
             "usage": response.llm_output.get("token_usage") if response.llm_output else None,
-            "run_id": str(kwargs.get("run_id", "")),
-            "tags": kwargs.get("tags"),
-            "metadata": kwargs.get("metadata"),
+            "run_id": run_id,
+            "tags": tags,
+            "metadata": metadata,
         })
 
     def _sanitize_inputs(self, inputs: Any) -> Any:

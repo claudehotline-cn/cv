@@ -62,6 +62,14 @@ class AuditWorker:
         }
         """
         try:
+            # Parse event if string or bytes
+            if isinstance(event, (str, bytes)):
+                try:
+                    event = json.loads(event)
+                except Exception as e:
+                    _LOGGER.error(f"[AuditWorker] Failed to parse event JSON: {e}, raw={event}")
+                    return
+
             # Here we would insert into DB
             # For now, we simulate by logging Structured JSON
             

@@ -77,47 +77,11 @@ def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: B
         _LOGGER.info("[SQL Agent] list_tables result: %s", result[:300] if len(result) > 300 else result)
         return {"tables_info": result, "analysis_id": analysis_id, "task_description": task_description}
 
-# ... (skipping unchanged parts)
-
-    # 获取所有业务表的 Schema
-    schema_results = []
-    
-    # Prepare config
-    # Note: access config from outer scope is not robust in Step 2 if not passed. 
-    # But step 2 signature is `sql_step2_get_schema(state: SQLAgentState)`. 
-    # It misses `config: RunnableConfig`. I should add it to signature first.
-    # Ah, I cannot easily change signature if graph node definition doesn't support it? 
-    # CompiledSubAgent nodes support config. I should update signature.
-    
-    for table in business_tables:
-        try:
-            # We don't have config here yet. Skip for now or need refactor.
-            # Actually, let's fix the step signature in next tool call if needed.
-            # For now, just focus on LLM and run_sql which are critical.
-            result = db_table_schema_tool.invoke({"table": table})
-            schema_results.append(f"表 {table}:\n{result}")
-            # ...
-
-# ...
-
-    # 🚀 使用 with_config 设置 tags，让 metadata 包含 agent 名称标签
-    _LOGGER.info("[SQL Agent] Starting LLM stream with tags=['agent:sql_agent']")
-    llm_config = {"tags": ["agent:sql_agent"], "metadata": {"sub_agent": "SQL Agent"}}
-    for chunk in llm.with_config(llm_config).stream(messages):
-
-# ...
-
-    try:
-        # Prepare config for tool call
-        # Same issue: sql_step4_run_sql does not take config.
-        # I need to update signatures to accept config.
-        
-        # 传入 user_requirement 以启用 SQL 审查
-        # result = db_run_sql_tool.invoke(...)
-        pass
     except Exception as e:
         _LOGGER.error("[SQL Agent] list_tables failed: %s", e)
         return {"tables_info": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
+
+
 
 def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> dict:
     """Step 2: 获取相关表的 Schema"""
