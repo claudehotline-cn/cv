@@ -1,5 +1,5 @@
 <template>
-  <aside class="w-64 bg-surface-light dark:bg-surface-dark flex flex-col border-r border-border-color dark:border-gray-800 z-20 flex-shrink-0 transition-colors">
+  <aside class="w-64 h-full bg-surface-light dark:bg-surface-dark flex flex-col border-r border-border-color dark:border-gray-800 z-20 flex-shrink-0 transition-colors">
     <!-- Header -->
     <div class="p-6 flex items-center gap-3">
       <div class="bg-primary/10 rounded-lg p-2 flex items-center justify-center">
