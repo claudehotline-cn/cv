@@ -10,14 +10,14 @@
           </div>
           <span class="brand-text">Nexus Hub</span>
         </div>
-        <button class="new-thread-btn" @click="handleNewChat">
-          <el-icon class="icon-sm"><Plus /></el-icon>
-          <span>New Thread</span>
-        </button>
+        <el-button type="primary" class="new-thread-btn-el" @click="handleNewChat">
+          <el-icon class="icon-sm" style="margin-right: 6px"><Plus /></el-icon>
+          New Thread
+        </el-button>
       </div>
 
       <!-- Navigation Content -->
-      <div class="sidebar-scroll">
+      <el-scrollbar class="sidebar-scroll" view-class="sidebar-scroll-view">
         <!-- System Section -->
         <div class="nav-group">
           <div class="group-title">System</div>
@@ -31,7 +31,7 @@
                <span class="status-dot"></span>
              </div>
              <span class="nav-label">Active Tasks</span>
-             <span class="nav-badge">2</span>
+             <el-tag type="warning" effect="light" round size="small" style="font-weight: 700; border: none; background: rgba(245, 158, 11, 0.1); color: #d97706;">2</el-tag>
           </button>
           
           <router-link to="/agents" class="nav-item" active-class="active">
@@ -81,7 +81,7 @@
              </router-link>
            </div>
         </div>
-      </div>
+      </el-scrollbar>
 
       <!-- Footer -->
       <div class="sidebar-footer">
@@ -210,37 +210,30 @@ function getAgentColor(name: string) {
   color: var(--text-primary);
 }
 
-.new-thread-btn {
+.new-thread-btn-el {
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: var(--accent-primary);
-  color: white;
-  border: none;
+  height: 42px;
   border-radius: 12px;
-  padding: 10px;
-  font-size: 14px;
   font-weight: 700;
-  cursor: pointer;
+  font-size: 14px;
   box-shadow: 0 4px 6px -1px rgba(31, 150, 173, 0.2);
-  transition: all 0.2s;
+  border: none;
+  background: var(--accent-primary);
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
-
-.new-thread-btn:hover {
+.new-thread-btn-el:hover {
   background: #1a8599;
-  transform: translateY(-1px);
   box-shadow: 0 6px 10px -2px rgba(31, 150, 173, 0.3);
-}
-
-.new-thread-btn:active {
-  transform: scale(0.98);
 }
 
 .sidebar-scroll {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
+}
+
+:deep(.sidebar-scroll-view) {
   padding: 0 12px 16px;
   display: flex;
   flex-direction: column;

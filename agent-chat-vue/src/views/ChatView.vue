@@ -134,45 +134,56 @@
       <div class="input-layer">
          <div class="input-wrapper">
             <div class="input-box">
-               <button class="attach-btn">
-                  <el-icon><CirclePlusFilled /></el-icon>
-               </button>
+               <el-button 
+                  class="attach-btn" 
+                  circle 
+                  text
+               >
+                  <el-icon :size="24"><CirclePlusFilled /></el-icon>
+               </el-button>
                
-               <textarea
+               <el-input
                   v-model="inputMessage"
-                  class="chat-input"
+                  type="textarea"
+                  :autosize="{ minRows: 1, maxRows: 6 }"
                   placeholder="Message Data Analyst..."
-                  rows="1"
+                  class="chat-input-el"
+                  resize="none"
                   @keydown.enter.exact.prevent="handleSend"
-                  @input="autoResize"
                   ref="textareaRef"
-               ></textarea>
+               />
                
-               <button 
+               <el-button 
                   v-if="chatStore.isStreaming"
                   class="stop-btn" 
+                  circle
+                  type="danger"
                   @click="chatStore.stopStream"
                >
                   <el-icon><VideoPause /></el-icon>
-               </button>
+               </el-button>
 
-               <button 
-                  v-if="!chatStore.isStreaming"
+               <el-button 
+                  v-else-if="!inputMessage.trim() && !chatStore.isStreaming"
                   class="async-toggle-btn"
                   :class="{ active: chatStore.asyncMode }"
+                  circle
                   @click="chatStore.asyncMode = !chatStore.asyncMode"
                   title="Async Mode"
                >
                   <el-icon><Timer /></el-icon>
-               </button>
-               <button 
+               </el-button>
+
+               <el-button 
                   v-else
                   class="send-btn" 
+                  circle
+                  type="primary"
                   :disabled="!inputMessage.trim()"
                   @click="handleSend"
                >
                   <el-icon><Top /></el-icon>
-               </button>
+               </el-button>
             </div>
          </div>
       </div>
@@ -227,17 +238,9 @@ const { isDark, toggleTheme } = useTheme()
 const chatStore = useChatStore()
 const inputMessage = ref('')
 const scrollContainer = ref<HTMLElement>()
-const textareaRef = ref<HTMLTextAreaElement>()
+const textareaRef = ref<any>()
 const showRightDrawer = ref(false)
 
-// Auto resize textarea
-function autoResize() {
-   const el = textareaRef.value
-   if (el) {
-      el.style.height = 'auto'
-      el.style.height = el.scrollHeight + 'px'
-   }
-}
 
 // 智能滚动：用户向上滚动时停止跟随，回到底部时恢复
 const userHasScrolledUp = ref(false)
@@ -296,7 +299,6 @@ async function handleSend() {
   
   chatStore.sendMessage(msg)
   inputMessage.value = ''
-  if (textareaRef.value) textareaRef.value.style.height = 'auto'
 }
 
 watch(
@@ -641,21 +643,19 @@ function isValidMessage(msg: any): boolean {
   color: var(--accent-primary);
 }
 
-.chat-input {
-  flex: 1;
+:deep(.chat-input-el .el-textarea__inner) {
   background: transparent;
   border: none;
-  font-family: inherit;
-  font-size: 16px;
+  box-shadow: none;
   padding: 10px 0;
-  max-height: 200px;
-  resize: none;
+  min-height: 24px !important;
   color: var(--text-primary);
-  min-height: 24px;
+  font-family: inherit;
+  font-size: 16px; 
+  resize: none;
 }
-
-.chat-input:focus {
-  outline: none;
+:deep(.chat-input-el .el-textarea__inner:focus) {
+  box-shadow: none;
 }
 
 .send-btn {
