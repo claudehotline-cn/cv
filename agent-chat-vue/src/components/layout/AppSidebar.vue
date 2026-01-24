@@ -1,25 +1,25 @@
 <template>
-  <aside class="w-64 h-full bg-surface-light dark:bg-surface-dark flex flex-col border-r border-border-color dark:border-gray-800 z-20 flex-shrink-0 transition-colors">
+  <aside class="sidebar-container">
     <!-- Header -->
-    <div class="p-6 flex items-center gap-3">
-      <div class="bg-primary/10 rounded-lg p-2 flex items-center justify-center">
-        <span class="material-symbols-outlined text-primary" style="font-size: 24px;">all_inclusive</span>
+    <div class="sidebar-header">
+      <div class="logo-wrapper">
+        <span class="material-symbols-outlined text-primary icon-xl-24">all_inclusive</span>
       </div>
-      <h1 class="text-text-main dark:text-white text-lg font-bold tracking-tight">AI Nexus</h1>
+      <h1 class="brand-title">AI Nexus</h1>
     </div>
 
     <!-- Scrollable Menu -->
-    <div class="flex-1 overflow-y-auto px-4 flex flex-col gap-2">
+    <div class="menu-scroll-area">
       <!-- We wrap el-menu to make it behave like the original nav list -->
       <el-menu
         :default-active="activeRoute"
-        class="custom-menu border-none bg-transparent w-full"
+        class="custom-menu"
         :router="true"
         :ellipsis="false" 
       >
         <el-menu-item index="/">
           <template #title>
-             <div class="flex items-center gap-3 w-full">
+             <div class="menu-item-content">
                 <span class="material-symbols-outlined filled" :class="{ 'text-primary': activeRoute === '/', 'text-text-secondary': activeRoute !== '/' }">dashboard</span>
                 <span class="font-medium">Dashboard</span>
              </div>
@@ -28,7 +28,7 @@
         
         <el-menu-item index="/chat">
           <template #title>
-             <div class="flex items-center gap-3 w-full">
+             <div class="menu-item-content">
                 <span class="material-symbols-outlined">chat</span>
                 <span class="font-medium">Chat Space</span>
              </div>
@@ -37,7 +37,7 @@
 
         <el-menu-item index="/agents" disabled>
            <template #title>
-             <div class="flex items-center gap-3 w-full opacity-60">
+             <div class="menu-item-content opacity-60">
                 <span class="material-symbols-outlined">smart_toy</span>
                 <span class="font-medium">Agents</span>
              </div>
@@ -46,7 +46,7 @@
 
         <el-menu-item index="/audit">
            <template #title>
-             <div class="flex items-center gap-3 w-full">
+             <div class="menu-item-content">
                 <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/audit' }">article</span>
                 <span class="font-medium">Audit</span>
              </div>
@@ -55,7 +55,7 @@
 
         <el-menu-item index="/analytics" disabled>
            <template #title>
-             <div class="flex items-center gap-3 w-full opacity-60">
+             <div class="menu-item-content opacity-60">
                 <span class="material-symbols-outlined">analytics</span>
                 <span class="font-medium">Analytics</span>
              </div>
@@ -63,12 +63,12 @@
         </el-menu-item>
 
         <!-- Divider & Subheader -->
-        <div class="my-2 border-t border-border-color dark:border-gray-800 pointer-events-none"></div>
-        <p class="px-3 text-xs font-semibold text-text-secondary dark:text-gray-500 uppercase tracking-wider mb-1 mt-2 pointer-events-none">Settings</p>
+        <div class="menu-divider"></div>
+        <p class="menu-section-title">Settings</p>
 
         <el-menu-item index="/settings/general" disabled>
             <template #title>
-             <div class="flex items-center gap-3 w-full opacity-60">
+             <div class="menu-item-content opacity-60">
                 <span class="material-symbols-outlined">settings</span>
                 <span class="font-medium">General</span>
              </div>
@@ -77,7 +77,7 @@
 
         <el-menu-item index="/settings/api" disabled>
             <template #title>
-             <div class="flex items-center gap-3 w-full opacity-60">
+             <div class="menu-item-content opacity-60">
                 <span class="material-symbols-outlined">api</span>
                 <span class="font-medium">API Keys</span>
              </div>
@@ -87,14 +87,14 @@
     </div>
 
     <!-- Footer -->
-    <div class="p-4 border-t border-border-color dark:border-gray-800">
-      <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors user-card">
-        <div class="size-8 rounded-full bg-gradient-to-tr from-blue-400 to-indigo-500"></div>
-        <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-text-main dark:text-white truncate">Alex Morgan</p>
-          <p class="text-xs text-text-secondary dark:text-gray-400 truncate">alex@nexus.ai</p>
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar"></div>
+        <div class="user-info">
+          <p class="user-name">Alex Morgan</p>
+          <p class="user-email">alex@nexus.ai</p>
         </div>
-        <span class="material-symbols-outlined text-text-secondary" style="font-size: 20px;">unfold_more</span>
+        <span class="material-symbols-outlined text-text-secondary icon-lg-20">unfold_more</span>
       </div>
     </div>
   </aside>
@@ -170,4 +170,161 @@ const activeRoute = computed(() => route.path)
 :deep(.dark .user-card:hover) {
     background-color: rgba(31, 41, 55, 0.5);
 }
+
+.sidebar-container {
+    width: 256px; /* w-64 */
+    height: 100%;
+    background-color: var(--bg-primary); /* bg-surface-light */
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border-color);
+    z-index: 20;
+    flex-shrink: 0;
+    transition: background-color 0.3s, border-color 0.3s;
+}
+:deep(.dark .sidebar-container) {
+    background-color: var(--bg-secondary); /* bg-surface-dark */
+    border-right-color: #1f2937; /* border-gray-800 */
+}
+
+.sidebar-header {
+    padding: 24px; /* p-6 */
+    display: flex;
+    align-items: center;
+    gap: 12px; /* gap-3 */
+}
+
+.logo-wrapper {
+    background-color: rgba(99, 102, 241, 0.1); /* primary/10 */
+    border-radius: 8px; /* rounded-lg */
+    padding: 8px; /* p-2 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.brand-title {
+    color: var(--text-primary);
+    font-size: 18px; /* text-lg */
+    font-weight: 700; /* font-bold */
+    letter-spacing: -0.025em; /* tracking-tight */
+    margin: 0;
+}
+:deep(.dark .brand-title) {
+    color: white;
+}
+
+.menu-scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 16px; /* px-4 */
+    display: flex;
+    flex-direction: column;
+    gap: 8px; /* gap-2 */
+}
+
+.custom-menu {
+    border: none !important;
+    background-color: transparent !important;
+    width: 100%;
+}
+
+.menu-item-content {
+    display: flex;
+    align-items: center;
+    gap: 12px; /* gap-3 */
+    width: 100%;
+}
+
+.menu-item-content.opacity-60 {
+    opacity: 0.6;
+}
+
+.menu-divider {
+    margin: 8px 0; /* my-2 */
+    border-top: 1px solid var(--border-color);
+    pointer-events: none;
+}
+:deep(.dark .menu-divider) {
+    border-top-color: #1f2937; /* gray-800 */
+}
+
+.menu-section-title {
+    padding: 0 12px; /* px-3 */
+    font-size: 12px; /* text-xs */
+    font-weight: 600; /* font-semibold */
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em; /* tracking-wider */
+    margin-bottom: 4px; /* mb-1 */
+    margin-top: 8px; /* mt-2 */
+    pointer-events: none;
+}
+:deep(.dark .menu-section-title) {
+    color: #6b7280; /* gray-500 */
+}
+
+.sidebar-footer {
+    padding: 16px; /* p-4 */
+    border-top: 1px solid var(--border-color);
+}
+:deep(.dark .sidebar-footer) {
+    border-top-color: #1f2937; /* gray-800 */
+}
+
+.user-card {
+    display: flex;
+    align-items: center;
+    gap: 12px; /* gap-3 */
+    padding: 8px; /* p-2 */
+    border-radius: 8px; /* rounded-lg */
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.user-avatar {
+    width: 32px; /* size-8 */
+    height: 32px;
+    border-radius: 9999px; /* rounded-full */
+    background: linear-gradient(to top right, #60a5fa, #6366f1); /* from-blue-400 to-indigo-500 */
+}
+
+.user-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.user-name {
+    font-size: 14px; /* text-sm */
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0;
+}
+:deep(.dark .user-name) {
+    color: white;
+}
+
+.user-email {
+    font-size: 12px; /* text-xs */
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0;
+}
+:deep(.dark .user-email) {
+    color: #9ca3af; /* gray-400 */
+}
+
+.icon-xl-24 {
+    font-size: 24px !important;
+}
+
+.icon-lg-20 {
+    font-size: 20px !important;
+}
+
 </style>

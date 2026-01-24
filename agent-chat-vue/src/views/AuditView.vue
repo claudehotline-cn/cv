@@ -1,72 +1,125 @@
 <template>
-  <div class="h-screen overflow-hidden flex bg-background-light dark:bg-background-dark font-display text-text-main antialiased">
+  <el-container class="audit-layout el-premium">
     <!-- Sidebar -->
-    <AppSidebar />
+    <el-aside width="auto">
+      <AppSidebar />
+    </el-aside>
 
     <!-- Main Audit Content -->
-    <main class="flex-1 flex flex-col h-full relative overflow-hidden">
-        <header class="bg-surface-light dark:bg-surface-dark border-b border-border-color dark:border-gray-800 h-16 flex items-center justify-between px-8 flex-shrink-0 z-10">
-            <div class="flex items-center gap-6">
-                <h2 class="text-lg font-bold text-text-main dark:text-white">Audit Logs</h2>
+    <el-container direction="vertical" class="audit-container">
+        <el-header class="audit-header">
+            <div class="header-left">
+                <h2 class="page-title">Audit Logs</h2>
             </div>
-            <div class="flex items-center gap-4">
-                 <input class="block w-64 pl-4 pr-3 py-2 border-none rounded-lg bg-gray-100 dark:bg-gray-800 text-sm placeholder-text-secondary focus:ring-2 focus:ring-primary/20 focus:bg-white dark:focus:bg-gray-700 transition-all" placeholder="Search logs..." type="text"/>
-                 <button class="px-4 py-2 bg-white border border-border-color text-text-main text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">Export</button>
+            <div class="header-right">
+                 <el-input 
+                    v-model="searchQuery"
+                    class="search-input-el"
+                    placeholder="Search logs..." 
+                    :prefix-icon="Search"
+                    clearable
+                 />
+                 <el-button class="export-btn-el">Export</el-button>
             </div>
-        </header>
+        </el-header>
         
-        <div class="flex-1 overflow-y-auto p-8">
-            <div class="max-w-[1400px] mx-auto bg-surface-light dark:bg-surface-dark rounded-xl border border-border-color dark:border-gray-800 shadow-card">
-                 <!-- Table Header -->
-                 <div class="grid grid-cols-12 gap-4 p-4 border-b border-border-color dark:border-gray-800 text-xs font-semibold text-text-secondary uppercase tracking-wider bg-gray-50/50 dark:bg-gray-800/50">
-                     <div class="col-span-2">Time</div>
-                     <div class="col-span-2">Event Type</div>
-                     <div class="col-span-2">Severity</div>
-                     <div class="col-span-4">Description</div>
-                     <div class="col-span-2">User/Agent</div>
-                 </div>
-                 
-                 <!-- Table Body -->
-                 <div class="divide-y divide-border-color dark:divide-gray-800">
-                     <div v-for="(log, idx) in logs" :key="idx" class="grid grid-cols-12 gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors items-center text-sm text-text-main dark:text-white">
-                         <div class="col-span-2 text-text-secondary">{{ log.time }}</div>
-                         <div class="col-span-2 font-medium">{{ log.type }}</div>
-                         <div class="col-span-2">
-                             <span 
-                               :class="{
-                                   'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400': log.severity === 'Success' || log.severity === 'Info',
-                                   'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400': log.severity === 'Warning',
-                                   'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400': log.severity === 'Error'
-                               }"
-                               class="px-2 py-0.5 rounded text-xs font-bold"
-                             >{{ log.severity }}</span>
-                         </div>
-                         <div class="col-span-4 truncate" :title="log.description">{{ log.description }}</div>
-                         <div class="col-span-2 flex items-center gap-2">
-                             <div class="size-6 rounded bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[10px] font-bold">
-                                 {{ log.initiator.substring(0,2).toUpperCase() }}
-                             </div>
-                             <span>{{ log.initiator }}</span>
-                         </div>
+        <el-main class="audit-main">
+            <div class="audit-content">
+                <el-card class="audit-card-el" shadow="hover" :body-style="{ padding: '0px' }">
+                     <!-- Filter Bar -->
+                     <div class="filter-bar">
+                        <div class="filter-group">
+                            <el-date-picker
+                                v-model="dateRange"
+                                type="daterange"
+                                range-separator="To"
+                                start-placeholder="Start date"
+                                end-placeholder="End date"
+                                size="default"
+                                class="filter-date"
+                            />
+                            <el-select v-model="selectedType" placeholder="Event Type" clearable class="filter-select">
+                                <el-option v-for="type in eventTypes" :key="type" :label="type" :value="type" />
+                            </el-select>
+                            <el-select v-model="selectedSeverity" placeholder="Severity" clearable class="filter-select">
+                                <el-option v-for="sev in severities" :key="sev" :label="sev" :value="sev" />
+                            </el-select>
+                        </div>
+                        <el-button link type="primary" @click="clearFilters">Clear Filters</el-button>
                      </div>
-                 </div>
+
+                     <el-table 
+                        :data="filteredLogs" 
+                        style="width: 100%" 
+                        class="premium-table"
+                        :header-cell-style="{ background: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', fontSize: '12px', letterSpacing: '0.05em' }"
+                        :row-class-name="tableRowClassName"
+                     >
+                        <el-table-column prop="time" label="Time" width="180">
+                            <template #default="scope">
+                                <span class="text-secondary">{{ scope.row.time }}</span>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column prop="type" label="Event Type" width="150" />
+                        
+                        <el-table-column prop="severity" label="Severity" width="120">
+                            <template #default="scope">
+                                <el-tag 
+                                    :type="getSeverityType(scope.row.severity)" 
+                                    effect="light" 
+                                    round 
+                                    size="small"
+                                    class="font-bold border-none"
+                                >
+                                    {{ scope.row.severity }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column prop="description" label="Description" min-width="300" show-overflow-tooltip />
+                        
+                        <el-table-column prop="initiator" label="User/Agent" width="180">
+                            <template #default="scope">
+                                <div class="user-cell">
+                                    <div class="user-avatar">
+                                        {{ scope.row.initiator.substring(0,2).toUpperCase() }}
+                                    </div>
+                                    <span>{{ scope.row.initiator }}</span>
+                                </div>
+                            </template>
+                        </el-table-column>
+                     </el-table>
+                     
+                     <!-- Pagination -->
+                     <div class="pagination-container">
+                         <el-pagination
+                            background
+                            layout="prev, pager, next"
+                            :total="100"
+                            class="premium-pagination"
+                         />
+                     </div>
+                </el-card>
             </div>
-            
-             <!-- Pagination Mock -->
-             <div class="mt-6 flex justify-end gap-2">
-                 <button class="px-3 py-1 border border-border-color rounded hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800 text-sm">Previous</button>
-                 <button class="px-3 py-1 bg-primary text-white rounded text-sm">1</button>
-                 <button class="px-3 py-1 border border-border-color rounded hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800 text-sm">2</button>
-                 <button class="px-3 py-1 border border-border-color rounded hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800 text-sm">Next</button>
-             </div>
-        </div>
-    </main>
-  </div>
+        </el-main>
+    </el-container>
+  </el-container>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Search } from '@element-plus/icons-vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
+
+const searchQuery = ref('')
+const dateRange = ref([])
+const selectedType = ref('')
+const selectedSeverity = ref('')
+
+// Filter Options
+const eventTypes = ['Connection', 'Batch Job', 'Performance', 'Deployment', 'Security', 'Auth', 'System']
+const severities = ['Success', 'Info', 'Warning', 'Error']
 
 const logs = ref([
     { time: '2023-10-24 10:42:05', type: 'Connection', severity: 'Error', description: 'Agent-007 failed to handshake with VectorDB cluster. Retrying in 5s...', initiator: 'System' },
@@ -77,7 +130,269 @@ const logs = ref([
     { time: '2023-10-24 09:30:11', type: 'Auth', severity: 'Success', description: 'User login from IP 192.168.1.1', initiator: 'Alex Morgan' },
     { time: '2023-10-24 08:00:00', type: 'System', severity: 'Info', description: 'Daily backup verification completed.', initiator: 'BackupSvc' },
 ])
+
+import { computed } from 'vue'
+
+const filteredLogs = computed(() => {
+    return logs.value.filter(log => {
+        // Search Query
+        if (searchQuery.value && !log.description.toLowerCase().includes(searchQuery.value.toLowerCase()) && !log.initiator.toLowerCase().includes(searchQuery.value.toLowerCase())) {
+            return false
+        }
+        // Event Type
+        if (selectedType.value && log.type !== selectedType.value) {
+            return false
+        }
+        // Severity
+        if (selectedSeverity.value && log.severity !== selectedSeverity.value) {
+            return false
+        }
+        // Date Range (Simple string comparison for demo, ideally parse Dates)
+        if (dateRange.value && dateRange.value.length === 2) {
+            const logDate = new Date(log.time)
+            const startDate = dateRange.value[0]
+            const endDate = dateRange.value[1]
+            if (logDate < startDate || logDate > endDate) {
+                return false
+            }
+        }
+        return true
+    })
+})
+
+const clearFilters = () => {
+    searchQuery.value = ''
+    dateRange.value = []
+    selectedType.value = ''
+    selectedSeverity.value = ''
+}
+
+const getSeverityType = (severity: string) => {
+    switch (severity.toLowerCase()) {
+        case 'success': return 'success'
+        case 'warning': return 'warning'
+        case 'error': return 'danger'
+        case 'info': return 'info'
+        default: return 'info'
+    }
+}
+
+const tableRowClassName = () => {
+    return 'custom-row'
+}
 </script>
 
 <style scoped>
+.audit-layout {
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    background-color: var(--el-bg-color-page);
+    font-family: 'Inter', sans-serif;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+}
+:deep(.dark .audit-layout) {
+    background-color: var(--el-bg-color-page);
+}
+
+.audit-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+}
+
+.audit-header {
+    background-color: var(--bg-primary);
+    border-bottom: 1px solid var(--border-color);
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.header-left, .header-right {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.header-right {
+    gap: 12px;
+}
+
+.page-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+/* Element Plus Overrides */
+.search-input-el {
+    width: 260px;
+}
+
+:deep(.search-input-el .el-input__wrapper) {
+    background-color: var(--bg-secondary); /* or #f3f4f6 */
+    box-shadow: none;
+    border-radius: 8px;
+}
+:deep(.search-input-el .el-input__inner) {
+    color: var(--text-primary);
+}
+:deep(.search-input-el .el-input__wrapper.is-focus) {
+    box-shadow: 0 0 0 1px var(--accent-primary);
+    background-color: var(--bg-primary);
+}
+
+.export-btn-el {
+    border-radius: 8px;
+    font-weight: 500;
+    /* Use default styling but ensure it matches theme */
+}
+
+.audit-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px;
+}
+
+.audit-card-el {
+    max-width: 1400px;
+    margin: 0 auto;
+    border-radius: 12px;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    --el-card-border-color: var(--border-color);
+    --el-card-bg-color: var(--bg-primary);
+}
+
+.filter-bar {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: transparent;
+}
+
+.filter-group {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.filter-select {
+    width: 160px;
+}
+
+:deep(.filter-date.el-date-editor) {
+    --el-date-editor-width: 240px;
+    box-shadow: none;
+    background-color: var(--bg-secondary);
+    border-radius: 8px;
+}
+:deep(.filter-date .el-range-input) {
+    color: var(--text-primary);
+    background: transparent;
+}
+:deep(.filter-date .el-range-separator) {
+    color: var(--text-secondary);
+}
+
+:deep(.filter-select .el-input__wrapper) {
+    background-color: var(--bg-secondary);
+    box-shadow: none;
+    border-radius: 8px;
+}
+:deep(.filter-select .el-input__inner) {
+    color: var(--text-primary);
+}
+
+/* Table Styling */
+:deep(.el-table) {
+    --el-table-bg-color: transparent;
+    --el-table-tr-bg-color: transparent;
+    --el-table-header-bg-color: transparent;
+    --el-table-row-hover-bg-color: var(--bg-tertiary); /* #f9fafb or dark eq */
+    --el-table-border-color: var(--border-color);
+    --el-table-text-color: var(--text-primary);
+    --el-table-header-text-color: var(--text-secondary);
+}
+
+:deep(.el-table th.el-table__cell) {
+    background-color: rgba(0,0,0,0.02); /* Slight header bg */
+}
+:deep(.dark .el-table th.el-table__cell) {
+    background-color: rgba(255,255,255,0.02);
+}
+
+.user-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.user-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background-color: var(--bg-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.text-secondary {
+    color: var(--text-secondary);
+}
+
+/* Pagination */
+.pagination-container {
+    padding: 16px;
+    display: flex;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border-color);
+}
+
+/* Premium Overrides */
+:deep(.premium-table .el-table__cell) {
+    padding: 16px 0;
+}
+
+:deep(.premium-table .cell) {
+    padding: 0 24px;
+}
+
+/* Pagination Customization */
+:deep(.premium-pagination .el-pagination.is-background .el-pager li:not(.is-disabled).is-active) {
+    background-color: var(--accent-primary) !important;
+}
+
+:deep(.premium-pagination .el-pagination.is-background .el-pager li) {
+    background-color: transparent !important;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+:deep(.premium-pagination .el-pagination.is-background .btn-prev),
+:deep(.premium-pagination .el-pagination.is-background .btn-next) {
+    background-color: transparent !important;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+:deep(.premium-pagination .el-pagination.is-background .el-pager li:hover) {
+    color: var(--accent-primary);
+    border-color: var(--accent-primary);
+}
 </style>

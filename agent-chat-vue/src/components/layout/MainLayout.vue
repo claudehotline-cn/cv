@@ -31,7 +31,7 @@
                <span class="status-dot"></span>
              </div>
              <span class="nav-label">Active Tasks</span>
-             <el-tag type="warning" effect="light" round size="small" style="font-weight: 700; border: none; background: rgba(245, 158, 11, 0.1); color: #d97706;">2</el-tag>
+             <el-tag type="warning" effect="light" round size="small" class="status-tag">2</el-tag>
           </button>
           
           <router-link to="/agents" class="nav-item" active-class="active">
@@ -312,6 +312,13 @@ function getAgentColor(name: string) {
   font-weight: 700;
   padding: 2px 8px;
   border-radius: 99px;
+}
+
+.status-tag {
+    font-weight: 700 !important;
+    border: none !important;
+    background: rgba(245, 158, 11, 0.1) !important;
+    color: #d97706 !important;
 }
 
 .text-truncate {
