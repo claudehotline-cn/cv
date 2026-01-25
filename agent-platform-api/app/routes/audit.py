@@ -178,6 +178,22 @@ async def get_run_summary(
                 msg = f"Tool: {e.payload['tool_name']}"
             elif "model" in e.payload:
                 msg = f"Model: {e.payload['model']}"
+            elif "langgraph_node" in e.payload:
+                node = e.payload["langgraph_node"]
+                if "start" in e.event_type:
+                    msg = f"Node '{node}' started"
+                elif "end" in e.event_type or "finished" in e.event_type:
+                    msg = f"Node '{node}' finished"
+                else:
+                    msg = f"Node: {node}"
+            elif "name" in e.payload:
+                name = e.payload["name"]
+                if "start" in e.event_type:
+                    msg = f"Start: {name}"
+                elif "end" in e.event_type or "finished" in e.event_type:
+                     msg = f"End: {name}"
+                else:
+                     msg = f"{name}"
         
         view = AuditEventView(
             event_id=str(e.event_id),

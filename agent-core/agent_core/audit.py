@@ -77,7 +77,10 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 "session_id": session_id,
                 "thread_id": thread_id,
                 "is_agent": is_agent,
-                "agent_name": agent_name
+                "agent_name": agent_name,
+                "name": kwargs.get("name") or md.get("name"),
+                "langgraph_node": md.get("langgraph_node"),
+                "subagent": md.get("sub_agent")
             }
 
         # Emit run_started if we haven't seen this run_id yet AND it is an agent
@@ -132,7 +135,12 @@ class AuditCallbackHandler(BaseCallbackHandler):
             thread_id=thread_id,
             span_id=lc_run_id, 
             component="chain", 
-            payload={"outputs_digest": str(self._sanitize_inputs(outputs))[:2000]}
+            payload={
+                "outputs_digest": str(self._sanitize_inputs(outputs))[:2000],
+                "name": ctx.get("name"),
+                "langgraph_node": ctx.get("langgraph_node"),
+                "subagent": ctx.get("subagent")
+            }
         )
         
         # Emit run_finished if this chain was the agent
@@ -170,7 +178,10 @@ class AuditCallbackHandler(BaseCallbackHandler):
             component="chain", 
             payload={
                 "error_class": type(error).__name__, 
-                "error_message": str(error)[:2000]
+                "error_message": str(error)[:2000],
+                "name": ctx.get("name"),
+                "langgraph_node": ctx.get("langgraph_node"),
+                "subagent": ctx.get("subagent")
             }
         )
         
