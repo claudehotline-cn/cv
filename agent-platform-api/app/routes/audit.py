@@ -1,254 +1,248 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
+from datetime import datetime
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, String, func
+from sqlalchemy.orm import selectinload
 
 from app.db import get_db
-from app.models.db_models import AuditLogModel
+from app.models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
-class AuditLog(BaseModel):
-    time: str
-    session_id: Optional[str] = None
-    trace_id: Optional[str] = None
-    user_id: str
+# --- View Models ---
+class AuditRunSummary(BaseModel):
+    run_id: str
+    time: datetime
+    root_agent_name: Optional[str]
+    status: str
+    duration_seconds: Optional[float]
+    initiator: Optional[str]
+    conversation_id: Optional[str]
+    llm_calls_count: int = 0
+    tool_calls_count: int = 0
+    failures_count: int = 0
+
+class PaginatedRunsResponse(BaseModel):
+    items: List[AuditRunSummary]
+    total: int
+    limit: int
+    offset: int
+
+class AuditEventView(BaseModel):
+    event_id: str
+    time: datetime
     type: str
+    component: Optional[str]
+    message: str
     severity: str
-    description: str
-    initiator: str
-    agent: Optional[str] = None
-    node: Optional[str] = None
-    details: Optional[dict] = None
+    payload: Optional[Dict[str, Any]]
+    span_id: Optional[str] = None
 
-@router.get("/", response_model=List[AuditLog])
-async def get_audit_logs(limit: int = 50, db: AsyncSession = Depends(get_db)):
-    """
-    Get audit logs from the real database.
-    """
-    stmt = select(AuditLogModel).order_by(desc(AuditLogModel.created_at)).limit(limit)
-    result = await db.execute(stmt)
-    db_logs = result.scalars().all()
+class RunDetailView(BaseModel):
+    run: AuditRunSummary
+    failures: List[AuditEventView]
+    spans: List[Dict[str, Any]] # simplified span view
+    recent_events: List[AuditEventView]
+
+# ... (Endpoints) ...
+# Inside get_run_summary
+
+@router.get("/runs", response_model=PaginatedRunsResponse)
+async def list_runs(
+    limit: int = 50, 
+    offset: int = 0,
+    status: Optional[str] = None,
+    agent: Optional[str] = None,
+    q: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """List agent runs with summary statistics."""
+    # Build base query
+    stmt = select(AgentRunModel)
     
-    logs = []
-    for log in db_logs:
-        # safely extract fields from JSON data if present
-        data = log.data or {}
-        # Parse description based on event type
-        event_type = log.event_type
-        description = "No description"
-        node_name = "-" 
-        agent_name = "-"
-        
-        # Helper to extract a clean string name/identifier
-        def get_name(inner_data, key, default):
-            val = inner_data.get(key)
-            if isinstance(val, str): return val
-            return default
-
-        # Helper to format node
-        def format_node_name(name):
-            if not name or name == "-": return "-"
-            return name.replace("_", " ").title().replace("Tv", "TV").replace("Sql", "SQL").replace("Llm", "LLM")
-
-        # Helper to safely parse inner data
-        def parse_inner(d):
-            if isinstance(d, dict): return d
-            if isinstance(d, str):
-                try:
-                    import json
-                    return json.loads(d)
-                except:
-                    return {}
-            return {}
-
-        # Helper to safely parse inner data
-        def parse_inner_payload(d):
-            p = d.get("data")
-            if isinstance(p, dict): return p
-            if isinstance(p, str):
-                try:
-                    import json
-                    return json.loads(p)
-                except:
-                    return {}
-            return {}
-
-        # Check top-level metadata/tags first (from my core fix)
-        # log.data is the Full Event. The payload is in log.data['data']
-        payload = parse_inner_payload(data)
-        
-        tags = payload.get("tags") or []
-        metadata = payload.get("metadata") or {}
-        
-        # Try to detect Agent name from metadata
-        if metadata.get("agent_name"):
-            agent_name = metadata.get("agent_name")
-            
-        # Sub-agent name from metadata -> Use as Node Name
-        if metadata.get("sub_agent"):
-            node_name = metadata.get("sub_agent")
-            
-            # Infer Main Agent from Sub-Agent if not explicitly set
-            if agent_name == "-":
-                sub = node_name.lower()
-                if "sql" in sub or "python" in sub or "data" in sub or "report" in sub or "visualizer" in sub:
-                     agent_name = "Data Agent"
-        
-        # If Agent still not found, check tags for 'agent:name' pattern
-        if agent_name == "-" and tags:
-            for tag in tags:
-                if tag.startswith("agent:"):
-                    raw_agent = tag.split(":", 1)[1]
-                    # Map standard sub-agent tags to Data Agent
-                    if raw_agent in ["sql_agent", "python_agent", "visualizer_agent", "report_agent", "reviewer_agent"]:
-                        agent_name = "Data Agent"
-                    else:
-                        agent_name = raw_agent.replace("_", " ").title()
-                    break
-
-        # Override node_name if explicit node_label exists
-        if metadata.get("node_label"):
-            node_name = metadata.get("node_label")
-        
-        # Fallback: if user_id is generic, maybe agent_name is better initiator?
-        # But we have separate Agent column now.
-
-        if event_type == "tool_start":
-            inner_payload = parse_inner(data.get("data"))
-            # inner_payload is ensured to be a dict by parse_inner (returns {} on err)
-            
-            tool = get_name(inner_payload, "tool", "unknown tool")
-
-            if tool == "task":
-                input_str = inner_payload.get("input", "{}")
-                try:
-                    import json
-                    args = {}
-                    if isinstance(input_str, str):
-                        if input_str.startswith("{"):
-                            args = json.loads(input_str)
-                    elif isinstance(input_str, dict):
-                        args = input_str
-                    
-                    subagent = args.get("subagent_type")
-                    if subagent:
-                        node_name = format_node_name(subagent)
-                        tool = "Task"
-                        # Infer Agent if not already found from tags
-                        if agent_name == "-":
-                            if "agent" in subagent or subagent in ["sql_agent", "python_agent", "reviewer_agent", "visualizer_agent", "report_agent"]:
-                                agent_name = "Data Agent"
-                    else:
-                        # Debug info
-                         keys = list(args.keys()) if args else []
-                         node_name = f"Task (Keys: {keys})"
-                except Exception as e:
-                     node_name = f"Task (Err)"
-            else:
-                 if tool != "unknown tool":
-                    node_name = format_node_name(tool)
-            
-            description = f"Executing: {tool}"
-        
-        elif event_type == "tool_end":
-            inner_payload = parse_inner(data.get("data"))
-            tool = get_name(inner_payload, "tool", "tool")
-            if tool == "task":
-                tool = "Task"
-            description = f"Completed: {tool}"
-            
-        elif event_type == "tool_error":
-             description = "Tool execution failed"
-
-        elif event_type == "llm_start":
-            inner_payload = parse_inner(data.get("data"))
-            model = get_name(inner_payload, "model", "LLM")
-            if "/" in model: model = model.split("/")[-1]
-            # Use Model Name but keep it readable. If usually empty/generic, use AI Inference
-            node_name = model if model != "LLM" else "AI Inference"
-            description = f"Querying {node_name}"
-            
-        elif event_type == "llm_end":
-            inner_payload = parse_inner(data.get("data"))
-            # Extracts model name if provided by callback handler
-            model = get_name(inner_payload, "model", "LLM")
-            if "/" in model: model = model.split("/")[-1]
-            node_name = model if model != "LLM" else "AI Inference"
-            tokens = 0
-            usage = inner_payload.get("usage") or {}
-            if isinstance(usage, dict):
-                tokens = usage.get("total_tokens", 0)
-            description = f"LLM generation complete ({tokens} tokens)"
-
-        elif event_type == "chain_start":
-            inner_payload = parse_inner(data.get("data"))
-            chain = get_name(inner_payload, "chain", "Chain")
-            
-            # Map technical chain names to user-friendly concepts
-            if chain in ["Chain", "unknown_chain", "RunnableSequence", "RunnableParallel"]:
-                 node_name = "Workflow Step"
-            else:
-                 node_name = chain
-            
-            # Use LangGraph specific metadata if available (injected by some runtimes)
-            if metadata.get("langgraph_node"):
-                node_name = metadata.get("langgraph_node").title()
-
-            description = f"Started {node_name}"
-            
-        elif event_type == "chain_end":
-            inner_payload = parse_inner(data.get("data"))
-            chain = get_name(inner_payload, "chain", "Chain")
-            
-            if chain in ["Chain", "unknown_chain", "RunnableSequence", "RunnableParallel"]:
-                 node_name = "Workflow Step"
-            else:
-                 node_name = chain
-
-            if metadata.get("langgraph_node"):
-                node_name = metadata.get("langgraph_node").title()
-
-            description = "Step completed"
-        elif event_type == "session_created":
-            description = "New session created"
-        elif "description" in data:
-             # Fallback if 'data' is flat or description is at top level?
-             # 'data' matches log.data (the event). event usually doesn't have description at top.
-             # but payload might.
-             description = str(data.get("data", {}).get("description", "")) or str(data.get("description", "")) or description
-             if not description: description = f"Event: {event_type}"
-        else:
-             description = f"Event: {event_type}"
-
-        # Severity mapping
-        if "error" in event_type or "failed" in str(description).lower():
-            severity = "Error"
-        elif "start" in event_type:
-            severity = "Info"
-        elif "end" in event_type or "success" in str(description).lower():
-            severity = "Success"
-        else:
-            severity = "Info"
-        
-        # If user_id is missing, default to System
-        # Initiator currently defaults to user_id. We keep it as is, but also provide 'user_id' field.
-        user_id_val = log.user_id or "System"
-        initiator = user_id_val
-
-        logs.append(AuditLog(
-            time=log.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            session_id=log.session_id, # Use real session_id column
-            trace_id=log.trace_id,     # Expose trace_id
-            user_id=user_id_val,
-            type=event_type,
-            severity=severity,
-            description=description,
-            initiator=initiator,
-            agent=agent_name,
-            node=node_name,
-            details=data
+    if status:
+        stmt = stmt.where(AgentRunModel.status == status)
+    if agent:
+        stmt = stmt.where(AgentRunModel.root_agent_name == agent)
+    
+    if q:
+        # Search ID or User or Conversation
+        from sqlalchemy import or_
+        stmt = stmt.where(or_(
+            AgentRunModel.run_id.cast(String).ilike(f"%{q}%"),
+            AgentRunModel.conversation_id.ilike(f"%{q}%"),
+            AgentRunModel.initiator_id.ilike(f"%{q}%")
         ))
+        
+    if start_date:
+        stmt = stmt.where(AgentRunModel.started_at >= start_date)
+    if end_date:
+        stmt = stmt.where(AgentRunModel.started_at <= end_date)
+
+    # Get Total Count
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_res = await db.execute(count_stmt)
+    total = total_res.scalar_one()
+        
+    # Apply Limit/Offset
+    stmt = stmt.order_by(desc(AgentRunModel.started_at)).limit(limit).offset(offset)
+    result = await db.execute(stmt)
+    runs = result.scalars().all()
     
-    return logs
+    output = []
+    for r in runs:
+        # Calculate duration
+        duration = None
+        if r.ended_at and r.started_at:
+            duration = (r.ended_at - r.started_at).total_seconds()
+            
+        output.append(AuditRunSummary(
+            run_id=str(r.run_id),
+            time=r.started_at,
+            root_agent_name=r.root_agent_name or "Unknown Agent",
+            status=r.status,
+            duration_seconds=duration,
+            initiator=r.initiator_id or "System",
+            conversation_id=r.conversation_id,
+            llm_calls_count=0, # TODO: Add aggregation
+            tool_calls_count=0,
+            failures_count=0
+        ))
+        
+    return PaginatedRunsResponse(
+        items=output,
+        total=total,
+        limit=limit,
+        offset=offset
+    )
+
+@router.get("/runs/{run_id}/summary", response_model=RunDetailView)
+async def get_run_summary(
+    run_id: str, 
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detailed summary for a specific run (Failures, Spans, Events)."""
+    # 1. Get Run
+    run_res = await db.execute(select(AgentRunModel).where(AgentRunModel.run_id == UUID(run_id)))
+    run = run_res.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+        
+    # 2. Get Events (Recent 200)
+    events_res = await db.execute(
+        select(AuditEventModel)
+        .where(AuditEventModel.run_id == UUID(run_id))
+        .order_by(AuditEventModel.event_time) # Chronological
+        .limit(200)
+    )
+    events = events_res.scalars().all()
+    
+    # 3. Process Events into View Models
+    failures = []
+    event_views = []
+    
+    llm_count = 0
+    tool_count = 0
+    span_names = {}
+    
+    for e in events:
+        severity = "Info"
+        if "error" in e.event_type or "failed" in e.event_type:
+            severity = "Error"
+        elif "start" in e.event_type:
+            severity = "Info"
+        elif "end" in e.event_type:
+            severity = "Success"
+            
+        # Infer Span Name from Payload
+        if e.span_id:
+            sid = str(e.span_id)
+            if e.payload:
+                if "model" in e.payload:
+                    span_names[sid] = f"LLM: {e.payload['model']}"
+                elif "tool_name" in e.payload:
+                    span_names[sid] = f"Tool: {e.payload['tool_name']}"
+
+        # Construct message from payload or type
+        msg = e.event_type
+        if e.payload:
+            if "error_message" in e.payload:
+                msg = e.payload["error_message"]
+            elif "tool_name" in e.payload:
+                msg = f"Tool: {e.payload['tool_name']}"
+            elif "model" in e.payload:
+                msg = f"Model: {e.payload['model']}"
+        
+        view = AuditEventView(
+            event_id=str(e.event_id),
+            time=e.event_time,
+            type=e.event_type,
+            component=e.component,
+            message=msg,
+            severity=severity,
+            payload=e.payload,
+            span_id=str(e.span_id) if e.span_id else None
+        )
+        event_views.append(view)
+        
+        if severity == "Error":
+            failures.append(view)
+        if e.event_type == "llm_called": llm_count += 1
+        if e.event_type == "tool_call_executed": tool_count += 1
+
+    # 4. Get Spans (Optional, simplistic list for now)
+    spans_res = await db.execute(
+        select(AgentSpanModel)
+        .where(AgentSpanModel.run_id == UUID(run_id))
+        .order_by(AgentSpanModel.started_at)
+    )
+    db_spans = spans_res.scalars().all()
+    spans = []
+    for s in db_spans:
+        sid = str(s.span_id)
+        name = s.node_name or s.agent_name or "Unknown"
+
+        # Refine Name
+        if sid in span_names:
+            name = span_names[sid]
+        elif not s.parent_span_id and run.root_agent_name:
+            name = run.root_agent_name
+        elif name.lower() in ["agent", "chain", "tool", "llm"]:
+             name = name.upper() if name.lower() == "llm" else name.capitalize()
+
+        spans.append({
+            "span_id": sid,
+            "parent_span_id": str(s.parent_span_id) if s.parent_span_id else None,
+            "type": s.span_type,
+            "name": name,
+            "status": s.status,
+            "duration": (s.ended_at - s.started_at).total_seconds() if s.ended_at else None
+        })
+
+    # Summary Object
+    duration = (run.ended_at - run.started_at).total_seconds() if run.ended_at else None
+    summary = AuditRunSummary(
+        run_id=str(run.run_id),
+        time=run.started_at,
+        root_agent_name=run.root_agent_name,
+        status=run.status,
+        duration_seconds=duration,
+        initiator=run.initiator_id,
+        conversation_id=run.conversation_id,
+        llm_calls_count=llm_count,
+        tool_calls_count=tool_count,
+        failures_count=len(failures)
+    )
+    
+    return RunDetailView(
+        run=summary,
+        failures=failures,
+        spans=spans,
+        recent_events=event_views
+    )

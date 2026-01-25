@@ -228,8 +228,20 @@ class ApiClient {
     }
 
     // Audit API
-    async getAuditLogs(limit = 50): Promise<any> {
-        return this.http.get('/audit/', { params: { limit } })
+    async listAuditRuns(params: {
+        limit?: number;
+        offset?: number;
+        status?: string;
+        agent?: string;
+        q?: string;
+        start_date?: string;
+        end_date?: string;
+    } = {}): Promise<{ items: any[], total: number }> {
+        return this.http.get('/audit/runs', { params: { limit: 50, ...params } })
+    }
+
+    async getAuditRunSummary(runId: string): Promise<any> {
+        return this.http.get(`/audit/runs/${runId}/summary`)
     }
 
     streamTask(

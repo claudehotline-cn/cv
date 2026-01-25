@@ -9,164 +9,296 @@
     <el-container direction="vertical" class="audit-container">
         <el-header class="audit-header">
             <div class="header-left">
-                <h2 class="page-title">Audit Logs</h2>
+                <h2 class="page-title">Run History</h2>
             </div>
             <div class="header-right">
-                 <el-input 
-                    v-model="searchQuery"
-                    class="search-input-el"
-                    placeholder="Search logs..." 
-                    :prefix-icon="Search"
-                    clearable
-                 />
-                 <el-button class="export-btn-el">Export</el-button>
+                 <el-button @click="refresh" :icon="Refresh" :loading="loading" circle />
             </div>
         </el-header>
         
         <el-main class="audit-main">
             <div class="audit-content">
-                <el-card class="audit-card-el" shadow="hover" :body-style="{ padding: '0px' }">
-                     <!-- Filter Bar -->
+                <el-card class="audit-card-el" shadow="never" :body-style="{ padding: '0px' }">
+                     <!-- Filter Bar (Consolidated) -->
                      <div class="filter-bar">
+                        <!-- Left: Filters -->
                         <div class="filter-group">
-                            <el-date-picker
+                             <el-input 
+                                v-model="searchQuery"
+                                class="filter-input-search"
+                                placeholder="Search ID / User..." 
+                                :prefix-icon="Search"
+                                clearable
+                                @keyup.enter="refresh"
+                             />
+                             <el-date-picker
                                 v-model="dateRange"
-                                type="daterange"
-                                range-separator="To"
-                                start-placeholder="Start date"
-                                end-placeholder="End date"
-                                size="default"
+                                type="datetimerange"
+                                range-separator="-"
+                                start-placeholder="Start"
+                                end-placeholder="End"
+                                :shortcuts="shortcuts"
                                 class="filter-date"
+                                :prefix-icon="Calendar"
                             />
-                            <el-select v-model="selectedType" placeholder="Event Type" clearable class="filter-select">
-                                <el-option v-for="type in eventTypes" :key="type" :label="type" :value="type" />
+                            <el-select v-model="selectedStatus" placeholder="Status" clearable class="filter-select">
+                                <template #prefix><el-icon><InfoFilled /></el-icon></template>
+                                <el-option label="Succeeded" value="succeeded" />
+                                <el-option label="Failed" value="failed" />
+                                <el-option label="Running" value="running" />
                             </el-select>
-                            <el-select v-model="selectedInitiator" placeholder="User/Agent" clearable class="filter-select">
-                                <el-option v-for="user in initiators" :key="user" :label="user" :value="user" />
-                            </el-select>
-                            <el-select v-model="selectedSeverity" placeholder="Severity" clearable class="filter-select">
-                                <el-option v-for="sev in severities" :key="sev" :label="sev" :value="sev" />
+                            <el-select v-model="selectedAgent" placeholder="All Agents" clearable class="filter-select">
+                                <template #prefix><el-icon><User /></el-icon></template>
+                                <el-option v-for="agent in agentOptions" :key="agent" :label="agent" :value="agent" />
                             </el-select>
                         </div>
-                        <el-button link type="primary" @click="clearFilters">Clear Filters</el-button>
+                        
+                        <!-- Right: Actions -->
+                        <div class="filter-actions">
+                            <el-button v-if="hasFilters" link type="info" @click="clearFilters">Reset</el-button>
+                            <el-button type="primary" @click="refresh">Query</el-button>
+                        </div>
                      </div>
 
+                     <!-- Table -->
                      <el-table 
                         v-loading="loading"
-                        :data="paginatedLogs" 
+                        :data="runs" 
                         style="width: 100%" 
                         class="premium-table"
-                        :header-cell-style="{ background: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', fontSize: '12px', letterSpacing: '0.05em' }"
-                        :row-class-name="tableRowClassName"
+                        :header-cell-style="{ 
+                            background: 'var(--bg-secondary)', 
+                            color: 'var(--text-secondary)', 
+                            fontWeight: '600', 
+                            fontSize: '12px', 
+                            textTransform: 'uppercase',
+                            borderBottom: '1px solid var(--border-color)'
+                        }"
                      >
-                        <el-table-column prop="session_id" label="Session ID" width="180" fixed="left" show-overflow-tooltip>
+                        <el-table-column label="Run ID" width="120" fixed="left">
                             <template #default="scope">
-                                <span class="font-mono text-xs text-secondary">{{ scope.row.session_id || '-' }}</span>
+                                <el-tooltip :content="scope.row.run_id" placement="top" :show-after="500">
+                                    <span class="font-mono text-xs text-secondary cursor-pointer hover:text-primary transition-colors">
+                                        #{{ scope.row.run_id.substring(0, 8) }}
+                                    </span>
+                                </el-tooltip>
                             </template>
                         </el-table-column>
 
-                        <el-table-column prop="time" label="Time" width="180">
+                        <el-table-column prop="time" label="Started" width="180">
                             <template #default="scope">
-                                <span class="text-secondary">{{ scope.row.time }}</span>
-                            </template>
-                        </el-table-column>
-                        
-                        <el-table-column prop="type" label="Event Type" width="150" />
-
-                        <el-table-column prop="node" label="Node" width="160">
-                            <template #default="scope">
-                                <span v-if="scope.row.node && scope.row.node !== '-'" class="font-mono text-xs">{{ scope.row.node }}</span>
-                                <span v-else class="text-secondary">-</span>
-                            </template>
-                        </el-table-column>
-                        
-                        <el-table-column prop="severity" label="Severity" width="120">
-                            <template #default="scope">
-                                <el-tag 
-                                    :type="getSeverityType(scope.row.severity)" 
-                                    effect="light" 
-                                    round 
-                                    size="small"
-                                    class="font-bold border-none"
-                                >
-                                    {{ scope.row.severity }}
-                                </el-tag>
-                            </template>
-                        </el-table-column>
-                        
-                        <el-table-column prop="description" label="Description" min-width="300" show-overflow-tooltip />
-                        
-                        <el-table-column prop="initiator" label="User" width="140">
-                            <template #default="scope">
-                                <div class="user-cell">
-                                    <div class="user-avatar">
-                                        {{ scope.row.initiator.substring(0,2).toUpperCase() }}
-                                    </div>
-                                    <span class="truncate">{{ scope.row.initiator }}</span>
+                                <div class="flex flex-col">
+                                    <span class="text-sm font-medium">{{ formatDate(scope.row.time).split(' ')[0] }}</span>
+                                    <span class="text-xs text-secondary">{{ formatDate(scope.row.time).split(' ')[1] }}</span>
                                 </div>
                             </template>
                         </el-table-column>
 
-                        <el-table-column prop="agent" label="Agent" width="140">
+                        <el-table-column prop="root_agent_name" label="Agent" width="160">
                              <template #default="scope">
-                                <span v-if="scope.row.agent && scope.row.agent !== '-'" class="font-bold text-primary">{{ scope.row.agent }}</span>
-                                <span v-else class="text-secondary">-</span>
+                                <span class="font-bold text-primary">{{ scope.row.root_agent_name }}</span>
                             </template>
                         </el-table-column>
 
-                        <el-table-column width="100" align="right" fixed="right">
+                        <el-table-column prop="status" label="Status" width="120">
                             <template #default="scope">
-                                <el-button link type="primary" size="small" @click="viewDetails(scope.row)">View</el-button>
+                                <el-tag 
+                                    :type="getStatusType(scope.row.status)" 
+                                    effect="light" 
+                                    round 
+                                    size="small"
+                                    class="border-none font-medium"
+                                >
+                                    {{ scope.row.status }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="Latency" width="100">
+                             <template #default="scope">
+                                <span class="text-sm font-mono">{{ formatDuration(scope.row.duration_seconds) }}</span>
+                            </template>
+                        </el-table-column>
+
+                        <el-table-column label="Activity" min-width="240">
+                             <template #default="scope">
+                                <div class="flex items-center gap-3">
+                                    <div v-if="scope.row.llm_calls_count > 0" class="flex items-center gap-1 text-xs text-secondary" title="LLM Calls">
+                                        <el-icon><ChatDotRound /></el-icon> {{ scope.row.llm_calls_count }}
+                                    </div>
+                                    <div v-if="scope.row.tool_calls_count > 0" class="flex items-center gap-1 text-xs text-secondary" title="Tool Calls">
+                                        <el-icon><Tools /></el-icon> {{ scope.row.tool_calls_count }}
+                                    </div>
+                                    <el-tag v-if="scope.row.failures_count > 0" size="small" type="danger" effect="dark" class="ml-auto">
+                                        {{ scope.row.failures_count }} Errors
+                                    </el-tag>
+                                </div>
+                            </template>
+                        </el-table-column>
+
+                        <el-table-column prop="initiator" label="User" width="140" show-overflow-tooltip>
+                            <template #default="scope">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
+                                        {{ scope.row.initiator.charAt(0).toUpperCase() }}
+                                    </div>
+                                    <span class="text-xs truncate">{{ scope.row.initiator }}</span>
+                                </div>
+                            </template>
+                        </el-table-column>
+
+                      <el-table-column width="80" align="right" fixed="right">
+                            <template #default="scope">
+                                <el-button link type="primary" :icon="ArrowRight" @click="viewRunDetails(scope.row)" />
                             </template>
                         </el-table-column>
                      </el-table>
-                     
-                     <!-- Pagination -->
-                     <div class="pagination-container">
-                         <el-pagination
+
+                     <div class="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                        <el-pagination
                             v-model:current-page="currentPage"
                             v-model:page-size="pageSize"
-                            :page-sizes="[10, 20, 50, 100]"
-                            background
+                            :page-sizes="[20, 50, 100]"
                             layout="total, sizes, prev, pager, next, jumper"
-                            :total="filteredLogs.length"
-                            class="premium-pagination"
-                         />
+                            :total="total"
+                            @size-change="refresh"
+                            @current-change="refresh"
+                        />
                      </div>
                 </el-card>
 
-                <!-- Details Drawer -->
+                <!-- Run Details Drawer -->
                 <el-drawer
                     v-model="drawerVisible"
-                    title="Audit Log Details"
+                    title="Run Execution Details"
                     direction="rtl"
-                    size="40%"
+                    size="50%"
                     class="premium-drawer"
+                    :destroy-on-close="true"
+                    :with-header="false" 
                 >
-                    <div v-if="selectedLog" class="drawer-content">
-                        <div class="detail-item">
-                            <span class="label">Time</span>
-                            <span class="value">{{ selectedLog.time }}</span>
+                     <div v-if="runDetail" class="h-full flex flex-col bg-white dark:bg-gray-900">
+                        <!-- Custom Header -->
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                            <div>
+                                <div class="flex items-center gap-3">
+                                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ runDetail.run?.root_agent_name }}</h3>
+                                    <el-tag :type="getStatusType(runDetail.run?.status)" effect="dark" size="small">{{ runDetail.run?.status }}</el-tag>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1 font-mono">ID: {{ runDetail.run?.run_id }}</div>
+                            </div>
+                            <el-button @click="drawerVisible = false" circle :icon="Close" size="small" />
                         </div>
-                        <div class="detail-item">
-                            <span class="label">Event Type</span>
-                            <span class="value">{{ selectedLog.type }}</span>
+
+                        <!-- Content Stats -->
+                        <div class="grid grid-cols-4 gap-4 p-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+                             <div class="stat-item">
+                                <div class="text-xs text-gray-500 uppercase">Duration</div>
+                                <div class="text-xl font-bold mt-1">{{ formatDuration(runDetail.run?.duration_seconds) }}</div>
+                             </div>
+                             <div class="stat-item">
+                                <div class="text-xs text-gray-500 uppercase">LLM Calls</div>
+                                <div class="text-xl font-bold mt-1">{{ runDetail.run?.llm_calls_count }}</div>
+                             </div>
+                             <div class="stat-item">
+                                <div class="text-xs text-gray-500 uppercase">Tool Calls</div>
+                                <div class="text-xl font-bold mt-1">{{ runDetail.run?.tool_calls_count }}</div>
+                             </div>
+                             <div class="stat-item">
+                                <div class="text-xs text-gray-500 uppercase">Start Time</div>
+                                <div class="text-sm font-medium mt-1">{{ formatDate(runDetail.run?.time) }}</div>
+                             </div>
                         </div>
-                        <div class="detail-item">
-                            <span class="label">Initiator</span>
-                            <span class="value">{{ selectedLog.initiator }}</span>
+
+                        <!-- Tabs -->
+                        <div class="flex-1 overflow-hidden flex flex-col">
+                            <el-tabs v-model="activeTab" class="h-full flex flex-col px-6">
+                                <el-tab-pane label="Timeline" name="timeline" class="h-full overflow-y-auto pb-6">
+                                    <el-timeline class="mt-4 pl-2">
+                                        <el-timeline-item
+                                          v-for="(activity, index) in runDetail.recent_events"
+                                          :key="index"
+                                          :timestamp="formatTime(activity.time)"
+                                          :type="getSeverityType(activity.severity)"
+                                          :color="getActivityColor(activity.severity)"
+                                          :hollow="activity.severity === 'Info'"
+                                          placement="top"
+                                        >
+                                          <div class="timeline-content pb-4">
+                                              <div class="flex items-start justify-between">
+                                                  <div>
+                                                      <div class="font-bold text-sm text-gray-800 dark:text-gray-200">{{ activity.type }}</div>
+                                                      <div class="text-xs text-gray-500 mt-0.5">{{ activity.component }}</div>
+                                                  </div>
+                                                  <el-tag v-if="activity.severity === 'Error'" type="danger" size="small" effect="plain">Failed</el-tag>
+                                              </div>
+                                              
+                                              <div v-if="activity.message && activity.message !== activity.type" class="mt-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                                  {{ activity.message }}
+                                              </div>
+
+                                              <!-- Payload Viewer -->
+                                              <div v-if="activity.payload && Object.keys(activity.payload).length > 0" class="mt-2">
+                                                  <details class="group">
+                                                      <summary class="text-xs text-primary cursor-pointer hover:underline list-none font-medium flex items-center gap-1 select-none">
+                                                          <el-icon class="group-open:rotate-90 transition-transform"><ArrowRight /></el-icon>
+                                                          Payload
+                                                      </summary>
+                                                      <pre class="json-viewer mt-2">{{ JSON.stringify(activity.payload, null, 2) }}</pre>
+                                                  </details>
+                                              </div>
+                                          </div>
+                                        </el-timeline-item>
+                                    </el-timeline>
+                                </el-tab-pane>
+                                
+                                <el-tab-pane label="Trace" name="trace" class="h-full overflow-y-auto pb-6">
+                                     <div v-if="!traceData.length" class="text-center text-gray-400 py-10">
+                                         No trace data available
+                                     </div>
+                                     <el-tree 
+                                        v-else
+                                        :data="traceData" 
+                                        node-key="span_id"
+                                        default-expand-all
+                                        :expand-on-click-node="false"
+                                        class="bg-transparent"
+                                     >
+                                        <template #default="{ node, data }">
+                                            <div class="flex-1 flex items-center justify-between py-2 pr-4 border-b border-gray-100 dark:border-gray-800">
+                                                <div class="flex items-center gap-2">
+                                                    <el-tag size="small" :type="getSpanTypeColor(data.type)">{{ data.type }}</el-tag>
+                                                    <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ data.name }}</span>
+                                                    <span v-if="data.duration" class="text-xs text-gray-400 ml-2">{{ formatDuration(data.duration) }}</span>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                     <el-tag size="small" :type="getStatusType(data.status)" effect="plain">{{ data.status }}</el-tag>
+                                                </div>
+                                            </div>
+                                        </template>
+                                     </el-tree>
+                                </el-tab-pane>
+
+                                <el-tab-pane label="Failures" name="failures" class="h-full overflow-y-auto pb-6">
+                                    <div v-if="!runDetail.failures.length" class="flex flex-col items-center justify-center py-12 text-gray-400">
+                                        <el-icon :size="48"><CircleCheck /></el-icon>
+                                        <div class="mt-4">No failures recorded</div>
+                                    </div>
+                                    <div v-else class="space-y-4 mt-4">
+                                        <div v-for="fail in runDetail.failures" :key="fail.event_id" class="border border-red-200 bg-red-50 dark:bg-red-900/10 rounded-lg p-4">
+                                            <div class="flex items-center gap-2 text-red-700 font-bold mb-2">
+                                                <el-icon><Warning /></el-icon>
+                                                {{ fail.type }}
+                                            </div>
+                                            <div class="text-sm text-gray-800 dark:text-gray-200 mb-3">{{ fail.message }}</div>
+                                            <pre class="json-viewer border-red-100">{{ JSON.stringify(fail.payload, null, 2) }}</pre>
+                                            <div class="text-xs text-gray-500 mt-2 text-right">{{ formatTime(fail.time) }}</div>
+                                        </div>
+                                    </div>
+                                </el-tab-pane>
+                            </el-tabs>
                         </div>
-                        <div class="detail-item">
-                            <span class="label">Description</span>
-                            <p class="value description-text">{{ selectedLog.description }}</p>
-                        </div>
-                        
-                        <el-divider content-position="left">Raw Data</el-divider>
-                        
-                        <div class="json-viewer">
-                            <pre>{{ JSON.stringify(selectedLog.details || {}, null, 2) }}</pre>
-                        </div>
-                    </div>
+                     </div>
                 </el-drawer>
             </div>
         </el-main>
@@ -175,162 +307,185 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { Search } from '@element-plus/icons-vue'
+import { ref, onMounted, watch, computed } from 'vue'
+import { Refresh, Search, Calendar, ChatDotRound, Tools, ArrowRight, Close, CircleCheck, Warning, InfoFilled, User } from '@element-plus/icons-vue'
 import apiClient from '@/api/client'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
+import dayjs from 'dayjs'
+import relativeTime from 'dayjs/plugin/relativeTime'
+dayjs.extend(relativeTime)
 
-const searchQuery = ref('')
-const dateRange = ref([])
-const selectedType = ref('')
-const selectedSeverity = ref('')
-const selectedInitiator = ref('')
 const loading = ref(false)
+const drawerLoading = ref(false)
+const runs = ref<any[]>([])
+const total = ref(0)
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(50)
+const selectedStatus = ref('')
+const selectedAgent = ref('')
+const searchQuery = ref('')
+const dateRange = ref<[Date, Date] | null>(null)
+const agentOptions = ref<string[]>([])
 
-// Drawer State
+// Drawer
 const drawerVisible = ref(false)
-const selectedLog = ref<any>(null)
+const runDetail = ref<any>(null)
+const activeTab = ref('timeline')
 
-const recursiveParse = (obj: any): any => {
-    if (typeof obj === 'string') {
-        try {
-            // Attempt to parse string as JSON
-            const parsed = JSON.parse(obj)
-            // If result is object/array, recurse
-            if (typeof parsed === 'object' && parsed !== null) {
-                return recursiveParse(parsed)
-            }
-            return parsed
-        } catch (e) {
-            return obj // Return original string if not JSON
+// Shortcuts for date picker
+const shortcuts = [
+  { text: 'Last Hour', value: () => [new Date(Date.now() - 3600 * 1000), new Date()] },
+  { text: 'Last 24h', value: () => [new Date(Date.now() - 3600 * 1000 * 24), new Date()] },
+  { text: 'Last 7 Days', value: () => [new Date(Date.now() - 3600 * 1000 * 24 * 7), new Date()] },
+]
+
+const hasFilters = computed(() => !!(selectedStatus.value || selectedAgent.value || searchQuery.value || dateRange.value))
+
+const traceData = computed(() => {
+    if (!runDetail.value?.spans) return []
+    const spans = JSON.parse(JSON.stringify(runDetail.value.spans)) // deep copy
+    const map: Record<string, any> = {}
+    const roots: any[] = []
+    
+    // 1. Initialize map
+    spans.forEach((s: any) => {
+        s.children = []
+        s.label = s.name // for el-tree default
+        map[s.span_id] = s
+    })
+    
+    // 2. Build Tree
+    spans.forEach((s: any) => {
+        if (s.parent_span_id && map[s.parent_span_id]) {
+            map[s.parent_span_id].children.push(s)
+        } else {
+            roots.push(s)
         }
-    } else if (Array.isArray(obj)) {
-        return obj.map(item => recursiveParse(item))
-    } else if (typeof obj === 'object' && obj !== null) {
-        const newObj: any = {}
-        for (const key in obj) {
-            newObj[key] = recursiveParse(obj[key])
-        }
-        return newObj
-    }
-    return obj
-}
+    })
+    
+    return roots
+})
 
-const viewDetails = (log: any) => {
-    // Deep copy and parse details
-    const parsedDetails = recursiveParse(log.details || {})
-    selectedLog.value = {
-        ...log,
-        details: parsedDetails
-    }
-    drawerVisible.value = true
-}
-
-// Filter Options
-
-const eventTypes = ['tool_start', 'tool_end', 'llm_start', 'llm_end', 'chain_start', 'chain_end']
-const severities = ['Success', 'Info', 'Warning', 'Error']
-const initiators = ['User', 'System', 'Claude-3.5-Sonnet', 'Gemini-Pro', 'DeepSeek-V3', 'Router']
-
-const logs = ref<any[]>([])
-
-onMounted(async () => {
+const refresh = async () => {
     loading.value = true
     try {
-        // Fetch a larger dataset for client-side pagination demo
-        logs.value = await apiClient.getAuditLogs(200)
+        const offset = (currentPage.value - 1) * pageSize.value
+        const res = await apiClient.listAuditRuns({
+            status: selectedStatus.value,
+            agent: selectedAgent.value,
+            q: searchQuery.value,
+            start_date: dateRange.value?.[0]?.toISOString(),
+            end_date: dateRange.value?.[1]?.toISOString(),
+            limit: pageSize.value,
+            offset: offset
+        })
+        runs.value = res.items
+        total.value = res.total
     } catch (e) {
-        console.error('Failed to fetch audit logs', e)
+        console.error('Failed to fetch runs', e)
     } finally {
         loading.value = false
     }
-})
-
-import { computed } from 'vue'
-
-const filteredLogs = computed(() => {
-    return logs.value.filter(log => {
-        // Search Query
-        if (searchQuery.value && !log.description.toLowerCase().includes(searchQuery.value.toLowerCase()) && !log.initiator.toLowerCase().includes(searchQuery.value.toLowerCase())) {
-            return false
-        }
-        // Event Type
-        if (selectedType.value && log.type !== selectedType.value) {
-            return false
-        }
-        // Severity
-        if (selectedSeverity.value && log.severity !== selectedSeverity.value) {
-            return false
-        }
-        // Initiator
-        if (selectedInitiator.value && log.initiator !== selectedInitiator.value) {
-            return false
-        }
-        // Date Range (Simple string comparison for demo, ideally parse Dates)
-        if (dateRange.value && dateRange.value.length === 2) {
-            const logDate = new Date(log.time)
-            const startDate = dateRange.value[0]
-            const endDate = dateRange.value[1]
-            if (logDate < startDate || logDate > endDate) {
-                return false
-            }
-        }
-        return true
-    })
-})
-
-const paginatedLogs = computed(() => {
-    const start = (currentPage.value - 1) * pageSize.value
-    const end = start + pageSize.value
-    return filteredLogs.value.slice(start, end)
-})
-
-const clearFilters = () => {
-    searchQuery.value = ''
-    dateRange.value = []
-    selectedType.value = ''
-    selectedSeverity.value = ''
-    selectedInitiator.value = ''
 }
 
-const getSeverityType = (severity: string) => {
-    switch (severity.toLowerCase()) {
-        case 'success': return 'success'
-        case 'warning': return 'warning'
-        case 'error': return 'danger'
-        case 'info': return 'info'
+const clearFilters = () => {
+    selectedStatus.value = ''
+    selectedAgent.value = ''
+    searchQuery.value = ''
+    dateRange.value = null
+    currentPage.value = 1
+    refresh()
+}
+
+watch([selectedStatus, selectedAgent, dateRange, searchQuery], () => {
+    currentPage.value = 1
+    refresh()
+})
+
+const viewRunDetails = async (run: any) => {
+    drawerVisible.value = true
+    runDetail.value = null 
+    drawerLoading.value = true
+    activeTab.value = 'timeline'
+    
+    try {
+        const detail = await apiClient.getAuditRunSummary(run.run_id)
+        runDetail.value = detail
+    } catch (e) {
+        console.error("Failed to load details", e)
+    } finally {
+        drawerLoading.value = false
+    }
+}
+
+// Helpers
+const formatDate = (val: string) => dayjs(val).format('YYYY-MM-DD HH:mm:ss')
+const formatTime = (val: string) => dayjs(val).format('HH:mm:ss.SSS')
+
+const formatDuration = (val?: number) => {
+    if (val === undefined || val === null) return '-'
+    if (val < 1) return '< 1s'
+    if (val < 60) return `${val.toFixed(1)}ms` 
+    if (val < 1) return `${(val * 1000).toFixed(0)}ms`
+    return `${val.toFixed(2)}s`
+}
+
+const getStatusType = (status?: string) => {
+    switch(status?.toLowerCase()) {
+        case 'succeeded': return 'success'
+        case 'failed': return 'danger'
+        case 'running': return 'primary'
+        case 'cancelled': return 'warning'
         default: return 'info'
     }
 }
 
-const tableRowClassName = () => {
-    return 'custom-row'
+const getSeverityType = (sev: string) => {
+    switch(sev?.toLowerCase()) {
+        case 'error': return 'danger'
+        case 'success': return 'success'
+        case 'warning': return 'warning'
+        default: return 'info'
+    }
 }
+
+const getActivityColor = (sev: string) => {
+    switch(sev?.toLowerCase()) {
+        case 'error': return '#f56c6c'
+        case 'success': return '#67c23a'
+        case 'warning': return '#e6a23c'
+        default: return '#909399'
+    }
+}
+
+const getSpanTypeColor = (type: string) => {
+    switch(type) {
+        case 'agent': return 'primary'
+        case 'chain': return 'info'
+        case 'tool': return 'warning'
+        case 'llm': return 'success'
+        default: return 'info'
+    }
+}
+
+
+
+
+onMounted(async () => {
+    try {
+        const agents = await apiClient.listAgents()
+        agentOptions.value = agents.map((a: any) => a.name)
+    } catch(e) {}
+    refresh()
+})
 </script>
 
 <style scoped>
 .audit-layout {
     height: 100vh;
-    overflow: hidden;
     display: flex;
     background-color: var(--el-bg-color-page);
     font-family: 'Inter', sans-serif;
-    color: var(--text-primary);
-    -webkit-font-smoothing: antialiased;
-}
-:deep(.dark .audit-layout) {
-    background-color: var(--el-bg-color-page);
-}
-
-.audit-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    position: relative;
-    overflow: hidden;
 }
 
 .audit-header {
@@ -341,18 +496,6 @@ const tableRowClassName = () => {
     align-items: center;
     justify-content: space-between;
     padding: 0 32px;
-    flex-shrink: 0;
-    z-index: 10;
-}
-
-.header-left, .header-right {
-    display: flex;
-    align-items: center;
-    gap: 24px;
-}
-
-.header-right {
-    gap: 12px;
 }
 
 .page-title {
@@ -361,219 +504,84 @@ const tableRowClassName = () => {
     color: var(--text-primary);
 }
 
-/* Element Plus Overrides */
-.search-input-el {
-    width: 260px;
-}
-
-:deep(.search-input-el .el-input__wrapper) {
-    background-color: var(--bg-secondary); /* or #f3f4f6 */
-    box-shadow: none;
-    border-radius: 8px;
-}
-:deep(.search-input-el .el-input__inner) {
-    color: var(--text-primary);
-}
-:deep(.search-input-el .el-input__wrapper.is-focus) {
-    box-shadow: 0 0 0 1px var(--accent-primary);
-    background-color: var(--bg-primary);
-}
-
-.export-btn-el {
-    border-radius: 8px;
-    font-weight: 500;
-    /* Use default styling but ensure it matches theme */
-}
-
 .audit-content {
-    flex: 1;
+    padding: 24px;
+    height: 100%;
     overflow-y: auto;
-    padding: 32px;
+    display: flex;
+    flex-direction: column;
 }
 
 .audit-card-el {
-    max-width: 1400px;
-    margin: 0 auto;
-    border-radius: 12px;
-    background-color: var(--bg-primary);
     border: 1px solid var(--border-color);
-    --el-card-border-color: var(--border-color);
-    --el-card-bg-color: var(--bg-primary);
+    background-color: var(--bg-primary);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden; 
 }
 
+/* Filter Bar Styling */
 .filter-bar {
     padding: 16px 24px;
-    border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: transparent;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--bg-primary);
+    flex-wrap: wrap;
+    gap: 16px;
 }
 
 .filter-group {
     display: flex;
-    gap: 12px;
     align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
 }
 
-.filter-select {
-    width: 160px;
-}
-
-:deep(.filter-date.el-date-editor) {
-    --el-date-editor-width: 240px;
-    box-shadow: none;
-    background-color: var(--bg-secondary);
-    border-radius: 8px;
-}
-:deep(.filter-date .el-range-input) {
-    color: var(--text-primary);
-    background: transparent;
-}
-:deep(.filter-date .el-range-separator) {
-    color: var(--text-secondary);
-}
-
-:deep(.filter-select .el-input__wrapper) {
-    background-color: var(--bg-secondary);
-    box-shadow: none;
-    border-radius: 8px;
-}
-:deep(.filter-select .el-input__inner) {
-    color: var(--text-primary);
-}
-
-/* Table Styling */
-:deep(.el-table) {
-    --el-table-bg-color: transparent;
-    --el-table-tr-bg-color: transparent;
-    --el-table-header-bg-color: transparent;
-    --el-table-row-hover-bg-color: var(--bg-tertiary); /* #f9fafb or dark eq */
-    --el-table-border-color: var(--border-color);
-    --el-table-text-color: var(--text-primary);
-    --el-table-header-text-color: var(--text-secondary);
-}
-
-:deep(.el-table th.el-table__cell) {
-    background-color: rgba(0,0,0,0.02); /* Slight header bg */
-}
-:deep(.dark .el-table th.el-table__cell) {
-    background-color: rgba(255,255,255,0.02);
-}
-
-.user-cell {
+.filter-actions {
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
-.user-avatar {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    background-color: var(--bg-tertiary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--text-secondary);
+/* Input Customization */
+.filter-input-search {
+    width: 240px;
+}
+.filter-date {
+    width: 320px !important;
+}
+.filter-select {
+    width: 140px;
 }
 
-.text-secondary {
-    color: var(--text-secondary);
+/* Make elements blend */
+:deep(.el-input__wrapper), :deep(.el-range-editor.el-input__wrapper) {
+    box-shadow: 0 0 0 1px var(--border-color) inset;
+    background-color: transparent;
 }
-
-/* Pagination */
-.pagination-container {
-    padding: 16px;
-    display: flex;
-    justify-content: flex-end;
-    border-top: 1px solid var(--border-color);
-}
-
-/* Premium Overrides */
-:deep(.premium-table .el-table__cell) {
-    padding: 16px 0;
-}
-
-:deep(.premium-table .cell) {
-    padding: 0 24px;
-}
-
-/* Pagination Customization */
-:deep(.premium-pagination .el-pagination.is-background .el-pager li:not(.is-disabled).is-active) {
-    background-color: var(--accent-primary) !important;
-}
-
-:deep(.premium-pagination .el-pagination.is-background .el-pager li) {
-    background-color: transparent !important;
-    border: 1px solid var(--border-color);
-    color: var(--text-secondary);
-}
-
-:deep(.premium-pagination .el-pagination.is-background .btn-prev),
-:deep(.premium-pagination .el-pagination.is-background .btn-next) {
-    background-color: transparent !important;
-    border: 1px solid var(--border-color);
-    color: var(--text-secondary);
-}
-
-:deep(.premium-pagination .el-pagination.is-background .el-pager li:hover) {
-    color: var(--accent-primary);
-    border-color: var(--accent-primary);
-}
-
-/* Drawer Styles */
-.drawer-content {
-    padding: 0 12px;
-}
-
-.detail-item {
-    margin-bottom: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.detail-item .label {
-    font-size: 12px;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    font-weight: 600;
-}
-
-.detail-item .value {
-    font-size: 14px;
-    color: var(--text-primary);
-}
-
-.description-text {
-    line-height: 1.5;
-    background-color: var(--bg-secondary);
-    padding: 12px;
-    border-radius: 8px;
-    margin-top: 4px;
+:deep(.el-input__wrapper:hover) {
+    box-shadow: 0 0 0 1px var(--el-color-primary) inset;
 }
 
 .json-viewer {
-    background-color: #1e1e1e;
+    background: #1e1e1e;
     color: #ce9178;
-    padding: 16px;
-    border-radius: 8px;
-    overflow-x: auto;
+    padding: 12px;
+    border-radius: 6px;
     font-family: 'Fira Code', monospace;
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: 11px;
+    overflow-x: auto;
+    line-height: 1.4;
 }
 
-:deep(.premium-drawer .el-drawer__header) {
-    margin-bottom: 0;
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--border-color);
-}
+.text-secondary { color: var(--text-secondary); }
+
+/* Premium Drawer Override */
 :deep(.premium-drawer .el-drawer__body) {
-    padding: 24px;
-    background-color: var(--bg-primary);
+    padding: 0;
 }
 </style>

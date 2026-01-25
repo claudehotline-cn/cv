@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
+from uuid import uuid4
 from ..db import get_db
 from ..models.db_models import SessionModel, AgentModel
 
@@ -33,7 +34,8 @@ async def create_session(
 
     new_session = SessionModel(
         agent_id=agent.id,
-        title=title or "New Chat"
+        title=title or "New Chat",
+        thread_id=uuid4()
     )
     db.add(new_session)
     await db.commit()

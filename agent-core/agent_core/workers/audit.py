@@ -26,6 +26,7 @@ class AuditWorker:
     async def start(self):
         """Start consuming events."""
         self.running = True
+        print(f"[AuditWorker] STARTING consumer on audit.events", flush=True)
         _LOGGER.info("[AuditWorker] Starting audit consumer service...")
         
         # Subscribe to audit topic
@@ -33,14 +34,19 @@ class AuditWorker:
         # agent_core.events.RedisEventBus.subscribe is a simple iterator wrapper around xread.
         # For production robustness, we should use xreadgroup, but for now we reuse the existing simple subscription interface.
         
-        iterator = self.event_bus.subscribe("agent:audit_events")
+        # Subscribe to audit topic starting from beginning to ensure we don't miss events
+        # emitted before worker start (e.g. during simultaneous restart)
+        iterator = self.event_bus.subscribe("audit.events", last_id="0")
         
         try:
+            print("[AuditWorker] Entering event loop", flush=True)
             async for event in iterator:
+                print(f"[AuditWorker] Received event raw: {str(event)[:100]}", flush=True)
                 if not self.running:
                     break
                 await self.process_event(event)
         except Exception as e:
+            print(f"[AuditWorker] CRASHED: {e}", flush=True)
             _LOGGER.error(f"[AuditWorker] Consumer crashed: {e}")
             if self.running:
                 # Simple restart logic could go here

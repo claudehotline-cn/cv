@@ -20,6 +20,12 @@ from .subagents.python import python_agent
 from .subagents.visualizer import visualizer_agent
 from .subagents.reviewer import reviewer_agent
 from .subagents.report import report_agent
+from agent_core.events import RedisEventBus, AuditEmitter
+from agent_core.settings import get_settings
+
+_settings = get_settings()
+_redis_bus = RedisEventBus(_settings.redis_url)
+_audit_emitter = AuditEmitter(_redis_bus.redis)
 
 _LOGGER = logging.getLogger("agent_langchain.data_deep_graph")
 
@@ -68,6 +74,7 @@ def get_data_deep_agent_graph(
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
             SensitiveToolMiddleware(
+                emitter=_audit_emitter,
                 sensitive_tools=["visualizer_agent", "report_agent"],
                 allowed_decisions=["approve", "reject"],
                 description={

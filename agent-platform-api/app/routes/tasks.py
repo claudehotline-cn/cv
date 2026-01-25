@@ -77,7 +77,8 @@ async def create_execute_task(
         agent_key,
         request.message,
         request.config,
-        "default" # user_id TODO: Extract from session or request
+        "default", # user_id
+        str(session.thread_id) if session.thread_id else str(session_id) # thread_id (new arg)
     )
     await redis_pool.close()
     

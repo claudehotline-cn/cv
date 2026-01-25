@@ -22,6 +22,15 @@ from ..prompts import (
 )
 from ..skills.registry import SKILLS_REGISTRY
 
+from agent_core.settings import get_settings
+from agent_core.events import RedisEventBus, AuditEmitter
+from agent_core.decorators import node_wrapper
+
+_settings = get_settings()
+_redis_bus = RedisEventBus(_settings.redis_url)
+_audit_emitter = AuditEmitter(_redis_bus.redis)
+
+
 _LOGGER = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
@@ -39,6 +48,7 @@ class PythonAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
+@node_wrapper("df_profile", emitter=_audit_emitter, graph_id="python_agent")
 def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 1: df_profile")
@@ -64,7 +74,8 @@ def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> dict:
         _LOGGER.error("[Python Agent] df_profile failed: %s", e)
         return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
 
-def step2_llm_generate_code(state: PythonAgentState) -> dict:
+@node_wrapper("llm_generate", emitter=_audit_emitter, graph_id="python_agent")
+def step2_llm_generate_code(state: PythonAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据 df_profile 结果生成 Python 代码"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 2: LLM generate code")
     task = state.get("task_description", "")
@@ -140,6 +151,7 @@ python
     _LOGGER.info("[Python Agent] LLM generated code: %s", code[:300])
     return {"python_code": code.strip()}
 
+@node_wrapper("python_execute", emitter=_audit_emitter, graph_id="python_agent")
 def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Command[Literal["llm_generate", "format_output"]]:
     """步骤 3: 执行 LLM 生成的 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 3: python_execute")
@@ -205,7 +217,8 @@ def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Com
                 goto="format_output"
             )
 
-def format_final_output(state: PythonAgentState) -> dict:
+@node_wrapper("format_output", emitter=_audit_emitter, graph_id="python_agent")
+def format_final_output(state: PythonAgentState, config: RunnableConfig) -> dict:
     """格式化最终输出为 Agent 消息"""
     result = state.get("python_result", "")
     _LOGGER.info("[Python Agent] format_final_output result length: %d", len(result))

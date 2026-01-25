@@ -8,7 +8,10 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, Human
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
+from langgraph.types import interrupt
 from deepagents.backends import StoreBackend
+
+from .events import AuditEmitter
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,11 +24,13 @@ class SensitiveToolMiddleware(AgentMiddleware):
     
     def __init__(
         self, 
+        emitter: AuditEmitter = None,
         sensitive_tools: List[str] = None,
         allowed_decisions: List[str] = None,
         description: Union[str, Dict[str, str]] = "High risk operation detected, please confirm."
     ):
         super().__init__()
+        self.emitter = emitter
         self.sensitive_tools = sensitive_tools or []
         self.allowed_decisions = allowed_decisions or ["approve", "reject"]
         self.description = description
@@ -61,6 +66,51 @@ class SensitiveToolMiddleware(AgentMiddleware):
             else:
                 desc = self.description
 
+            # Emit hitl_requested
+            current_run_id = None
+            if hasattr(request, "runtime") and request.runtime:
+                 # 1. Try config
+                 config = getattr(request.runtime, "config", None)
+                 if config:
+                     current_run_id = config.get("metadata", {}).get("run_id")
+                 
+                 # 2. Try context (if config failed)
+                 if not current_run_id:
+                     ctx = getattr(request.runtime, "context", {})
+                     # Context might be dict or object
+                     if isinstance(ctx, dict):
+                         current_run_id = ctx.get("run_id") or ctx.get("configurable", {}).get("run_id")
+            
+            # Extract session/thread info
+            session_id = None
+            thread_id = None
+            if hasattr(request, "runtime"):
+                cfg = getattr(request.runtime, "config", {})
+                meta = cfg.get("metadata", {})
+                configurable = cfg.get("configurable", {})
+                
+                session_id = meta.get("session_id") or configurable.get("session_id")
+                thread_id = meta.get("thread_id") or configurable.get("thread_id")
+                
+                if not session_id and isinstance(getattr(request.runtime, "context", {}), dict):
+                     ctx = request.runtime.context
+                     session_id = ctx.get("session_id") or ctx.get("configurable", {}).get("session_id")
+
+            if self.emitter and current_run_id:
+                await self.emitter.emit(
+                    event_type="hitl_requested",
+                    run_id=str(current_run_id),
+                    session_id=str(session_id) if session_id else None,
+                    thread_id=str(thread_id) if thread_id else None,
+                    span_id=None, 
+                    component="middleware",
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_args": str(tool_args)[:2000], 
+                        "description": desc
+                    }
+                )
+
             # Prepare Interrupt Payload
             interrupt_value = {
                 "action_requests": [{
@@ -93,6 +143,18 @@ class SensitiveToolMiddleware(AgentMiddleware):
                 decision_type = decision.get("type")
                 message = decision.get("message", "")
                 
+                if self.emitter and current_run_id:
+                    await self.emitter.emit(
+                        event_type="hitl_approved" if decision_type == "approve" else "hitl_rejected",
+                        run_id=str(current_run_id),
+                        component="middleware",
+                        payload={
+                            "tool_name": tool_name,
+                            "decision": decision_type,
+                            "reason": message
+                        }
+                    )
+
                 if decision_type == "reject":
                     content = f"USER_INTERRUPT: Operation '{tool_name}' rejected by user. Feedback: {message}. Stop or modify your plan."
                     _LOGGER.info(f"[HITL] Rejected: {content}")

@@ -30,7 +30,8 @@ async def agent_execute_task(
 
     input_message: str,
     config: Dict[str, Any] = None,
-    user_id: str = "default"
+    user_id: str = "default",
+    thread_id: str = None
 ) -> Dict[str, Any]:
     """执行 Agent 任务
     
@@ -87,16 +88,29 @@ async def agent_execute_task(
             result_chunks = []
             progress = 20
             
+            # Generate explicit run_id for Audit consistency
+            # This ensures AuditCallbackHandler and node_wrapper share the same run_id
+            run_id = str(uuid.uuid4())
+            
+            # Resolve thread_id
+            effective_thread_id = thread_id or session_id
+            
             # Inject task_id and user_id into config
             config = config or {}
             config.setdefault("configurable", {})
             config["configurable"]["task_id"] = task_id
             config["configurable"]["user_id"] = user_id
             config["configurable"]["session_id"] = session_id
+            config["configurable"]["thread_id"] = effective_thread_id
             
-            # Inject session_id into metadata so it propagates to AuditCallbackHandler
+            # Inject session_id and run_id into metadata so it propagates to AuditCallbackHandler
             config.setdefault("metadata", {})
             config["metadata"]["session_id"] = session_id
+            config["metadata"]["thread_id"] = effective_thread_id
+            config["metadata"]["run_id"] = run_id
+            config["metadata"]["sub_agent"] = agent_key 
+            # Also inject user info if needed
+            config["metadata"]["user_id"] = user_id
 
             async for chunk in graph.astream(
                 {"messages": [{"role": "user", "content": input_message}]},
@@ -155,53 +169,14 @@ _audit_worker_task = None
 _audit_worker_instance = None
 
 async def save_audit_log_to_db(event: Dict[str, Any]):
-    """Callback to persist audit event to Postgres."""
+    """Callback to persist audit event to Postgres using AuditPersistenceService."""
     from app.db import AsyncSessionLocal
-    from app.models.db_models import AuditLogModel
+    from app.services.audit_service import AuditPersistenceService
     
-    import json
     try:
-        # Ensure event is a dict (just in case agent_core logic didn't handle it or local invoke)
-        if isinstance(event, str):
-             event = json.loads(event)
-             
-        # Parse 'data' field if it is a string (Redis Stream limitation often forces string values)
-        event_data = event.get("data") or {}
-        if isinstance(event_data, str):
-            try:
-                event_data = json.loads(event_data)
-                event["data"] = event_data # Update in place
-            except:
-                pass
-        
         async with AsyncSessionLocal() as db:
-            # Deduplication: Check if run_id already exists for this event type
-            run_id = event_data.get("run_id")
-            if run_id:
-                from sqlalchemy import select, func
-                stmt = select(AuditLogModel).where(
-                    AuditLogModel.event_type == event.get("type"),
-                    func.jsonb_extract_path_text(AuditLogModel.data, 'data', 'run_id') == str(run_id)
-                )
-                existing = await db.execute(stmt)
-                if existing.scalar_one_or_none():
-                    _LOGGER.info(f"Skipping duplicate audit log for run_id {run_id}")
-                    return
-
-            # Safe extraction of session_id handling None metadata
-            metadata = event_data.get("metadata") or {}
-            session_id = str(metadata.get("session_id", ""))
-
-            log = AuditLogModel(
-                event_type=event.get("type", "unknown"),
-                user_id=str(event.get("user_id", "")),
-                session_id=session_id,
-                trace_id=str(event.get("trace_id", "")),
-                task_id=str(event.get("task_id", "")), # May be missing
-                data=event # Store full event (including timestamp)
-            )
-            db.add(log)
-            await db.commit()
+            service = AuditPersistenceService(db)
+            await service.process_event(event)
     except Exception as e:
         _LOGGER.error(f"Failed to persist audit log: {e}")
 
