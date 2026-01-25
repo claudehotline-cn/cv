@@ -22,6 +22,14 @@ from ..prompts import (
     REPORT_AGENT_DESCRIPTION
 )
 
+from agent_core.settings import get_settings
+from agent_core.events import RedisEventBus, AuditEmitter
+from agent_core.decorators import node_wrapper
+
+_settings = get_settings()
+_redis_bus = RedisEventBus(_settings.redis_url)
+_audit_emitter = AuditEmitter(_redis_bus.redis)
+
 _LOGGER = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
@@ -36,6 +44,7 @@ class ReportAgentState(TypedDict):
     df_profile_result: str
     report_content: str
 
+@node_wrapper("report_df_profile", emitter=_audit_emitter, graph_id="report_agent")
 def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> dict:
     """Step 1: 强制调用 df_profile 获取数据概览"""
     _LOGGER.info("[Report Agent Fixed Flow] Step 1: df_profile")
@@ -88,6 +97,7 @@ def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> 
         _LOGGER.error("[Report Agent] df_profile failed: %s", e)
         return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
 
+@node_wrapper("report_generate", emitter=_audit_emitter, graph_id="report_agent")
 def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据数据概览生成 Markdown 报告"""
     _LOGGER.info("[Report Agent Fixed Flow] Step 2: LLM generate report")
@@ -191,12 +201,12 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
 
 # 构建 Report 固化流程图
 report_agent_graph = StateGraph(ReportAgentState)
-report_agent_graph.add_node("df_profile", report_step1_df_profile)
-report_agent_graph.add_node("generate", report_step2_generate)
+report_agent_graph.add_node("report_df_profile", report_step1_df_profile)
+report_agent_graph.add_node("report_generate", report_step2_generate)
 
-report_agent_graph.add_edge(START, "df_profile")
-report_agent_graph.add_edge("df_profile", "generate")
-report_agent_graph.add_edge("generate", END)
+report_agent_graph.add_edge(START, "report_df_profile")
+report_agent_graph.add_edge("report_df_profile", "report_generate")
+report_agent_graph.add_edge("report_generate", END)
 
 report_agent_runnable = report_agent_graph.compile()
 

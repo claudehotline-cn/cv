@@ -63,7 +63,8 @@ async def test_data_agent_invocation_mock():
     
     assert graph is not None
 
-def test_python_execute_tool():
+@pytest.mark.asyncio
+async def test_python_execute_tool():
     """Test functionality of Python execution tool."""
     from data_agent.tools.python import python_execute_tool
     
@@ -74,7 +75,7 @@ def test_python_execute_tool():
     # Run the tool
     # Tool output is a JSON string
     import json
-    output_str = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=config)
+    output_str = await python_execute_tool.ainvoke({"code": code, "analysis_id": analysis_id}, config=config)
     
     # Parse output
     output = json.loads(output_str)

@@ -4,6 +4,7 @@ from uuid import UUID
 from datetime import datetime
 from typing import Dict, Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from app.models.db_models import (
@@ -52,33 +53,45 @@ class AuditPersistenceService:
         if event_type in ("chain_start", "run_started", "tool_call_requested", "llm_called", "langgraph_node_started"):
             await self._handle_span_start(run_id, span_id, event_type, payload, event)
 
+        # Ensure Span Exists (Idempotent) to satisfy FK
+        if span_id:
+            await self._ensure_span_exists(run_id, span_id, event.get("session_id"), event.get("thread_id"))
+
         # 4. Create AuditEventModel (Timeline)
-        # Note: AuditEventModel does not have 'component' field in schema currently.
-        # We store component in payload if needed, or mapped to actor/target.
-        
-        audit_event = AuditEventModel(
-            event_id=UUID(event["event_id"]) if event.get("event_id") else None,
-            run_id=run_id,
-            span_id=span_id,
-            session_id=event.get("session_id"),
-            thread_id=event.get("thread_id"),
-            event_type=event_type,
-            actor_type=event.get("actor_type"),
-            actor_id=event.get("actor_id"),
-            component=event.get("component"), 
-            payload=payload,
-            # event_time handled by default or parsed if string provided
-        )
-        self.db.add(audit_event)
+        # Wrap in nested transaction to ignore duplicates (idempotency)
+        try:
+            async with self.db.begin_nested():
+                audit_event = AuditEventModel(
+                    event_id=UUID(event["event_id"]) if event.get("event_id") else None,
+                    run_id=run_id,
+                    span_id=span_id,
+                    session_id=event.get("session_id"),
+                    thread_id=event.get("thread_id"),
+                    event_type=event_type,
+                    actor_type=event.get("actor_type"),
+                    actor_id=event.get("actor_id"),
+                    component=event.get("component"), 
+                    payload=payload,
+                    # event_time handled by default or parsed if string provided
+                )
+                self.db.add(audit_event)
+                await self.db.flush()
+        except (IntegrityError, Exception) as e:
+            msg = str(e)
+            if "duplicate key" in msg or "UniqueViolation" in msg or "already exists" in msg:
+                _LOGGER.info(f"Event {event.get('event_id')} already exists. Skipping insertion but proceeding with state updates.")
+                _LOGGER.info(f"Continuing to process event type: {event_type} for run {run_id} span {span_id}")
+            else:
+                raise e
         
         # 5. Handle State Transitions (End / Other)
         if event_type == "run_started":
             await self._handle_run_start(run_id, event.get("session_id"), event.get("thread_id"), payload)
             
-        elif event_type in ("run_finished", "run_failed"):
+        elif event_type in ("run_finished", "run_failed", "run_interrupted"):
             await self._handle_run_end(run_id, event_type, payload)
             
-        elif event_type in ("chain_end", "tool_call_executed", "llm_output_received", "tool_val_failed", "llm_failed", "langgraph_node_finished", "node_failed"):
+        elif event_type in ("chain_end", "tool_call_executed", "llm_output_received", "tool_val_failed", "llm_failed", "langgraph_node_finished", "node_failed", "chain_interrupted"):
             await self._handle_span_end(span_id, event_type, payload)
             
             # Extra specialized handling
@@ -103,6 +116,9 @@ class AuditPersistenceService:
         try:
              # Force INSERT via nested transaction to handle race conditions
             async with self.db.begin_nested():
+                # For robustness, handle case where run might have been created by another worker
+                # but not yet committed? No, consistent read.
+                # Just insert.
                 run = AgentRunModel(
                     run_id=run_id,
                     status="running",
@@ -112,10 +128,32 @@ class AuditPersistenceService:
                 self.db.add(run)
                 await self.db.flush()
         except Exception as e:
-            # Likely IntegrityError if run was inserted concurrently
-            _LOGGER.info(f"AgentRun {run_id} insert skipped (race condition or exists): {e}")
-            # Ensure it's in session? No, if it failed, we might need to get it again to attach to session?
-            # But we don't strictly need it attached for FK to work, the row just needs to exist.
+            # Log errors (usually IntegrityError) but continue
+            _LOGGER.error(f"Ensure Run {run_id} failed: {e}")
+            pass
+
+    async def _ensure_span_exists(self, run_id: UUID, span_id: UUID, session_id: str | None, thread_id: str | None):
+        """Ensure AgentSpanModel exists. Idempotent."""
+        existing = await self.db.get(AgentSpanModel, span_id)
+        if existing:
+            return
+            
+        try:
+            async with self.db.begin_nested():
+                span = AgentSpanModel(
+                    span_id=span_id,
+                    run_id=run_id,
+                    span_type="unknown",
+                    agent_name="unknown", 
+                    status="running",
+                    # created_at and started_at default to now
+                    started_at=datetime.utcnow()
+                )
+                self.db.add(span)
+                await self.db.flush()
+        except Exception as e:
+            # Log errors but continue (e.g. FK violation if run missing)
+            _LOGGER.error(f"Ensure Span {span_id} failed: {e}")
             pass
 
     async def _handle_run_start(self, run_id: UUID, session_id: str | None, thread_id: str | None, payload: Dict[str, Any]):
@@ -139,8 +177,21 @@ class AuditPersistenceService:
 
     async def _handle_run_end(self, run_id: UUID, event_type: str, payload: Dict[str, Any]):
         """Update AgentRunModel."""
-        status = "succeeded" if event_type == "run_finished" else "failed"
-        stmt = update(AgentRunModel).where(AgentRunModel.run_id == run_id).values(
+        if event_type == "run_finished":
+            status = "succeeded"
+        elif event_type == "run_interrupted":
+            status = "interrupted"
+        else:
+            status = "failed"
+            
+        stmt = update(AgentRunModel).where(AgentRunModel.run_id == run_id)
+        
+        # Prevent overwriting 'interrupted' or 'failed' with 'succeeded'
+        # This handles cases where run_interrupted happens, followed by run_finished cleanup
+        if status == "succeeded":
+            stmt = stmt.where(AgentRunModel.status.not_in(["interrupted", "failed"]))
+
+        stmt = stmt.values(
             status=status,
             ended_at=datetime.utcnow()
         )
@@ -196,10 +247,14 @@ class AuditPersistenceService:
              except Exception as e:
                  _LOGGER.warning(f"Failed to infer context from parent span: {e}")
 
+        # Resolve Parent Span ID (LangChain often sends parent_run_id)
+        raw_parent_id = event.get("parent_span_id") or event.get("parent_run_id")
+        parent_uuid = UUID(raw_parent_id) if raw_parent_id else None
+
         span = AgentSpanModel(
             span_id=span_id,
             run_id=run_id,
-            parent_span_id=UUID(event.get("parent_span_id")) if event.get("parent_span_id") else None,
+            parent_span_id=parent_uuid,
             span_type=span_type,
             agent_name=event.get("component"), 
             node_name=node_name,
@@ -214,8 +269,22 @@ class AuditPersistenceService:
         if not span_id:
             return
             
-        status = "failed" if "failed" in event_type else "succeeded"
-        stmt = update(AgentSpanModel).where(AgentSpanModel.span_id == span_id).values(
+        if "failed" in event_type:
+            status = "failed"
+        elif "interrupted" in event_type:
+            status = "interrupted"
+        else:
+            status = "succeeded"
+
+        _LOGGER.info(f"Updating Span {span_id} status to {status} due to {event_type}")
+
+        stmt = update(AgentSpanModel).where(AgentSpanModel.span_id == span_id)
+        
+        # Prevent overwriting 'interrupted' or 'failed' with 'succeeded'
+        if status == "succeeded":
+            stmt = stmt.where(AgentSpanModel.status.not_in(["interrupted", "failed"]))
+
+        stmt = stmt.values(
             status=status,
             ended_at=datetime.utcnow()
         )

@@ -25,6 +25,14 @@ from ..prompts import (
     SQL_AGENT_DESCRIPTION, SQL_AGENT_PROMPT
 )
 
+from agent_core.settings import get_settings
+from agent_core.events import RedisEventBus, AuditEmitter
+from agent_core.decorators import node_wrapper
+
+_settings = get_settings()
+_redis_bus = RedisEventBus(_settings.redis_url)
+_audit_emitter = AuditEmitter(_redis_bus.redis)
+
 _LOGGER = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
@@ -43,7 +51,8 @@ class SQLAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: BaseStore, runtime: Runtime) -> dict:
+@node_wrapper("list_tables", emitter=_audit_emitter, graph_id="sql_agent")
+async def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: BaseStore, runtime: Runtime) -> dict:
     """Step 1: 列出所有表"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 1: list_tables")
     # Check if runtime has 'state' attribute
@@ -73,7 +82,7 @@ def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: B
         child_config.setdefault("tags", []).append("agent:sql_agent")
         child_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
         
-        result = db_list_tables_tool.invoke({"analysis_id": analysis_id}, config=child_config)
+        result = await db_list_tables_tool.ainvoke({"analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[SQL Agent] list_tables result: %s", result[:300] if len(result) > 300 else result)
         return {"tables_info": result, "analysis_id": analysis_id, "task_description": task_description}
 
@@ -83,7 +92,8 @@ def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: B
 
 
 
-def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> dict:
+@node_wrapper("table_schema", emitter=_audit_emitter, graph_id="sql_agent")
+async def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> dict:
     """Step 2: 获取相关表的 Schema"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 2: get_schema")
     
@@ -112,7 +122,7 @@ def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> dict:
             # Config passed to step2
             child_config = config.copy() if config else {}
             child_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
-            result = db_table_schema_tool.invoke({"table": table}, config=child_config)
+            result = await db_table_schema_tool.ainvoke({"table": table}, config=child_config)
             schema_results.append(f"表 {table}:\n{result}")
             _LOGGER.info("[SQL Agent] Got schema for table %s: %s", table, result[:200] if len(result) > 200 else result)
         except Exception as e:
@@ -122,7 +132,8 @@ def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> dict:
     _LOGGER.info("[SQL Agent] Total schema_info length: %d, tables: %d", len(schema_info), len(schema_results))
     return {"schema_info": schema_info}
 
-def sql_step3_generate_sql(state: SQLAgentState) -> dict:
+@node_wrapper("llm_generate_sql", emitter=_audit_emitter, graph_id="sql_agent")
+def sql_step3_generate_sql(state: SQLAgentState, config: RunnableConfig) -> dict:
     """Step 3: LLM 根据表结构生成 SQL"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 3: LLM generate SQL")
     
@@ -249,7 +260,8 @@ Strictly result ONLY the SQL code.
     
     return {"generated_sql": extracted_sql, "messages": [sql_preview_msg]}
 
-def sql_step4_run_sql(state: SQLAgentState, config: RunnableConfig) -> Command[Literal["llm_generate_sql", "format_output"]]:
+@node_wrapper("run_sql", emitter=_audit_emitter, graph_id="sql_agent")
+async def sql_step4_run_sql(state: SQLAgentState, config: RunnableConfig) -> Command[Literal["llm_generate_sql", "format_output"]]:
     """步骤 4: 执行 SQL，使用 Command 决定下一步走向"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 4: run_sql")
     
@@ -281,7 +293,7 @@ def sql_step4_run_sql(state: SQLAgentState, config: RunnableConfig) -> Command[L
         child_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
 
         # 传入 user_requirement 以启用 SQL 审查
-        result = db_run_sql_tool.invoke({
+        result = await db_run_sql_tool.ainvoke({
             "sql": sql, 
             "analysis_id": analysis_id,
             "user_requirement": task_description
@@ -335,7 +347,8 @@ def sql_step4_run_sql(state: SQLAgentState, config: RunnableConfig) -> Command[L
                 goto="format_output"
             )
 
-def sql_format_output(state: SQLAgentState) -> dict:
+@node_wrapper("format_output", emitter=_audit_emitter, graph_id="sql_agent")
+def sql_format_output(state: SQLAgentState, config: RunnableConfig) -> dict:
     """格式化输出"""
     sql_result = state.get("sql_result", "")
     output = f"SQL_AGENT_COMPLETE: {sql_result}"

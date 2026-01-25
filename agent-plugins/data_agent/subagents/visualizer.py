@@ -24,6 +24,14 @@ from ..prompts import (
     VISUALIZER_AGENT_DESCRIPTION
 )
 
+from agent_core.settings import get_settings
+from agent_core.events import RedisEventBus, AuditEmitter
+from agent_core.decorators import node_wrapper
+
+_settings = get_settings()
+_redis_bus = RedisEventBus(_settings.redis_url)
+_audit_emitter = AuditEmitter(_redis_bus.redis)
+
 _LOGGER = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
@@ -41,7 +49,8 @@ class VisualizerAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) -> dict:
+@node_wrapper("viz_df_profile", emitter=_audit_emitter, graph_id="visualizer_agent")
+async def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 1: df_profile")
     
@@ -59,16 +68,16 @@ def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) ->
     
     # 只加载 result（Python Agent 处理后的数据，已转换好类型）
     try:
-        child_config = config.copy() if config else {}
         child_config.setdefault("metadata", {})["sub_agent"] = "Visualizer Agent"
-        result = df_profile_tool.invoke({"df_name": "result", "analysis_id": analysis_id}, config=child_config)
+        result = await df_profile_tool.ainvoke({"df_name": "result", "analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[Visualizer Agent] df_profile(result): %s", result[:500] if len(result) > 500 else result)
         return {"df_profile_result": result, "analysis_id": analysis_id, "task_description": task_description}
     except Exception as e:
         _LOGGER.error("[Visualizer Agent] df_profile(result) failed: %s", e)
         return {"df_profile_result": f'{{"error": "DataFrame result not found: {e}"}}', "analysis_id": analysis_id, "task_description": task_description}
 
-def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableConfig) -> dict:
+@node_wrapper("viz_llm_generate", emitter=_audit_emitter, graph_id="visualizer_agent")
+async def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据 df_profile 结果生成 ECharts 代码"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 2: LLM generate chart code")
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -215,7 +224,8 @@ python
     _LOGGER.info("[Visualizer Agent] LLM generated code: %s", code[:300])
     return {"chart_code": code.strip()}
 
-def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> Command[Literal["llm_generate", "format_output"]]:
+@node_wrapper("viz_python_execute", emitter=_audit_emitter, graph_id="visualizer_agent")
+async def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> Command[Literal["viz_llm_generate", "viz_format_output"]]:
     """Step 3: 执行 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 3: python_execute")
     code = state.get("chart_code", "")
@@ -224,15 +234,14 @@ def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig
     if not code:
         return Command(
             update={"chart_result": "Error: No code to execute", "retry_count": 0},
-            goto="format_output"
+            goto="viz_format_output"
         )
         
     retry_count = state.get("retry_count", 0)
     
     try:
-        child_config = config.copy() if config else {}
         child_config.setdefault("metadata", {})["sub_agent"] = "Visualizer Agent"
-        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=child_config)
+        result = await python_execute_tool.ainvoke({"code": code, "analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[Visualizer Agent] python_execute result: %s", result[:500] if len(result) > 500 else result)
         
         # 检查执行结果是否包含错误
@@ -278,17 +287,17 @@ def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig
                 _LOGGER.info("[Visualizer Agent] Retrying... Attempt %d", retry_count + 1)
                 return Command(
                     update={"chart_result": result, "retry_count": retry_count + 1, "error_feedback": error_msg},
-                    goto="llm_generate"  # 回到 LLM 重新生成
+                    goto="viz_llm_generate"  # 回到 LLM 重新生成
                 )
             else:
                 return Command(
                     update={"chart_result": result, "error_feedback": error_msg},
-                    goto="format_output"  # 超过重试次数，结束
+                    goto="viz_format_output"  # 超过重试次数，结束
                 )
         
         return Command(
             update={"chart_result": result, "error_feedback": ""},
-            goto="format_output"
+            goto="viz_format_output"
         )
         
     except Exception as e:
@@ -296,14 +305,15 @@ def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig
         if retry_count < 3:
             return Command(
                 update={"chart_result": f"Error: {e}", "retry_count": retry_count + 1, "error_feedback": str(e)},
-                goto="llm_generate"
+                goto="viz_llm_generate"
             )
         else:
             return Command(
                 update={"chart_result": f"Error: {e}", "error_feedback": str(e)},
-                goto="format_output"
+                goto="viz_format_output"
             )
 
+@node_wrapper("viz_format_output", emitter=_audit_emitter, graph_id="visualizer_agent")
 def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """格式化最终输出 - 提取 CHART_DATA 并持久化到文件"""
     result = state.get("chart_result", "")
@@ -344,17 +354,17 @@ def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig)
 
 # 构建 Visualizer Agent Graph
 viz_agent_graph = StateGraph(VisualizerAgentState)
-viz_agent_graph.add_node("df_profile", viz_step1_df_profile)
-viz_agent_graph.add_node("llm_generate", viz_step2_llm_generate_code)
-viz_agent_graph.add_node("python_execute", viz_step3_python_execute)
-viz_agent_graph.add_node("format_output", viz_format_final_output)
+viz_agent_graph.add_node("viz_df_profile", viz_step1_df_profile)
+viz_agent_graph.add_node("viz_llm_generate", viz_step2_llm_generate_code)
+viz_agent_graph.add_node("viz_python_execute", viz_step3_python_execute)
+viz_agent_graph.add_node("viz_format_output", viz_format_final_output)
 
-viz_agent_graph.add_edge(START, "df_profile")
-viz_agent_graph.add_edge("df_profile", "llm_generate")
-viz_agent_graph.add_edge("llm_generate", "python_execute")
+viz_agent_graph.add_edge(START, "viz_df_profile")
+viz_agent_graph.add_edge("viz_df_profile", "viz_llm_generate")
+viz_agent_graph.add_edge("viz_llm_generate", "viz_python_execute")
 
 # Command 模式：python_execute 内部直接决定下一步，无需 conditional_edges
-viz_agent_graph.add_edge("format_output", END)
+viz_agent_graph.add_edge("viz_format_output", END)
 
 visualizer_agent_runnable = viz_agent_graph.compile()
 

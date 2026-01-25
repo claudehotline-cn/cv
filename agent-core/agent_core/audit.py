@@ -169,36 +169,70 @@ class AuditCallbackHandler(BaseCallbackHandler):
         session_id = ctx.get("session_id") or (str(md.get("session_id")) if md.get("session_id") else None)
         thread_id = ctx.get("thread_id") or (str(md.get("thread_id")) if md.get("thread_id") else None)
 
-        await self.emitter.emit(
-            event_type="chain_failed", 
-            run_id=run_id, 
-            session_id=session_id,
-            thread_id=thread_id,
-            span_id=lc_run_id, 
-            component="chain", 
-            payload={
-                "error_class": type(error).__name__, 
-                "error_message": str(error)[:2000],
-                "name": ctx.get("name"),
-                "langgraph_node": ctx.get("langgraph_node"),
-                "subagent": ctx.get("subagent")
-            }
-        )
-        
-        # Emit run_failed if this chain was the agent
-        if ctx.get("is_agent"):
+        error_type = type(error).__name__
+        is_interrupt = "Interrupt" in error_type
+
+        if is_interrupt:
             await self.emitter.emit(
-                event_type="run_failed", 
+                event_type="chain_interrupted", 
                 run_id=run_id, 
                 session_id=session_id,
                 thread_id=thread_id,
                 span_id=lc_run_id, 
-                component="agent",
+                component="chain", 
                 payload={
-                    "error_class": type(error).__name__, 
-                    "error_message": str(error)[:2000]
+                    "error_class": error_type, 
+                    "error_message": str(error)[:2000],
+                    "name": ctx.get("name"),
+                    "langgraph_node": ctx.get("langgraph_node"),
+                    "subagent": ctx.get("subagent")
                 }
             )
+            
+            if ctx.get("is_agent"):
+                await self.emitter.emit(
+                    event_type="run_interrupted",
+                    run_id=run_id, 
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    span_id=lc_run_id, 
+                    component="agent",
+                    payload={
+                        "error_class": error_type, 
+                        "error_message": str(error)[:2000]
+                    }
+                )
+        else:
+            await self.emitter.emit(
+                event_type="chain_failed", 
+                run_id=run_id, 
+                session_id=session_id,
+                thread_id=thread_id,
+                span_id=lc_run_id, 
+                component="chain", 
+                payload={
+                    "error_class": error_type, 
+                    "error_message": str(error)[:2000],
+                    "name": ctx.get("name"),
+                    "langgraph_node": ctx.get("langgraph_node"),
+                    "subagent": ctx.get("subagent")
+                }
+            )
+            
+            # Emit run_failed if this chain was the agent
+            if ctx.get("is_agent"):
+                await self.emitter.emit(
+                    event_type="run_failed", 
+                    run_id=run_id, 
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    span_id=lc_run_id, 
+                    component="agent",
+                    payload={
+                        "error_class": error_type, 
+                        "error_message": str(error)[:2000]
+                    }
+                )
         
         # Cleanup
         if lc_run_id:
@@ -295,14 +329,40 @@ class AuditCallbackHandler(BaseCallbackHandler):
         if lc_run_id:
             self._run_context.pop(lc_run_id, None)
 
-    async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs: Any) -> Any:
+    async def on_tool_start(
+        self,
+        serialized: Dict[str, Any],
+        input_str: str,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """"""
         md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
-        lc_parent_id = str(kwargs.get("parent_run_id")) if kwargs.get("parent_run_id") else None
+        if metadata:
+             md.update(metadata)
+        
         tool_name = serialized.get("name") if serialized else "unknown"
+
+        if not parent_run_id:
+            _LOGGER.info(f"ORPHAN TOOL START: name={tool_name} run_id={run_id} metadata={metadata} tags={tags}")
+
+        lc_run_id = str(run_id)
+        lc_parent_id = str(parent_run_id) if parent_run_id else None
+        
+        # Check for redundant tool wrapper (Graph Node name == Tool name)
+        # SUPPRESSION REMOVED: Restore data for frontend
         
         session_id = str(md.get("session_id")) if md.get("session_id") else None
         thread_id = str(md.get("thread_id")) if md.get("thread_id") else None
+
+        # Priority: Metadata span_id (from node_wrapper) > LangChain parent_run_id
+        effective_parent_span_id = lc_parent_id
+        if metadata and "span_id" in metadata:
+             effective_parent_span_id = metadata["span_id"]
 
         # Cache context
         if lc_run_id:
@@ -319,7 +379,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
             session_id=session_id,
             thread_id=thread_id,
             span_id=lc_run_id, 
-            parent_span_id=lc_parent_id,
+            parent_span_id=effective_parent_span_id,
             component="tool", 
             payload={
                 "tool_name": tool_name, 

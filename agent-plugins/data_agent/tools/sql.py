@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 import uuid
@@ -106,9 +108,8 @@ def _save_sql_result_csv(rows: List[Dict], columns: List[str], analysis_id: str,
     return save_sql_csv(rows, columns, analysis_id, user_id=user_id)
 
 
-@tool("data_db_list_tables")
-def db_list_tables_tool(config: RunnableConfig = None) -> str:
-    """列出当前默认数据库中的候选表及其部分列信息。"""
+def _sync_db_list_tables(config: RunnableConfig = None) -> str:
+    """列出当前默认数据库中的候选表及其部分列信息 (同步实现)。"""
     settings = get_settings()
     raw_db_name = getattr(settings, "db_default_name", None)
     if not raw_db_name:
@@ -120,9 +121,14 @@ def db_list_tables_tool(config: RunnableConfig = None) -> str:
     return json.dumps({"db_name": db_name, "tables": tables_payload}, default=str, ensure_ascii=False)
 
 
-@tool("data_db_table_schema")
-def db_table_schema_tool(table: str) -> str:
-    """查看默认数据库中某个表的列信息与少量样本数据。"""
+@tool("data_db_list_tables")
+async def db_list_tables_tool(config: RunnableConfig = None) -> str:
+    """列出当前默认数据库中的候选表及其部分列信息。"""
+    return await asyncio.to_thread(_sync_db_list_tables, config)
+
+
+def _sync_db_table_schema(table: str) -> str:
+    """查看默认数据库中某个表的列信息与少量样本数据 (同步实现)。"""
     if not table or not table.strip():
         raise ValueError("表名不能为空。")
 
@@ -146,20 +152,19 @@ def db_table_schema_tool(table: str) -> str:
     }, default=str, ensure_ascii=False)
 
 
-@tool("data_db_run_sql")
-def db_run_sql_tool(
+@tool("data_db_table_schema")
+async def db_table_schema_tool(table: str) -> str:
+    """查看默认数据库中某个表的列信息与少量样本数据。"""
+    return await asyncio.to_thread(_sync_db_table_schema, table)
+
+
+def _sync_db_run_sql(
     sql: str, 
     analysis_id: Optional[str] = None,
     user_requirement: Optional[str] = None,
     config: RunnableConfig = None
 ) -> str:
-    """在默认数据库上执行一条只读 SQL，并返回结果表。
-    
-    Args:
-        sql: 要执行的 SQL 语句
-        analysis_id: 分析任务 ID（用于持久化结果）
-        user_requirement: 用户的原始需求描述（用于审核 SQL 是否符合需求）
-    """
+    """在默认数据库上执行一条只读 SQL (同步实现)。"""
     user_id = "anonymous"
     if config:
         user_id = config.get("configurable", {}).get("user_id", "anonymous")
@@ -221,3 +226,20 @@ def db_run_sql_tool(
 
     except Exception as e:
         return SQLResultSchema(success=False, columns=[], rows=[], total_rows=0, error=str(e)).model_dump_json()
+
+
+@tool("data_db_run_sql")
+async def db_run_sql_tool(
+    sql: str, 
+    analysis_id: Optional[str] = None,
+    user_requirement: Optional[str] = None,
+    config: RunnableConfig = None
+) -> str:
+    """在默认数据库上执行一条只读 SQL，并返回结果表。
+    
+    Args:
+        sql: 要执行的 SQL 语句
+        analysis_id: 分析任务 ID（用于持久化结果）
+        user_requirement: 用户的原始需求描述（用于审核 SQL 是否符合需求）
+    """
+    return await asyncio.to_thread(_sync_db_run_sql, sql, analysis_id, user_requirement, config)

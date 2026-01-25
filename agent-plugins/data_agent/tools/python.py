@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -10,6 +11,7 @@ import pandas as pd
 from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 
 from agent_core.runtime import build_chat_llm
 from data_agent.schemas import PythonResultSchema, ValidationResultSchema
@@ -132,20 +134,12 @@ def _persist_chart(chart_json_str: str, analysis_id: str, user_id: str = "anonym
     return save_chart(chart_json_str, analysis_id, user_id=user_id)
 
 
-from langchain_core.runnables import RunnableConfig
-
-@tool("python_execute")
-def python_execute_tool(
+def _python_execute_sync(
     code: str, 
     analysis_id: str,
     config: RunnableConfig
 ) -> str:
-    """在安全沙箱中执行 Python 代码进行数据分析。
-    
-    Args:
-        code: 要执行的 Python 代码
-        analysis_id: 分析任务 ID（必填，用于持久化结果和加载已有 DataFrame）
-    """
+    """Synchronous implementation of python execution."""
     if not code or not code.strip():
         raise ValueError("代码不能为空。")
 
@@ -156,15 +150,11 @@ def python_execute_tool(
         analysis_id = cfg_analysis_id
     _LOGGER.info("python_execute: analysis_id=%s, user_id=%s", analysis_id, user_id)
     
-    # ... (omitted logging) ...
-
     # 安全检查
     code_lower = code.lower()
     for forbidden in _FORBIDDEN_IMPORTS:
         if f"import {forbidden}" in code_lower or f"from {forbidden}" in code_lower:
             raise ValueError(f"禁止导入模块：{forbidden}")
-
-    # ... (omitted syntax check) ...
 
     if _CODE_REVIEW_ENABLED:
         review = _review_python_code(code)
@@ -172,8 +162,7 @@ def python_execute_tool(
             return json.dumps({"success": False, "error": "语法错误", "issues": review.get("issues")}, ensure_ascii=False)
 
     safe_globals = _create_safe_globals(analysis_id, user_id)
-    # 🔴 重要：不使用单独的 locals 字典！
-    # ... (omitted exec logic) ...
+    
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     result = None
@@ -194,13 +183,9 @@ def python_execute_tool(
         stdout_out = stdout_capture.getvalue()
         stderr_out = stderr_capture.getvalue()
         
-        # ... (omitted result logging) ...
         _LOGGER.info(f"Python Execution Result:\n{'='*50}\nSTDOUT:\n{stdout_out}\n{'='*50}")
         if stderr_out:
             _LOGGER.warning(f"STDERR:\n{stderr_out}")
-
-        if stdout_out and "CHART_DATA:" in stdout_out:
-            pass
 
         output_data = {"success": True, "stdout": stdout_out, "stderr": stderr_out}
 
@@ -243,9 +228,25 @@ def python_execute_tool(
         _LOGGER.error(f"Python Execution FAILED:\n{'='*50}\nError: {e}\n{'='*50}")
         return PythonResultSchema(success=False, error=str(e)).model_dump_json()
 
+@tool("python_execute")
+async def python_execute_tool(
+    code: str, 
+    analysis_id: str,
+    config: RunnableConfig
+) -> str:
+    """在安全沙箱中执行 Python 代码进行数据分析。
+    
+    Args:
+        code: 要执行的 Python 代码
+        analysis_id: 分析任务 ID（必填，用于持久化结果和加载已有 DataFrame）
+    """
+    # Use asyncio.to_thread to run the synchronous execution in a separate thread
+    # while maintaining the asyncio context (unlike run_in_executor which might lose context)
+    return await asyncio.to_thread(_python_execute_sync, code, analysis_id, config)
+
 
 @tool("df_profile")
-def df_profile_tool(
+async def df_profile_tool(
     df_name: str = "result",
     analysis_id: Optional[str] = None,
     config: RunnableConfig = None
@@ -256,6 +257,14 @@ def df_profile_tool(
         df_name: DataFrame 名称
         analysis_id: 分析任务 ID
     """
+    return await asyncio.to_thread(_sync_df_profile, df_name, analysis_id, config)
+
+
+def _sync_df_profile(
+    df_name: str,
+    analysis_id: Optional[str],
+    config: RunnableConfig
+) -> str:
     user_id = "anonymous"
     if config:
         user_id = config.get("configurable", {}).get("user_id", "anonymous")

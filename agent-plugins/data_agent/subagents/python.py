@@ -48,8 +48,8 @@ class PythonAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-@node_wrapper("df_profile", emitter=_audit_emitter, graph_id="python_agent")
-def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> dict:
+@node_wrapper("py_df_profile", emitter=_audit_emitter, graph_id="python_agent")
+async def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 1: df_profile")
     
@@ -67,7 +67,7 @@ def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> dict:
 
     
     try:
-        result = df_profile_tool.invoke({"df_name": "sql_result", "analysis_id": analysis_id})
+        result = await df_profile_tool.ainvoke({"df_name": "sql_result", "analysis_id": analysis_id}, config=config)
         _LOGGER.info("[Python Agent] df_profile result: %s", result[:500] if len(result) > 500 else result)
         return {"df_profile_result": result, "analysis_id": analysis_id, "task_description": task_description}
     except Exception as e:
@@ -151,8 +151,8 @@ python
     _LOGGER.info("[Python Agent] LLM generated code: %s", code[:300])
     return {"python_code": code.strip()}
 
-@node_wrapper("python_execute", emitter=_audit_emitter, graph_id="python_agent")
-def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Command[Literal["llm_generate", "format_output"]]:
+@node_wrapper("py_python_execute", emitter=_audit_emitter, graph_id="python_agent")
+async def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Command[Literal["llm_generate", "format_output"]]:
     """步骤 3: 执行 LLM 生成的 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 3: python_execute")
     code = state.get("python_code", "")
@@ -169,7 +169,7 @@ def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Com
     
     try:
         # Pass config to tool invocation so it gets user_id
-        result = python_execute_tool.invoke({"code": code, "analysis_id": analysis_id}, config=config)
+        result = await python_execute_tool.ainvoke({"code": code, "analysis_id": analysis_id}, config=config)
         _LOGGER.info("[Python Agent] python_execute result: %s", result[:500] if len(result) > 500 else result)
         
         # 检查执行结果是否包含错误
@@ -228,14 +228,14 @@ def format_final_output(state: PythonAgentState, config: RunnableConfig) -> dict
 
 # 构建 Python Agent Graph
 python_agent_graph = StateGraph(PythonAgentState)
-python_agent_graph.add_node("df_profile", step1_df_profile)
+python_agent_graph.add_node("py_df_profile", step1_df_profile)
 python_agent_graph.add_node("llm_generate", step2_llm_generate_code)
-python_agent_graph.add_node("python_execute", step3_python_execute)
+python_agent_graph.add_node("py_python_execute", step3_python_execute)
 python_agent_graph.add_node("format_output", format_final_output)
 
-python_agent_graph.add_edge(START, "df_profile")
-python_agent_graph.add_edge("df_profile", "llm_generate")
-python_agent_graph.add_edge("llm_generate", "python_execute")
+python_agent_graph.add_edge(START, "py_df_profile")
+python_agent_graph.add_edge("py_df_profile", "llm_generate")
+python_agent_graph.add_edge("llm_generate", "py_python_execute")
 
 # Command 模式：python_execute 内部直接决定下一步，无需 conditional_edges
 python_agent_graph.add_edge("format_output", END)

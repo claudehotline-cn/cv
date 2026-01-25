@@ -22,9 +22,11 @@ class AuditRunSummary(BaseModel):
     duration_seconds: Optional[float]
     initiator: Optional[str]
     conversation_id: Optional[str]
+    session_id: Optional[str]
     llm_calls_count: int = 0
     tool_calls_count: int = 0
     failures_count: int = 0
+    interrupts_count: int = 0
 
 class PaginatedRunsResponse(BaseModel):
     items: List[AuditRunSummary]
@@ -45,7 +47,7 @@ class AuditEventView(BaseModel):
 class RunDetailView(BaseModel):
     run: AuditRunSummary
     failures: List[AuditEventView]
-    spans: List[Dict[str, Any]] # simplified span view
+    spans: List[Dict[str, Any]]
     recent_events: List[AuditEventView]
 
 # ... (Endpoints) ...
@@ -95,13 +97,49 @@ async def list_runs(
     result = await db.execute(stmt)
     runs = result.scalars().all()
     
+    # Aggregation
+    run_ids = [r.run_id for r in runs]
+    stats = {rid: {"llm": 0, "tool": 0, "fail": 0, "interrupt": 0} for rid in run_ids}
+    
+    if run_ids:
+        from sqlalchemy import or_
+        # 1. Events Counts
+        evt_stmt = (
+            select(AuditEventModel.run_id, AuditEventModel.event_type, AuditEventModel.severity, func.count())
+            .where(AuditEventModel.run_id.in_(run_ids))
+            .where(or_(
+                AuditEventModel.event_type.in_(['llm_called', 'tool_call_executed']),
+                AuditEventModel.severity == 'Error'
+            ))
+            .group_by(AuditEventModel.run_id, AuditEventModel.event_type, AuditEventModel.severity)
+        )
+        evt_res = await db.execute(evt_stmt)
+        for rid, etype, sev, cnt in evt_res:
+            if rid in stats:
+                if etype == 'llm_called': stats[rid]['llm'] += cnt
+                if etype == 'tool_call_executed': stats[rid]['tool'] += cnt
+                if sev == 'Error': stats[rid]['fail'] += cnt
+                
+        # 2. Interrupts (ApprovalRequests)
+        from app.models.db_models import ApprovalRequestModel
+        appr_stmt = (
+            select(ApprovalRequestModel.run_id, func.count())
+            .where(ApprovalRequestModel.run_id.in_(run_ids))
+            .group_by(ApprovalRequestModel.run_id)
+        )
+        appr_res = await db.execute(appr_stmt)
+        for rid, cnt in appr_res:
+             if rid in stats:
+                 stats[rid]['interrupt'] += cnt
+
     output = []
     for r in runs:
         # Calculate duration
         duration = None
         if r.ended_at and r.started_at:
             duration = (r.ended_at - r.started_at).total_seconds()
-            
+        
+        s = stats.get(r.run_id, {})
         output.append(AuditRunSummary(
             run_id=str(r.run_id),
             time=r.started_at,
@@ -110,9 +148,11 @@ async def list_runs(
             duration_seconds=duration,
             initiator=r.initiator_id or "System",
             conversation_id=r.conversation_id,
-            llm_calls_count=0, # TODO: Add aggregation
-            tool_calls_count=0,
-            failures_count=0
+            session_id=r.conversation_id,
+            llm_calls_count=s.get("llm", 0),
+            tool_calls_count=s.get("tool", 0),
+            failures_count=s.get("fail", 0),
+            interrupts_count=s.get("interrupt", 0)
         ))
         
     return PaginatedRunsResponse(
@@ -153,8 +193,18 @@ async def get_run_summary(
     
     for e in events:
         severity = "Info"
-        if "error" in e.event_type or "failed" in e.event_type:
-            severity = "Error"
+        is_interrupt = False
+
+        if "interrupted" in e.event_type:
+             severity = "Interrupt"
+             is_interrupt = True
+        elif "error" in e.event_type or "failed" in e.event_type:
+            # Check for legacy GraphInterrupt stored as error
+            if e.payload and e.payload.get("error_class") in ["GraphInterrupt", "NodeInterrupt"]:
+                 severity = "Interrupt"
+                 is_interrupt = True
+            else:
+                 severity = "Error"
         elif "start" in e.event_type:
             severity = "Info"
         elif "end" in e.event_type:
@@ -212,6 +262,16 @@ async def get_run_summary(
         if e.event_type == "llm_called": llm_count += 1
         if e.event_type == "tool_call_executed": tool_count += 1
 
+    # 3b. Get Pending Approvals for Status Enrichment
+    from app.models.db_models import ApprovalRequestModel
+    pending_stmt = select(ApprovalRequestModel).where(
+        ApprovalRequestModel.run_id == UUID(run_id),
+        ApprovalRequestModel.status == 'pending'
+    )
+    pending_res = await db.execute(pending_stmt)
+    pending_reqs = pending_res.scalars().all()
+    pending_map = {str(r.span_id): r for r in pending_reqs if r.span_id}
+
     # 4. Get Spans (Optional, simplistic list for now)
     spans_res = await db.execute(
         select(AgentSpanModel)
@@ -231,6 +291,17 @@ async def get_run_summary(
             name = run.root_agent_name
         elif name.lower() in ["agent", "chain", "tool", "llm"]:
              name = name.upper() if name.lower() == "llm" else name.capitalize()
+             
+        # Prepend SubAgent Context to generic "Tools"
+        if name == "Tools" and s.subagent_kind:
+            clean_sub = s.subagent_kind.replace("_", " ").title()
+            name = f"{clean_sub} Tools"
+             
+        # Context Enrichment
+        if sid in pending_map:
+             name += " (Waiting for Approval)"
+        elif s.status == "interrupted":
+             name += " (Interrupted)"
 
         spans.append({
             "span_id": sid,
@@ -240,6 +311,22 @@ async def get_run_summary(
             "status": s.status,
             "duration": (s.ended_at - s.started_at).total_seconds() if s.ended_at else None
         })
+
+    # Visual Polish: If run is interrupted, mark the last span as interrupted too
+    if run.status == "interrupted" and spans:
+        last_span = spans[-1]
+        if last_span["status"] in ["succeeded", "running"]:
+             last_span["status"] = "interrupted"
+             if "(Interrupted)" not in last_span["name"] and "(Waiting for Approval)" not in last_span["name"]:
+                 last_span["name"] += " (Interrupted)"
+
+    # 5. Get Interrupts Count
+    from app.models.db_models import ApprovalRequestModel
+    interrupts_res = await db.execute(
+        select(func.count())
+        .where(ApprovalRequestModel.run_id == UUID(run_id))
+    )
+    interrupts_count = interrupts_res.scalar_one()
 
     # Summary Object
     duration = (run.ended_at - run.started_at).total_seconds() if run.ended_at else None
@@ -251,9 +338,11 @@ async def get_run_summary(
         duration_seconds=duration,
         initiator=run.initiator_id,
         conversation_id=run.conversation_id,
+        session_id=run.conversation_id,
         llm_calls_count=llm_count,
         tool_calls_count=tool_count,
-        failures_count=len(failures)
+        failures_count=len(failures),
+        interrupts_count=interrupts_count
     )
     
     return RunDetailView(

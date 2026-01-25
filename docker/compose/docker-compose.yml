@@ -362,6 +362,17 @@ services:
       timeout: 3s
       retries: 5
 
+  agent-test:
+    build:
+      context: ../..
+      dockerfile: docker/agent-test/Dockerfile
+    image: cv/agent-test:latest
+    container_name: agent-test
+    volumes:
+      - ../..:/workspace
+    # Keep the container running
+    command: [ "tail", "-f", "/dev/null" ]
+
   agent-langchain:
     # 使用 langgraph build 构建的生产镜像（支持 PostgreSQL 线程持久化）
     # 重建命令: cd agent-langchain && langgraph build -t cv/agent-langchain-prod:latest -c langgraph.json
@@ -493,6 +504,7 @@ services:
       - ../../logs:/logs:rw
       - ../../agent-core:/app/agent-core:ro
       - ../../agent-plugins:/app/agent-plugins:ro
+      - ../../agent-platform-api/app:/app/app:rw # Hot reload for worker code
       - ../../agent-langchain/workspace:/data/workspace:rw
       - ../../policy.yaml:/app/policy.yaml:ro
 

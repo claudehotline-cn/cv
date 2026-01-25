@@ -17,6 +17,14 @@ from ..prompts import (
     EXCEL_AGENT_DESCRIPTION
 )
 
+from agent_core.settings import get_settings
+from agent_core.events import RedisEventBus, AuditEmitter
+from agent_core.decorators import node_wrapper
+
+_settings = get_settings()
+_redis_bus = RedisEventBus(_settings.redis_url)
+_audit_emitter = AuditEmitter(_redis_bus.redis)
+
 _LOGGER = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
@@ -32,6 +40,7 @@ class ExcelAgentState(TypedDict):
     sheets_info: str       # Step 1: Sheet 列表
     load_result: str       # Step 2: 加载结果
 
+@node_wrapper("list_sheets", emitter=_audit_emitter, graph_id="excel_agent")
 def excel_step1_list_sheets(state: ExcelAgentState, config: RunnableConfig) -> dict:
     """Step 1: 列出 Excel Sheet"""
     _LOGGER.info("[Excel Agent Fixed Flow] Step 1: list_sheets")
@@ -65,7 +74,8 @@ def excel_step1_list_sheets(state: ExcelAgentState, config: RunnableConfig) -> d
         _LOGGER.error("[Excel Agent] list_sheets failed: %s", e)
         return {"sheets_info": f"Error: {e}", "analysis_id": analysis_id, "file_id": file_id, "task_description": task_description}
 
-def excel_step2_load_sheet(state: ExcelAgentState) -> dict:
+@node_wrapper("load_sheet", emitter=_audit_emitter, graph_id="excel_agent")
+def excel_step2_load_sheet(state: ExcelAgentState, config: RunnableConfig) -> dict:
     """Step 2: 加载 Sheet 数据"""
     _LOGGER.info("[Excel Agent Fixed Flow] Step 2: load_sheet")
     
@@ -87,7 +97,8 @@ def excel_step2_load_sheet(state: ExcelAgentState) -> dict:
         _LOGGER.error("[Excel Agent] load_sheet failed: %s", e)
         return {"load_result": f"Error: {e}"}
 
-def excel_format_output(state: ExcelAgentState) -> dict:
+@node_wrapper("format_output", emitter=_audit_emitter, graph_id="excel_agent")
+def excel_format_output(state: ExcelAgentState, config: RunnableConfig) -> dict:
     """格式化输出"""
     load_result = state.get("load_result", "")
     output = f"EXCEL_AGENT_COMPLETE: Excel 数据加载完成\n\n{load_result}"

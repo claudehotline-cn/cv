@@ -85,6 +85,16 @@
                             </template>
                         </el-table-column>
 
+                        <el-table-column label="Session ID" width="120">
+                            <template #default="scope">
+                                <el-tooltip :content="scope.row.session_id" placement="top" :show-after="500">
+                                     <span class="font-mono text-xs text-secondary cursor-pointer hover:text-primary transition-colors">
+                                        {{ scope.row.session_id ? scope.row.session_id.substring(0, 8) : '-' }}
+                                     </span>
+                                </el-tooltip>
+                            </template>
+                        </el-table-column>
+
                         <el-table-column prop="time" label="Started" width="180">
                             <template #default="scope">
                                 <div class="flex flex-col">
@@ -120,23 +130,37 @@
                             </template>
                         </el-table-column>
 
-                        <el-table-column label="Activity" min-width="240">
+                        <el-table-column label="Statistics" min-width="280">
                              <template #default="scope">
                                 <div class="flex items-center gap-3">
-                                    <div v-if="scope.row.llm_calls_count > 0" class="flex items-center gap-1 text-xs text-secondary" title="LLM Calls">
-                                        <el-icon><ChatDotRound /></el-icon> {{ scope.row.llm_calls_count }}
-                                    </div>
-                                    <div v-if="scope.row.tool_calls_count > 0" class="flex items-center gap-1 text-xs text-secondary" title="Tool Calls">
-                                        <el-icon><Tools /></el-icon> {{ scope.row.tool_calls_count }}
-                                    </div>
-                                    <el-tag v-if="scope.row.failures_count > 0" size="small" type="danger" effect="dark" class="ml-auto">
-                                        {{ scope.row.failures_count }} Errors
-                                    </el-tag>
+                                    <el-tooltip content="LLM Calls" placement="top" :show-after="300" v-if="scope.row.llm_calls_count > 0">
+                                        <div class="flex items-center gap-1 text-xs text-secondary cursor-help">
+                                            <el-icon><ChatDotRound /></el-icon> {{ scope.row.llm_calls_count }}
+                                        </div>
+                                    </el-tooltip>
+
+                                    <el-tooltip content="Tool Calls" placement="top" :show-after="300" v-if="scope.row.tool_calls_count > 0">
+                                        <div class="flex items-center gap-1 text-xs text-secondary cursor-help">
+                                            <el-icon><Tools /></el-icon> {{ scope.row.tool_calls_count }}
+                                        </div>
+                                    </el-tooltip>
+
+                                    <el-tooltip content="Interrupts (HITL)" placement="top" :show-after="300" v-if="scope.row.interrupts_count > 0">
+                                        <div class="flex items-center gap-1 text-xs text-warning cursor-help">
+                                            <el-icon><VideoPause /></el-icon> {{ scope.row.interrupts_count }}
+                                        </div>
+                                    </el-tooltip>
+
+                                    <el-tooltip v-if="scope.row.failures_count > 0" content="Errors" placement="top" :show-after="300">
+                                        <el-tag size="small" type="danger" effect="dark" class="ml-auto cursor-help">
+                                            {{ scope.row.failures_count }} Errors
+                                        </el-tag>
+                                    </el-tooltip>
                                 </div>
                             </template>
                         </el-table-column>
 
-                        <el-table-column prop="initiator" label="User" width="140" show-overflow-tooltip>
+                        <el-table-column prop="initiator" label="Initiator" width="140" show-overflow-tooltip>
                             <template #default="scope">
                                 <div class="flex items-center gap-2">
                                     <div class="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
@@ -191,7 +215,7 @@
                         </div>
 
                         <!-- Content Stats -->
-                        <div class="grid grid-cols-4 gap-4 p-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+                        <div class="grid grid-cols-6 gap-4 p-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
                              <div class="stat-item">
                                 <div class="text-xs text-gray-500 uppercase">Duration</div>
                                 <div class="text-xl font-bold mt-1">{{ formatDuration(runDetail.run?.duration_seconds) }}</div>
@@ -205,6 +229,14 @@
                                 <div class="text-xl font-bold mt-1">{{ runDetail.run?.tool_calls_count }}</div>
                              </div>
                              <div class="stat-item">
+                                <div class="text-xs text-gray-500 uppercase text-yellow-600">Interrupts</div>
+                                <div class="text-xl font-bold mt-1 text-yellow-600">{{ runDetail.run?.interrupts_count }}</div>
+                             </div>
+                             <div class="stat-item">
+                                <div class="text-xs text-gray-500 uppercase text-red-600">Errors</div>
+                                <div class="text-xl font-bold mt-1 text-red-600">{{ runDetail.run?.failures_count }}</div>
+                             </div>
+                             <div class="stat-item">
                                 <div class="text-xs text-gray-500 uppercase">Start Time</div>
                                 <div class="text-sm font-medium mt-1">{{ formatDate(runDetail.run?.time) }}</div>
                              </div>
@@ -213,18 +245,21 @@
                         <!-- Tabs -->
                         <div class="flex-1 overflow-hidden flex flex-col">
                             <el-tabs v-model="activeTab" class="h-full flex flex-col px-6">
-                                <el-tab-pane label="Timeline" name="timeline" class="h-full overflow-y-auto pb-6">
+                                <el-tab-pane label="Event" name="timeline" class="h-full overflow-y-auto pb-6">
                                     <el-timeline class="mt-4 pl-2">
                                         <el-timeline-item
                                           v-for="(activity, index) in runDetail.recent_events"
                                           :key="index"
+                                          :ref="(el: any) => setTimelineItemRef(el, activity.span_id)"
                                           :timestamp="formatTime(activity.time)"
                                           :type="getSeverityType(activity.severity)"
                                           :color="getActivityColor(activity.severity)"
                                           :hollow="activity.severity === 'Info'"
                                           placement="top"
+                                          :class="{ 'highlight-event': activity.span_id === highlightedSpanId }"
                                         >
                                           <div class="timeline-content pb-4">
+                                              <!-- ... existing content ... -->
                                               <div class="flex items-start justify-between">
                                                   <div>
                                                       <div class="font-bold text-sm text-gray-800 dark:text-gray-200">{{ activity.type }}</div>
@@ -244,7 +279,7 @@
                                                           <el-icon class="group-open:rotate-90 transition-transform"><ArrowRight /></el-icon>
                                                           Payload
                                                       </summary>
-                                                      <pre class="json-viewer mt-2">{{ JSON.stringify(activity.payload, null, 2) }}</pre>
+                                                  <pre class="json-viewer mt-2">{{ formatPayload(activity.payload) }}</pre>
                                                   </details>
                                               </div>
                                           </div>
@@ -252,9 +287,9 @@
                                     </el-timeline>
                                 </el-tab-pane>
                                 
-                                <el-tab-pane label="Trace" name="trace" class="h-full overflow-y-auto pb-6">
+                                <el-tab-pane label="Timeline" name="trace" class="h-full overflow-y-auto pb-6">
                                      <div v-if="!traceData.length" class="text-center text-gray-400 py-10">
-                                         No trace data available
+                                         No timeline data available
                                      </div>
                                      <el-tree 
                                         v-else
@@ -263,12 +298,16 @@
                                         default-expand-all
                                         :expand-on-click-node="false"
                                         class="bg-transparent"
+                                        @node-click="handleNodeClick"
                                      >
-                                        <template #default="{ node, data }">
+                                        <template #default="{ data }">
                                             <div class="flex-1 flex items-center justify-between py-2 pr-4 border-b border-gray-100 dark:border-gray-800">
                                                 <div class="flex items-center gap-2">
                                                     <el-tag size="small" :type="getSpanTypeColor(data.type)">{{ data.type }}</el-tag>
                                                     <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ data.name }}</span>
+                                                    <el-icon v-if="['interrupted', 'paused'].includes(data.status?.toLowerCase())" class="text-yellow-500 ml-1">
+                                                        <VideoPause />
+                                                    </el-icon>
                                                     <span v-if="data.duration" class="text-xs text-gray-400 ml-2">{{ formatDuration(data.duration) }}</span>
                                                 </div>
                                                 <div class="flex items-center gap-2">
@@ -307,8 +346,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
-import { Refresh, Search, Calendar, ChatDotRound, Tools, ArrowRight, Close, CircleCheck, Warning, InfoFilled, User } from '@element-plus/icons-vue'
+import { ref, onMounted, watch, computed, nextTick, type ComponentPublicInstance } from 'vue'
+import { Refresh, Search, Calendar, ChatDotRound, Tools, ArrowRight, Close, CircleCheck, Warning, InfoFilled, User, VideoPause } from '@element-plus/icons-vue'
 import apiClient from '@/api/client'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import dayjs from 'dayjs'
@@ -402,6 +441,32 @@ watch([selectedStatus, selectedAgent, dateRange, searchQuery], () => {
     refresh()
 })
 
+const highlightedSpanId = ref<string | null>(null)
+const timelineItemRefs = ref<Record<string, HTMLElement | ComponentPublicInstance>>({})
+
+const setTimelineItemRef = (el: HTMLElement | ComponentPublicInstance | null, spanId?: string) => {
+    if (el && spanId) {
+        timelineItemRefs.value[spanId] = el
+    }
+}
+
+const handleNodeClick = async (data: any) => {
+    if (!data.span_id) return
+    
+    // 1. Switch Tab
+    activeTab.value = 'timeline' // This is the Event tab now
+    highlightedSpanId.value = data.span_id
+    
+    // 2. Scroll to Element
+    await nextTick()
+    const target = timelineItemRefs.value[data.span_id]
+    if (target) {
+        // Element-plus timeline item might need $el access if it's a component
+        const domEl = '$el' in target ? (target as any).$el : target
+        domEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+}
+
 const viewRunDetails = async (run: any) => {
     drawerVisible.value = true
     runDetail.value = null 
@@ -415,6 +480,14 @@ const viewRunDetails = async (run: any) => {
         console.error("Failed to load details", e)
     } finally {
         drawerLoading.value = false
+    }
+}
+
+const formatPayload = (payload: any) => {
+    try {
+        return JSON.stringify(payload, null, 2)
+    } catch (e) {
+        return String(payload)
     }
 }
 
@@ -436,6 +509,7 @@ const getStatusType = (status?: string) => {
         case 'failed': return 'danger'
         case 'running': return 'primary'
         case 'cancelled': return 'warning'
+        case 'interrupted': return 'warning'
         default: return 'info'
     }
 }
@@ -445,6 +519,7 @@ const getSeverityType = (sev: string) => {
         case 'error': return 'danger'
         case 'success': return 'success'
         case 'warning': return 'warning'
+        case 'interrupt': return 'warning'
         default: return 'info'
     }
 }
@@ -454,6 +529,7 @@ const getActivityColor = (sev: string) => {
         case 'error': return '#f56c6c'
         case 'success': return '#67c23a'
         case 'warning': return '#e6a23c'
+        case 'interrupt': return '#e6a23c'
         default: return '#909399'
     }
 }
@@ -575,7 +651,11 @@ onMounted(async () => {
     font-family: 'Fira Code', monospace;
     font-size: 11px;
     overflow-x: auto;
+    font-size: 11px;
+    overflow-x: auto;
     line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-all;
 }
 
 .text-secondary { color: var(--text-secondary); }
@@ -583,5 +663,18 @@ onMounted(async () => {
 /* Premium Drawer Override */
 :deep(.premium-drawer .el-drawer__body) {
     padding: 0;
+}
+
+.highlight-event :deep(.el-timeline-item__node) {
+    box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.4);
+    transform: scale(1.2);
+    transition: all 0.3s ease;
+}
+.highlight-event :deep(.timeline-content) {
+    background-color: var(--el-color-primary-light-9);
+    border-radius: 4px;
+    padding: 8px;
+    margin: -8px; /* Offset padding */
+    border-left: 3px solid var(--el-color-primary);
 }
 </style>
