@@ -30,8 +30,17 @@ from agent_core.events import RedisEventBus, AuditEmitter
 from agent_core.decorators import node_wrapper
 
 _settings = get_settings()
-_redis_bus = RedisEventBus(_settings.redis_url)
-_audit_emitter = AuditEmitter(_redis_bus.redis)
+
+# Lazy init to track event loop correctly
+_redis_bus = None
+_audit_emitter = None
+
+def _get_audit_emitter():
+    global _redis_bus, _audit_emitter
+    if _audit_emitter is None:
+        _redis_bus = RedisEventBus(_settings.redis_url)
+        _audit_emitter = AuditEmitter(_redis_bus.redis)
+    return _audit_emitter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +60,7 @@ class SQLAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-@node_wrapper("list_tables", emitter=_audit_emitter, graph_id="sql_agent")
+@node_wrapper("list_tables", emitter=_get_audit_emitter(), graph_id="sql_agent")
 async def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: BaseStore, runtime: Runtime) -> dict:
     """Step 1: 列出所有表"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 1: list_tables")
@@ -92,7 +101,7 @@ async def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, st
 
 
 
-@node_wrapper("table_schema", emitter=_audit_emitter, graph_id="sql_agent")
+@node_wrapper("table_schema", emitter=_get_audit_emitter(), graph_id="sql_agent")
 async def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> dict:
     """Step 2: 获取相关表的 Schema"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 2: get_schema")
@@ -132,13 +141,18 @@ async def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> 
     _LOGGER.info("[SQL Agent] Total schema_info length: %d, tables: %d", len(schema_info), len(schema_results))
     return {"schema_info": schema_info}
 
-@node_wrapper("llm_generate_sql", emitter=_audit_emitter, graph_id="sql_agent")
-def sql_step3_generate_sql(state: SQLAgentState, config: RunnableConfig) -> dict:
+@node_wrapper("llm_generate_sql", emitter=_get_audit_emitter(), graph_id="sql_agent")
+async def sql_step3_generate_sql(state: SQLAgentState, config: RunnableConfig) -> dict:
     """Step 3: LLM 根据表结构生成 SQL"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 3: LLM generate SQL")
     
     task = state.get("task_description", "")
     schema_info = state.get("schema_info", "")
+    
+    # Debug config
+    _LOGGER.info(f"[SQL DEBUG] Config keys in llm_generate: {list(config.keys()) if config else 'None'}")
+    if config and 'callbacks' in config:
+         _LOGGER.info(f"[SQL DEBUG] Config has callbacks: {config['callbacks']}")
     
     # 构建 Prompt
     prompt = SQL_AGENT_PROMPT.format(
@@ -188,8 +202,11 @@ Strictly result ONLY the SQL code.
     
     # 🚀 使用 with_config 设置 tags，让 metadata 包含 agent 名称标签
     _LOGGER.info("[SQL Agent] Starting LLM stream with tags=['agent:sql_agent']")
-    llm_config = {"tags": ["agent:sql_agent"], "metadata": {"sub_agent": "SQL Agent"}}
-    for chunk in llm.with_config(llm_config).stream(messages):
+    # Merge with parent config to preserve tracing context (run_id, callbacks)
+    llm_config = config.copy() if config else {}
+    llm_config.setdefault("tags", []).append("agent:sql_agent")
+    llm_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
+    async for chunk in llm.with_config(llm_config).astream(messages):
         # 1. Accumulate response
         if full_response is None:
             full_response = chunk
@@ -260,7 +277,7 @@ Strictly result ONLY the SQL code.
     
     return {"generated_sql": extracted_sql, "messages": [sql_preview_msg]}
 
-@node_wrapper("run_sql", emitter=_audit_emitter, graph_id="sql_agent")
+@node_wrapper("run_sql", emitter=_get_audit_emitter(), graph_id="sql_agent")
 async def sql_step4_run_sql(state: SQLAgentState, config: RunnableConfig) -> Command[Literal["llm_generate_sql", "format_output"]]:
     """步骤 4: 执行 SQL，使用 Command 决定下一步走向"""
     _LOGGER.info("[SQL Agent Fixed Flow] Step 4: run_sql")
@@ -347,7 +364,7 @@ async def sql_step4_run_sql(state: SQLAgentState, config: RunnableConfig) -> Com
                 goto="format_output"
             )
 
-@node_wrapper("format_output", emitter=_audit_emitter, graph_id="sql_agent")
+@node_wrapper("format_output", emitter=_get_audit_emitter(), graph_id="sql_agent")
 def sql_format_output(state: SQLAgentState, config: RunnableConfig) -> dict:
     """格式化输出"""
     sql_result = state.get("sql_result", "")

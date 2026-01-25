@@ -367,3 +367,56 @@ class PolicyMiddleware(AgentMiddleware):
         _LOGGER.info(f"[PolicyMiddleware] ALLOWED: {tool_name} for role {user_role}")
         return await handler(request)
 
+
+from langchain.agents.middleware.todo import TodoListMiddleware, Todo, WRITE_TODOS_TOOL_DESCRIPTION, WRITE_TODOS_SYSTEM_PROMPT
+from langchain_core.tools import tool
+from typing import Annotated
+from langchain.tools import InjectedToolCallId
+from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
+
+class FixedTodoListMiddleware(TodoListMiddleware):
+    """
+    Patched TodoListMiddleware that ensures write_todos propagates trace context.
+    
+    The original write_todos tool definition lacks RunnableConfig, which can cause
+    it to run as an orphan trace (missing parent_run_id) in some execution environments.
+    By adding config: RunnableConfig, we ensure the current context is injected.
+    """
+    
+    def __init__(
+        self,
+        *,
+        system_prompt: str = WRITE_TODOS_SYSTEM_PROMPT,
+        tool_description: str = WRITE_TODOS_TOOL_DESCRIPTION,
+    ) -> None:
+        super().__init__(system_prompt=system_prompt, tool_description=tool_description)
+
+        # Re-define write_todos with RunnableConfig to fix context propagation
+        @tool(description=self.tool_description)
+        def write_todos(
+            todos: list[Todo], 
+            tool_call_id: Annotated[str, InjectedToolCallId],
+            config: RunnableConfig
+        ) -> Command[Any]:
+            """Create and manage a structured task list for your current work session."""
+            return Command(
+                update={
+                    "todos": todos,
+                    "messages": [
+                        ToolMessage(f"Updated todo list to {todos}", tool_call_id=tool_call_id)
+                    ],
+                }
+            )
+
+        self.tools = [write_todos]
+
+# =============================================================================
+# Global Monkey Patch
+# =============================================================================
+# We patch deepagents.graph.TodoListMiddleware globally so that ALL agents
+# (Data Agent, Article Agent, etc.) automatically use the fixed version
+# without needing individual patches in their graph definitions.
+import deepagents.graph
+deepagents.graph.TodoListMiddleware = FixedTodoListMiddleware
+

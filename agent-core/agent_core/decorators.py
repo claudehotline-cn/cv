@@ -13,7 +13,15 @@ def new_span_id() -> str:
 
 def with_span(config: Dict[str, Any], *, graph_id: str = "unknown", node_id: str = "unknown") -> Dict[str, Any]:
     md = dict(config.get("metadata", {}))
+    # Prefer existing span_id in metadata as parent (nested manual spans)
+    # If not found, use the current LangChain run_id from config (linking to LangGraph node)
     parent_span_id = md.get("span_id")
+    if not parent_span_id:
+        parent_span_id = config.get("run_id")
+        # Ensure it's a string
+        if parent_span_id:
+            parent_span_id = str(parent_span_id)
+
     span_id = new_span_id()
     md.update({
         "graph_id": graph_id,
@@ -44,11 +52,19 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
             # 1. Inject new Span Context
             config2 = with_span(config, graph_id=graph_id, node_id=node_id)
             md = config2["metadata"]
+            # Debugging orphan source
+            # print(f"[ORPHAN HUNT] node_wrapper called for '{node_id}'. Config keys: {list(config.keys())}", flush=True)
+            
             t0 = time.time()
             
             run_id = md.get("run_id", "unknown")
             span_id = md.get("span_id")
             parent_span_id = md.get("parent_span_id")
+            
+            if not parent_span_id:
+                parent_span_id = config.get("run_id")
+            if not parent_span_id and run_id != "unknown":
+                parent_span_id = run_id
             
             # 2. Emit Start Event
             session_id = md.get("session_id")

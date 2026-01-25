@@ -9,7 +9,10 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
 
 from agent_core.runtime import build_chat_llm
-from agent_core.middleware import SensitiveToolMiddleware
+from agent_core.middleware import SensitiveToolMiddleware, FixedTodoListMiddleware
+import deepagents.graph
+# Explicitly patch locally to ensure it takes effect before create_deep_agent uses it
+deepagents.graph.TodoListMiddleware = FixedTodoListMiddleware
 from agent_core.store import get_async_store, get_checkpointer
 from .prompts import MAIN_AGENT_PROMPT
 
@@ -24,8 +27,17 @@ from agent_core.events import RedisEventBus, AuditEmitter
 from agent_core.settings import get_settings
 
 _settings = get_settings()
-_redis_bus = RedisEventBus(_settings.redis_url)
-_audit_emitter = AuditEmitter(_redis_bus.redis)
+
+# Lazy init to track event loop correctly
+_redis_bus = None
+_audit_emitter = None
+
+def _get_audit_emitter():
+    global _redis_bus, _audit_emitter
+    if _audit_emitter is None:
+        _redis_bus = RedisEventBus(_settings.redis_url)
+        _audit_emitter = AuditEmitter(_redis_bus.redis)
+    return _audit_emitter
 
 _LOGGER = logging.getLogger("agent_langchain.data_deep_graph")
 
@@ -74,7 +86,7 @@ def get_data_deep_agent_graph(
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
             SensitiveToolMiddleware(
-                emitter=_audit_emitter,
+                emitter=_get_audit_emitter(),
                 sensitive_tools=["visualizer_agent", "report_agent"],
                 allowed_decisions=["approve", "reject"],
                 description={
@@ -93,7 +105,6 @@ def get_data_deep_agent_graph(
             routes={"/_shared/": StoreBackend(rt)},
         ),
         # 使用 PostgreSQL 持久化存储（长期记忆 + 会话检查点）
-        store=get_async_store,  # deepagents 接受工厂函数
         checkpointer=cp,  # 使用注入的或预初始化的实例
         response_format=response_format,
     )

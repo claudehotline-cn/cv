@@ -48,6 +48,8 @@ class AuditPersistenceService:
         # 3. Ensure Run Exists (Idempotent) to satisfy Foreign Keys
         # This handles out-of-order events where child arrives before parent
         await self._ensure_run_exists(run_id, event.get("session_id"), event.get("thread_id"))
+        # Force commit to ensure Run exists before potential Span operations (which might rollback)
+        await self.db.commit()
         
         # Handle Span Start explicitly if needed for Span FKs (chains/tools)
         if event_type in ("chain_start", "run_started", "tool_call_requested", "llm_called", "langgraph_node_started"):
@@ -151,10 +153,14 @@ class AuditPersistenceService:
                 )
                 self.db.add(span)
                 await self.db.flush()
+        except IntegrityError:
+            # Race condition: span created by another event in parallel. Safe to ignore.
+            pass
         except Exception as e:
-            # Log errors but continue (e.g. FK violation if run missing)
+            # Log real errors
             _LOGGER.error(f"Ensure Span {span_id} failed: {e}")
             pass
+
 
     async def _handle_run_start(self, run_id: UUID, session_id: str | None, thread_id: str | None, payload: Dict[str, Any]):
         """Create or Update AgentRunModel."""
@@ -174,6 +180,21 @@ class AuditPersistenceService:
             root_agent_name=agent_name
         )
         self.db.add(run)
+        
+        # Ensure Root Span exists so children can link to it
+        # This fixes the "Orphan Node" and "FK Violation" issues fundamentally
+        root_span = AgentSpanModel(
+            span_id=run_id,
+            run_id=run_id,
+            parent_span_id=None,
+            span_type="chain",
+            agent_name=agent_name,
+            node_name="Root Agent",
+            status="running",
+            started_at=datetime.utcnow()
+        )
+        # Use merge to avoid conflict if auto-heal already created it
+        await self.db.merge(root_span)
 
     async def _handle_run_end(self, run_id: UUID, event_type: str, payload: Dict[str, Any]):
         """Update AgentRunModel."""
@@ -250,7 +271,7 @@ class AuditPersistenceService:
         # Resolve Parent Span ID (LangChain often sends parent_run_id)
         raw_parent_id = event.get("parent_span_id") or event.get("parent_run_id")
         parent_uuid = UUID(raw_parent_id) if raw_parent_id else None
-
+        
         span = AgentSpanModel(
             span_id=span_id,
             run_id=run_id,
@@ -260,9 +281,68 @@ class AuditPersistenceService:
             node_name=node_name,
             subagent_kind=subagent_kind,
             status="running",
-            meta=payload # Store initial inputs in meta
+            meta=payload
         )
         self.db.add(span)
+        
+from sqlalchemy.exc import IntegrityError
+
+# ... (inside class)
+
+        try:
+            await self.db.commit()
+        except (IntegrityError, Exception) as e:
+             # Check for FK Violation
+             err_str = str(e).lower()
+             if "foreign" in err_str and "constraint" in err_str:
+                await self.db.rollback()
+                _LOGGER.warning(f"[Auto-Heal] Parent {parent_uuid} missing for {span_id}. Attempting recovery.")
+                
+                # Strategy 1: Create Placeholder Root Span
+                try:
+                    root_span = AgentSpanModel(
+                        span_id=run_id,
+                        run_id=run_id,
+                        parent_span_id=None,
+                        span_type="chain",
+                        agent_name=event.get("component") or "System",
+                        node_name="Root Agent",
+                        subagent_kind=None,
+                        status="running",
+                        meta={"created_by": "orphan_fix"}
+                    )
+                    self.db.add(root_span)
+                    await self.db.commit()
+                    _LOGGER.info(f"[Auto-Heal] Created Placeholder Root Span: {run_id}")
+                except Exception as root_ex:
+                    # Ignore (Root already exists or other error)
+                    await self.db.rollback()
+                    _LOGGER.info(f"[Auto-Heal] Root creation skipped: {root_ex}")
+
+                # Strategy 2: Retry with Parent = Root
+                try:
+                    span.parent_span_id = run_id
+                    self.db.add(span)
+                    await self.db.commit()
+                    _LOGGER.info(f"[Auto-Heal] Successfully linked {span_id} to {run_id}")
+                    return
+                except Exception as link_ex:
+                     await self.db.rollback()
+                     _LOGGER.warning(f"[Auto-Heal] Failed to link to root: {link_ex}")
+
+                # Strategy 3: Fallback to Orphan (Last Resort)
+                try:
+                    span.parent_span_id = None
+                    self.db.add(span)
+                    await self.db.commit()
+                    _LOGGER.warning(f"[Auto-Heal] Fallback: Created Orphan {span_id}")
+                except Exception as final_ex:
+                    _LOGGER.error(f"[Auto-Heal] FAILED ALL STRATEGIES: {final_ex}")
+                    # Do not raise, let it drop? Or raise to alert? 
+                    # Raising crashes worker. Dropping loses data.
+                    # Dropping is better for system stability.
+             else:
+                raise e
 
     async def _handle_span_end(self, span_id: UUID | None, event_type: str, payload: Dict[str, Any]):
         """Update AgentSpanModel."""

@@ -112,9 +112,13 @@ async def agent_execute_task(
             # Also inject user info if needed
             config["metadata"]["user_id"] = user_id
 
+            # Ensure LangChain uses our Run ID
+            config["run_id"] = UUID(run_id)
+
             async for chunk in graph.astream(
                 {"messages": [{"role": "user", "content": input_message}]},
-                config=config
+                config=config,
+                run_id=UUID(run_id)
             ):
                 result_chunks.append(chunk)
                 
