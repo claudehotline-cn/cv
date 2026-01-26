@@ -8,29 +8,35 @@ from .events import AuditEmitter
 
 _LOGGER = logging.getLogger(__name__)
 
-def new_span_id() -> str:
-    return str(uuid.uuid4())
-
 def with_span(config: Dict[str, Any], *, graph_id: str = "unknown", node_id: str = "unknown") -> Dict[str, Any]:
     md = dict(config.get("metadata", {}))
-    # Prefer existing span_id in metadata as parent (nested manual spans)
-    # If not found, use the current LangChain run_id from config (linking to LangGraph node)
-    parent_span_id = md.get("span_id")
-    if not parent_span_id:
-        parent_span_id = config.get("run_id")
-        # Ensure it's a string
-        if parent_span_id:
-            parent_span_id = str(parent_span_id)
+    
+    # LangGraph Nodes are just Python functions, they do NOT have a native LangChain run_id yet.
+    # We MUST generate a unique Span ID for this node execution here manually.
+    span_id = str(uuid.uuid4())
+    
+    # Parent span is the parent_run_id from config (if available) - this is correct.
+    # It might come from the parent Chain's execution context.
+    parent_span_id = config.get("parent_run_id")
 
-    span_id = new_span_id()
     md.update({
         "graph_id": graph_id,
         "node_id": node_id,
-        "parent_span_id": parent_span_id,
-        "span_id": span_id,
+        "parent_span_id": str(parent_span_id) if parent_span_id else None,
+        "span_id": span_id, # Our generated Span ID
+        
+        # CRITICAL: Do NOT overwrite "request_id" (business ID) in metadata.
+        # It is passed down from the top level.
     })
+    
     new_cfg = dict(config)
     new_cfg["metadata"] = md
+    
+    # We set "run_id" in the new config to our generated Span ID.
+    # This ensures that any SUB-CHAINS or TOOLS called inside this node
+    # will see this Span ID as their "parent_run_id".
+    new_cfg["run_id"] = span_id
+        
     return new_cfg
 
 def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknown"):
@@ -45,26 +51,49 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
             ...
     """
     import inspect
-
+    
     def deco(fn):
         @wraps(fn)
         async def wrapper(state: Any, config: Dict[str, Any], *args: Any, **kwargs: Any) -> Any:
             # 1. Inject new Span Context
             config2 = with_span(config, graph_id=graph_id, node_id=node_id)
             md = config2["metadata"]
-            # Debugging orphan source
-            # print(f"[ORPHAN HUNT] node_wrapper called for '{node_id}'. Config keys: {list(config.keys())}", flush=True)
             
             t0 = time.time()
             
-            run_id = md.get("run_id", "unknown")
+            # Use request_id as the Global Trace ID (DB run_id)
+            request_id = md.get("request_id", "unknown")
+            
             span_id = md.get("span_id")
             parent_span_id = md.get("parent_span_id")
             
             if not parent_span_id:
-                parent_span_id = config.get("run_id")
-            if not parent_span_id and run_id != "unknown":
-                parent_span_id = run_id
+                # 1. Try direct keys (rarely populated by LC)
+                parent_span_id = config.get("parent_run_id")
+                
+                # 2. Try callbacks (Standard LC propagation)
+                if not parent_span_id:
+                    cbs = config.get("callbacks")
+                    if cbs:
+                        # If it's a CallbackManager or list
+                        if hasattr(cbs, "parent_run_id"):
+                             parent_span_id = getattr(cbs, "parent_run_id", None)
+                        elif isinstance(cbs, list):
+                             for cb in cbs:
+                                 if hasattr(cb, "parent_run_id"):
+                                     parent_span_id = getattr(cb, "parent_run_id", None)
+                                     if parent_span_id: break
+            
+            # fallback to run_id if interpreted as parent context
+            if not parent_span_id:
+                 # config['run_id'] in LangGraph often points to the parent span (the graph run)
+                 cand = config.get("run_id")
+                 if cand and cand != request_id:
+                     parent_span_id = cand
+
+            # Ensure it's not the same as the Run ID (Request ID) to avoid FK violation
+            if parent_span_id == request_id:
+                parent_span_id = None
             
             # 2. Emit Start Event
             session_id = md.get("session_id")
@@ -78,7 +107,7 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
             try:
                 await emitter.emit(
                     event_type="langgraph_node_started",
-                    run_id=run_id,
+                    request_id=request_id,
                     session_id=session_id,
                     thread_id=thread_id,
                     span_id=span_id,
@@ -96,7 +125,7 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
                 latency_ms = int((time.time() - t0) * 1000)
                 await emitter.emit(
                     event_type="langgraph_node_finished",
-                    run_id=run_id,
+                    request_id=request_id,
                     session_id=session_id,
                     thread_id=thread_id,
                     span_id=span_id,
@@ -115,7 +144,7 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
                 latency_ms = int((time.time() - t0) * 1000)
                 await emitter.emit(
                     event_type="node_failed",
-                    run_id=run_id,
+                    request_id=request_id,
                     session_id=session_id,
                     thread_id=thread_id,
                     span_id=span_id,

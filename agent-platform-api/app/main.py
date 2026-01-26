@@ -25,8 +25,17 @@ async def lifespan(app: FastAPI):
     
     async with AsyncSessionLocal() as session:
         await registry.sync_plugins(session)
+        
+    # Initialize Global Event Bus
+    from agent_core.events import RedisEventBus
+    from agent_core.settings import get_settings
+    settings = get_settings()
+    app.state.event_bus = RedisEventBus(settings.redis_url)
+    print("Global Redis Event Bus initialized.")
+    
     yield
     # Shutdown
+    await app.state.event_bus.close()
     await cleanup_stores()
     print("Agent Platform API Shutting down...")
 

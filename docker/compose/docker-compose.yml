@@ -440,6 +440,7 @@ services:
     container_name: agent-api
     environment:
       - DATABASE_URL=postgresql+asyncpg://cv_kb:cv_kb_pass@pgvector:5432/cv_kb
+      - PYTHONUNBUFFERED=1
       - REDIS_URL=redis://langgraph-redis:6379
       # LLM
       - AGENT_LLM_PROVIDER=vllm
@@ -468,8 +469,8 @@ services:
       - "18111:8000"
     volumes:
       - ../../logs:/logs:rw
-      - ../../agent-core:/app/agent-core:ro
-      - ../../agent-plugins:/app/agent-plugins:ro
+      - ../../agent-core:/app/agent-core:rw
+      - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for API code
       # Workspaces
       - ../../agent-langchain/workspace:/data/workspace:rw
@@ -489,6 +490,7 @@ services:
     command: [ "arq", "app.worker.WorkerSettings" ]
     environment:
       - DATABASE_URL=postgresql+asyncpg://cv_kb:cv_kb_pass@pgvector:5432/cv_kb
+      - PYTHONUNBUFFERED=1
       - REDIS_URL=redis://langgraph-redis:6379
       - AGENT_LLM_PROVIDER=vllm
       - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
@@ -502,8 +504,8 @@ services:
         condition: service_healthy
     volumes:
       - ../../logs:/logs:rw
-      - ../../agent-core:/app/agent-core:ro
-      - ../../agent-plugins:/app/agent-plugins:ro
+      - ../../agent-core:/app/agent-core:rw
+      - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for worker code
       - ../../agent-langchain/workspace:/data/workspace:rw
       - ../../policy.yaml:/app/policy.yaml:ro

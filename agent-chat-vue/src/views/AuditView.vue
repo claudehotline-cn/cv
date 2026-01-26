@@ -75,11 +75,11 @@
                             borderBottom: '1px solid var(--border-color)'
                         }"
                      >
-                        <el-table-column label="Run ID" width="120" fixed="left">
+                        <el-table-column label="Request ID" width="120" fixed="left">
                             <template #default="scope">
-                                <el-tooltip :content="scope.row.run_id" placement="top" :show-after="500">
+                                <el-tooltip :content="scope.row.request_id" placement="top" :show-after="500">
                                     <span class="font-mono text-xs text-secondary cursor-pointer hover:text-primary transition-colors">
-                                        #{{ scope.row.run_id.substring(0, 8) }}
+                                        #{{ scope.row.request_id.substring(0, 8) }}
                                     </span>
                                 </el-tooltip>
                             </template>
@@ -209,7 +209,7 @@
                                     <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ runDetail.run?.root_agent_name }}</h3>
                                     <el-tag :type="getStatusType(runDetail.run?.status)" effect="dark" size="small">{{ runDetail.run?.status }}</el-tag>
                                 </div>
-                                <div class="text-xs text-gray-500 mt-1 font-mono">ID: {{ runDetail.run?.run_id }}</div>
+                                <div class="text-xs text-gray-500 mt-1 font-mono">ID: {{ runDetail.run?.request_id }}</div>
                             </div>
                             <el-button @click="drawerVisible = false" circle :icon="Close" size="small" />
                         </div>
@@ -474,7 +474,9 @@ const viewRunDetails = async (run: any) => {
     activeTab.value = 'timeline'
     
     try {
-        const detail = await apiClient.getAuditRunSummary(run.run_id)
+        const detail = await apiClient.getAuditRunSummary(run.request_id)
+        console.log("[DEBUG] Audit Run Summary Response:", detail)
+        console.log("[DEBUG] Spans:", detail.spans)
         runDetail.value = detail
     } catch (e) {
         console.error("Failed to load details", e)

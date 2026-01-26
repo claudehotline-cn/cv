@@ -23,7 +23,7 @@ def test_sql_agent_audit():
     logger.info("Sending chat message: 'List all tables in database'")
     resp = requests.post(
         f"{BASE_URL}/sessions/{session_id}/chat",
-        json={"message": "List all tables in database"}
+        json={"message": "按城市统计每月订单总金额，绘制一个折线图"}
     )
     assert resp.status_code == 200, f"Chat failed: {resp.text}"
     

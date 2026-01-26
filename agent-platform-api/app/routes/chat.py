@@ -2,7 +2,7 @@ import json
 import logging
 import traceback
 from typing import AsyncGenerator
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -185,6 +185,7 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
 @router.post("/{session_id}/chat")
 async def chat_stream(
     session_id: str,
+    request: Request,
     message: str = Body(..., embed=True),
     db: AsyncSession = Depends(get_db)
 ):
@@ -202,15 +203,15 @@ async def chat_stream(
     plugin = registry.get_plugin(agent_key)
     graph = plugin.get_graph()
     
-    settings = get_settings()
-    event_bus = RedisEventBus(settings.redis_url)
+    # Use global event bus to avoid event loop conflicts
+    event_bus = request.app.state.event_bus
     
     # Audit Emitter
     emitter = AuditEmitter(redis=event_bus.redis)
     audit_callback = AuditCallbackHandler(emitter=emitter)
 
     import uuid
-    run_id = str(uuid.uuid4())
+    request_id = str(uuid.uuid4())
 
     thread_id = str(session.thread_id) if session.thread_id else str(session.id)
     
@@ -220,12 +221,19 @@ async def chat_stream(
             "session_id": str(session.id), 
             "user_id": "mock_user", 
             "analysis_id": str(session.id),
-            "run_id": run_id
+            "run_id": request_id # LangGraph typically uses 'run_id' for trace context, we map business request_id to it?
+            # Wait, our decorators use config.get("metadata", {}).get("request_id") for the global ID.
+            # But LangSmith/LangChain native might expect run_id.
+            # Let's clean this up:
+            # We set 'run_id' in configurable for LangGraph standard? No, run_id is usually automated.
+            # Let's just ensure we pass request_id in metadata.
         },
         "callbacks": [audit_callback],
         "tags": [agent_key, "agent_platform"],
         "metadata": {
-            "run_id": run_id,
+            "request_id": request_id, 
+            # Legacy alias if needed by other components, but we are removing run_id usage.
+            # "run_id": request_id, 
             "session_id": str(session.id),
             "thread_id": thread_id,
             "agent_key": agent_key,

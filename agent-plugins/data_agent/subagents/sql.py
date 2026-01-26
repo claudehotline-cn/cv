@@ -63,6 +63,7 @@ class SQLAgentState(TypedDict):
 @node_wrapper("list_tables", emitter=_get_audit_emitter(), graph_id="sql_agent")
 async def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: BaseStore, runtime: Runtime) -> dict:
     """Step 1: 列出所有表"""
+    print(f"[SQL DIRECT DEBUG] Inside sql_step1_list_tables. Config keys: {list(config.keys()) if config else 'None'}", flush=True)
     _LOGGER.info("[SQL Agent Fixed Flow] Step 1: list_tables")
     # Check if runtime has 'state' attribute
     if hasattr(runtime, "state"):

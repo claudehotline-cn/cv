@@ -15,7 +15,7 @@ router = APIRouter(prefix="/audit", tags=["audit"])
 
 # --- View Models ---
 class AuditRunSummary(BaseModel):
-    run_id: str
+    request_id: str
     time: datetime
     root_agent_name: Optional[str]
     status: str
@@ -77,7 +77,7 @@ async def list_runs(
         # Search ID or User or Conversation
         from sqlalchemy import or_
         stmt = stmt.where(or_(
-            AgentRunModel.run_id.cast(String).ilike(f"%{q}%"),
+            AgentRunModel.request_id.cast(String).ilike(f"%{q}%"),
             AgentRunModel.conversation_id.ilike(f"%{q}%"),
             AgentRunModel.initiator_id.ilike(f"%{q}%")
         ))
@@ -98,20 +98,20 @@ async def list_runs(
     runs = result.scalars().all()
     
     # Aggregation
-    run_ids = [r.run_id for r in runs]
+    run_ids = [r.request_id for r in runs]
     stats = {rid: {"llm": 0, "tool": 0, "fail": 0, "interrupt": 0} for rid in run_ids}
     
     if run_ids:
         from sqlalchemy import or_
         # 1. Events Counts
         evt_stmt = (
-            select(AuditEventModel.run_id, AuditEventModel.event_type, AuditEventModel.severity, func.count())
-            .where(AuditEventModel.run_id.in_(run_ids))
+            select(AuditEventModel.request_id, AuditEventModel.event_type, AuditEventModel.severity, func.count())
+            .where(AuditEventModel.request_id.in_(run_ids))
             .where(or_(
                 AuditEventModel.event_type.in_(['llm_called', 'tool_call_executed']),
                 AuditEventModel.severity == 'Error'
             ))
-            .group_by(AuditEventModel.run_id, AuditEventModel.event_type, AuditEventModel.severity)
+            .group_by(AuditEventModel.request_id, AuditEventModel.event_type, AuditEventModel.severity)
         )
         evt_res = await db.execute(evt_stmt)
         for rid, etype, sev, cnt in evt_res:
@@ -123,9 +123,9 @@ async def list_runs(
         # 2. Interrupts (ApprovalRequests)
         from app.models.db_models import ApprovalRequestModel
         appr_stmt = (
-            select(ApprovalRequestModel.run_id, func.count())
-            .where(ApprovalRequestModel.run_id.in_(run_ids))
-            .group_by(ApprovalRequestModel.run_id)
+            select(ApprovalRequestModel.request_id, func.count())
+            .where(ApprovalRequestModel.request_id.in_(run_ids))
+            .group_by(ApprovalRequestModel.request_id)
         )
         appr_res = await db.execute(appr_stmt)
         for rid, cnt in appr_res:
@@ -139,9 +139,9 @@ async def list_runs(
         if r.ended_at and r.started_at:
             duration = (r.ended_at - r.started_at).total_seconds()
         
-        s = stats.get(r.run_id, {})
+        s = stats.get(r.request_id, {})
         output.append(AuditRunSummary(
-            run_id=str(r.run_id),
+            request_id=str(r.request_id),
             time=r.started_at,
             root_agent_name=r.root_agent_name or "Unknown Agent",
             status=r.status,
@@ -162,22 +162,35 @@ async def list_runs(
         offset=offset
     )
 
-@router.get("/runs/{run_id}/summary", response_model=RunDetailView)
+@router.get("/runs/{request_id}/summary", response_model=RunDetailView)
 async def get_run_summary(
-    run_id: str, 
+    request_id: str, 
     db: AsyncSession = Depends(get_db)
 ):
     """Get detailed summary for a specific run (Failures, Spans, Events)."""
     # 1. Get Run
-    run_res = await db.execute(select(AgentRunModel).where(AgentRunModel.run_id == UUID(run_id)))
-    run = run_res.scalar_one_or_none()
+    if request_id == "latest":
+        stmt = select(AgentRunModel).order_by(desc(AgentRunModel.started_at)).limit(1)
+        run_res = await db.execute(stmt)
+        run = run_res.scalar_one_or_none()
+    else:
+        try:
+            uuid_obj = UUID(request_id)
+            run_res = await db.execute(select(AgentRunModel).where(AgentRunModel.request_id == uuid_obj))
+            run = run_res.scalar_one_or_none()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid UUID format")
+            
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+        
+    # Resolve actual ID for subsequent queries if we fetched 'latest'
+    real_request_id = run.request_id
         
     # 2. Get Events (Recent 200)
     events_res = await db.execute(
         select(AuditEventModel)
-        .where(AuditEventModel.run_id == UUID(run_id))
+        .where(AuditEventModel.request_id == real_request_id)
         .order_by(AuditEventModel.event_time) # Chronological
         .limit(200)
     )
@@ -265,7 +278,7 @@ async def get_run_summary(
     # 3b. Get Pending Approvals for Status Enrichment
     from app.models.db_models import ApprovalRequestModel
     pending_stmt = select(ApprovalRequestModel).where(
-        ApprovalRequestModel.run_id == UUID(run_id),
+        ApprovalRequestModel.request_id == real_request_id,
         ApprovalRequestModel.status == 'pending'
     )
     pending_res = await db.execute(pending_stmt)
@@ -275,7 +288,7 @@ async def get_run_summary(
     # 4. Get Spans (Optional, simplistic list for now)
     spans_res = await db.execute(
         select(AgentSpanModel)
-        .where(AgentSpanModel.run_id == UUID(run_id))
+        .where(AgentSpanModel.request_id == real_request_id)
         .order_by(AgentSpanModel.started_at)
     )
     db_spans = spans_res.scalars().all()
@@ -324,14 +337,14 @@ async def get_run_summary(
     from app.models.db_models import ApprovalRequestModel
     interrupts_res = await db.execute(
         select(func.count())
-        .where(ApprovalRequestModel.run_id == UUID(run_id))
+        .where(ApprovalRequestModel.request_id == real_request_id)
     )
     interrupts_count = interrupts_res.scalar_one()
 
     # Summary Object
     duration = (run.ended_at - run.started_at).total_seconds() if run.ended_at else None
     summary = AuditRunSummary(
-        run_id=str(run.run_id),
+        request_id=str(run.request_id),
         time=run.started_at,
         root_agent_name=run.root_agent_name,
         status=run.status,

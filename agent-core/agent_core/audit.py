@@ -6,14 +6,14 @@ import asyncio
 import uuid
 from functools import wraps
 
-from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from .events import AuditEmitter
 
 _LOGGER = logging.getLogger(__name__)
 
-class AuditCallbackHandler(BaseCallbackHandler):
+class AuditCallbackHandler(AsyncCallbackHandler):
     """
     Callback Handler that captures Agent execution events and emits them 
     via AuditEmitter for asynchronous auditing.
@@ -29,112 +29,158 @@ class AuditCallbackHandler(BaseCallbackHandler):
         """Extract metadata safely."""
         return kwargs.get("metadata", {}) or {}
 
-    async def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], **kwargs: Any) -> Any:
+    def _get_ids(self, kwargs: Dict[str, Any]):
+        """
+        Extract Request/Trace IDs according to New Architecture.
+
+        config/metadata:
+            request_id: Business Logic ID (agent_runs.run_id)
+            run_id: Legacy Business Logic ID (Alias for request_id)
+        
+        kwargs:
+            run_id: Trace/Span ID (Native LangChain UUID)
+            parent_run_id: Parent Span ID (Native LangChain UUID)
+        """
         md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
-        lc_parent_id = str(kwargs.get("parent_run_id")) if kwargs.get("parent_run_id") else None
         
-        # Determine component type and agent name
-        component = "chain"
-        is_agent = False
-        agent_name = "unknown"
+        # 1. Request ID (Business Run)
+        # This is the FK linking this Span to the User Task
+        request_id = md.get("request_id") or md.get("run_id") or "unknown"
         
-        tags = md.get("tags") or kwargs.get("tags", [])
+        # 2. Span ID (Trace Node)
+        # Native LangChain ID. This is the primary key of agent_spans.
+        span_id = str(kwargs.get("run_id"))
         
-        # Heuristic to find agent name
-        for tag in tags:
-            if tag.startswith("agent:") and tag != "agent":
-                agent_name = tag.split(":", 1)[1]
-                is_agent = True
-                break
-            if tag.endswith("_agent"):
-                agent_name = tag
-                is_agent = True
+        # 3. Parent Span ID (Trace Edge)
+        parent_span_id = str(kwargs.get("parent_run_id")) if kwargs.get("parent_run_id") else None
         
-        # Fallback to metadata
-        if agent_name == "unknown" and md.get("agent_name"):
-            agent_name = md.get("agent_name")
-            is_agent = True
-            
-        if "agent" in tags or is_agent:
-            component = "agent"
-        
-        # Check sub_agent metadata
-        if md.get("sub_agent"):
-            agent_name = md.get("sub_agent")
-            # If it's a subagent, we might treat it as agent component too?
-            # But usually 'agent' tag is sufficient.
-            
-        # Extract IDs
-        run_id = str(md.get("run_id")) if md.get("run_id") else "unknown"
         session_id = str(md.get("session_id")) if md.get("session_id") else None
         thread_id = str(md.get("thread_id")) if md.get("thread_id") else None
+        
+        return request_id, span_id, parent_span_id, session_id, thread_id
 
-        # Cache context for end/error events which might lack metadata
-        if lc_run_id:
-            self._run_context[lc_run_id] = {
-                "run_id": run_id,
+    async def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], **kwargs: Any) -> Any:
+        try:
+            # New Architecture: Decoupled IDs
+            request_id, span_id, parent_span_id, session_id, thread_id = self._get_ids(kwargs)
+            md = self._md(kwargs)
+            
+            # Determine component type and agent name
+            component = "chain"
+            is_agent = False
+            agent_name = "unknown"
+            
+            tags = md.get("tags") or kwargs.get("tags", [])
+            
+            # Heuristic to find agent name
+            for tag in tags:
+                if tag.startswith("agent:") and tag != "agent":
+                    agent_name = tag.split(":", 1)[1]
+                    is_agent = True
+                    break
+                if tag.endswith("_agent"):
+                    agent_name = tag
+                    is_agent = True
+            
+            # Fallback to metadata
+            if agent_name == "unknown" and md.get("agent_name"):
+                agent_name = md.get("agent_name")
+                is_agent = True
+                
+            if "agent" in tags or is_agent:
+                component = "agent"
+            
+            # Check sub_agent metadata
+            if md.get("sub_agent"):
+                agent_name = md.get("sub_agent")
+                
+            name = kwargs.get("name") or md.get("name")
+
+            # Cache context for end/error events which might lack metadata
+            # Key off the SPAN_ID (Native LC ID)
+            self._run_context[span_id] = {
+                "request_id": request_id,
                 "session_id": session_id,
                 "thread_id": thread_id,
                 "is_agent": is_agent,
                 "agent_name": agent_name,
-                "name": kwargs.get("name") or md.get("name"),
+                "name": name,
                 "langgraph_node": md.get("langgraph_node"),
                 "subagent": md.get("sub_agent")
             }
 
-        # Emit run_started if we haven't seen this run_id yet AND it is an agent
-        # (Only start Run for the Agent, not every chain, unless run_id is new)
-        # Actually, run_id maps to AgentRun. Only one AgentRun per session usually? 
-        # No, multiple turns. Each turn has unique run_id.
-        if run_id != "unknown" and run_id not in self._seen_runs:
-            self._seen_runs.add(run_id)
+            # Emit run_started ONCE per Request ID
+            # This mimics the "Root Span" creation for the Business Run
+            if request_id != "unknown" and request_id not in self._seen_runs:
+                self._seen_runs.add(request_id)
+                await self.emitter.emit(
+                    event_type="run_started", 
+                    request_id=request_id, # Business ID
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    span_id=None, # Run event has no span
+                    component="agent", 
+                    payload={
+                        "root_agent_name": agent_name
+                    }
+                )
+            
+            # Pure Trace Event
+            event_type = "chain_start"
+            if component == "agent":
+                event_type = "subagent_started"
+            elif md.get("langgraph_node"):
+                # Explicitly detect LangGraph Nodes
+                event_type = "langgraph_node_started"
+                component = "node"
+                
             await self.emitter.emit(
-                event_type="run_started", 
-                run_id=run_id, 
+                event_type=event_type, 
+                request_id=request_id,       # Links to AgentRun (FK)
+                span_id=span_id,         # PK of AgentSpan
+                parent_span_id=parent_span_id, # Tree Structure
                 session_id=session_id,
                 thread_id=thread_id,
-                span_id=lc_run_id, 
-                component="agent", 
+                component=component, 
                 payload={
                     "inputs_digest": str(self._sanitize_inputs(inputs))[:2000],
-                    "root_agent_name": agent_name
+                    "name": name,
+                    "langgraph_node": md.get("langgraph_node"),
+                    "subagent": md.get("sub_agent")
                 }
             )
-            
-        await self.emitter.emit(
-            event_type="chain_start", 
-            run_id=run_id, 
-            session_id=session_id,
-            thread_id=thread_id,
-            span_id=lc_run_id,
-            parent_span_id=lc_parent_id,
-            component=component, 
-            payload={
-                "inputs_digest": str(self._sanitize_inputs(inputs))[:2000],
-                "name": kwargs.get("name") or md.get("name"),
-                "langgraph_node": md.get("langgraph_node"),
-                "subagent": md.get("sub_agent")
-            }
-        )
+        except Exception as e:
+            import traceback
+            print(f"[AuditError] CRASH in on_chain_start: {e}\n{traceback.format_exc()}", flush=True)
+            pass
 
     async def on_chain_end(self, outputs: Dict[str, Any], **kwargs: Any) -> Any:
         md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
+        # Native Span ID
+        span_id = str(kwargs.get("run_id"))
         
         # Retrieve context
-        ctx = self._run_context.get(lc_run_id, {}) if lc_run_id else {}
-        run_id = ctx.get("run_id") or (str(md.get("run_id")) if md.get("run_id") else "unknown")
-        session_id = ctx.get("session_id") or (str(md.get("session_id")) if md.get("session_id") else None)
-        thread_id = ctx.get("thread_id") or (str(md.get("thread_id")) if md.get("thread_id") else None)
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
         
+        event_type = "chain_end"
+        component = "chain"
+        if ctx.get("is_agent"):
+            event_type = "subagent_finished"
+            component = "agent"
+        elif ctx.get("langgraph_node"):
+            event_type = "langgraph_node_finished"
+            component = "node"
+            
         await self.emitter.emit(
-            event_type="chain_end", 
-            run_id=run_id, 
+            event_type=event_type, 
+            request_id=request_id, 
             session_id=session_id,
             thread_id=thread_id,
-            span_id=lc_run_id, 
-            component="chain", 
+            span_id=span_id, 
+            component=component, 
             payload={
                 "outputs_digest": str(self._sanitize_inputs(outputs))[:2000],
                 "name": ctx.get("name"),
@@ -143,43 +189,46 @@ class AuditCallbackHandler(BaseCallbackHandler):
             }
         )
         
-        # Emit run_finished if this chain was the agent
+        # Emit run_finished if this chain was the agent (Last mile updater for DB status)
         if ctx.get("is_agent"):
             await self.emitter.emit(
                 event_type="run_finished", 
-                run_id=run_id, 
+                request_id=request_id, 
                 session_id=session_id,
                 thread_id=thread_id,
-                span_id=lc_run_id, 
+                span_id=span_id, 
                 component="agent",
                 payload={"outputs_digest": str(self._sanitize_inputs(outputs))[:2000]}
             )
         
         # Cleanup
-        if lc_run_id:
-            self._run_context.pop(lc_run_id, None)
+        self._run_context.pop(span_id, None)
         
     async def on_chain_error(self, error: Union[Exception, KeyboardInterrupt], **kwargs: Any) -> Any:
-        md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
+        # Native Span ID
+        span_id = str(kwargs.get("run_id"))
         
         # Retrieve context
-        ctx = self._run_context.get(lc_run_id, {}) if lc_run_id else {}
-        run_id = ctx.get("run_id") or (str(md.get("run_id")) if md.get("run_id") else "unknown")
-        session_id = ctx.get("session_id") or (str(md.get("session_id")) if md.get("session_id") else None)
-        thread_id = ctx.get("thread_id") or (str(md.get("thread_id")) if md.get("thread_id") else None)
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
 
         error_type = type(error).__name__
         is_interrupt = "Interrupt" in error_type
+        
+        component = "chain"
+        if ctx.get("langgraph_node"):
+            component = "node"
 
         if is_interrupt:
             await self.emitter.emit(
                 event_type="chain_interrupted", 
-                run_id=run_id, 
+                request_id=request_id, 
                 session_id=session_id,
                 thread_id=thread_id,
-                span_id=lc_run_id, 
-                component="chain", 
+                span_id=span_id, 
+                component=component, 
                 payload={
                     "error_class": error_type, 
                     "error_message": str(error)[:2000],
@@ -192,10 +241,10 @@ class AuditCallbackHandler(BaseCallbackHandler):
             if ctx.get("is_agent"):
                 await self.emitter.emit(
                     event_type="run_interrupted",
-                    run_id=run_id, 
+                    request_id=request_id, 
                     session_id=session_id,
                     thread_id=thread_id,
-                    span_id=lc_run_id, 
+                    span_id=span_id, 
                     component="agent",
                     payload={
                         "error_class": error_type, 
@@ -203,13 +252,17 @@ class AuditCallbackHandler(BaseCallbackHandler):
                     }
                 )
         else:
+            event_type = "chain_failed"
+            if component == "node":
+                event_type = "node_failed" # Optional: if distinct event needed
+
             await self.emitter.emit(
-                event_type="chain_failed", 
-                run_id=run_id, 
+                event_type=event_type, 
+                request_id=request_id, 
                 session_id=session_id,
                 thread_id=thread_id,
-                span_id=lc_run_id, 
-                component="chain", 
+                span_id=span_id, 
+                component=component, 
                 payload={
                     "error_class": error_type, 
                     "error_message": str(error)[:2000],
@@ -219,14 +272,13 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 }
             )
             
-            # Emit run_failed if this chain was the agent
             if ctx.get("is_agent"):
                 await self.emitter.emit(
                     event_type="run_failed", 
-                    run_id=run_id, 
+                    request_id=request_id, 
                     session_id=session_id,
                     thread_id=thread_id,
-                    span_id=lc_run_id, 
+                    span_id=span_id, 
                     component="agent",
                     payload={
                         "error_class": error_type, 
@@ -235,50 +287,43 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 )
         
         # Cleanup
-        if lc_run_id:
-            self._run_context.pop(lc_run_id, None)
+        self._run_context.pop(span_id, None)
 
     async def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any) -> Any:
-        md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
-        lc_parent_id = str(kwargs.get("parent_run_id")) if kwargs.get("parent_run_id") else None
-        
-        model_name = kwargs.get("invocation_params", {}).get("model_name", "unknown_model")
-        
-        session_id = str(md.get("session_id")) if md.get("session_id") else None
-        thread_id = str(md.get("thread_id")) if md.get("thread_id") else None
+        try:
+            request_id, span_id, parent_span_id, session_id, thread_id = self._get_ids(kwargs)
+            
+            model_name = kwargs.get("invocation_params", {}).get("model_name", "unknown_model")
 
-        # Cache context
-        if lc_run_id:
-            self._run_context[lc_run_id] = {
-                "run_id": str(md.get("run_id")) if md.get("run_id") else "unknown",
+            # Cache context
+            self._run_context[span_id] = {
+                "request_id": request_id,
                 "session_id": session_id,
                 "thread_id": thread_id
             }
-        
-        await self.emitter.emit(
-            event_type="llm_called", 
-            run_id=str(md.get("run_id")) if md.get("run_id") else "unknown", 
-            session_id=session_id,
-            thread_id=thread_id,
-            span_id=lc_run_id, 
-            parent_span_id=lc_parent_id, 
-            component="llm", 
-            payload={
-                "model": model_name,
-                "prompts_digest": str(prompts)[:2000]
-            }
-        )
+            
+            await self.emitter.emit(
+                event_type="llm_called", 
+                request_id=request_id, 
+                session_id=session_id,
+                thread_id=thread_id,
+                span_id=span_id, 
+                parent_span_id=parent_span_id, 
+                component="llm", 
+                payload={
+                    "model": model_name,
+                    "prompts_digest": str(prompts)[:2000]
+                }
+            )
+        except Exception:
+            pass
 
     async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> Any:
-        md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
-        
-        # Retrieve context
-        ctx = self._run_context.get(lc_run_id, {}) if lc_run_id else {}
-        run_id = ctx.get("run_id") or (str(md.get("run_id")) if md.get("run_id") else "unknown")
-        session_id = ctx.get("session_id") or (str(md.get("session_id")) if md.get("session_id") else None)
-        thread_id = ctx.get("thread_id") or (str(md.get("thread_id")) if md.get("thread_id") else None)
+        span_id = str(kwargs.get("run_id"))
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
         
         generations = []
         if response.generations:
@@ -288,10 +333,10 @@ class AuditCallbackHandler(BaseCallbackHandler):
                     
         await self.emitter.emit(
             event_type="llm_output_received", 
-            run_id=run_id, 
+            request_id=request_id, 
             session_id=session_id,
             thread_id=thread_id,
-            span_id=lc_run_id, 
+            span_id=span_id, 
             component="llm", 
             payload={
                 "generations_digest": str(generations)[:2000],
@@ -299,25 +344,21 @@ class AuditCallbackHandler(BaseCallbackHandler):
             }
         )
         
-        if lc_run_id:
-            self._run_context.pop(lc_run_id, None)
+        self._run_context.pop(span_id, None)
 
     async def on_llm_error(self, error: Union[Exception, KeyboardInterrupt], **kwargs: Any) -> Any:
-        md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
-        
-        # Retrieve context
-        ctx = self._run_context.get(lc_run_id, {}) if lc_run_id else {}
-        run_id = ctx.get("run_id") or (str(md.get("run_id")) if md.get("run_id") else "unknown")
-        session_id = ctx.get("session_id") or (str(md.get("session_id")) if md.get("session_id") else None)
-        thread_id = ctx.get("thread_id") or (str(md.get("thread_id")) if md.get("thread_id") else None)
+        span_id = str(kwargs.get("run_id"))
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
         
         await self.emitter.emit(
             event_type="llm_failed", 
-            run_id=run_id, 
+            request_id=request_id, 
             session_id=session_id,
             thread_id=thread_id,
-            span_id=lc_run_id, 
+            span_id=span_id, 
             component="llm", 
             payload={
                 "failure_domain": "llm", 
@@ -326,8 +367,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
             }
         )
         
-        if lc_run_id:
-            self._run_context.pop(lc_run_id, None)
+        self._run_context.pop(span_id, None)
 
     async def on_tool_start(
         self,
@@ -341,45 +381,37 @@ class AuditCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> Any:
         """"""
-        md = self._md(kwargs)
+        md = kwargs.get("metadata", {}) or {}
         if metadata:
-             md.update(metadata)
+            md.update(metadata)
+        
+        request_id = md.get("request_id") or md.get("run_id") or "unknown"
+        lc_span_id = str(run_id)
+        # Check metadata['span_id'] from node_wrapper, else use parent_run_id
+        parent_span_id = str(parent_run_id) if parent_run_id else None
+        if md.get("span_id"):
+             parent_span_id = md.get("span_id")
         
         tool_name = serialized.get("name") if serialized else "unknown"
-
-        if not parent_run_id:
-            _LOGGER.info(f"ORPHAN TOOL START: name={tool_name} run_id={run_id} metadata={metadata} tags={tags}")
-
-        lc_run_id = str(run_id)
-        lc_parent_id = str(parent_run_id) if parent_run_id else None
-        
-        # Check for redundant tool wrapper (Graph Node name == Tool name)
-        # SUPPRESSION REMOVED: Restore data for frontend
         
         session_id = str(md.get("session_id")) if md.get("session_id") else None
         thread_id = str(md.get("thread_id")) if md.get("thread_id") else None
 
-        # Priority: Metadata span_id (from node_wrapper) > LangChain parent_run_id
-        effective_parent_span_id = lc_parent_id
-        if metadata and "span_id" in metadata:
-             effective_parent_span_id = metadata["span_id"]
-
         # Cache context
-        if lc_run_id:
-            self._run_context[lc_run_id] = {
-                "run_id": str(md.get("run_id")) if md.get("run_id") else "unknown",
-                "session_id": session_id,
-                "thread_id": thread_id,
-                "tool_name": tool_name
-            }
+        self._run_context[lc_span_id] = {
+            "request_id": request_id, 
+            "session_id": session_id,
+            "thread_id": thread_id,
+            "tool_name": tool_name
+        }
 
         await self.emitter.emit(
             event_type="tool_call_requested", 
-            run_id=str(md.get("run_id")) if md.get("run_id") else "unknown", 
+            request_id=request_id, 
             session_id=session_id,
             thread_id=thread_id,
-            span_id=lc_run_id, 
-            parent_span_id=effective_parent_span_id,
+            span_id=lc_span_id, 
+            parent_span_id=parent_span_id,
             component="tool", 
             payload={
                 "tool_name": tool_name, 
@@ -388,49 +420,81 @@ class AuditCallbackHandler(BaseCallbackHandler):
         )
 
     async def on_tool_end(self, output: str, **kwargs: Any) -> Any:
-        md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
-        
-        # Retrieve context
-        ctx = self._run_context.get(lc_run_id, {}) if lc_run_id else {}
-        run_id = ctx.get("run_id") or (str(md.get("run_id")) if md.get("run_id") else "unknown")
-        session_id = ctx.get("session_id") or (str(md.get("session_id")) if md.get("session_id") else None)
-        thread_id = ctx.get("thread_id") or (str(md.get("thread_id")) if md.get("thread_id") else None)
+        span_id = str(kwargs.get("run_id"))
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
         tool_name = ctx.get("tool_name", "unknown")
         
-        await self.emitter.emit(
-            event_type="tool_call_executed", 
-            run_id=run_id, 
-            session_id=session_id,
-            thread_id=thread_id,
-            span_id=lc_run_id, 
-            component="tool", 
-            payload={
-                "output_digest": str(output)[:2000],
-                "tool_name": tool_name
-            }
-        )
+        # Semantic Error Detection
+        is_error = False
+        error_msg = None
         
-        if lc_run_id:
-            self._run_context.pop(lc_run_id, None)
+        try:
+            import json
+            if "{" in output and "}" in output:
+                data = json.loads(output)
+                if isinstance(data, dict):
+                    if data.get("success") is False:
+                        is_error = True
+                        error_msg = data.get("error") or data.get("message") or str(data)
+                    elif "error" in data and data["error"]:
+                        is_error = True
+                        error_msg = data["error"]
+        except:
+            pass
+            
+        if not is_error and isinstance(output, str) and output.strip().startswith("Error:"):
+            is_error = True
+            error_msg = output
+            
+        if is_error:
+            await self.emitter.emit(
+                event_type="tool_failed", 
+                request_id=request_id, 
+                session_id=session_id,
+                thread_id=thread_id,
+                span_id=span_id, 
+                component="tool", 
+                payload={
+                    "failure_domain": "tool", 
+                    "error_class": "SemanticError", 
+                    "error_message": str(error_msg)[:2000],
+                    "tool_name": tool_name,
+                    "output_digest": str(output)[:2000] 
+                }
+            )
+        else:
+            await self.emitter.emit(
+                event_type="tool_call_executed", 
+                request_id=request_id, 
+                session_id=session_id,
+                thread_id=thread_id,
+                span_id=span_id, 
+                component="tool", 
+                payload={
+                    "output_digest": str(output)[:2000],
+                    "tool_name": tool_name
+                }
+            )
+        
+        self._run_context.pop(span_id, None)
 
     async def on_tool_error(self, error: Union[Exception, KeyboardInterrupt], **kwargs: Any) -> Any:
-        md = self._md(kwargs)
-        lc_run_id = str(kwargs.get("run_id")) if kwargs.get("run_id") else None
-        
-        # Retrieve context
-        ctx = self._run_context.get(lc_run_id, {}) if lc_run_id else {}
-        run_id = ctx.get("run_id") or (str(md.get("run_id")) if md.get("run_id") else "unknown")
-        session_id = ctx.get("session_id") or (str(md.get("session_id")) if md.get("session_id") else None)
-        thread_id = ctx.get("thread_id") or (str(md.get("thread_id")) if md.get("thread_id") else None)
+        span_id = str(kwargs.get("run_id"))
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
         tool_name = ctx.get("tool_name", "unknown")
         
         await self.emitter.emit(
             event_type="tool_failed", 
-            run_id=run_id, 
+            request_id=request_id, 
             session_id=session_id,
             thread_id=thread_id,
-            span_id=lc_run_id, 
+            span_id=span_id, 
             component="tool", 
             payload={
                 "failure_domain": "tool", 
@@ -440,8 +504,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
             }
         )
         
-        if lc_run_id:
-            self._run_context.pop(lc_run_id, None)
+        self._run_context.pop(span_id, None)
         
     def _sanitize_inputs(self, inputs: Any) -> Any:
         """Helper to sanitize extensive inputs/outputs."""

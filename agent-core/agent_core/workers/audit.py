@@ -1,4 +1,5 @@
 import asyncio
+
 import logging
 import json
 import time
@@ -25,75 +26,95 @@ class AuditWorker:
         
     async def start(self):
         """Start consuming events."""
+        print("UUID-MARKER-FIXED-REALLY: AuditWorker Starting with Fixes", flush=True)
         self.running = True
-        print(f"[AuditWorker] STARTING consumer on audit.events", flush=True)
-        _LOGGER.info("[AuditWorker] Starting audit consumer service...")
+        print(f"[AuditWorker] STARTING consumer on audit.events (BATCH MODE)", flush=True)
+        _LOGGER.info("[AuditWorker] Starting audit consumer service (BATCH MODE)...")
         
         # Subscribe to audit topic
-        # In Redis Streams, we usually use Consumer Groups for reliable delivery.
-        # agent_core.events.RedisEventBus.subscribe is a simple iterator wrapper around xread.
-        # For production robustness, we should use xreadgroup, but for now we reuse the existing simple subscription interface.
-        
-        # Subscribe to audit topic starting from beginning to ensure we don't miss events
-        # emitted before worker start (e.g. during simultaneous restart)
         iterator = self.event_bus.subscribe("audit.events", last_id="0")
+        
+        batch = []
+        batch_size = 10
+        batch_timeout = 0.05 # 50ms
+        last_flush_time = time.time()
         
         try:
             print("[AuditWorker] Entering event loop", flush=True)
+            
+            # Simple batching implementation
+            # Since iterator yields events, we can't easily timeout waiting for next event without asyncio.wait_for
+            # But wait_for on every iteration is expensive.
+            # A better approach for simple batching from async generator:
+            # 1. Try to get events.
+            # 2. If we have events, add to batch.
+            # 3. Check flush condition.
+            
             async for event in iterator:
-                print(f"[AuditWorker] Received event raw: {str(event)[:100]}", flush=True)
+                # print(f"[AuditWorker] Received event raw: {str(event)[:100]}", flush=True)
                 if not self.running:
                     break
-                await self.process_event(event)
+                
+                batch.append(event)
+                
+                current_time = time.time()
+                if len(batch) >= batch_size or (current_time - last_flush_time) >= batch_timeout:
+                    await self.process_batch(batch)
+                    batch = []
+                    last_flush_time = current_time
+            
+            # Flush remaining
+            if batch:
+                 await self.process_batch(batch)
+
         except Exception as e:
             print(f"[AuditWorker] CRASHED: {e}", flush=True)
             _LOGGER.error(f"[AuditWorker] Consumer crashed: {e}")
             if self.running:
-                # Simple restart logic could go here
                 pass
 
     async def stop(self):
         self.running = False
         
-    async def process_event(self, event: Dict[str, Any]):
-        """
-        Process a single audit event.
-        Expected format:
-        {
-            "type": "tool_start" | "tool_end" | ...,
-            "timestamp": float,
-            "user_id": str,
-            "trace_id": str,
-            "data": {...}
-        }
-        """
+    async def process_batch(self, batch: list[Dict[str, Any]]):
+        """Process a batch of audit events."""
+        if not batch:
+            return
+            
         try:
-            # Parse event if string or bytes
-            if isinstance(event, (str, bytes)):
-                try:
-                    event = json.loads(event)
-                except Exception as e:
-                    _LOGGER.error(f"[AuditWorker] Failed to parse event JSON: {e}, raw={event}")
-                    return
+            # DEBUG: Inspect batch type
+            if batch:
+                 print(f"[AuditWorker Debug] Batch count: {len(batch)}. First item type: {type(batch[0])}. Content: {batch[0]}", flush=True)
 
-            # Here we would insert into DB
-            # For now, we simulate by logging Structured JSON
-            
-            # Enrich/Normalize
-            if "timestamp" not in event:
-                event["timestamp"] = time.time()
+            # Pre-processing batch
+            processed_batch = []
+            for event in batch:
+                # Parse if needed
+                if isinstance(event, (str, bytes)):
+                    try:
+                        event = json.loads(event)
+                    except Exception as e:
+                        _LOGGER.error(f"[AuditWorker] Failed to parse event JSON: {e}")
+                        continue
                 
-            log_entry = json.dumps(event, ensure_ascii=False)
+                # Enrich
+                if "timestamp" not in event:
+                    event["timestamp"] = time.time()
+                
+                # Log (maybe sample or summary?)
+                print(f"AUDIT_LOG: {json.dumps(event, ensure_ascii=False)}", flush=True)
+                processed_batch.append(event)
             
-            # Print to stdout (docker logs captured by Fluentd/Promtail)
-            # Prefix with AUDIT_LOG for easy grep
-            print(f"AUDIT_LOG: {log_entry}")
+            if not processed_batch:
+                return
+
+            print(f"[AuditWorker] Processing batch of {len(processed_batch)} events", flush=True)
             
             if self.persist_callback:
-                await self.persist_callback(event)
+                await self.persist_callback(processed_batch)
             
         except Exception as e:
-            _LOGGER.error(f"[AuditWorker] Failed to process event: {e}, Event: {event}")
+            _LOGGER.error(f"[AuditWorker] Failed to process batch: {e}")
 
 async def main():
     """Entrypoint for standalone worker process."""

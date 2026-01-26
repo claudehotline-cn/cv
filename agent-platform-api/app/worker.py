@@ -48,6 +48,7 @@ async def agent_execute_task(
     from app.core.plugin_loader import get_agent_class
     
     _LOGGER.info(f"[Worker] Starting task {task_id} for agent {agent_key}")
+    print(f"[WORKER DEBUG] Code reload check: timestamp {datetime.utcnow()}", flush=True)
     
     # Init EventBus
     from agent_core.events import RedisEventBus
@@ -88,9 +89,8 @@ async def agent_execute_task(
             result_chunks = []
             progress = 20
             
-            # Generate explicit run_id for Audit consistency
-            # This ensures AuditCallbackHandler and node_wrapper share the same run_id
-            run_id = str(uuid.uuid4())
+            # Generate Request ID (Business Logic ID)
+            request_id = str(UUID(task_id)) if task_id else str(uuid.uuid4())
             
             # Resolve thread_id
             effective_thread_id = thread_id or session_id
@@ -103,22 +103,22 @@ async def agent_execute_task(
             config["configurable"]["session_id"] = session_id
             config["configurable"]["thread_id"] = effective_thread_id
             
-            # Inject session_id and run_id into metadata so it propagates to AuditCallbackHandler
+            # Inject request_id into metadata so AuditCallbackHandler can link Spans to this Request
             config.setdefault("metadata", {})
             config["metadata"]["session_id"] = session_id
             config["metadata"]["thread_id"] = effective_thread_id
-            config["metadata"]["run_id"] = run_id
+            config["metadata"]["request_id"] = request_id
+            config["metadata"]["run_id"] = request_id # Legacy compatibility
             config["metadata"]["sub_agent"] = agent_key 
             # Also inject user info if needed
             config["metadata"]["user_id"] = user_id
 
-            # Ensure LangChain uses our Run ID
-            config["run_id"] = UUID(run_id)
+            # NOTE: We DO NOT set config["run_id"]. We let LangChain generate a native UUID for the Root Span.
+            # This decouples the "Request" (DB Run) from the "Trace" (Execution Graph).
 
             async for chunk in graph.astream(
                 {"messages": [{"role": "user", "content": input_message}]},
-                config=config,
-                run_id=UUID(run_id)
+                config=config
             ):
                 result_chunks.append(chunk)
                 
@@ -172,15 +172,20 @@ async def agent_execute_task(
 _audit_worker_task = None
 _audit_worker_instance = None
 
-async def save_audit_log_to_db(event: Dict[str, Any]):
-    """Callback to persist audit event to Postgres using AuditPersistenceService."""
+async def save_audit_log_to_db(events: Any):
+    """Callback to persist audit event batch to Postgres using AuditPersistenceService."""
     from app.db import AsyncSessionLocal
     from app.services.audit_service import AuditPersistenceService
+    from typing import List
+    
+    # Handle single event or batch
+    if not isinstance(events, list):
+        events = [events]
     
     try:
         async with AsyncSessionLocal() as db:
             service = AuditPersistenceService(db)
-            await service.process_event(event)
+            await service.process_batch(events)
     except Exception as e:
         _LOGGER.error(f"Failed to persist audit log: {e}")
 
