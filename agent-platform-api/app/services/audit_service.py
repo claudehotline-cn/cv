@@ -1,7 +1,7 @@
 import logging
 import json
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List
 
 from sqlalchemy.exc import IntegrityError
@@ -139,9 +139,7 @@ class AuditPersistenceService:
                 # Just insert.
                 run = AgentRunModel(
                     request_id=request_id,
-                    status="running",
-                    conversation_id=session_id,
-                    thread_id=thread_id
+                    started_at=datetime.now(timezone.utc)
                 )
                 self.db.add(run)
                 await self.db.flush()
@@ -165,7 +163,7 @@ class AuditPersistenceService:
                     agent_name="unknown", 
                     status="running",
                     # created_at and started_at default to now
-                    started_at=datetime.utcnow()
+                    started_at=datetime.now(timezone.utc)
                 )
                 self.db.add(span)
                 await self.db.flush()
@@ -220,7 +218,7 @@ class AuditPersistenceService:
 
         stmt = stmt.values(
             status=status,
-            ended_at=datetime.utcnow()
+            ended_at=datetime.now(timezone.utc)
         )
         if status == "failed":
             stmt = stmt.values(
@@ -346,9 +344,38 @@ class AuditPersistenceService:
 
         stmt = stmt.values(
             status=status,
-            ended_at=datetime.utcnow()
+            ended_at=datetime.now(timezone.utc)
         )
         await self.db.execute(stmt)
+        
+        # Propagate interruption to parents
+        if status == "interrupted":
+            await self._propagate_interruption(span_id)
+
+    async def _propagate_interruption(self, start_span_id: UUID):
+        """Recursively mark active parent spans as interrupted."""
+        current_id = start_span_id
+        # Safety limit for recursion
+        for _ in range(20): 
+            # Get parent of current
+            stmt = select(AgentSpanModel.parent_span_id).where(AgentSpanModel.span_id == current_id)
+            res = await self.db.execute(stmt)
+            parent_id = res.scalar_one_or_none()
+            
+            if not parent_id:
+                break
+                
+            # Update parent status
+            # Only update if running to avoid clobbering other terminal states or unrelated failures
+            update_stmt = (
+                update(AgentSpanModel)
+                .where(AgentSpanModel.span_id == parent_id)
+                .where(AgentSpanModel.status == "running") 
+                .values(status="interrupted", ended_at=datetime.now(timezone.utc))
+            )
+            await self.db.execute(update_stmt)
+            
+            current_id = parent_id
 
     async def _handle_tool_audit(self, request_id: UUID, span_id: UUID | None, event_type: str, payload: Dict[str, Any], session_id: str | None, thread_id: str | None):
         """Populate ToolAuditModel on completion."""
@@ -374,8 +401,8 @@ class AuditPersistenceService:
             thread_id=thread_id,
             tool_name=tool_name, 
             tool_version="1.0",
-            request_time=datetime.utcnow(), 
-            response_time=datetime.utcnow(),
+            request_time=datetime.now(timezone.utc), 
+            response_time=datetime.now(timezone.utc),
             status="failed" if "failed" in event_type else "succeeded",
             output_digest=payload.get("output_digest"),
             error=payload if "failed" in event_type else None,
@@ -394,7 +421,7 @@ class AuditPersistenceService:
             approval_id=uuid4(),
             request_id=request_id,
             span_id=span_id,
-            requested_at=datetime.utcnow(),
+            requested_at=datetime.now(timezone.utc),
             action_type=action_type,
             risk_level="high", # Default for now
             status="pending",
@@ -433,7 +460,7 @@ class AuditPersistenceService:
         decision = ApprovalDecisionModel(
             decision_id=uuid4(),
             approval_id=req.approval_id,
-            decided_at=datetime.utcnow(),
+            decided_at=datetime.now(timezone.utc),
             decider_id=payload.get("actor_id", "user"), # or from payload
             decision=decision_val,
             reason=payload.get("reason", "")
