@@ -285,7 +285,7 @@ async def get_run_summary(
     pending_reqs = pending_res.scalars().all()
     pending_map = {str(r.span_id): r for r in pending_reqs if r.span_id}
 
-    # 4. Get Spans (Optional, simplistic list for now)
+    # 4. Get Spans
     spans_res = await db.execute(
         select(AgentSpanModel)
         .where(AgentSpanModel.request_id == real_request_id)

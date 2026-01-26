@@ -66,20 +66,24 @@ class SensitiveToolMiddleware(AgentMiddleware):
             else:
                 desc = self.description
 
-            # Emit hitl_requested
-            current_run_id = None
+            # Retrieve Request ID (Global Trace ID)
+            current_request_id = None
             if hasattr(request, "runtime") and request.runtime:
                  # 1. Try config
                  config = getattr(request.runtime, "config", None)
                  if config:
-                     current_run_id = config.get("metadata", {}).get("run_id")
+                     current_request_id = config.get("metadata", {}).get("request_id")
                  
                  # 2. Try context (if config failed)
-                 if not current_run_id:
+                 if not current_request_id:
                      ctx = getattr(request.runtime, "context", {})
                      # Context might be dict or object
                      if isinstance(ctx, dict):
-                         current_run_id = ctx.get("run_id") or ctx.get("configurable", {}).get("run_id")
+                         current_request_id = ctx.get("request_id") or ctx.get("configurable", {}).get("request_id")
+                         
+            # Fallback for legacy run_id if request_id missing
+            if not current_request_id and current_run_id: 
+                current_request_id = current_run_id
             
             # Extract session/thread info
             session_id = None
@@ -96,10 +100,10 @@ class SensitiveToolMiddleware(AgentMiddleware):
                      ctx = request.runtime.context
                      session_id = ctx.get("session_id") or ctx.get("configurable", {}).get("session_id")
 
-            if self.emitter and current_run_id:
+            if self.emitter and current_request_id:
                 await self.emitter.emit(
                     event_type="hitl_requested",
-                    run_id=str(current_run_id),
+                    request_id=str(current_request_id),
                     session_id=str(session_id) if session_id else None,
                     thread_id=str(thread_id) if thread_id else None,
                     span_id=None, 
@@ -143,10 +147,10 @@ class SensitiveToolMiddleware(AgentMiddleware):
                 decision_type = decision.get("type")
                 message = decision.get("message", "")
                 
-                if self.emitter and current_run_id:
+                if self.emitter and current_request_id:
                     await self.emitter.emit(
                         event_type="hitl_approved" if decision_type == "approve" else "hitl_rejected",
-                        run_id=str(current_run_id),
+                        request_id=str(current_request_id),
                         component="middleware",
                         payload={
                             "tool_name": tool_name,
