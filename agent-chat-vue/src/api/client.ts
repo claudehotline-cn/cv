@@ -227,6 +227,63 @@ class ApiClient {
         return this.http.post(`/tasks/${taskId}/cancel`)
     }
 
+    async listSessionTasks(sessionId: string, params?: { status?: string; limit?: number }): Promise<any> {
+        return this.http.get(`/tasks/sessions/${sessionId}`, { params })
+    }
+
+    streamSessionTasks(
+        sessionId: string,
+        onEvent: (data: any) => void,
+        onError?: (error: Error) => void
+    ): () => void {
+        const controller = new AbortController()
+
+        const fetchStream = async () => {
+            try {
+                const response = await fetch(`${this.baseUrl}/tasks/sessions/${sessionId}/stream`, {
+                    signal: controller.signal,
+                })
+
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+
+                const reader = response.body?.getReader()
+                if (!reader) throw new Error('No response body')
+
+                const decoder = new TextDecoder()
+                let buffer = ''
+
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+
+                    buffer += decoder.decode(value, { stream: true })
+                    const lines = buffer.split('\n')
+                    buffer = lines.pop() || ''
+
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            try {
+                                const jsonStr = line.substring(5).trim()
+                                if (!jsonStr) continue
+                                const data = JSON.parse(jsonStr)
+                                onEvent(data)
+                            } catch (e) {
+                                console.warn('Failed to parse SSE data:', line)
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                if ((error as Error).name !== 'AbortError') {
+                    onError?.(error as Error)
+                }
+            }
+        }
+
+        fetchStream()
+        return () => controller.abort()
+    }
+
     // Audit API
     async listAuditRuns(params: {
         limit?: number;

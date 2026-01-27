@@ -35,25 +35,50 @@
       </div>
 
       <!-- Background Tasks -->
-      <div class="section" v-if="chatStore.currentTask">
+      <div class="section" v-if="chatStore.tasks.length">
         <div class="section-header">
           <h4 class="section-title">Background Tasks</h4>
-          <span class="badge active">1 Active</span>
+          <span class="badge active">{{ chatStore.activeTasks.length }} Active</span>
         </div>
-        
+
         <div class="task-list">
-          <div class="task-card active">
+          <div
+            v-for="task in chatStore.tasks"
+            :key="task.id"
+            class="task-card"
+            :class="{ active: task.status === 'running' || task.status === 'pending' }"
+          >
             <div class="task-header">
               <div class="task-title-row">
-                <el-icon class="task-icon spin"><Loading /></el-icon>
-                <span class="task-name">{{ chatStore.currentTask.name }}</span>
+                <el-icon class="task-icon spin" v-if="task.status === 'running' || task.status === 'pending'"><Loading /></el-icon>
+                <span class="task-name">{{ task.name }}</span>
               </div>
-              <span class="task-progress-text">{{ chatStore.currentTask.progress }}%</span>
+              <span class="task-progress-text">{{ task.progress }}%</span>
             </div>
+
             <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: chatStore.currentTask.progress + '%' }"></div>
+              <div class="progress-fill" :style="{ width: task.progress + '%' }"></div>
             </div>
-            <p class="task-meta">ID #{{ chatStore.currentTask.id.slice(0, 8) }} • {{ chatStore.currentTask.status }}</p>
+
+            <p class="task-meta">ID #{{ task.id.slice(0, 8) }} • {{ task.status }}</p>
+
+            <div class="task-actions">
+              <button
+                v-if="task.status === 'running' || task.status === 'pending'"
+                class="task-action-btn danger"
+                @click.stop="chatStore.cancelTask(task.id)"
+              >
+                Cancel
+              </button>
+
+              <router-link
+                v-else-if="task.status === 'completed' && task.resultUrl"
+                class="task-action-btn"
+                :to="task.resultUrl"
+              >
+                View Result
+              </router-link>
+            </div>
           </div>
         </div>
       </div>
@@ -248,6 +273,34 @@ const chatStore = useChatStore()
   padding: 12px;
   background: var(--bg-primary);
   transition: all 0.2s;
+}
+
+.task-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.task-action-btn {
+  font-size: 11px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  line-height: 1;
+}
+
+.task-action-btn:hover {
+  color: var(--text-primary);
+}
+
+.task-action-btn.danger {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.06);
 }
 
 .task-card:hover {

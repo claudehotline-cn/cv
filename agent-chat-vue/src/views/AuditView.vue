@@ -347,12 +347,15 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, computed, nextTick, type ComponentPublicInstance } from 'vue'
+import { useRoute } from 'vue-router'
 import { Refresh, Search, Calendar, ChatDotRound, Tools, ArrowRight, Close, CircleCheck, Warning, InfoFilled, User, VideoPause } from '@element-plus/icons-vue'
 import apiClient from '@/api/client'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 dayjs.extend(relativeTime)
+
+const route = useRoute()
 
 const loading = ref(false)
 const drawerLoading = ref(false)
@@ -550,11 +553,19 @@ const getSpanTypeColor = (type: string) => {
 
 
 onMounted(async () => {
+    // Support deep-linking from async task result: /audit?q=<request_id>
+    const q = route.query.q
+    if (typeof q === 'string' && q) {
+        searchQuery.value = q
+    }
+
     try {
         const agents = await apiClient.listAgents()
         agentOptions.value = agents.map((a: any) => a.name)
     } catch(e) {}
-    refresh()
+    if (!searchQuery.value) {
+        refresh()
+    }
 })
 </script>
 

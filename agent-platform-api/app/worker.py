@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from arq import ArqRedis
 from arq.connections import RedisSettings
@@ -58,6 +58,21 @@ async def agent_execute_task(
     
     async with async_session_maker() as db:
         task_service = TaskService(db)
+
+        async def emit_task_event(event_type: str, payload: Dict[str, Any]) -> None:
+            """Emit task events to both per-task and per-session streams."""
+            event: Dict[str, Any] = {
+                "type": event_type,
+                "task_id": task_id,
+                "session_id": session_id,
+                "agent_key": agent_key,
+                "title": (input_message or "")[:80],
+                **payload,
+            }
+            # Per-task stream (legacy / debug)
+            await event_bus.publish(f"task:{task_id}:stream", event)
+            # Per-session stream (primary)
+            await event_bus.publish(f"session:{session_id}:tasks", event)
         
         # 更新状态为 running
         await task_service.update_status(
@@ -66,6 +81,7 @@ async def agent_execute_task(
             started_at=datetime.utcnow()
         )
         await task_service.update_progress(UUID(task_id), 10, "正在初始化 Agent...")
+        await emit_task_event("task_progress", {"status": "running", "progress": 10, "message": "正在初始化 Agent..."})
         
         try:
             # 加载 Agent
@@ -77,6 +93,7 @@ async def agent_execute_task(
             graph = agent.get_graph()
             
             await task_service.update_progress(UUID(task_id), 20, "Agent 已加载，开始执行...")
+            await emit_task_event("task_progress", {"status": "running", "progress": 20, "message": "Agent 已加载，开始执行..."})
             
             # 检查取消
             if await task_service.is_cancel_requested(UUID(task_id)):
@@ -85,14 +102,14 @@ async def agent_execute_task(
                     status="cancelled",
                     completed_at=datetime.utcnow()
                 )
+                await emit_task_event("task_cancelled", {"status": "cancelled", "progress": 100, "message": "已取消"})
                 return {"cancelled": True}
             
-            # 执行 Agent（流式）
-            result_chunks = []
+            # 执行 Agent（内部流式，仅用于驱动进度，不向前端输出 chunk）
             progress = 20
             
             # Generate Request ID (Business Logic ID)
-            request_id = str(UUID(task_id)) if task_id else str(uuid.uuid4())
+            request_id = str(UUID(task_id)) if task_id else str(uuid4())
             
             # Resolve thread_id
             effective_thread_id = thread_id or session_id
@@ -134,21 +151,19 @@ async def agent_execute_task(
             # NOTE: We DO NOT set config["run_id"]. We let LangChain generate a native UUID for the Root Span.
             # This decouples the "Request" (DB Run) from the "Trace" (Execution Graph).
 
-            async for chunk in graph.astream(
+            async for _chunk in graph.astream(
                 {"messages": [{"role": "user", "content": input_message}]},
                 config=config
             ):
-                result_chunks.append(chunk)
-                
-                # 更新进度（简单递增）
-                progress = min(90, progress + 5)
-                await task_service.update_progress(UUID(task_id), progress, "执行中...")
-                
-                # 发布到 Redis Stream (Event Bus)
-                await event_bus.publish(f"task:{task_id}:stream", {
-                    "type": "chunk", 
-                    "data": str(chunk)[:1000]
-                })
+                # 更新进度（简单递增，最多到 90）
+                new_progress = min(90, progress + 5)
+                if new_progress != progress:
+                    progress = new_progress
+                    await task_service.update_progress(UUID(task_id), progress, "执行中...")
+                    await emit_task_event(
+                        "task_progress",
+                        {"status": "running", "progress": progress, "message": "执行中..."},
+                    )
                 
                 # 检查取消
                 if await task_service.is_cancel_requested(UUID(task_id)):
@@ -157,10 +172,15 @@ async def agent_execute_task(
                         status="cancelled",
                         completed_at=datetime.utcnow()
                     )
-                    return {"cancelled": True, "partial_result": result_chunks}
+                    await emit_task_event("task_cancelled", {"status": "cancelled", "progress": 100, "message": "已取消"})
+                    return {"cancelled": True}
             
             # 完成
-            final_result = {"chunks": len(result_chunks), "success": True}
+            final_result = {
+                "success": True,
+                "audit_run_id": request_id,
+                "audit_url": f"/audit?q={request_id}",
+            }
             await task_service.update_status(
                 UUID(task_id),
                 status="completed",
@@ -168,6 +188,10 @@ async def agent_execute_task(
                 result=final_result
             )
             await task_service.update_progress(UUID(task_id), 100, "完成")
+            await emit_task_event(
+                "task_completed",
+                {"status": "completed", "progress": 100, "message": "完成", "result": final_result},
+            )
             
             _LOGGER.info(f"[Worker] Task {task_id} completed successfully")
             return final_result
@@ -179,6 +203,10 @@ async def agent_execute_task(
                 status="failed",
                 completed_at=datetime.utcnow(),
                 error=str(e)
+            )
+            await emit_task_event(
+                "task_failed",
+                {"status": "failed", "progress": 100, "message": "失败", "error": str(e)},
             )
             return {"error": str(e)}
         finally:

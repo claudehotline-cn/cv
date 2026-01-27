@@ -2,8 +2,8 @@
   <div class="async-task-card">
     <div class="task-header">
       <div class="header-left">
-        <el-icon class="task-icon spin"><Loading /></el-icon>
-        <span class="task-name">Async Task</span>
+        <el-icon class="task-icon" :class="{ spin: isActive }"><Loading /></el-icon>
+        <span class="task-name">{{ taskName || 'Async Task' }}</span>
       </div>
       <span class="task-percentage">{{ progress }}%</span>
     </div>
@@ -13,30 +13,49 @@
     </div>
     
     <div class="task-status">
-      {{ statusMessage || 'Processing...' }}
+      <span v-if="status === 'failed'">{{ error || statusMessage || 'Failed' }}</span>
+      <span v-else>{{ statusMessage || (status === 'completed' ? 'Completed' : 'Processing...') }}</span>
     </div>
     
     <div class="task-footer" v-if="taskId">
       <span class="task-id">ID: {{ taskId.slice(0, 8) }}</span>
-      <button v-if="status === 'running'" class="cancel-btn" @click.stop="$emit('cancel', taskId)">
-        Cancel
-      </button>
+      <div class="task-actions">
+        <button
+          v-if="status === 'running' || status === 'pending'"
+          class="cancel-btn"
+          @click.stop="$emit('cancel', taskId)"
+        >
+          Cancel
+        </button>
+        <router-link
+          v-else-if="status === 'completed' && resultUrl"
+          class="result-link"
+          :to="resultUrl"
+        >
+          View Result
+        </router-link>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 
-defineProps<{
+const props = defineProps<{
   progress: number
   status: string
   statusMessage?: string
   taskId?: string
   taskName?: string
+  resultUrl?: string
+  error?: string
 }>()
 
 defineEmits(['cancel'])
+
+const isActive = computed(() => props.status === 'running' || props.status === 'pending')
 </script>
 
 <style scoped>
@@ -119,6 +138,22 @@ defineEmits(['cancel'])
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.task-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.result-link {
+  font-size: 11px;
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+
+.result-link:hover {
+  text-decoration: underline;
 }
 
 .cancel-btn:hover {

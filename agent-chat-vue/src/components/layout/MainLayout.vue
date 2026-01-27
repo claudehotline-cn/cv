@@ -31,7 +31,7 @@
                <span class="status-dot"></span>
              </div>
              <span class="nav-label">Active Tasks</span>
-             <el-tag type="warning" effect="light" round size="small" class="status-tag">2</el-tag>
+             <el-tag type="warning" effect="light" round size="small" class="status-tag">{{ chatStore.activeTasks.length }}</el-tag>
           </button>
           
           <router-link to="/agents" class="nav-item" active-class="active">

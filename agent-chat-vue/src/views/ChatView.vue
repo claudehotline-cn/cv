@@ -25,7 +25,7 @@
               <div class="loading-bars">
                  <span></span><span></span><span></span>
               </div>
-              <span class="pill-text">2 Jobs Running</span>
+              <span class="pill-text">{{ chatStore.activeTasks.length }} Jobs Running</span>
            </div>
            
            <button class="icon-btn" @click="toggleTheme" title="Toggle Theme">
@@ -105,18 +105,6 @@
                       <!-- TODO: Add Interrupt Component -->
                       <p>Waiting for user approval...</p>
                    </div>
-
-
-                   <!-- Async Task Card -->
-                   <AsyncTaskCard
-                     v-else-if="block.type === 'async_task'"
-                     :progress="block.progress || 0"
-                     :status="block.status || 'pending'"
-                     :statusMessage="block.content || ''"
-                     :taskId="block.taskId || ''"
-                     :taskName="block.content || ''"
-                     @cancel="chatStore.cancelTask"
-                   />
                 </template>
                 
                 <div v-if="chatStore.isLoading && chatStore.streamingBlocks.length === 0" class="content-wrapper">
@@ -164,7 +152,7 @@
                </el-button>
 
                <el-button 
-                  v-else-if="!inputMessage.trim() && !chatStore.isStreaming"
+                  v-else
                   class="async-toggle-btn"
                   :class="{ active: chatStore.asyncMode }"
                   circle
@@ -175,7 +163,7 @@
                </el-button>
 
                <el-button 
-                  v-else
+                  v-if="!chatStore.isStreaming && inputMessage.trim()"
                   class="send-btn" 
                   circle
                   type="primary"
@@ -229,7 +217,6 @@ import ToolCallBlock from '@/components/chat/ToolCallBlock.vue'
 import ToolOutputBlock from '@/components/chat/ToolOutputBlock.vue'
 import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
 import ChartRenderer from '@/components/chat/ChartRenderer.vue'
-import AsyncTaskCard from '@/components/chat/AsyncTaskCard.vue' // New
 import AgentRightSidebar from '@/components/chat/AgentRightSidebar.vue'
 
 import { useTheme } from '@/composables/useTheme'
@@ -297,8 +284,10 @@ async function handleSend() {
   // 发送消息时重置滚动状态，自动跟随新消息
   userHasScrolledUp.value = false
   
-  chatStore.sendMessage(msg)
+  await chatStore.sendMessage(msg)
   inputMessage.value = ''
+  await nextTick()
+  textareaRef.value?.focus?.()
 }
 
 watch(

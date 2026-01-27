@@ -16,9 +16,9 @@ class TaskService:
     def __init__(self, db: AsyncSession):
         self.db = db
     
-    async def create_task(self, session_id: UUID) -> TaskModel:
+    async def create_task(self, session_id: UUID, meta: Optional[Dict[str, Any]] = None) -> TaskModel:
         """创建新任务"""
-        task = TaskModel(session_id=session_id, status="pending")
+        task = TaskModel(session_id=session_id, status="pending", result=meta)
         self.db.add(task)
         await self.db.commit()
         await self.db.refresh(task)
@@ -57,8 +57,11 @@ class TaskService:
             values["completed_at"] = completed_at
         if error:
             values["error"] = error
-        if result:
-            values["result"] = result
+        if result is not None:
+            # Merge with existing result meta (e.g. input_message) if present
+            existing = await self.get_task(task_id)
+            existing_result = existing.result if existing and isinstance(existing.result, dict) else {}
+            values["result"] = {**existing_result, **result}
             
         await self.db.execute(
             update(TaskModel)

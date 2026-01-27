@@ -62,6 +62,19 @@
                         :interrupt-data="block.data"
                         @resume="handleResume"
                      />
+
+                     <!-- Async Task Block -->
+                     <AsyncTaskCard
+                        v-else-if="block.type === 'async_task'"
+                        :progress="block.progress || 0"
+                        :status="block.status || 'pending'"
+                        :statusMessage="block.content || ''"
+                        :taskId="block.taskId || ''"
+                        :taskName="getTaskName(block.taskId || '')"
+                        :resultUrl="block.resultUrl"
+                        :error="block.error"
+                        @cancel="chatStore.cancelTask"
+                     />
                    </template>
                 </template>
                 
@@ -84,6 +97,7 @@ import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallBlock from './ToolCallBlock.vue'
 import ToolOutputBlock from './ToolOutputBlock.vue'
 import InterruptBlock from './InterruptBlock.vue'
+import AsyncTaskCard from './AsyncTaskCard.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ChartRenderer from './ChartRenderer.vue'
 import dayjs from 'dayjs'
@@ -103,6 +117,11 @@ function getUserContent(message: Message): string {
 
 import { useChatStore } from '@/stores/chat'
 const chatStore = useChatStore()
+
+function getTaskName(taskId: string): string {
+  const task = chatStore.tasks.find(t => t.id === taskId)
+  return task?.name || ''
+}
 
 async function handleResume(decision: 'approve' | 'reject', feedback: string) {
   // Use session ID from message (if available) or current session

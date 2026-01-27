@@ -17,6 +17,8 @@ export interface AsyncTaskBlock {
     content: string // task name or description
     progress: number
     status: string // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+    resultUrl?: string
+    error?: string
 }
 
 export interface ThinkingBlock {

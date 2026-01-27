@@ -65,6 +65,8 @@ export const useChatStore = defineStore('chat', () => {
         sessions.value.unshift(session)
         currentSessionId.value = session.id
         messages.value = []
+        tasks.value = []
+        subscribeSessionTaskStream(session.id)
         return session
     }
 
@@ -80,12 +82,16 @@ export const useChatStore = defineStore('chat', () => {
             session.is_interrupted || false,
             session.interrupt_data
         )
+        await loadSessionTasks(sessionId)
+        subscribeSessionTaskStream(sessionId)
     }
 
     function resetSession() {
         currentSessionId.value = null
         messages.value = []
         stream.reset()
+        tasks.value = []
+        stopSessionTaskStream()
     }
 
     async function deleteSession(sessionId: string) {
@@ -94,21 +100,176 @@ export const useChatStore = defineStore('chat', () => {
         if (currentSessionId.value === sessionId) {
             currentSessionId.value = null
             messages.value = []
+            tasks.value = []
+            stopSessionTaskStream()
         }
     }
 
     // 异步任务相关
     const asyncMode = ref(false)
-    const currentTask = ref<{
+    type AsyncTask = {
         id: string
         name: string
         progress: number
         status: string
         message?: string
-    } | null>(null)
+        resultUrl?: string
+        error?: string
+    }
 
-    // 任务 SSE 连接持有
-    let taskEventSource: (() => void) | null = null
+    const tasks = ref<AsyncTask[]>([])
+    const activeTasks = computed(() => tasks.value.filter(t => ['pending', 'running'].includes(t.status)))
+
+    // 会话任务 SSE 连接持有（单会话单连接）
+    let sessionTaskEventSource: (() => void) | null = null
+
+    function stopSessionTaskStream() {
+        if (sessionTaskEventSource) {
+            sessionTaskEventSource()
+            sessionTaskEventSource = null
+        }
+    }
+
+    async function loadSessionTasks(sessionId: string) {
+        try {
+            const res = await apiClient.listSessionTasks(sessionId, { limit: 50 })
+            const list = (res.tasks || []) as any[]
+            tasks.value = list.map((t) => {
+                const result = t.result || {}
+                return {
+                    id: t.id,
+                    name: result.input_message?.slice(0, 20) || `Task ${String(t.id).slice(0, 8)}`,
+                    progress: Number(t.progress || 0),
+                    status: t.status,
+                    message: t.progress_message,
+                    resultUrl: result.audit_url,
+                    error: t.error,
+                } as AsyncTask
+            })
+        } catch (e) {
+            console.error('Failed to load session tasks', e)
+            tasks.value = []
+        }
+    }
+
+    function upsertTask(taskId: string, patch: Partial<AsyncTask> & { name?: string }) {
+        const idx = tasks.value.findIndex(t => t.id === taskId)
+        if (idx >= 0) {
+            tasks.value[idx] = { ...tasks.value[idx], ...patch }
+        } else {
+            tasks.value.unshift({
+                id: taskId,
+                name: patch.name || `Task ${taskId.slice(0, 8)}`,
+                progress: patch.progress ?? 0,
+                status: patch.status || 'pending',
+                message: patch.message,
+                resultUrl: patch.resultUrl,
+                error: patch.error,
+            })
+        }
+    }
+
+    function updateMessageTaskBlock(taskId: string, patch: Partial<any>) {
+        const msg = messages.value.find((m: Message) =>
+            m.blocks.some((b: any) => b.type === 'async_task' && b.taskId === taskId)
+        )
+        if (!msg) return
+        const block = msg.blocks.find((b: any) => b.type === 'async_task' && b.taskId === taskId) as any
+        if (!block) return
+        Object.assign(block, patch)
+    }
+
+    function subscribeSessionTaskStream(sessionId: string) {
+        stopSessionTaskStream()
+
+        sessionTaskEventSource = apiClient.streamSessionTasks(
+            sessionId,
+            (data: any) => {
+                const taskId = data.task_id || data.taskId
+                if (!taskId) return
+
+                const status = data.status
+                const progress = data.progress !== undefined ? Number(data.progress) : undefined
+                const message = data.message || data.progress_message || data.progressMessage
+
+                let resultUrl: string | undefined
+                if (data.result) {
+                    const raw = data.result
+                    try {
+                        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+                        resultUrl = parsed?.audit_url || parsed?.result_url
+                    } catch {
+                        // ignore
+                    }
+                }
+                if (!resultUrl && data.audit_url) resultUrl = data.audit_url
+
+                if (data.type === 'task_progress' || data.type === 'task_cancel_requested') {
+                    upsertTask(taskId, {
+                        name: (data.title || '').slice(0, 20) || undefined,
+                        status: status || 'running',
+                        progress: progress,
+                        message: message,
+                    })
+                    updateMessageTaskBlock(taskId, {
+                        progress: progress,
+                        status: status || 'running',
+                        content: message || '执行中...',
+                    })
+                    return
+                }
+
+                if (data.type === 'task_completed') {
+                    upsertTask(taskId, {
+                        name: (data.title || '').slice(0, 20) || undefined,
+                        status: 'completed',
+                        progress: 100,
+                        message: message || '完成',
+                        resultUrl,
+                    })
+                    updateMessageTaskBlock(taskId, {
+                        progress: 100,
+                        status: 'completed',
+                        content: message || '完成',
+                        resultUrl,
+                    })
+                    return
+                }
+
+                if (data.type === 'task_failed') {
+                    upsertTask(taskId, {
+                        name: (data.title || '').slice(0, 20) || undefined,
+                        status: 'failed',
+                        progress: 100,
+                        message: message || '失败',
+                        error: data.error,
+                    })
+                    updateMessageTaskBlock(taskId, {
+                        progress: 100,
+                        status: 'failed',
+                        content: data.error || message || '失败',
+                        error: data.error,
+                    })
+                    return
+                }
+
+                if (data.type === 'task_cancelled') {
+                    upsertTask(taskId, {
+                        name: (data.title || '').slice(0, 20) || undefined,
+                        status: 'cancelled',
+                        progress: 100,
+                        message: message || '已取消',
+                    })
+                    updateMessageTaskBlock(taskId, {
+                        progress: 100,
+                        status: 'cancelled',
+                        content: message || '已取消',
+                    })
+                }
+            },
+            (err) => console.error('Session task stream error', err)
+        )
+    }
 
     // 聊天功能（完全使用 SDK）
     async function sendMessage(content: string) {
@@ -171,99 +332,18 @@ export const useChatStore = defineStore('chat', () => {
             }
             messages.value.push(aiMessage)
 
-            // 设置当前任务并订阅状态
-            currentTask.value = {
+            // 加入任务列表（后续由 SSE 推进度/结果）
+            upsertTask(taskId, {
                 id: taskId,
                 name: content.slice(0, 20),
                 progress: 0,
                 status: 'pending',
                 message: 'Task queued...'
-            }
-
-            subscribeTaskStream(taskId)
+            })
 
         } catch (error) {
             console.error('Failed to execute async task:', error)
         }
-    }
-
-    function subscribeTaskStream(taskId: string) {
-        // 关闭旧连接
-        if (taskEventSource) {
-            taskEventSource()
-            taskEventSource = null
-        }
-
-        taskEventSource = apiClient.streamTask(
-            taskId,
-            (data: any) => {
-                // data: { type: 'chunk'|'progress', data: ... }
-                // 注意：routes/tasks.py 返回的是 { type: ..., data: ... }
-                // 但是 worker.py 发布的是 { type: 'chunk', data: str }
-
-                // 这里我们主要关注更新 Store 状态和 消息块
-
-                if (data.type === 'chunk') {
-                    // Update task card in chat messages?
-                    // Ideally we should stream output content if there is text?
-                    // Currently `chunk` is raw output.
-
-                    // For now, let's just update generic progress if not provided
-                    if (currentTask.value) {
-                        currentTask.value.message = "Processing..."
-                    }
-                }
-
-                // 我们还需要轮询 status 或者依赖 worker 发送 progress 事件?
-                // worker.py 并没有发送 'progress' 事件到 stream!
-                // worker.py 只有: await redis.xadd(..., {type: 'chunk', ...})
-
-                // Wait, worker.py ALSO updates DB status & progress.
-                // But tasks.py stream ONLY reads from Redis stream.
-                // So frontend won't receive progress updates unless we also push them to Redis.
-
-                // Check worker.py again:
-                // It calls task_service.update_progress (DB update)
-                // It calls event_bus.publish('chunk')
-
-                // It SHOULD also publish progress to event bus if we want real-time progress bar.
-                // I missed that in worker.py refactor.
-            },
-            (err) => console.error('Task stream error', err)
-        )
-
-        // Polling fallback to keep progress sync?
-        // Let's implement simple polling for status/progress since worker doesn't emit progress to stream yet
-        const pollInterval = setInterval(async () => {
-            try {
-                const task = await apiClient.getTask(taskId)
-                if (currentTask.value && currentTask.value.id === taskId) {
-                    currentTask.value.progress = task.progress
-                    currentTask.value.status = task.status
-                    currentTask.value.message = task.progress_message
-
-                    // Update the message block in chat history as well
-                    const msg = messages.value.find((m: Message) => m.blocks.some((b: any) => b.type === 'async_task' && b.taskId === taskId))
-                    if (msg) {
-                        const block = msg.blocks.find((b: any) => b.type === 'async_task') as any
-                        if (block) {
-                            block.progress = task.progress
-                            block.status = task.status
-                            block.content = task.progress_message || block.content
-                        }
-                    }
-
-                    if (['completed', 'failed', 'cancelled'].includes(task.status)) {
-                        clearInterval(pollInterval)
-                        if (taskEventSource) taskEventSource()
-                        // If completed, maybe show result? 
-                        // For now keep it simple.
-                    }
-                } else {
-                    clearInterval(pollInterval)
-                }
-            } catch (e) { /* ignore */ }
-        }, 1000)
     }
 
     async function cancelTask(taskId: string) {
@@ -298,7 +378,8 @@ export const useChatStore = defineStore('chat', () => {
         currentAgentId,
 
         asyncMode,
-        currentTask,
+        tasks,
+        activeTasks,
 
         loadSessions,
         createSession,
