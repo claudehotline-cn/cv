@@ -1,7 +1,0 @@
-{
-  "items": [
-    { "name": "det_720p", "status": "Running", "fps": 24, "input_fps": 376, "alerts": 0 },
-    { "name": "det_track_1080p", "status": "Running", "fps": 24, "input_fps": 341, "alerts": 1 },
-    { "name": "face_recog", "status": "Running", "fps": 25, "input_fps": 359, "alerts": 0 }
-  ]
-}

@@ -1,7 +1,0 @@
-D:\Projects\ai\cv\video-source-manager\src\main.cpp;D:\Projects\ai\cv\video-source-manager\build-vs\VideoSourceManager.dir\Release\main.obj
-D:\Projects\ai\cv\video-source-manager\src\app\source_agent.cc;D:\Projects\ai\cv\video-source-manager\build-vs\VideoSourceManager.dir\Release\source_agent.obj
-D:\Projects\ai\cv\video-source-manager\src\app\controller\source_controller.cc;D:\Projects\ai\cv\video-source-manager\build-vs\VideoSourceManager.dir\Release\source_controller.obj
-D:\Projects\ai\cv\video-source-manager\src\app\rpc\grpc_server.cc;D:\Projects\ai\cv\video-source-manager\build-vs\VideoSourceManager.dir\Release\grpc_server.obj
-D:\Projects\ai\cv\video-source-manager\src\app\metrics\metrics_exporter.cc;D:\Projects\ai\cv\video-source-manager\build-vs\VideoSourceManager.dir\Release\metrics_exporter.obj
-D:\Projects\ai\cv\video-source-manager\src\app\rest\rest_server.cc;D:\Projects\ai\cv\video-source-manager\build-vs\VideoSourceManager.dir\Release\rest_server.obj
-D:\Projects\ai\cv\video-source-manager\src\adapters\inputs\ffmpeg_rtsp_reader.cc;D:\Projects\ai\cv\video-source-manager\build-vs\VideoSourceManager.dir\Release\ffmpeg_rtsp_reader.obj

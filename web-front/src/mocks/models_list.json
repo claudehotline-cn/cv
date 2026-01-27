@@ -1,7 +1,0 @@
-{
-  "items": [
-    { "id": "yolo_v8m", "task": "detection", "family": "yolo", "variant": "v8m", "path": "models/yolo_v8m.onnx", "input_shape": "640x640", "params": "25M" },
-    { "id": "clip_s", "task": "embedding", "family": "clip", "variant": "vit-s", "path": "models/clip_vits.onnx", "input_shape": "224x224", "params": "90M" },
-    { "id": "reid_fast", "task": "reid", "family": "fastreid", "variant": "r50", "path": "models/fast_reid_r50.onnx", "input_shape": "256x128", "params": "28M" }
-  ]
-}

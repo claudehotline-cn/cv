@@ -1,5 +1,0 @@
-{
-  "ok": true,
-  "body": "{\n\t\"code\" : \"OK\",\n\t\"data\" : \n\t{\n\t\t\"drain\" : \n\t\t{\n\t\t\t\"blocked_nodes\" : [],\n\t\t\t\"elapsed_ms\" : 0,\n\t\t\t\"ok\" : false,\n\t\t\t\"timeout_sec\" : 0\n\t\t},\n\t\t\"last_apply_ms\" : 0,\n\t\t\"model_targets\" : \n\t\t[\n\t\t\t{\n\t\t\t\t\"model_path\" : \"D:/Projects/ai/cv/video-analyzer/build-ninja/bin/model/yolov12x.onnx\",\n\t\t\t\t\"node\" : \"det\",\n\t\t\t\t\"type\" : \"model.ort\"\n\t\t\t}\n\t\t],\n\t\t\"phase\" : \"Ready\",\n\t\t\"project\" : \"\",\n\t\t\"revision\" : \"\",\n\t\t\"tags\" : []\n\t},\n\t\"name\" : \"orch_e2e_01\",\n\t\"success\" : true\n}",
-  "status": 200
-}

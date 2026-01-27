@@ -1,1 +1,0 @@
-{"success":true,"code":"OK","data":[{"id":"orch_cam_e2e_02","uri":"rtsp://127.0.0.1:8554/camera_01","profile":"","model_id":"","fps":25.0965,"phase":"Ready","caps":{"codec":"h264","resolution":[1280,720],"fps":25.0965,"pix_fmt":"BGR","color_space":"BT.709"}}]}
