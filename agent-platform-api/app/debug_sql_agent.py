@@ -8,7 +8,7 @@ from data_agent.subagents.sql import sql_step1_list_tables, SQLAgentState
 logging.basicConfig(level=logging.INFO)
 
 from agent_core.audit import AuditCallbackHandler
-from agent_core.events import RedisEventBus
+from agent_core.events import AuditEmitter, RedisEventBus
 from langchain_core.callbacks import BaseCallbackHandler
 
 async def main():
@@ -18,7 +18,8 @@ async def main():
     # Initialize EventBus and Audit Handler
     # Use internal redis hostname from docker-compose
     bus = RedisEventBus(redis_url="redis://langgraph-redis:6379")
-    audit_handler = AuditCallbackHandler(event_bus=bus)
+    emitter = AuditEmitter(redis=bus.redis)
+    audit_handler = AuditCallbackHandler(emitter=emitter)
     
     # Mock Config
     config: RunnableConfig = {

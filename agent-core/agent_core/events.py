@@ -9,7 +9,6 @@ from typing import Any, Dict, AsyncIterator, List, Optional
 import asyncio
 import json
 import logging
-import time
 
 _LOGGER = logging.getLogger("agent_core.events")
 
@@ -141,52 +140,4 @@ class RedisEventBus(EventBus):
     async def close(self):
         await self.redis.close()
 
-
-from dataclasses import dataclass
-import uuid
-
-@dataclass
-class AuditEmitter:
-    """Standardized Audit Event Emitter."""
-    redis: Any  # Redis client (aioredis)
-    stream_key: str = "audit.events"
-
-    async def emit(
-        self,
-        *,
-        event_type: str,
-        request_id: str,
-        span_id: str | None,
-        session_id: str | None = None,
-        thread_id: str | None = None,
-        parent_span_id: str | None = None,
-        component: str | None = None,
-        payload: Dict[str, Any] | None = None,
-        actor_type: str = "agent",
-        actor_id: str = "worker",
-    ):
-        """Emit a standardized audit event to the stream."""
-        if payload is None:
-            payload = {}
-            
-        fields = {
-            "event_id": str(uuid.uuid4()),
-            "schema_version": "1",
-            "event_type": event_type,
-            "event_time": str(time.time()),
-            "request_id": str(request_id) if request_id else "unknown",
-            "session_id": str(session_id) if session_id else "",
-            "thread_id": str(thread_id) if thread_id else "",
-            "span_id": str(span_id) if span_id else "",
-            "parent_span_id": str(parent_span_id) if parent_span_id else "",
-            "component": component or "",
-            "actor_type": actor_type,
-            "actor_id": actor_id,
-            "payload_json": json.dumps(payload, ensure_ascii=False),
-        }
-        # Use xadd with logical stream key
-        # Assuming self.redis is a Redis client instance that supports xadd
-        try:
-            await self.redis.xadd(self.stream_key, fields, maxlen=100000, approximate=True)
-        except Exception as e:
-            _LOGGER.error(f"Failed to emit audit event {event_type}: {e}")
+from agent_audit.emitter import AuditEmitter

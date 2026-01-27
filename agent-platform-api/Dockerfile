@@ -17,8 +17,8 @@ RUN playwright install --with-deps chromium
 # Copy app code
 COPY . .
 
-# Set PYTHONPATH to include agent-core and plugins (which are mounted via volumes)
-ENV PYTHONPATH=/app/agent-core:/app/agent-plugins:/app
+# Set PYTHONPATH to include reusable in-repo packages (mounted via volumes)
+ENV PYTHONPATH=/app/agent-audit:/app/agent-core:/app/agent-plugins:/app
 
 EXPOSE 8000
 

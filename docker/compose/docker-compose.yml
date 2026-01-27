@@ -469,6 +469,7 @@ services:
       - "18111:8000"
     volumes:
       - ../../logs:/logs:rw
+      - ../../agent-audit:/app/agent-audit:rw
       - ../../agent-core:/app/agent-core:rw
       - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for API code
@@ -504,6 +505,7 @@ services:
         condition: service_healthy
     volumes:
       - ../../logs:/logs:rw
+      - ../../agent-audit:/app/agent-audit:rw
       - ../../agent-core:/app/agent-core:rw
       - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for worker code

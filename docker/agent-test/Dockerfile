@@ -33,6 +33,6 @@ RUN pip install --no-cache-dir \
 # This allows using local code changes without rebuilding
 # But we need to install the package interactively or set PYTHONPATH
 
-ENV PYTHONPATH=/workspace/agent-core:/workspace/agent-test:/workspace/agent-plugins:/workspace:/workspace/third-party/deepagents-0.3.0
+ENV PYTHONPATH=/workspace/agent-audit:/workspace/agent-core:/workspace/agent-test:/workspace/agent-plugins:/workspace:/workspace/third-party/deepagents-0.3.0
 
 CMD ["bash"]
