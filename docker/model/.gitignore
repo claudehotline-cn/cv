@@ -1,6 +1,0 @@
-# Ignore all by default
-*
-# Keep helper files
-!.gitignore
-!README.md
-!yolov12x/config.pbtxt

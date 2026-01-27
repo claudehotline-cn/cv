@@ -284,8 +284,22 @@ class AuditPersistenceService:
                  pass
 
         # Resolve Parent Span ID (Native LangChain Topology)
+        # NOTE: parent_span_id is a self-FK; if parent span hasn't been persisted yet
+        # (events can arrive out-of-order), setting it eagerly will violate the FK.
+        # We store it in meta['pending_parent_id'] and adopt later when parent exists.
         raw_parent_id = event.get("parent_span_id")
         parent_uuid = UUID(raw_parent_id) if raw_parent_id else None
+
+        meta = dict(payload) if isinstance(payload, dict) else {}
+        if parent_uuid:
+            try:
+                parent = await self.db.get(AgentSpanModel, parent_uuid)
+                if parent is None:
+                    meta["pending_parent_id"] = str(parent_uuid)
+                    parent_uuid = None
+            except Exception:
+                meta["pending_parent_id"] = str(parent_uuid)
+                parent_uuid = None
         
         # Apply values to model
         span.span_type = span_type
@@ -293,7 +307,7 @@ class AuditPersistenceService:
         span.node_name = node_name
         span.subagent_kind = subagent_kind
         span.parent_span_id = parent_uuid
-        span.meta = payload
+        span.meta = meta
         span.status = "running"
         
         # Add to session

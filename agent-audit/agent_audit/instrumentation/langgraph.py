@@ -57,6 +57,25 @@ def _resolve_emitter(
         if isinstance(md_emitter, AuditEmitter):
             return md_emitter
 
+        # Most reliable: derive from callbacks (LangChain callback propagation survives
+        # LangGraph config filtering, without storing non-serializable objects in metadata).
+        cbs = config.get("callbacks")
+        candidates = []
+        if cbs is not None:
+            if isinstance(cbs, list):
+                candidates = cbs
+            else:
+                handlers = getattr(cbs, "handlers", None)
+                if isinstance(handlers, list):
+                    candidates = handlers
+                else:
+                    candidates = [cbs]
+
+        for cb in candidates:
+            cb_emitter = getattr(cb, "emitter", None)
+            if isinstance(cb_emitter, AuditEmitter):
+                return cb_emitter
+
         return None
 
     if callable(emitter):
