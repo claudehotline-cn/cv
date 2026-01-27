@@ -22,22 +22,7 @@ from ..prompts import (
 )
 from ..skills.registry import SKILLS_REGISTRY
 
-from agent_core.settings import get_settings
-from agent_core.events import RedisEventBus, AuditEmitter
 from agent_core.decorators import node_wrapper
-
-_settings = get_settings()
-
-# Lazy init to track event loop correctly
-_redis_bus = None
-_audit_emitter = None
-
-def _get_audit_emitter():
-    global _redis_bus, _audit_emitter
-    if _audit_emitter is None:
-        _redis_bus = RedisEventBus(_settings.redis_url)
-        _audit_emitter = AuditEmitter(_redis_bus.redis)
-    return _audit_emitter
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,7 +42,7 @@ class PythonAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-@node_wrapper("py_df_profile", emitter=_get_audit_emitter(), graph_id="python_agent")
+@node_wrapper("py_df_profile", graph_id="python_agent")
 async def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 1: df_profile")
@@ -83,7 +68,7 @@ async def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> d
         _LOGGER.error("[Python Agent] df_profile failed: %s", e)
         return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
 
-@node_wrapper("llm_generate", emitter=_get_audit_emitter(), graph_id="python_agent")
+@node_wrapper("llm_generate", graph_id="python_agent")
 async def step2_llm_generate_code(state: PythonAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据 df_profile 结果生成 Python 代码"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 2: LLM generate code")
@@ -165,7 +150,7 @@ python
     _LOGGER.info("[Python Agent] LLM generated code: %s", code[:300])
     return {"python_code": code.strip()}
 
-@node_wrapper("py_python_execute", emitter=_get_audit_emitter(), graph_id="python_agent")
+@node_wrapper("py_python_execute", graph_id="python_agent")
 async def step3_python_execute(state: PythonAgentState, config: RunnableConfig) -> Command[Literal["llm_generate", "format_output"]]:
     """步骤 3: 执行 LLM 生成的 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Python Agent Fixed Flow] Step 3: python_execute")
@@ -231,7 +216,7 @@ async def step3_python_execute(state: PythonAgentState, config: RunnableConfig) 
                 goto="format_output"
             )
 
-@node_wrapper("format_output", emitter=_get_audit_emitter(), graph_id="python_agent")
+@node_wrapper("format_output", graph_id="python_agent")
 def format_final_output(state: PythonAgentState, config: RunnableConfig) -> dict:
     """格式化最终输出为 Agent 消息"""
     result = state.get("python_result", "")

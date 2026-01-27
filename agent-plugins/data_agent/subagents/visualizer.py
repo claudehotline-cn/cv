@@ -24,13 +24,7 @@ from ..prompts import (
     VISUALIZER_AGENT_DESCRIPTION
 )
 
-from agent_core.settings import get_settings
-from agent_core.events import RedisEventBus, AuditEmitter
 from agent_core.decorators import node_wrapper
-
-_settings = get_settings()
-_redis_bus = RedisEventBus(_settings.redis_url)
-_audit_emitter = AuditEmitter(_redis_bus.redis)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +43,7 @@ class VisualizerAgentState(TypedDict):
     retry_count: int        # 重试次数
     error_feedback: str     # 错误反馈
 
-@node_wrapper("viz_df_profile", emitter=_audit_emitter, graph_id="visualizer_agent")
+@node_wrapper("viz_df_profile", graph_id="visualizer_agent")
 async def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """Step 1: 调用 df_profile 查看数据结构"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 1: df_profile")
@@ -68,6 +62,7 @@ async def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConf
     
     # 只加载 result（Python Agent 处理后的数据，已转换好类型）
     try:
+        child_config = config.copy() if config else {}
         child_config.setdefault("metadata", {})["sub_agent"] = "Visualizer Agent"
         result = await df_profile_tool.ainvoke({"df_name": "result", "analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[Visualizer Agent] df_profile(result): %s", result[:500] if len(result) > 500 else result)
@@ -76,7 +71,7 @@ async def viz_step1_df_profile(state: VisualizerAgentState, config: RunnableConf
         _LOGGER.error("[Visualizer Agent] df_profile(result) failed: %s", e)
         return {"df_profile_result": f'{{"error": "DataFrame result not found: {e}"}}', "analysis_id": analysis_id, "task_description": task_description}
 
-@node_wrapper("viz_llm_generate", emitter=_audit_emitter, graph_id="visualizer_agent")
+@node_wrapper("viz_llm_generate", graph_id="visualizer_agent")
 async def viz_step2_llm_generate_code(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据 df_profile 结果生成 ECharts 代码"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 2: LLM generate chart code")
@@ -224,7 +219,7 @@ python
     _LOGGER.info("[Visualizer Agent] LLM generated code: %s", code[:300])
     return {"chart_code": code.strip()}
 
-@node_wrapper("viz_python_execute", emitter=_audit_emitter, graph_id="visualizer_agent")
+@node_wrapper("viz_python_execute", graph_id="visualizer_agent")
 async def viz_step3_python_execute(state: VisualizerAgentState, config: RunnableConfig) -> Command[Literal["viz_llm_generate", "viz_format_output"]]:
     """Step 3: 执行 Python 代码，使用 Command 决定下一步走向"""
     _LOGGER.info("[Visualizer Agent Fixed Flow] Step 3: python_execute")
@@ -240,6 +235,7 @@ async def viz_step3_python_execute(state: VisualizerAgentState, config: Runnable
     retry_count = state.get("retry_count", 0)
     
     try:
+        child_config = config.copy() if config else {}
         child_config.setdefault("metadata", {})["sub_agent"] = "Visualizer Agent"
         result = await python_execute_tool.ainvoke({"code": code, "analysis_id": analysis_id}, config=child_config)
         _LOGGER.info("[Visualizer Agent] python_execute result: %s", result[:500] if len(result) > 500 else result)
@@ -313,7 +309,7 @@ async def viz_step3_python_execute(state: VisualizerAgentState, config: Runnable
                 goto="viz_format_output"
             )
 
-@node_wrapper("viz_format_output", emitter=_audit_emitter, graph_id="visualizer_agent")
+@node_wrapper("viz_format_output", graph_id="visualizer_agent")
 def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig) -> dict:
     """格式化最终输出 - 提取 CHART_DATA 并持久化到文件"""
     result = state.get("chart_result", "")

@@ -53,6 +53,8 @@ async def agent_execute_task(
     # Init EventBus
     from agent_core.events import RedisEventBus
     event_bus = RedisEventBus(settings.redis_url)
+    from agent_core.audit import AuditCallbackHandler
+    from agent_core.events import AuditEmitter
     
     async with async_session_maker() as db:
         task_service = TaskService(db)
@@ -97,6 +99,22 @@ async def agent_execute_task(
             
             # Inject task_id and user_id into config
             config = config or {}
+            audit_emitter = AuditEmitter(redis=event_bus.redis)
+            config["audit_emitter"] = audit_emitter
+
+            audit_callback = AuditCallbackHandler(emitter=audit_emitter)
+            existing_callbacks = config.get("callbacks")
+            if existing_callbacks is None:
+                config["callbacks"] = [audit_callback]
+            elif isinstance(existing_callbacks, list):
+                config["callbacks"] = [*existing_callbacks, audit_callback]
+            else:
+                add_handler = getattr(existing_callbacks, "add_handler", None)
+                if callable(add_handler):
+                    add_handler(audit_callback)
+                else:
+                    config["callbacks"] = [existing_callbacks, audit_callback]
+
             config.setdefault("configurable", {})
             config["configurable"]["task_id"] = task_id
             config["configurable"]["user_id"] = user_id

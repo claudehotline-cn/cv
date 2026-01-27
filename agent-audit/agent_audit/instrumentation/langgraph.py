@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union
 import time
 import uuid
 import logging
@@ -43,14 +43,45 @@ def with_span(config: Dict[str, Any], *, graph_id: str = "unknown", node_id: str
         
     return new_cfg
 
-def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknown"):
+def _resolve_emitter(
+    emitter: AuditEmitter | Callable[[Dict[str, Any]], AuditEmitter] | None,
+    config: Dict[str, Any],
+) -> AuditEmitter | None:
+    if emitter is None:
+        cfg_emitter = config.get("audit_emitter")
+        if isinstance(cfg_emitter, AuditEmitter):
+            return cfg_emitter
+
+        md = config.get("metadata", {})
+        md_emitter = md.get("audit_emitter") if isinstance(md, dict) else None
+        if isinstance(md_emitter, AuditEmitter):
+            return md_emitter
+
+        return None
+
+    if callable(emitter):
+        try:
+            return emitter(config)
+        except Exception as exc:
+            _LOGGER.warning("Failed to resolve audit emitter from callable: %s", exc)
+            return None
+
+    return emitter
+
+
+def node_wrapper(
+    node_id: str,
+    *,
+    emitter: AuditEmitter | Callable[[Dict[str, Any]], AuditEmitter] | None = None,
+    graph_id: str = "unknown",
+):
     """
     Decorator for LangGraph nodes to inject Span ID and emit audit events.
     
     Usage:
         from agent_core.decorators import node_wrapper
         
-        @node_wrapper("my_node", emitter=emitter, graph_id="my_graph")
+        @node_wrapper("my_node", graph_id="my_graph")
         async def my_node(state, config):
             ...
     """
@@ -61,6 +92,7 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
         async def wrapper(state: Any, config: Dict[str, Any], *args: Any, **kwargs: Any) -> Any:
             # 1. Inject new Span Context
             config2 = with_span(config, graph_id=graph_id, node_id=node_id)
+            resolved_emitter = _resolve_emitter(emitter, config2)
             md = config2["metadata"]
             
             t0 = time.time()
@@ -109,16 +141,17 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
                 thread_id = config.get("configurable", {}).get("thread_id", "")
             
             try:
-                await emitter.emit(
-                    event_type="langgraph_node_started",
-                    request_id=request_id,
-                    session_id=session_id,
-                    thread_id=thread_id,
-                    span_id=span_id,
-                    parent_span_id=parent_span_id,
-                    component="node",
-                    payload={"graph_id": graph_id, "node_id": node_id}
-                )
+                if resolved_emitter:
+                    await resolved_emitter.emit(
+                        event_type="langgraph_node_started",
+                        request_id=request_id,
+                        session_id=session_id,
+                        thread_id=thread_id,
+                        span_id=span_id,
+                        parent_span_id=parent_span_id,
+                        component="node",
+                        payload={"graph_id": graph_id, "node_id": node_id},
+                    )
             
                 # 3. Execute Node (Handle Sync/Async)
                 out = fn(state, config2, *args, **kwargs)
@@ -127,42 +160,44 @@ def node_wrapper(node_id: str, *, emitter: AuditEmitter, graph_id: str = "unknow
                 
                 # 4. Emit Finish Event
                 latency_ms = int((time.time() - t0) * 1000)
-                await emitter.emit(
-                    event_type="langgraph_node_finished",
-                    request_id=request_id,
-                    session_id=session_id,
-                    thread_id=thread_id,
-                    span_id=span_id,
-                    parent_span_id=parent_span_id,
-                    component="node",
-                    payload={
-                        "graph_id": graph_id, 
-                        "node_id": node_id, 
-                        "latency_ms": latency_ms
-                    }
-                )
+                if resolved_emitter:
+                    await resolved_emitter.emit(
+                        event_type="langgraph_node_finished",
+                        request_id=request_id,
+                        session_id=session_id,
+                        thread_id=thread_id,
+                        span_id=span_id,
+                        parent_span_id=parent_span_id,
+                        component="node",
+                        payload={
+                            "graph_id": graph_id,
+                            "node_id": node_id,
+                            "latency_ms": latency_ms,
+                        },
+                    )
                 return out
                 
             except Exception as e:
                 # 5. Emit Failure Event
                 latency_ms = int((time.time() - t0) * 1000)
-                await emitter.emit(
-                    event_type="node_failed",
-                    request_id=request_id,
-                    session_id=session_id,
-                    thread_id=thread_id,
-                    span_id=span_id,
-                    parent_span_id=parent_span_id,
-                    component="node",
-                    payload={
-                        "failure_domain": "node",
-                        "graph_id": graph_id,
-                        "node_id": node_id,
-                        "error_class": type(e).__name__,
-                        "error_message": str(e)[:2000],
-                        "latency_ms": latency_ms
-                    }
-                )
+                if resolved_emitter:
+                    await resolved_emitter.emit(
+                        event_type="node_failed",
+                        request_id=request_id,
+                        session_id=session_id,
+                        thread_id=thread_id,
+                        span_id=span_id,
+                        parent_span_id=parent_span_id,
+                        component="node",
+                        payload={
+                            "failure_domain": "node",
+                            "graph_id": graph_id,
+                            "node_id": node_id,
+                            "error_class": type(e).__name__,
+                            "error_message": str(e)[:2000],
+                            "latency_ms": latency_ms,
+                        },
+                    )
                 raise
         return wrapper
     return deco

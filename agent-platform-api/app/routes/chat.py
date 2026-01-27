@@ -241,6 +241,7 @@ async def chat_stream(
             "agent_name": session.agent.name
         }
     }
+    config["audit_emitter"] = emitter
 
     inputs = {"messages": [HumanMessage(content=message)]}
     return StreamingResponse(

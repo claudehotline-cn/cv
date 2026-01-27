@@ -22,13 +22,7 @@ from ..prompts import (
     REPORT_AGENT_DESCRIPTION
 )
 
-from agent_core.settings import get_settings
-from agent_core.events import RedisEventBus, AuditEmitter
 from agent_core.decorators import node_wrapper
-
-_settings = get_settings()
-_redis_bus = RedisEventBus(_settings.redis_url)
-_audit_emitter = AuditEmitter(_redis_bus.redis)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +38,7 @@ class ReportAgentState(TypedDict):
     df_profile_result: str
     report_content: str
 
-@node_wrapper("report_df_profile", emitter=_audit_emitter, graph_id="report_agent")
+@node_wrapper("report_df_profile", graph_id="report_agent")
 def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> dict:
     """Step 1: 强制调用 df_profile 获取数据概览"""
     _LOGGER.info("[Report Agent Fixed Flow] Step 1: df_profile")
@@ -97,7 +91,7 @@ def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> 
         _LOGGER.error("[Report Agent] df_profile failed: %s", e)
         return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
 
-@node_wrapper("report_generate", emitter=_audit_emitter, graph_id="report_agent")
+@node_wrapper("report_generate", graph_id="report_agent")
 def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> dict:
     """Step 2: LLM 根据数据概览生成 Markdown 报告"""
     _LOGGER.info("[Report Agent Fixed Flow] Step 2: LLM generate report")

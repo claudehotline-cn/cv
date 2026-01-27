@@ -7,7 +7,7 @@ import uuid
 from functools import wraps
 
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_core.outputs import LLMResult
+from langchain_core.outputs import ChatResult, LLMResult
 
 from ..emitter import AuditEmitter
 
@@ -327,6 +327,46 @@ class AuditCallbackHandler(AsyncCallbackHandler):
         except Exception:
             pass
 
+    async def on_chat_model_start(
+        self,
+        serialized: Dict[str, Any],
+        messages: Any,
+        **kwargs: Any,
+    ) -> Any:
+        try:
+            request_id, span_id, parent_span_id, session_id, thread_id = self._get_ids(kwargs)
+
+            invocation = kwargs.get("invocation_params", {}) or {}
+            model_name = (
+                invocation.get("model_name")
+                or invocation.get("model")
+                or invocation.get("model_id")
+                or "unknown_model"
+            )
+
+            # Cache context
+            self._run_context[span_id] = {
+                "request_id": request_id,
+                "session_id": session_id,
+                "thread_id": thread_id,
+            }
+
+            await self.emitter.emit(
+                event_type="llm_called",
+                request_id=request_id,
+                session_id=session_id,
+                thread_id=thread_id,
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+                component="llm",
+                payload={
+                    "model": model_name,
+                    "messages_digest": str(messages)[:2000],
+                },
+            )
+        except Exception:
+            pass
+
     async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> Any:
         span_id = str(kwargs.get("run_id"))
         ctx = self._run_context.get(span_id, {})
@@ -355,6 +395,40 @@ class AuditCallbackHandler(AsyncCallbackHandler):
         
         self._run_context.pop(span_id, None)
 
+    async def on_chat_model_end(self, response: ChatResult, **kwargs: Any) -> Any:
+        span_id = str(kwargs.get("run_id"))
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
+
+        generations: list[str] = []
+        try:
+            for gen in response.generations or []:
+                if getattr(gen, "text", None):
+                    generations.append(str(gen.text))
+                elif getattr(gen, "message", None) is not None:
+                    generations.append(str(getattr(gen.message, "content", gen.message))[:2000])
+                else:
+                    generations.append(str(gen)[:2000])
+        except Exception:
+            generations = [str(response)[:2000]]
+
+        await self.emitter.emit(
+            event_type="llm_output_received",
+            request_id=request_id,
+            session_id=session_id,
+            thread_id=thread_id,
+            span_id=span_id,
+            component="llm",
+            payload={
+                "generations_digest": str(generations)[:2000],
+                "token_usage": response.llm_output.get("token_usage") if response.llm_output else None,
+            },
+        )
+
+        self._run_context.pop(span_id, None)
+
     async def on_llm_error(self, error: Union[Exception, KeyboardInterrupt], **kwargs: Any) -> Any:
         span_id = str(kwargs.get("run_id"))
         ctx = self._run_context.get(span_id, {})
@@ -376,6 +450,29 @@ class AuditCallbackHandler(AsyncCallbackHandler):
             }
         )
         
+        self._run_context.pop(span_id, None)
+
+    async def on_chat_model_error(self, error: Union[Exception, KeyboardInterrupt], **kwargs: Any) -> Any:
+        span_id = str(kwargs.get("run_id"))
+        ctx = self._run_context.get(span_id, {})
+        request_id = ctx.get("request_id") or "unknown"
+        session_id = ctx.get("session_id")
+        thread_id = ctx.get("thread_id")
+
+        await self.emitter.emit(
+            event_type="llm_failed",
+            request_id=request_id,
+            session_id=session_id,
+            thread_id=thread_id,
+            span_id=span_id,
+            component="llm",
+            payload={
+                "failure_domain": "llm",
+                "error_class": type(error).__name__,
+                "error_message": str(error)[:2000],
+            },
+        )
+
         self._run_context.pop(span_id, None)
 
     async def on_tool_start(
