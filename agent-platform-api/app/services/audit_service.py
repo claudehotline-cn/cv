@@ -254,6 +254,9 @@ class AuditPersistenceService:
         
         # Extract meaningful names
         node_name = payload.get("name") or event.get("name")
+        # langgraph_node_started uses "node_id" in payload
+        if not node_name and "node_id" in payload:
+             node_name = payload["node_id"]
         if not node_name and "langgraph_node" in payload:  
              node_name = payload["langgraph_node"]
         if not node_name and "langgraph_node" in event:

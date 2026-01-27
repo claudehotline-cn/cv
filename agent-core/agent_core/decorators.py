@@ -35,7 +35,11 @@ def with_span(config: Dict[str, Any], *, graph_id: str = "unknown", node_id: str
     # We set "run_id" in the new config to our generated Span ID.
     # This ensures that any SUB-CHAINS or TOOLS called inside this node
     # will see this Span ID as their "parent_run_id".
-    new_cfg["run_id"] = span_id
+    #
+    # UPDATE: We MUST NOT set "run_id" here, because it will be copied to child LLM calls,
+    # forcing them to reuse the SAME ID, causing a collision (Node ID == LLM ID).
+    # Instead, we rely on metadata["span_id"] (handled by audit.py) for linkage.
+    # new_cfg["run_id"] = span_id
         
     return new_cfg
 

@@ -36,6 +36,7 @@ class AuditCallbackHandler(AsyncCallbackHandler):
         config/metadata:
             request_id: Business Logic ID (agent_runs.run_id)
             run_id: Legacy Business Logic ID (Alias for request_id)
+            span_id: Injected by @node_wrapper to indicate the current node span
         
         kwargs:
             run_id: Trace/Span ID (Native LangChain UUID)
@@ -52,12 +53,20 @@ class AuditCallbackHandler(AsyncCallbackHandler):
         span_id = str(kwargs.get("run_id"))
         
         # 3. Parent Span ID (Trace Edge)
-        parent_span_id = str(kwargs.get("parent_run_id")) if kwargs.get("parent_run_id") else None
+        # Priority: metadata["span_id"] (from @node_wrapper) > kwargs["parent_run_id"] (LangChain native)
+        # This ensures that LLM/tool calls within a node correctly link to the node span.
+        if md.get("span_id"):
+            parent_span_id = str(md.get("span_id"))
+        elif kwargs.get("parent_run_id"):
+            parent_span_id = str(kwargs.get("parent_run_id"))
+        else:
+            parent_span_id = None
         
         session_id = str(md.get("session_id")) if md.get("session_id") else None
         thread_id = str(md.get("thread_id")) if md.get("thread_id") else None
         
         return request_id, span_id, parent_span_id, session_id, thread_id
+
 
     async def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], **kwargs: Any) -> Any:
         try:
