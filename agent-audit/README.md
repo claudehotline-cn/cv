@@ -161,3 +161,145 @@ A: 若 parent span 尚未落库，可先写入 `meta["pending_parent_id"]`，
 
 `pyproject.toml` 已预留 `kafka` extras（如 `aiokafka`），
 后续可在 `emitter` 中引入可插拔 transport。
+
+---
+
+## 9. 审计表建表 SQL（PostgreSQL）
+
+> 说明：以下为 **agent-audit** 在平台侧落库所需核心表结构（与 `agent-platform-api/app/models/db_models.py` 对齐）。
+> 若你只需要事件流，不落库可跳过。  
+> 默认使用 `pgcrypto` 的 `gen_random_uuid()`，也可由应用层生成 UUID。
+
+```sql
+-- 需要 UUID 生成函数
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- 1) 运行主表
+CREATE TABLE IF NOT EXISTS agent_runs (
+  request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id VARCHAR(100),
+  thread_id VARCHAR(100),
+  root_agent_name VARCHAR(100),
+  entrypoint VARCHAR(200),
+  initiator_type VARCHAR(50),
+  initiator_id VARCHAR(100),
+  env VARCHAR(20) DEFAULT 'prod',
+  started_at TIMESTAMPTZ DEFAULT now(),
+  ended_at TIMESTAMPTZ,
+  status VARCHAR(20) DEFAULT 'running',
+  error_code VARCHAR(50),
+  error_message TEXT,
+  tags JSONB
+);
+
+-- 2) Span 表（节点 / LLM / tool）
+CREATE TABLE IF NOT EXISTS agent_spans (
+  span_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id UUID NOT NULL REFERENCES agent_runs(request_id),
+  parent_span_id UUID REFERENCES agent_spans(span_id),
+  span_type VARCHAR(50) NOT NULL,           -- tool / chain / llm / node
+  agent_name VARCHAR(100),
+  subagent_kind VARCHAR(50),
+  graph_id VARCHAR(100),
+  node_id VARCHAR(100),
+  node_name VARCHAR(100),
+  attempt INT DEFAULT 1,
+  started_at TIMESTAMPTZ DEFAULT now(),
+  ended_at TIMESTAMPTZ,
+  status VARCHAR(20) DEFAULT 'running',
+  input_blob_id UUID,
+  output_blob_id UUID,
+  meta JSONB
+);
+
+-- 3) 审计事件流
+CREATE TABLE IF NOT EXISTS audit_events (
+  event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id UUID NOT NULL REFERENCES agent_runs(request_id),
+  span_id UUID REFERENCES agent_spans(span_id),
+  session_id VARCHAR(100),
+  thread_id VARCHAR(100),
+  event_time TIMESTAMPTZ DEFAULT now(),
+  event_type VARCHAR(100) NOT NULL,
+  actor_type VARCHAR(50),
+  actor_id VARCHAR(100),
+  component VARCHAR(50),
+  target_type VARCHAR(50),
+  target_id VARCHAR(100),
+  severity VARCHAR(20) DEFAULT 'info',
+  decision VARCHAR(50),
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  payload_blob_id UUID,
+  prev_hash VARCHAR(200),
+  hash VARCHAR(200)
+);
+
+-- 4) Tool 审计
+CREATE TABLE IF NOT EXISTS tool_audits (
+  tool_event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id UUID NOT NULL REFERENCES agent_runs(request_id),
+  span_id UUID REFERENCES agent_spans(span_id),
+  session_id VARCHAR(100),
+  thread_id VARCHAR(100),
+  tool_name VARCHAR(200) NOT NULL,
+  tool_version VARCHAR(50),
+  request_time TIMESTAMPTZ DEFAULT now(),
+  response_time TIMESTAMPTZ,
+  status VARCHAR(20) DEFAULT 'pending',
+  side_effect_level VARCHAR(20),
+  resource JSONB,
+  input_blob_id UUID,
+  output_blob_id UUID,
+  input_digest TEXT,
+  output_digest TEXT,
+  error JSONB,
+  approval_id UUID
+);
+
+-- 5) 大对象 / Payload 存储
+CREATE TABLE IF NOT EXISTS audit_blobs (
+  blob_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  content_type VARCHAR(100) DEFAULT 'text/plain',
+  compression VARCHAR(20),
+  encrypted BOOLEAN DEFAULT false,
+  sha256 VARCHAR(64),
+  content BYTEA
+);
+
+-- 6) HITL 审批
+CREATE TABLE IF NOT EXISTS approval_requests (
+  approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id UUID NOT NULL REFERENCES agent_runs(request_id),
+  span_id UUID REFERENCES agent_spans(span_id),
+  requested_at TIMESTAMPTZ DEFAULT now(),
+  policy_id VARCHAR(100),
+  action_type VARCHAR(50),
+  risk_level VARCHAR(20),
+  status VARCHAR(20) DEFAULT 'pending',
+  proposed_action_blob_id UUID
+);
+
+CREATE TABLE IF NOT EXISTS approval_decisions (
+  decision_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  approval_id UUID NOT NULL REFERENCES approval_requests(approval_id),
+  decided_at TIMESTAMPTZ DEFAULT now(),
+  decider_id VARCHAR(100),
+  decision VARCHAR(20) NOT NULL,
+  reason TEXT,
+  edited_action_blob_id UUID
+);
+
+-- 可选：父子 Span 外键延迟检查（避免乱序事件导致 FK 错误）
+ALTER TABLE agent_spans
+  DROP CONSTRAINT IF EXISTS agent_spans_parent_span_id_fkey;
+ALTER TABLE agent_spans
+  ADD CONSTRAINT agent_spans_parent_span_id_fkey
+  FOREIGN KEY (parent_span_id) REFERENCES agent_spans(span_id)
+  DEFERRABLE INITIALLY DEFERRED;
+```
+
+> 建议索引：
+> - `audit_events(request_id, event_time)`
+> - `agent_spans(request_id)`
+> - `tool_audits(request_id)`
