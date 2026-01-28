@@ -35,7 +35,6 @@ class AuditCallbackHandler(AsyncCallbackHandler):
 
         config/metadata:
             request_id: Business Logic ID (agent_runs.run_id)
-            run_id: Legacy Business Logic ID (Alias for request_id)
             span_id: Injected by @node_wrapper to indicate the current node span
         
         kwargs:
@@ -46,7 +45,7 @@ class AuditCallbackHandler(AsyncCallbackHandler):
         
         # 1. Request ID (Business Run)
         # This is the FK linking this Span to the User Task
-        request_id = md.get("request_id") or md.get("run_id") or "unknown"
+        request_id = md.get("request_id") or "unknown"
         
         # 2. Span ID (Trace Node)
         # Native LangChain ID. This is the primary key of agent_spans.
@@ -491,7 +490,7 @@ class AuditCallbackHandler(AsyncCallbackHandler):
         if metadata:
             md.update(metadata)
         
-        request_id = md.get("request_id") or md.get("run_id") or "unknown"
+        request_id = md.get("request_id") or "unknown"
         lc_span_id = str(run_id)
         # Check metadata['span_id'] from node_wrapper, else use parent_run_id
         parent_span_id = str(parent_run_id) if parent_run_id else None

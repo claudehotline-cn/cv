@@ -35,12 +35,21 @@ def validate_result_tool(
         analysis_id: 分析任务 ID
     """
     user_id = "anonymous"
+    session_id = "default"
+    task_id = None
     if config:
-        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+        configurable = config.get("configurable", {})
+        user_id = configurable.get("user_id", "anonymous")
+        session_id = configurable.get("session_id", "default")
+        task_id = configurable.get("task_id") or None
 
     _LOGGER.info("validate_result_tool: data_source=%s, analysis_id=%s, user_id=%s", data_source, analysis_id, user_id)
     
-    df = get_dataframe(data_source, analysis_id, user_id) if analysis_id else None
+    df = (
+        get_dataframe(data_source, analysis_id, user_id, session_id=session_id, task_id=task_id)
+        if analysis_id
+        else None
+    )
     if df is None:
         return json.dumps({"valid": False, "error": f"DataFrame '{data_source}' 不存在"})
     

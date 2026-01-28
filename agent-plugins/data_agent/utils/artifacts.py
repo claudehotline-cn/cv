@@ -24,7 +24,7 @@ _LOGGER = logging.getLogger("data_agent.utils.artifacts")
 def get_backend_from_config(config: Dict[str, Any]) -> WorkspaceBackend:
     """Create WorkspaceBackend using identity from runnable config.
     
-    Extracts user_id, session_id, and analysis_id (mapped to task_id).
+    Extracts user_id, session_id, and task_id.
     
     Args:
         config: LangChain RunnableConfig (or similar dict with 'configurable')
@@ -32,27 +32,20 @@ def get_backend_from_config(config: Dict[str, Any]) -> WorkspaceBackend:
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", "anonymous")
     session_id = configurable.get("session_id", "default")
-    analysis_id = configurable.get("analysis_id", "")
-    
-    # Task ID mapping:
-    # If analysis_id is present, it's an async Data Analysis task.
-    # Otherwise check for generic task_id, else None (Sync)
-    task_id = None
-    if analysis_id:
-        task_id = f"data_analysis_{analysis_id}"
-    else:
-        task_id = configurable.get("task_id")
-        
+    task_id = configurable.get("task_id") or None
+
+    # Workspace layout:
+    # - Sync artifacts:  {session_id}/artifacts/
+    # - Async artifacts: {session_id}/{task_id}/artifacts/
     return WorkspaceBackend(AGENT_NAME, user_id, session_id, task_id)
 
 
 def get_backend_by_ids(
     user_id: str, 
     session_id: str, 
-    analysis_id: Optional[str] = None
+    task_id: Optional[str] = None
 ) -> WorkspaceBackend:
     """Create WorkspaceBackend using explicit IDs."""
-    task_id = f"data_analysis_{analysis_id}" if analysis_id else None
     return WorkspaceBackend(AGENT_NAME, user_id, session_id, task_id)
 
 
@@ -61,18 +54,21 @@ def get_backend_by_ids(
 def store_dataframe(
     name: str, 
     df: pd.DataFrame, 
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> str:
     """Store DataFrame to Parquet."""
     if not analysis_id:
         _LOGGER.error("store_dataframe called without analysis_id")
         return ""
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     
-    # Structure: .../tasks/{task_id}/dataframes/{name}.parquet
+    # Structure:
+    # - Sync:  .../{session_id}/artifacts/dataframes/{name}.parquet
+    # - Async: .../{session_id}/{task_id}/artifacts/dataframes/{name}.parquet
     relative_path = f"dataframes/{name}.parquet"
     filepath = os.path.join(backend.artifacts_dir, relative_path)
     
@@ -89,15 +85,16 @@ def store_dataframe(
 
 def get_dataframe(
     name: str, 
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> Optional[pd.DataFrame]:
     """Load DataFrame from Parquet."""
     if not analysis_id:
         return None
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     filepath = os.path.join(backend.artifacts_dir, f"dataframes/{name}.parquet")
     
     if not os.path.exists(filepath):
@@ -113,15 +110,16 @@ def get_dataframe(
 
 
 def list_dataframes(
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> List[str]:
     """List available DataFrames for analysis."""
     if not analysis_id:
         return []
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     dataframes_dir = os.path.join(backend.artifacts_dir, "dataframes")
     
     if not os.path.exists(dataframes_dir):
@@ -135,15 +133,16 @@ def list_dataframes(
 
 
 def clear_dataframes(
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> None:
     """Clear all DataFrames for analysis."""
     if not analysis_id:
         return
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     dataframes_dir = os.path.join(backend.artifacts_dir, "dataframes")
     
     if os.path.exists(dataframes_dir):
@@ -154,15 +153,16 @@ def clear_dataframes(
 
 def save_chart(
     chart_data: Union[str, Dict], 
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> str:
     """Save chart configuration JSON."""
     if not analysis_id:
         return ""
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     
     try:
         data = chart_data if isinstance(chart_data, dict) else json.loads(chart_data)
@@ -179,57 +179,61 @@ def save_chart(
 
 
 def load_chart(
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> Optional[Dict]:
     """Load latest chart configuration."""
     if not analysis_id:
         return None
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     return backend.read_json("chart.json")
 
 
 def save_report(
     content: str, 
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> str:
     """Save Markdown report."""
     if not analysis_id:
         return ""
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     return backend.write_text("report.md", content)
 
 
 def load_report(
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> str:
     """Load Markdown report."""
     if not analysis_id:
         return ""
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     return backend.read_text("report.md")
 
 
 def save_sql_csv(
     rows: List[Dict], 
     columns: List[str], 
-    analysis_id: str, 
+    analysis_id: str,
     user_id: str = "anonymous",
-    session_id: str = "default"
+    session_id: str = "default",
+    task_id: Optional[str] = None,
 ) -> str:
     """Save SQL results as CSV."""
     if not analysis_id:
         return ""
         
-    backend = get_backend_by_ids(user_id, session_id, analysis_id)
+    backend = get_backend_by_ids(user_id, session_id, task_id)
     
     csv_dir = backend.ensure_dir("sql_results")
     filepath = os.path.join(csv_dir, f"sql_{uuid.uuid4().hex[:8]}.csv")

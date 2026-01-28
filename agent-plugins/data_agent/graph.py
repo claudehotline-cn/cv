@@ -51,10 +51,13 @@ def _get_graph_root_dir(rt) -> str:
     ctx = getattr(rt, "context", {}) or {}
     
     user_id = ctx.get("user_id", "anonymous")
-    analysis_id = ctx.get("analysis_id", "default")
+    session_id = ctx.get("session_id", "default")
+    task_id = ctx.get("task_id") or None
     
-    # Match logic in subagents: session_id="default", task_id="data_analysis_{analysis_id}"
-    backend = get_backend(user_id=user_id, session_id="default", task_id=f"data_analysis_{analysis_id}")
+    # Workspace layout:
+    # - Sync artifacts:  {session_id}/artifacts/
+    # - Async artifacts: {session_id}/{task_id}/artifacts/
+    backend = get_backend(user_id=user_id, session_id=session_id, task_id=task_id)
     return backend.artifacts_dir
 
 def get_data_deep_agent_graph(

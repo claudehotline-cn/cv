@@ -47,6 +47,7 @@ class TaskListResponse(BaseModel):
 async def create_execute_task(
     session_id: UUID,
     request: ExecuteRequest,
+    req: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """创建异步执行任务"""
@@ -94,6 +95,30 @@ async def create_execute_task(
         str(session.thread_id) if session.thread_id else str(session_id) # thread_id (new arg)
     )
     await redis_pool.close()
+
+    # Emit job_queued audit event (for trace tree root)
+    try:
+        from agent_core.events import AuditEmitter
+        emitter = AuditEmitter(redis=req.app.state.event_bus.redis)
+        thread_id = str(session.thread_id) if session.thread_id else str(session_id)
+        await emitter.emit(
+            event_type="job_queued",
+            request_id=str(task.id),
+            span_id=str(task.id),
+            session_id=str(session_id),
+            thread_id=thread_id,
+            component="job",
+            actor_type="service",
+            actor_id="agent-api",
+            payload={
+                "agent_key": agent_key,
+                "title": (request.message or "")[:120],
+                "queue": "arq",
+            },
+        )
+    except Exception:
+        # Best-effort; async task itself should still run
+        pass
     
     return {
         "task_id": str(task.id),
@@ -193,6 +218,8 @@ async def cancel_task(
     # Emit cancel-requested event for realtime UI (worker will later emit cancelled)
     from agent_core.events import RedisEventBus
     event_bus = RedisEventBus(settings.redis_url)
+    from agent_core.events import AuditEmitter
+    audit_emitter = AuditEmitter(redis=event_bus.redis)
     try:
         event = {
             "type": "task_cancel_requested",
@@ -203,6 +230,19 @@ async def cancel_task(
         }
         await event_bus.publish(f"task:{task_id}:stream", event)
         await event_bus.publish(f"session:{task.session_id}:tasks", event)
+
+        # Also emit audit event (job lifecycle)
+        await audit_emitter.emit(
+            event_type="job_cancel_requested",
+            request_id=str(task_id),
+            span_id=str(task_id),
+            session_id=str(task.session_id),
+            thread_id=None,
+            component="job",
+            actor_type="user",
+            actor_id="api",
+            payload={"reason": "user_requested"},
+        )
     finally:
         await event_bus.close()
     

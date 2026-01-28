@@ -7,6 +7,7 @@ import re
 from typing import TypedDict, Annotated, Sequence, Any
 
 from langchain_core.messages import BaseMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from deepagents import CompiledSubAgent
 
@@ -84,7 +85,7 @@ def excel_step2_load_sheet(state: ExcelAgentState, config: RunnableConfig) -> di
             "file_id": file_id,
             "sheet_name": sheet_name,
             "analysis_id": analysis_id
-        })
+        }, config=config)
         _LOGGER.info("[Excel Agent] load_sheet result: %s", result[:300] if len(result) > 300 else result)
         return {"load_result": result}
     except Exception as e:

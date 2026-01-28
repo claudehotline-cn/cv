@@ -105,6 +105,7 @@ def _review_sql_logic(sql: str, schema_info: str, user_requirement: str = "") ->
 
 
 def _save_sql_result_csv(rows: List[Dict], columns: List[str], analysis_id: str, user_id: str = "anonymous") -> str:
+    # NOTE: Prefer passing session_id/task_id to save_sql_csv for correct workspace layout.
     return save_sql_csv(rows, columns, analysis_id, user_id=user_id)
 
 
@@ -166,8 +167,13 @@ def _sync_db_run_sql(
 ) -> str:
     """在默认数据库上执行一条只读 SQL (同步实现)。"""
     user_id = "anonymous"
+    session_id = "default"
+    task_id = None
     if config:
-        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+        configurable = config.get("configurable", {})
+        user_id = configurable.get("user_id", "anonymous")
+        session_id = configurable.get("session_id", "default")
+        task_id = configurable.get("task_id") or None
     
     _LOGGER.info(f"[DEBUG] db_run_sql_tool: analysis_id={analysis_id}, user_id={user_id}, config_keys={list(config.keys()) if config else 'None'}")
 
@@ -209,8 +215,22 @@ def _sync_db_run_sql(
         # 存储到工作区（Parquet）
         # 存储到工作区（Parquet）
         if analysis_id:
-            store_dataframe("sql_result", df, analysis_id, user_id=user_id)
-            save_sql_csv(result.rows, result.columns, analysis_id, user_id=user_id)
+            store_dataframe(
+                "sql_result",
+                df,
+                analysis_id,
+                user_id=user_id,
+                session_id=session_id,
+                task_id=task_id,
+            )
+            save_sql_csv(
+                result.rows,
+                result.columns,
+                analysis_id,
+                user_id=user_id,
+                session_id=session_id,
+                task_id=task_id,
+            )
 
         result_data = SQLResultSchema(
             success=True,

@@ -147,4 +147,3 @@ def get_settings() -> Settings:
     """返回进程内唯一 Settings 实例。"""
 
     return Settings()  # type: ignore[call-arg]
-

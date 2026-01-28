@@ -44,8 +44,11 @@ def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> 
     _LOGGER.info("[Report Agent Fixed Flow] Step 1: df_profile")
     
     # Check for user_id and analysis_id from config
-    user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
-    analysis_id = config.get("configurable", {}).get("analysis_id", "")
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id", "NOT_FOUND")
+    session_id = configurable.get("session_id", "default")
+    task_id = configurable.get("task_id") or None
+    analysis_id = configurable.get("analysis_id", "")
 
     
     task_description = ""
@@ -66,7 +69,13 @@ def report_step1_df_profile(state: ReportAgentState, config: RunnableConfig) -> 
         
         full_data_str = "（数据加载失败）"
         try:
-            df = get_dataframe("result", analysis_id, user_id)
+            df = get_dataframe(
+                "result",
+                analysis_id,
+                user_id=user_id,
+                session_id=session_id,
+                task_id=task_id,
+            )
             if df is not None and not df.empty:
                 # 限制最大行数，防止暴撑 Context (例如最多 100 行)
                 if len(df) > 100:
@@ -99,14 +108,24 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     df_info = state.get("df_profile_result", "")
     analysis_id = state.get("analysis_id", "")
     user_id = "anonymous"
+    session_id = "default"
+    task_id = None
     if config:
-        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+        configurable = config.get("configurable", {})
+        user_id = configurable.get("user_id", "anonymous")
+        session_id = configurable.get("session_id", "default")
+        task_id = configurable.get("task_id") or None
     
     # 🚀 读取之前的报告（如果存在），支持增量修改
     prev_report = ""
     prev_report_section = ""
     if analysis_id and user_id:
-        prev_report = load_report(analysis_id, user_id=user_id)
+        prev_report = load_report(
+            analysis_id,
+            user_id=user_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
         if prev_report:
             _LOGGER.info("[Report Agent] Loaded previous report (%d chars) for incremental modification", len(prev_report))
             prev_report_section = f"""
@@ -178,12 +197,23 @@ def report_step2_generate(state: ReportAgentState, config: RunnableConfig) -> di
     # 持久化报告到文件
     analysis_id = state.get("analysis_id", "")
     user_id = "anonymous"
+    session_id = "default"
+    task_id = None
     if config:
-        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+        configurable = config.get("configurable", {})
+        user_id = configurable.get("user_id", "anonymous")
+        session_id = configurable.get("session_id", "default")
+        task_id = configurable.get("task_id") or None
     
     if analysis_id:
         try:
-            saved_path = save_report(content, analysis_id, user_id=user_id)
+            saved_path = save_report(
+                content,
+                analysis_id,
+                user_id=user_id,
+                session_id=session_id,
+                task_id=task_id,
+            )
             _LOGGER.info("[Report Agent] Report saved to: %s", saved_path)
         except Exception as e:
             _LOGGER.error("[Report Agent] Failed to save report: %s", e)

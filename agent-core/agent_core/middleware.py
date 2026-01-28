@@ -81,9 +81,7 @@ class SensitiveToolMiddleware(AgentMiddleware):
                      if isinstance(ctx, dict):
                          current_request_id = ctx.get("request_id") or ctx.get("configurable", {}).get("request_id")
                          
-            # Fallback for legacy run_id if request_id missing
-            if not current_request_id and current_run_id: 
-                current_request_id = current_run_id
+            # Do not fallback to tracing run_id; request_id is the user request id
             
             # Extract session/thread info
             session_id = None
@@ -423,4 +421,3 @@ class FixedTodoListMiddleware(TodoListMiddleware):
 # without needing individual patches in their graph definitions.
 import deepagents.graph
 deepagents.graph.TodoListMiddleware = FixedTodoListMiddleware
-

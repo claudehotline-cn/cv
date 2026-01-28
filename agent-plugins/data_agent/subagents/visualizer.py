@@ -81,12 +81,20 @@ async def viz_step2_llm_generate_code(state: VisualizerAgentState, config: Runna
     df_info = state.get("df_profile_result", "")
     
     # 从 config 中获取 analysis_id 和 user_id
-    user_id = config.get("configurable", {}).get("user_id", "mock_user_from_tool_call_999")
-    analysis_id = config.get("configurable", {}).get("analysis_id", "")
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id", "mock_user_from_tool_call_999")
+    session_id = configurable.get("session_id", "default")
+    task_id = configurable.get("task_id") or None
+    analysis_id = configurable.get("analysis_id", "")
     
     previous_chart = ""
     if analysis_id:
-        chart_data = load_chart(analysis_id, user_id=user_id)
+        chart_data = load_chart(
+            analysis_id,
+            user_id=user_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
         if chart_data:
             previous_chart = json.dumps(chart_data, ensure_ascii=False)
             _LOGGER.info(f"[Visualizer Agent] Found previous chart: {len(previous_chart)} chars")
@@ -317,8 +325,13 @@ def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig)
     
     # Extract user_id from config
     user_id = "anonymous"
+    session_id = "default"
+    task_id = None
     if config:
-        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+        configurable = config.get("configurable", {})
+        user_id = configurable.get("user_id", "anonymous")
+        session_id = configurable.get("session_id", "default")
+        task_id = configurable.get("task_id") or None
     
     # 从 python_execute 结果中提取 CHART_DATA
     try:
@@ -332,7 +345,13 @@ def viz_format_final_output(state: VisualizerAgentState, config: RunnableConfig)
             # 持久化图表数据到文件
             if analysis_id:
                 try:
-                    saved_path = save_chart(chart_data_str, analysis_id, user_id=user_id)
+                    saved_path = save_chart(
+                        chart_data_str,
+                        analysis_id,
+                        user_id=user_id,
+                        session_id=session_id,
+                        task_id=task_id,
+                    )
                     _LOGGER.info("[Visualizer Agent] Chart saved to: %s", saved_path)
                 except Exception as e:
                     _LOGGER.error("[Visualizer Agent] Failed to save chart: %s", e)

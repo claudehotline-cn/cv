@@ -3,6 +3,7 @@ import logging
 import json
 from typing import Any, Dict, Optional
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 
 from data_agent.utils.artifacts import store_dataframe
 
@@ -13,7 +14,8 @@ _LOGGER = logging.getLogger("agent_langchain.tools.excel")
 def excel_load_tool(
     file_path: str, 
     sheet_name: Optional[str] = None,
-    analysis_id: Optional[str] = None
+    analysis_id: Optional[str] = None,
+    config: RunnableConfig = None,
 ) -> str:
     """加载 Excel 文件到工作区供分析。
     
@@ -38,7 +40,23 @@ def excel_load_tool(
         
         # 存储到工作区
         if analysis_id:
-            store_dataframe(df_name, df, analysis_id)
+            user_id = "anonymous"
+            session_id = "default"
+            task_id = None
+            if config:
+                configurable = config.get("configurable", {})
+                user_id = configurable.get("user_id", "anonymous")
+                session_id = configurable.get("session_id", "default")
+                task_id = configurable.get("task_id") or None
+
+            store_dataframe(
+                df_name,
+                df,
+                analysis_id,
+                user_id=user_id,
+                session_id=session_id,
+                task_id=task_id,
+            )
 
         preview_rows = df.head(10).to_dict(orient="records")
         

@@ -292,6 +292,11 @@ async def get_run_summary(
         .order_by(AgentSpanModel.started_at)
     )
     db_spans = spans_res.scalars().all()
+    job_root_id = None
+    for s in db_spans:
+        if s.span_type == "job" and not s.parent_span_id:
+            job_root_id = s.span_id
+            break
     spans = []
     for s in db_spans:
         sid = str(s.span_id)
@@ -300,8 +305,11 @@ async def get_run_summary(
         # Refine Name
         if sid in span_names:
             name = span_names[sid]
-        elif not s.parent_span_id and run.root_agent_name:
-            name = run.root_agent_name
+        elif run.root_agent_name and s.span_type == "chain":
+            # When async jobs exist, the synthetic job span is the DB root. In that case,
+            # render the root chain span(s) under the job using the run's root_agent_name.
+            if (not s.parent_span_id) or (job_root_id and s.parent_span_id == job_root_id):
+                name = run.root_agent_name
         elif name.lower() in ["agent", "chain", "tool", "llm"]:
              name = name.upper() if name.lower() == "llm" else name.capitalize()
              

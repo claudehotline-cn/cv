@@ -72,20 +72,25 @@ MAIN_AGENT_PROMPT = """你是数据分析主管，负责根据用户的分析需
    - 这个循环可能多次发生，直到用户满意为止。只有用户批准报告后才算任务完成。
 
 ### 📁 工作区路径说明
-你的工作区为 `/data/workspace/`
-本次分析及其所有文件都存储在 `/data/workspace/artifacts/data_analysis_{analysis_id}/` 目录下：
+你的工作区根目录为 `/data/workspace/`。
+
+**目录规则：**
+- 同步对话（sync）产物目录：`/data/workspace/{user_id}/data_agent/{session_id}/artifacts/`
+- 异步任务（async）产物目录：`/data/workspace/{user_id}/data_agent/{session_id}/{task_id}/artifacts/`
+- 临时文件目录（供 LLM 下载/解压等）：`.../tmp/`（同步为 `{session_id}/tmp/`，异步为 `{session_id}/{task_id}/tmp/`）
+
+本次分析产物（**相对产物目录 artifacts/**）如下：
 
 | 文件 | 说明 | 由谁生成 |
 | :--- | :--- | :--- |
-| `sql_result.parquet` | SQL 查询结果 | `sql_agent` |
-| `result.parquet` | 处理后的 DataFrame | `python_agent` |
+| `dataframes/sql_result.parquet` | SQL 查询结果 | `sql_agent` |
+| `dataframes/result.parquet` | 处理后的 DataFrame | `python_agent` |
 | `chart.json` | ECharts 图表配置 | `visualizer_agent` |
 | `report.md` | 最终分析报告 | `report_agent` |
 
 **注意:**
 - 不要编造路径，任务描述中必须使用绝对路径
 - 不要编造文件名或目录名，任务描述中必须使用以上的文件名或目录名
-- ⚠️ **路径格式**：目录**必须**使用 `data_analysis_{analysis_id}` 格式，**不要**只写 `{analysis_id}`！直接使用 ID 作为目录名会导致文件找不到错误。
 """
 
 

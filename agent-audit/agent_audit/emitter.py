@@ -4,6 +4,8 @@ import json
 import logging
 import time
 import uuid
+import asyncio
+import inspect
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -61,7 +63,13 @@ class AuditEmitter:
             fields.update(dict(extra_fields))
 
         try:
-            await self.redis.xadd(self.stream_key, fields, maxlen=100000, approximate=True)
+            xadd = getattr(self.redis, "xadd", None)
+            if xadd is None:
+                raise AttributeError("redis client has no xadd()")
+
+            if inspect.iscoroutinefunction(xadd):
+                await xadd(self.stream_key, fields, maxlen=100000, approximate=True)
+            else:
+                await asyncio.to_thread(xadd, self.stream_key, fields, maxlen=100000, approximate=True)
         except Exception as exc:
             _LOGGER.error("Failed to emit audit event %s: %s", event_type, exc)
-

@@ -28,8 +28,8 @@ class WorkspaceBackend:
     
     Directory structure:
     - Sync:  /data/workspace/{user_id}/{agent_name}/{session_id}/artifacts/
-    - Async: /data/workspace/{user_id}/{agent_name}/{session_id}/tasks/{task_id}/
-    - Tmp:   /data/workspace/{user_id}/{agent_name}/{session_id}/[tasks/{task_id}/]tmp/
+    - Async: /data/workspace/{user_id}/{agent_name}/{session_id}/{task_id}/artifacts/
+    - Tmp:   /data/workspace/{user_id}/{agent_name}/{session_id}/tmp/ (or /{task_id}/tmp/)
     
     Usage:
         # Sync operations
@@ -70,10 +70,10 @@ class WorkspaceBackend:
         """Get temporary files directory.
         
         Sync:  /{base_dir}/tmp/
-        Async: /{base_dir}/tasks/{task_id}/tmp/
+        Async: /{base_dir}/{task_id}/tmp/
         """
         if self.task_id:
-            return os.path.join(self.base_dir, "tasks", self.task_id, "tmp")
+            return os.path.join(self.base_dir, self.task_id, "tmp")
         return os.path.join(self.base_dir, "tmp")
     
     @property
@@ -81,10 +81,10 @@ class WorkspaceBackend:
         """Get artifacts directory.
         
         Sync:  /{base_dir}/artifacts/
-        Async: /{base_dir}/tasks/{task_id}/
+        Async: /{base_dir}/{task_id}/artifacts/
         """
         if self.task_id:
-            return os.path.join(self.base_dir, "tasks", self.task_id)
+            return os.path.join(self.base_dir, self.task_id, "artifacts")
         return os.path.join(self.base_dir, "artifacts")
     
     def get_path(self, relative_path: str) -> str:

@@ -6,7 +6,7 @@ from typing import Dict, Any, List
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_
 from app.models.db_models import (
     AgentRunModel, AgentSpanModel, AuditEventModel, ToolAuditModel, AuditBlobModel,
     ApprovalRequestModel, ApprovalDecisionModel
@@ -68,9 +68,11 @@ class AuditPersistenceService:
             
         # 3. Ensure Run Exists (Idempotent)
         await self._ensure_run_exists(request_id, event.get("session_id"), event.get("thread_id"))
-        
+
+        is_job_event = isinstance(event_type, str) and event_type.startswith("job_")
+
         # Handle Span Start
-        if event_type in ("chain_start", "subagent_started", "run_started", "tool_call_requested", "llm_called", "langgraph_node_started"):
+        if is_job_event or event_type in ("chain_start", "subagent_started", "run_started", "tool_call_requested", "llm_called", "langgraph_node_started"):
             await self._handle_span_start(request_id, span_id, event_type, payload, event)
 
         # Ensure Span Exists
@@ -110,9 +112,12 @@ class AuditPersistenceService:
             
         elif event_type in ("run_finished", "run_failed", "run_interrupted"):
             await self._handle_run_end(request_id, event_type, payload)
+
+        elif event_type in ("job_completed", "job_failed", "job_cancelled", "job_timed_out"):
+            await self._handle_job_end(request_id, event_type, payload)
             
-        elif event_type in ("chain_end", "subagent_finished", "chain_failed", "tool_call_executed", "llm_output_received", "tool_val_failed", "llm_failed", "langgraph_node_finished", "node_failed", "chain_interrupted"):
-            await self._handle_span_end(span_id, event_type, payload)
+        elif event_type in ("chain_end", "subagent_finished", "chain_failed", "tool_call_executed", "llm_output_received", "tool_val_failed", "llm_failed", "langgraph_node_finished", "node_failed", "chain_interrupted", "job_completed", "job_failed", "job_cancelled", "job_timed_out"):
+            await self._handle_span_end(request_id, span_id, event_type, payload)
             
             # Extra specialized handling
             if "tool" in event_type:
@@ -129,6 +134,13 @@ class AuditPersistenceService:
         """Ensure AgentRunModel exists. Idempotent."""
         existing = await self.db.get(AgentRunModel, request_id)
         if existing:
+            # Best effort linkage: some events might arrive before run_started
+            # or with incomplete session/thread fields. Fill when we can.
+            if session_id and (existing.conversation_id is None or existing.conversation_id == ""):
+                existing.conversation_id = session_id
+            if thread_id and (existing.thread_id is None or existing.thread_id == ""):
+                existing.thread_id = thread_id
+            await self.db.flush()
             return
             
         try:
@@ -139,13 +151,16 @@ class AuditPersistenceService:
                 # Just insert.
                 run = AgentRunModel(
                     request_id=request_id,
-                    started_at=datetime.now(timezone.utc)
+                    # Best effort linkage for list/filtering in UI
+                    conversation_id=session_id or None,
+                    thread_id=thread_id or None,
+                    started_at=datetime.now(timezone.utc),
                 )
                 self.db.add(run)
                 await self.db.flush()
         except Exception as e:
             # Log errors (usually IntegrityError) but continue
-            _LOGGER.error(f"Ensure Run {run_id} failed: {e}")
+            _LOGGER.error(f"Ensure Run {request_id} failed: {e}")
             pass
 
     async def _ensure_span_exists(self, request_id: UUID, span_id: UUID, session_id: str | None, thread_id: str | None):
@@ -184,6 +199,11 @@ class AuditPersistenceService:
         # 1. Update Run Model
         existing = await self.db.get(AgentRunModel, request_id)
         if existing:
+            # Ensure linkage is populated (run may have been created by _ensure_run_exists)
+            if (existing.conversation_id is None or existing.conversation_id == "") and session_id:
+                existing.conversation_id = session_id
+            if (existing.thread_id is None or existing.thread_id == "") and thread_id:
+                existing.thread_id = thread_id
             if (existing.root_agent_name is None or existing.root_agent_name == "unknown") and agent_name != "unknown":
                 existing.root_agent_name = agent_name
         else:
@@ -227,6 +247,34 @@ class AuditPersistenceService:
             )
         await self.db.execute(stmt)
 
+    async def _handle_job_end(self, request_id: UUID, event_type: str, payload: Dict[str, Any]) -> None:
+        """Update AgentRunModel from job lifecycle terminal events."""
+        status_map = {
+            "job_completed": "succeeded",
+            "job_failed": "failed",
+            "job_cancelled": "cancelled",
+            "job_timed_out": "failed",
+        }
+        status = status_map.get(event_type)
+        if not status:
+            return
+
+        stmt = update(AgentRunModel).where(AgentRunModel.request_id == request_id)
+
+        # Prevent overwriting terminal failures/cancels with success.
+        if status == "succeeded":
+            stmt = stmt.where(AgentRunModel.status.not_in(["interrupted", "failed", "cancelled"]))
+
+        values: Dict[str, Any] = {
+            "status": status,
+            "ended_at": datetime.now(timezone.utc),
+        }
+        if status == "failed":
+            values["error_message"] = payload.get("error_message")
+            values["error_code"] = payload.get("error_class")
+
+        await self.db.execute(stmt.values(**values))
+
     async def _handle_span_start(self, request_id: UUID, span_id: UUID | None, event_type: str, payload: Dict[str, Any], event: Dict[str, Any]):
         """Create AgentSpanModel."""
         if not span_id:
@@ -247,6 +295,8 @@ class AuditPersistenceService:
 
         # Now populate/overwrite fields (Update Logic)
         span_type = "chain"
+        if isinstance(event_type, str) and event_type.startswith("job_"):
+            span_type = "job"
         if "tool" in event_type: span_type = "tool"
         elif "llm" in event_type: span_type = "llm"
         elif "node" in event_type: span_type = "node"
@@ -254,6 +304,9 @@ class AuditPersistenceService:
         
         # Extract meaningful names
         node_name = payload.get("name") or event.get("name")
+        if span_type == "job":
+            title = payload.get("title") or payload.get("job_title") or payload.get("input_message")
+            node_name = f"Job: {str(title)[:120]}" if title else "Job"
         # langgraph_node_started uses "node_id" in payload
         if not node_name and "node_id" in payload:
              node_name = payload["node_id"]
@@ -291,6 +344,23 @@ class AuditPersistenceService:
         parent_uuid = UUID(raw_parent_id) if raw_parent_id else None
 
         meta = dict(payload) if isinstance(payload, dict) else {}
+
+        # job span is the logical root; do not inherit any parent pointer
+        if span_type == "job":
+            parent_uuid = None
+
+        # If this is a root chain span and a job span exists for this run,
+        # physically mount the root chain under the job node.
+        if span_type == "chain" and parent_uuid is None:
+            try:
+                job_span = await self.db.get(AgentSpanModel, request_id)
+                if job_span and job_span.span_type == "job":
+                    meta.setdefault("raw_parent_span_id", None)
+                    meta.setdefault("mounted_under_job", True)
+                    meta.setdefault("job_id", str(request_id))
+                    parent_uuid = request_id
+            except Exception:
+                pass
         if parent_uuid:
             try:
                 parent = await self.db.get(AgentSpanModel, parent_uuid)
@@ -319,6 +389,10 @@ class AuditPersistenceService:
         # Adopt orphans
         await self._adopt_orphans(span_id)
 
+        # For job spans, mount any pre-existing root chain spans under this job.
+        if span_type == "job":
+            await self._mount_chain_roots_under_job(request_id)
+
     async def _adopt_orphans(self, span_id: UUID):
         """Link any existing spans that were waiting for this span_id."""
         # Update children where meta['pending_parent_id'] matches span_id
@@ -339,7 +413,60 @@ class AuditPersistenceService:
         except Exception as e:
              _LOGGER.warning(f"Adoption failed for {span_id}: {e}")
 
-    async def _handle_span_end(self, span_id: UUID | None, event_type: str, payload: Dict[str, Any]):
+    async def _mount_chain_roots_under_job(self, request_id: UUID) -> None:
+        """Mount pre-existing root chain spans under the synthetic job span.
+
+        For async jobs, we create a synthetic root span with:
+            span_id == request_id
+            span_type == "job"
+
+        LangChain root chain spans may arrive before the job_* events (out-of-order).
+        This helper rewires those chain roots (parent_span_id IS NULL) to be children
+        of the job span so the UI shows a single rooted tree.
+        """
+        try:
+            job_span = await self.db.get(AgentSpanModel, request_id)
+            if not job_span or job_span.span_type != "job":
+                return
+
+            stmt = (
+                select(AgentSpanModel)
+                .where(AgentSpanModel.request_id == request_id)
+                .where(AgentSpanModel.span_type == "chain")
+                .where(AgentSpanModel.parent_span_id.is_(None))
+                .where(AgentSpanModel.span_id != request_id)
+                .order_by(AgentSpanModel.started_at.asc())
+            )
+            res = await self.db.execute(stmt)
+            roots = res.scalars().all()
+            if not roots:
+                return
+
+            mounted = 0
+            for span in roots:
+                meta = dict(span.meta) if isinstance(span.meta, dict) else {}
+                # If this isn't a real root (waiting for parent), don't mount it.
+                if meta.get("pending_parent_id"):
+                    continue
+                if meta.get("mounted_under_job"):
+                    continue
+
+                meta.setdefault("raw_parent_span_id", None)
+                meta["mounted_under_job"] = True
+                meta["job_id"] = str(request_id)
+
+                span.parent_span_id = request_id
+                span.meta = meta
+                self.db.add(span)
+                mounted += 1
+
+            if mounted:
+                await self.db.flush()
+                _LOGGER.info(f"Mounted {mounted} root chain span(s) under job {request_id}")
+        except Exception as e:
+            _LOGGER.warning(f"Mount chain roots under job failed for {request_id}: {e}")
+
+    async def _handle_span_end(self, request_id: UUID, span_id: UUID | None, event_type: str, payload: Dict[str, Any]):
         """Update AgentSpanModel."""
         if not span_id:
             return
@@ -368,6 +495,64 @@ class AuditPersistenceService:
         # Propagate interruption to parents
         if status == "interrupted":
             await self._propagate_interruption(span_id)
+
+        # Reconcile Run status from Root Span status.
+        # This makes run state robust even if run_finished/run_failed events are not emitted
+        # (e.g., missing tags / misclassified root chain).
+        await self._reconcile_run_from_root_span(request_id)
+
+    async def _reconcile_run_from_root_span(self, request_id: UUID) -> None:
+        """Best-effort run status update based on the root chain span (parent_span_id is NULL)."""
+        run = await self.db.get(AgentRunModel, request_id)
+        if not run:
+            return
+
+        # Only attempt to reconcile if the run isn't already in a terminal error state.
+        if run.status not in ("running", "succeeded"):
+            return
+
+        root_stmt = (
+            select(AgentSpanModel.status, AgentSpanModel.ended_at)
+            .where(AgentSpanModel.request_id == request_id)
+            .where(AgentSpanModel.parent_span_id.is_(None))
+            .where(AgentSpanModel.span_type == "chain")
+            .order_by(AgentSpanModel.started_at.asc())
+            .limit(1)
+        )
+        res = await self.db.execute(root_stmt)
+        root = res.first()
+        if not root:
+            return
+
+        root_status, root_ended_at = root
+        if root_status == "running":
+            return
+
+        status_map = {
+            "succeeded": "succeeded",
+            "failed": "failed",
+            "interrupted": "interrupted",
+        }
+        target_status = status_map.get(root_status)
+        if not target_status:
+            return
+
+        # Do not overwrite failed/interrupted with succeeded.
+        if target_status == "succeeded" and run.status != "running":
+            return
+
+        # Allow overwriting "running/succeeded" with "failed/interrupted".
+        if target_status in ("failed", "interrupted") and run.status not in ("running", "succeeded"):
+            return
+
+        stmt = update(AgentRunModel).where(AgentRunModel.request_id == request_id)
+        if target_status == "succeeded":
+            stmt = stmt.where(AgentRunModel.status.not_in(["interrupted", "failed"]))
+        stmt = stmt.values(
+            status=target_status,
+            ended_at=run.ended_at or root_ended_at or datetime.now(timezone.utc),
+        )
+        await self.db.execute(stmt)
 
     async def _propagate_interruption(self, start_span_id: UUID):
         """Recursively mark active parent spans as interrupted."""

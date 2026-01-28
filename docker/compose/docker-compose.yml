@@ -15,7 +15,6 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ../../db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ../../db/mlflow_init.sql:/docker-entrypoint-initdb.d/02-mlflow.sql:ro
       - ../../db/fixed_dump.sql:/docker-entrypoint-initdb.d/03-fixed-data.sql:ro
     healthcheck:
       test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent" ]
@@ -222,6 +221,7 @@ services:
       - REDIS_URL=redis://langgraph-redis:6379
       - AGENT_LLM_PROVIDER=vllm
       - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
+      - AGENT_OPENAI_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
       - POSTGRES_HOST=pgvector
       - POSTGRES_PORT=5432
       - POSTGRES_USER=cv_kb

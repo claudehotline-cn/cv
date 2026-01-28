@@ -215,31 +215,27 @@ async def chat_stream(
 
     thread_id = str(session.thread_id) if session.thread_id else str(session.id)
     
+    configurable = {
+        "thread_id": thread_id,
+        "session_id": str(session.id),
+        "user_id": "mock_user",
+    }
+    # 仅 data_agent 使用 analysis_id 作为工作区隔离标识
+    if agent_key == "data_agent":
+        configurable["analysis_id"] = str(session.id)
+
     config = {
-        "configurable": {
-            "thread_id": thread_id,
-            "session_id": str(session.id), 
-            "user_id": "mock_user", 
-            "analysis_id": str(session.id),
-            "run_id": request_id # LangGraph typically uses 'run_id' for trace context, we map business request_id to it?
-            # Wait, our decorators use config.get("metadata", {}).get("request_id") for the global ID.
-            # But LangSmith/LangChain native might expect run_id.
-            # Let's clean this up:
-            # We set 'run_id' in configurable for LangGraph standard? No, run_id is usually automated.
-            # Let's just ensure we pass request_id in metadata.
-        },
+        "configurable": configurable,
         "callbacks": [audit_callback],
         "tags": [agent_key, "agent_platform"],
         "metadata": {
-            "request_id": request_id, 
-            # Legacy alias if needed by other components, but we are removing run_id usage.
-            # "run_id": request_id, 
+            "request_id": request_id,
             "session_id": str(session.id),
             "thread_id": thread_id,
             "agent_key": agent_key,
             "agent_id": str(session.agent.id),
-            "agent_name": session.agent.name
-        }
+            "agent_name": session.agent.name,
+        },
     }
     config["audit_emitter"] = emitter
 
@@ -276,13 +272,15 @@ async def resume_chat(
     plugin = registry.get_plugin(agent_key)
     graph = plugin.get_graph()
     
-    config = {
-        "configurable": {
-            "thread_id": str(session.id),
-            "user_id": "mock_user",
-            "analysis_id": str(session.id)
-        }
+    configurable = {
+        "thread_id": str(session.id),
+        "session_id": str(session.id),
+        "user_id": "mock_user",
     }
+    if agent_key == "data_agent":
+        configurable["analysis_id"] = str(session.id)
+
+    config = {"configurable": configurable}
 
     decisions = [{"type": request.decision, "message": request.feedback}]
     resume_input = Command(resume=decisions)

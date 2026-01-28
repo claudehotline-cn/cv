@@ -49,7 +49,12 @@ _FORBIDDEN_BUILTINS = {"open", "exec", "eval", "compile"}
 _CODE_REVIEW_ENABLED = True
 
 
-def _create_safe_globals(analysis_id: Optional[str], user_id: str = "anonymous") -> Dict[str, Any]:
+def _create_safe_globals(
+    analysis_id: Optional[str],
+    user_id: str = "anonymous",
+    session_id: str = "default",
+    task_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """创建安全的执行环境，提供 load_dataframe 函数供代码显式加载数据。"""
     import builtins
     safe_builtins = {k: v for k, v in builtins.__dict__.items() if k not in _FORBIDDEN_BUILTINS}
@@ -95,9 +100,9 @@ def _create_safe_globals(analysis_id: Optional[str], user_id: str = "anonymous")
         """从工作区加载指定的 DataFrame。"""
         if not analysis_id:
             raise ValueError("analysis_id 未传递，无法加载 DataFrame。")
-        df = _get_df(name, analysis_id, user_id)
+        df = _get_df(name, analysis_id, user_id, session_id=session_id, task_id=task_id)
         if df is None:
-            available = _list_dfs(analysis_id, user_id)
+            available = _list_dfs(analysis_id, user_id, session_id=session_id, task_id=task_id)
             raise ValueError(f"DataFrame '{name}' 不存在。可用的 DataFrame: {available}")
         
         for col in df.columns:
@@ -112,7 +117,7 @@ def _create_safe_globals(analysis_id: Optional[str], user_id: str = "anonymous")
         """列出工作区中所有可用的 DataFrame 名称。"""
         if not analysis_id:
             return []
-        return _list_dfs(analysis_id, user_id)
+        return _list_dfs(analysis_id, user_id, session_id=session_id, task_id=task_id)
     
     safe_globals["load_dataframe"] = load_dataframe
     safe_globals["list_dataframes"] = list_dataframes
@@ -129,9 +134,21 @@ def _review_python_code(code: str) -> Dict[str, Any]:
         return {"approved": False, "issues": [str(e)], "suggestion": "修复语法错误"}
 
 
-def _persist_chart(chart_json_str: str, analysis_id: str, user_id: str = "anonymous") -> str:
+def _persist_chart(
+    chart_json_str: str,
+    analysis_id: str,
+    user_id: str = "anonymous",
+    session_id: str = "default",
+    task_id: Optional[str] = None,
+) -> str:
     """保存 Chart JSON"""
-    return save_chart(chart_json_str, analysis_id, user_id=user_id)
+    return save_chart(
+        chart_json_str,
+        analysis_id,
+        user_id=user_id,
+        session_id=session_id,
+        task_id=task_id,
+    )
 
 
 def _python_execute_sync(
@@ -143,9 +160,12 @@ def _python_execute_sync(
     if not code or not code.strip():
         raise ValueError("代码不能为空。")
 
-    user_id = config.get("configurable", {}).get("user_id", "anonymous")
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id", "anonymous")
+    session_id = configurable.get("session_id", "default")
+    task_id = configurable.get("task_id") or None
     # 优先从 config 获取 analysis_id，参数作为 fallback
-    cfg_analysis_id = config.get("configurable", {}).get("analysis_id", "")
+    cfg_analysis_id = configurable.get("analysis_id", "")
     if cfg_analysis_id:
         analysis_id = cfg_analysis_id
     _LOGGER.info("python_execute: analysis_id=%s, user_id=%s", analysis_id, user_id)
@@ -161,7 +181,12 @@ def _python_execute_sync(
         if not review.get("approved"):
             return json.dumps({"success": False, "error": "语法错误", "issues": review.get("issues")}, ensure_ascii=False)
 
-    safe_globals = _create_safe_globals(analysis_id, user_id)
+    safe_globals = _create_safe_globals(
+        analysis_id,
+        user_id=user_id,
+        session_id=session_id,
+        task_id=task_id,
+    )
     
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
@@ -194,7 +219,14 @@ def _python_execute_sync(
         if analysis_id:
             for k, v in safe_globals.items():
                 if isinstance(v, pd.DataFrame) and not k.startswith("_"):
-                    path = store_dataframe(k, v, analysis_id, user_id)
+                    path = store_dataframe(
+                        k,
+                        v,
+                        analysis_id,
+                        user_id=user_id,
+                        session_id=session_id,
+                        task_id=task_id,
+                    )
                     if path:
                         saved_dfs.append(path)
                     if result is None and k in ("df", "result"):
@@ -217,7 +249,14 @@ def _python_execute_sync(
 
                 output_data["result_preview"] = safe_df.to_dict(orient="records")
                 if analysis_id:
-                    store_dataframe("result", result, analysis_id, user_id)
+                    store_dataframe(
+                        "result",
+                        result,
+                        analysis_id,
+                        user_id=user_id,
+                        session_id=session_id,
+                        task_id=task_id,
+                    )
             else:
                 output_data["result_type"] = type(result).__name__
                 output_data["result"] = str(result)
@@ -266,12 +305,21 @@ def _sync_df_profile(
     config: RunnableConfig
 ) -> str:
     user_id = "anonymous"
+    session_id = "default"
+    task_id = None
     if config:
-        user_id = config.get("configurable", {}).get("user_id", "anonymous")
+        configurable = config.get("configurable", {})
+        user_id = configurable.get("user_id", "anonymous")
+        session_id = configurable.get("session_id", "default")
+        task_id = configurable.get("task_id") or None
     
     _LOGGER.info(f"[DEBUG] df_profile_tool: analysis_id={analysis_id}, user_id={user_id}, config_keys={list(config.keys()) if config else 'None'}")
 
-    df = get_dataframe(df_name, analysis_id, user_id) if analysis_id else None
+    df = (
+        get_dataframe(df_name, analysis_id, user_id, session_id=session_id, task_id=task_id)
+        if analysis_id
+        else None
+    )
     if df is None:
         return json.dumps({"error": f"DataFrame '{df_name}' 未找到。请确保已执行 SQL 或 Python 生成数据。"})
     
