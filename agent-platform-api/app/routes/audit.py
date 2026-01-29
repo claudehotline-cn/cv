@@ -363,13 +363,21 @@ async def get_run_summary(
             "duration": (s.ended_at - s.started_at).total_seconds() if s.ended_at else None
         })
 
-    # Visual Polish: If run is interrupted, mark the last span as interrupted too
+    # Visual Polish: If run is interrupted, mark the last span as interrupted too.
+    #
+    # If we have an explicit job_phase like "Waiting Approval" (running), don't overwrite it.
     if run.status == "interrupted" and spans:
         last_span = spans[-1]
-        if last_span["status"] in ["succeeded", "running"]:
-             last_span["status"] = "interrupted"
-             if "(Interrupted)" not in last_span["name"] and "(Waiting for Approval)" not in last_span["name"]:
-                 last_span["name"] += " (Interrupted)"
+        is_waiting_phase = (
+            last_span.get("type") == "job_phase"
+            and isinstance(last_span.get("name"), str)
+            and last_span["name"].startswith("Waiting Approval")
+            and last_span.get("status") == "running"
+        )
+        if not is_waiting_phase and last_span.get("status") in ["succeeded", "running"]:
+            last_span["status"] = "interrupted"
+            if "(Interrupted)" not in last_span["name"] and "(Waiting for Approval)" not in last_span["name"]:
+                last_span["name"] += " (Interrupted)"
 
     # 5. Get Interrupts Count
     from app.models.db_models import ApprovalRequestModel

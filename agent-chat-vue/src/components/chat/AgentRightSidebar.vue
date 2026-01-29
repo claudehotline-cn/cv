@@ -46,7 +46,7 @@
             v-for="task in chatStore.tasks"
             :key="task.id"
             class="task-card"
-            :class="{ active: task.status === 'running' || task.status === 'pending' }"
+            :class="{ active: ['running', 'pending', 'waiting_approval'].includes(task.status) }"
           >
             <div class="task-header">
               <div class="task-title-row">
@@ -70,6 +70,23 @@
               >
                 Cancel
               </button>
+
+              <template v-else-if="task.status === 'waiting_approval'">
+                <input
+                  v-model="feedbackByTask[task.id]"
+                  class="task-feedback-input"
+                  placeholder="Feedback (optional)"
+                />
+                <button class="task-action-btn" @click.stop="resumeTask(task.id, 'approve')">
+                  Approve
+                </button>
+                <button class="task-action-btn danger" @click.stop="resumeTask(task.id, 'reject')">
+                  Reject
+                </button>
+                <router-link v-if="task.resultUrl" class="task-action-btn" :to="task.resultUrl">
+                  Details
+                </router-link>
+              </template>
 
               <router-link
                 v-else-if="task.status === 'completed' && task.resultUrl"
@@ -103,12 +120,20 @@
 </template>
 
 <script setup lang="ts">
+import { reactive } from 'vue'
 import { 
   DataAnalysis, Monitor, Search, Picture, Loading 
 } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
 
 const chatStore = useChatStore()
+
+const feedbackByTask = reactive<Record<string, string>>({})
+
+function resumeTask(taskId: string, decision: 'approve' | 'reject') {
+  const feedback = feedbackByTask[taskId] || ''
+  chatStore.resumeTask(taskId, decision, feedback)
+}
 </script>
 
 <style scoped>
@@ -279,6 +304,18 @@ const chatStore = useChatStore()
   display: flex;
   gap: 8px;
   margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.task-feedback-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 .task-action-btn {

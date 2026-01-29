@@ -45,6 +45,10 @@ const activeMenu = computed(() => {
           <el-icon><DataAnalysis /></el-icon>
           <span>数据分析</span>
         </el-menu-item>
+        <el-menu-item index="/finance-docs">
+          <el-icon><Monitor /></el-icon>
+          <span>Knowledge Base (UI)</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

@@ -128,6 +128,12 @@ class AuditPersistenceService:
         elif event_type in ("run_finished", "run_failed", "run_interrupted"):
             await self._handle_run_end(request_id, event_type, payload)
 
+        elif event_type == "job_waiting_approval":
+            await self._handle_job_pause(request_id, span_id, event_time)
+
+        elif event_type == "job_resumed":
+            await self._handle_job_resume(request_id, span_id)
+
         elif event_type in ("job_completed", "job_failed", "job_cancelled", "job_timed_out"):
             await self._handle_job_end(request_id, event_type, payload)
             await self._handle_span_end(request_id, span_id, event_type, payload)
@@ -144,6 +150,43 @@ class AuditPersistenceService:
             await self._handle_hitl_request(request_id, span_id, payload)
         elif event_type in ("hitl_approved", "hitl_rejected"):
             await self._handle_hitl_decision(request_id, span_id, event_type, payload)
+
+    async def _handle_job_pause(
+        self,
+        request_id: UUID,
+        span_id: UUID | None,
+        event_time: datetime | None,
+    ) -> None:
+        """Mark an async job as paused (waiting for approval)."""
+        ts = event_time or datetime.now(timezone.utc)
+
+        if span_id:
+            await self.db.execute(
+                update(AgentSpanModel)
+                .where(AgentSpanModel.span_id == span_id)
+                .values(status="interrupted", ended_at=ts)
+            )
+
+        await self.db.execute(
+            update(AgentRunModel)
+            .where(AgentRunModel.request_id == request_id)
+            .values(status="interrupted", ended_at=ts)
+        )
+
+    async def _handle_job_resume(self, request_id: UUID, span_id: UUID | None) -> None:
+        """Re-open an async job after HITL resume."""
+        if span_id:
+            await self.db.execute(
+                update(AgentSpanModel)
+                .where(AgentSpanModel.span_id == span_id)
+                .values(status="running", ended_at=None)
+            )
+
+        await self.db.execute(
+            update(AgentRunModel)
+            .where(AgentRunModel.request_id == request_id)
+            .values(status="running", ended_at=None)
+        )
             
     def _parse_event_time(self, event: Dict[str, Any]) -> datetime | None:
         """Parse emitter epoch seconds into a timezone-aware datetime."""
@@ -177,12 +220,17 @@ class AuditPersistenceService:
         job_id = request_id
         queued_span_id = uuid5(job_id, "job_phase:queued")
         exec_span_id = uuid5(job_id, "job_phase:execute")
+        wait_span_id = uuid5(job_id, "job_phase:waiting_approval")
 
         ts = event_time or datetime.now(timezone.utc)
 
         async def ensure_phase(span_id: UUID, *, name: str, phase: str, status: str) -> AgentSpanModel:
             existing = await self.db.get(AgentSpanModel, span_id)
             if existing:
+                # Re-open a phase span on resume.
+                if status == "running":
+                    existing.status = "running"
+                    existing.ended_at = None
                 # Keep the earliest started_at (events may arrive out-of-order).
                 if existing.started_at and existing.started_at > ts:
                     existing.started_at = ts
@@ -236,6 +284,20 @@ class AuditPersistenceService:
             await ensure_phase(exec_span_id, name="Running", phase="execute", status="running")
             return
 
+        if event_type == "job_waiting_approval":
+            # Close Running as interrupted and open Waiting Approval.
+            await ensure_phase(exec_span_id, name="Running", phase="execute", status="running")
+            await close_phase(exec_span_id, status="interrupted")
+            await ensure_phase(wait_span_id, name="Waiting Approval", phase="waiting_approval", status="running")
+            return
+
+        if event_type == "job_resumed":
+            # Close Waiting Approval and re-open Running.
+            await ensure_phase(wait_span_id, name="Waiting Approval", phase="waiting_approval", status="running")
+            await close_phase(wait_span_id, status="succeeded")
+            await ensure_phase(exec_span_id, name="Running", phase="execute", status="running")
+            return
+
         terminal_map = {
             "job_completed": "succeeded",
             "job_failed": "failed",
@@ -250,6 +312,11 @@ class AuditPersistenceService:
             queued = await ensure_phase(queued_span_id, name="Queued", phase="queued", status="running")
             if queued.ended_at is None:
                 await close_phase(queued_span_id, status=terminal_map[event_type])
+
+            # Close Waiting Approval too (if it exists) so the phase tree is always clean.
+            waiting = await self.db.get(AgentSpanModel, wait_span_id)
+            if waiting and waiting.ended_at is None:
+                await close_phase(wait_span_id, status=terminal_map[event_type])
             return
             
     async def _ensure_run_exists(self, request_id: UUID, session_id: str | None, thread_id: str | None):
@@ -328,6 +395,9 @@ class AuditPersistenceService:
                 existing.thread_id = thread_id
             if (existing.root_agent_name is None or existing.root_agent_name == "unknown") and agent_name != "unknown":
                 existing.root_agent_name = agent_name
+            # Support HITL resume: a new run may start again for the same request_id.
+            existing.status = "running"
+            existing.ended_at = None
         else:
             run = AgentRunModel(
                 request_id=request_id,
@@ -406,6 +476,12 @@ class AuditPersistenceService:
         
         # If exists and NOT a placeholder, we are done (idempotent)
         if span and span.span_type != "unknown":
+            # Support job resume: reopen the job root so later job_completed can mark it succeeded.
+            if span.span_type == "job" and event_type in ("job_resumed", "job_started"):
+                span.status = "running"
+                span.ended_at = None
+                self.db.add(span)
+                await self.db.flush()
             return
             
         if not span:

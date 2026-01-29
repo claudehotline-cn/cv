@@ -73,7 +73,9 @@
                         :taskName="getTaskName(block.taskId || '')"
                         :resultUrl="block.resultUrl"
                         :error="block.error"
+                        :interruptData="block.interruptData"
                         @cancel="chatStore.cancelTask"
+                        @resume="handleTaskResume"
                      />
                    </template>
                 </template>
@@ -127,6 +129,10 @@ async function handleResume(decision: 'approve' | 'reject', feedback: string) {
   // Use session ID from message (if available) or current session
   // Usually the current active session
   await chatStore.resumeChat(decision, feedback)
+}
+
+async function handleTaskResume(taskId: string, decision: 'approve' | 'reject', feedback: string) {
+  await chatStore.resumeTask(taskId, decision, feedback)
 }
 </script>
 

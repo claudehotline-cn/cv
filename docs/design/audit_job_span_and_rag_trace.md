@@ -95,10 +95,12 @@
 
 - `job_phase:queued`（`span_type="job_phase"`，`node_name="Queued"`）：从 `job_queued` 开始，到 `job_started` 结束
 - `job_phase:execute`（`span_type="job_phase"`，`node_name="Running"`）：从 `job_started` 开始，到 `job_completed/job_failed/job_cancelled/job_timed_out` 结束
+- `job_phase:waiting_approval`（`span_type="job_phase"`，`node_name="Waiting Approval"`）：从 `job_waiting_approval` 开始，到 `job_resumed` 结束（可选，仅 HITL 场景）
 
 ID 约定（幂等，可重复计算）：
 - `queued_span_id = uuid5(job_id, "job_phase:queued")`
 - `execute_span_id = uuid5(job_id, "job_phase:execute")`
+- `wait_span_id = uuid5(job_id, "job_phase:waiting_approval")`
 
 > 说明：`job_progress` 仍然只作为事件存在（Event 列表可见），不作为树节点。
 
@@ -122,6 +124,10 @@ ID 约定（幂等，可重复计算）：
   - payload：`reason?/duration_ms`
 - `job_timed_out`：超时（终态）
   - payload：`timeout_seconds/duration_ms`
+- `job_waiting_approval`：HITL 中断并进入等待审批（非终态）
+  - payload：`interrupt_data?/policy_id?/action_type?`
+- `job_resumed`：HITL 审批通过/拒绝后继续执行（非终态）
+  - payload：`decision/actor_id?`
 
 > 说明：平台已有 SSE/任务流事件（`task_progress/task_completed/...`）可继续保留；审计事件建议用 `job_*` 与深层 agent 工具 `task` 解耦。
 

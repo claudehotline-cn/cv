@@ -11,6 +11,8 @@ from arq import ArqRedis
 from arq.connections import RedisSettings
 
 from agent_core.settings import get_settings
+from app.utils.interrupts import extract_interrupt_data
+from app.utils.session_memory import format_recent_messages_for_prompt
 
 _LOGGER = logging.getLogger("agent_platform.worker")
 settings = get_settings()
@@ -192,8 +194,31 @@ async def agent_execute_task(
             # NOTE: We DO NOT set config["run_id"]. We let LangChain generate a native UUID for the Root Span.
             # This decouples the "Request" (DB Run) from the "Trace" (Execution Graph).
 
+            shared_context = ""
+            try:
+                from agent_core.store import get_async_store
+
+                store = await get_async_store()
+                item = await store.aget(("agent_platform", "sessions", str(session_id)), "recent_messages")
+                if item and isinstance(getattr(item, "value", None), dict):
+                    recent = item.value.get("messages")
+                    if isinstance(recent, list) and recent:
+                        shared_context = format_recent_messages_for_prompt(recent)
+            except Exception:
+                shared_context = ""
+
+            messages = []
+            if shared_context:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": "以下是该会话近期对话内容（供参考）：\n" + shared_context,
+                    }
+                )
+            messages.append({"role": "user", "content": input_message})
+
             async for _chunk in graph.astream(
-                {"messages": [{"role": "user", "content": input_message}]},
+                {"messages": messages},
                 config=config
             ):
                 # 更新进度（简单递增，最多到 90）
@@ -217,6 +242,47 @@ async def agent_execute_task(
                     await emit_task_event("task_cancelled", {"status": "cancelled", "progress": 100, "message": "已取消"})
                     await emit_job_event("job_cancelled", {"reason": "user_requested"})
                     return {"cancelled": True}
+
+            # HITL: check if execution ended due to an interrupt (waiting for approval)
+            interrupt_data = None
+            try:
+                state = await graph.aget_state(config)
+                interrupt_data = extract_interrupt_data(state)
+            except Exception:
+                interrupt_data = None
+
+            if interrupt_data:
+                paused_result = {
+                    "success": False,
+                    "interrupted": True,
+                    "interrupt_data": interrupt_data,
+                    "audit_run_id": request_id,
+                    "audit_url": f"/audit?q={request_id}",
+                }
+                await task_service.update_status(
+                    UUID(task_id),
+                    status="waiting_approval",
+                    result=paused_result,
+                )
+                await task_service.update_progress(UUID(task_id), 90, "等待人工确认")
+                await emit_task_event(
+                    "task_waiting_approval",
+                    {
+                        "status": "waiting_approval",
+                        "progress": 90,
+                        "message": "等待人工确认",
+                        "interrupt_data": interrupt_data,
+                        "result": paused_result,
+                    },
+                )
+                await emit_job_event(
+                    "job_waiting_approval",
+                    {
+                        "interrupt_data": interrupt_data,
+                    },
+                )
+                _LOGGER.info(f"[Worker] Task {task_id} waiting for approval (interrupt)")
+                return paused_result
             
             # 完成
             final_result = {
@@ -252,6 +318,237 @@ async def agent_execute_task(
                 status="failed",
                 completed_at=datetime.utcnow(),
                 error=str(e)
+            )
+            await emit_task_event(
+                "task_failed",
+                {"status": "failed", "progress": 100, "message": "失败", "error": str(e)},
+            )
+            await emit_job_event(
+                "job_failed",
+                {
+                    "error_class": type(e).__name__,
+                    "error_message": str(e)[:2000],
+                },
+            )
+            return {"error": str(e)}
+        finally:
+            try:
+                await event_bus.close()
+            except Exception:
+                pass
+            if audit_redis is not None:
+                try:
+                    audit_redis.close()
+                except Exception:
+                    pass
+
+
+async def agent_resume_task(
+    ctx: Dict[str, Any],
+    task_id: str,
+    session_id: str,
+    agent_key: str,
+    decision: str,
+    feedback: str = "",
+    config: Dict[str, Any] = None,
+    user_id: str = "default",
+    thread_id: str = None,
+) -> Dict[str, Any]:
+    """Resume an interrupted async task (HITL)."""
+    from datetime import datetime
+    from uuid import UUID
+
+    from app.db import AsyncSessionLocal
+    from app.models.db_models import TaskModel
+    from app.services.task_service import TaskService
+    from app.core.agent_registry import registry
+
+    _LOGGER.info(f"[Worker] Resuming task {task_id} for agent {agent_key}")
+
+    from agent_core.events import RedisEventBus, AuditEmitter
+    from agent_core.audit import AuditCallbackHandler
+
+    event_bus = RedisEventBus(settings.redis_url)
+    audit_redis = None
+    audit_emitter = None
+
+    async with AsyncSessionLocal() as db:
+        task_service = TaskService(db)
+
+        task: TaskModel | None = await task_service.get_task(UUID(task_id))
+        input_message = ""
+        if task and isinstance(task.result, dict):
+            input_message = str(task.result.get("input_message") or "")
+
+        async def emit_task_event(event_type: str, payload: Dict[str, Any]) -> None:
+            event: Dict[str, Any] = {
+                "type": event_type,
+                "task_id": task_id,
+                "session_id": session_id,
+                "agent_key": agent_key,
+                "title": (input_message or "")[:80],
+                **payload,
+            }
+            await event_bus.publish(f"task:{task_id}:stream", event)
+            await event_bus.publish(f"session:{session_id}:tasks", event)
+
+        request_id = str(UUID(task_id))
+        effective_thread_id = thread_id or session_id
+
+        import redis as redis_lib
+        audit_redis = redis_lib.Redis.from_url(settings.redis_url, decode_responses=False)
+        audit_emitter = AuditEmitter(redis=audit_redis)
+
+        async def emit_job_event(event_type: str, payload: Dict[str, Any]) -> None:
+            try:
+                await audit_emitter.emit(
+                    event_type=event_type,
+                    request_id=request_id,
+                    span_id=task_id,
+                    session_id=session_id,
+                    thread_id=effective_thread_id,
+                    component="job",
+                    actor_type="service",
+                    actor_id=os.getenv("HOSTNAME", "agent-worker"),
+                    payload=payload,
+                )
+            except Exception:
+                pass
+
+        await emit_job_event("job_resumed", {"decision": decision})
+
+        try:
+            await task_service.update_status(UUID(task_id), status="running")
+            await task_service.update_progress(UUID(task_id), 90, "继续执行...")
+            await emit_task_event(
+                "task_progress",
+                {"status": "running", "progress": 90, "message": "继续执行..."},
+            )
+
+            agent = registry.get_plugin(agent_key)
+            if not agent:
+                raise ValueError(f"Agent not found: {agent_key}")
+            graph = agent.get_graph()
+
+            config = config or {}
+            config["audit_emitter"] = audit_emitter
+
+            audit_callback = AuditCallbackHandler(emitter=audit_emitter)
+            existing_callbacks = config.get("callbacks")
+            if existing_callbacks is None:
+                config["callbacks"] = [audit_callback]
+            elif isinstance(existing_callbacks, list):
+                config["callbacks"] = [*existing_callbacks, audit_callback]
+            else:
+                add_handler = getattr(existing_callbacks, "add_handler", None)
+                if callable(add_handler):
+                    add_handler(audit_callback)
+                else:
+                    config["callbacks"] = [existing_callbacks, audit_callback]
+
+            config.setdefault("configurable", {})
+            config["configurable"]["task_id"] = task_id
+            config["configurable"]["user_id"] = user_id
+            config["configurable"]["session_id"] = session_id
+            if agent_key == "data_agent":
+                config["configurable"].setdefault("analysis_id", task_id)
+            config["configurable"]["thread_id"] = effective_thread_id
+
+            config.setdefault("metadata", {})
+            config["metadata"]["session_id"] = session_id
+            config["metadata"]["thread_id"] = effective_thread_id
+            config["metadata"]["request_id"] = request_id
+            config["metadata"]["sub_agent"] = agent_key
+            config["metadata"]["user_id"] = user_id
+
+            config.setdefault("tags", [])
+            if agent_key not in config["tags"]:
+                config["tags"].append(agent_key)
+            if "agent_platform" not in config["tags"]:
+                config["tags"].append("agent_platform")
+            if "async_task" not in config["tags"]:
+                config["tags"].append("async_task")
+
+            from langgraph.types import Command
+
+            resume_input = Command(
+                resume=[{"type": decision, "message": feedback}],
+            )
+
+            async for _chunk in graph.astream(resume_input, config=config):
+                if await task_service.is_cancel_requested(UUID(task_id)):
+                    await task_service.update_status(
+                        UUID(task_id),
+                        status="cancelled",
+                        completed_at=datetime.utcnow(),
+                    )
+                    await emit_task_event(
+                        "task_cancelled",
+                        {"status": "cancelled", "progress": 100, "message": "已取消"},
+                    )
+                    await emit_job_event("job_cancelled", {"reason": "user_requested"})
+                    return {"cancelled": True}
+
+            interrupt_data = None
+            try:
+                state = await graph.aget_state(config)
+                interrupt_data = extract_interrupt_data(state)
+            except Exception:
+                interrupt_data = None
+
+            if interrupt_data:
+                paused_result = {
+                    "success": False,
+                    "interrupted": True,
+                    "interrupt_data": interrupt_data,
+                    "audit_run_id": request_id,
+                    "audit_url": f"/audit?q={request_id}",
+                }
+                await task_service.update_status(
+                    UUID(task_id),
+                    status="waiting_approval",
+                    result=paused_result,
+                )
+                await task_service.update_progress(UUID(task_id), 90, "等待人工确认")
+                await emit_task_event(
+                    "task_waiting_approval",
+                    {
+                        "status": "waiting_approval",
+                        "progress": 90,
+                        "message": "等待人工确认",
+                        "interrupt_data": interrupt_data,
+                        "result": paused_result,
+                    },
+                )
+                await emit_job_event("job_waiting_approval", {"interrupt_data": interrupt_data})
+                return paused_result
+
+            final_result = {
+                "success": True,
+                "audit_run_id": request_id,
+                "audit_url": f"/audit?q={request_id}",
+            }
+            await task_service.update_status(
+                UUID(task_id),
+                status="completed",
+                completed_at=datetime.utcnow(),
+                result=final_result,
+            )
+            await task_service.update_progress(UUID(task_id), 100, "完成")
+            await emit_task_event(
+                "task_completed",
+                {"status": "completed", "progress": 100, "message": "完成", "result": final_result},
+            )
+            await emit_job_event("job_completed", {"result": final_result})
+            return final_result
+
+        except Exception as e:
+            _LOGGER.error(f"[Worker] Resume task {task_id} failed: {e}")
+            await task_service.update_status(
+                UUID(task_id),
+                status="failed",
+                completed_at=datetime.utcnow(),
+                error=str(e),
             )
             await emit_task_event(
                 "task_failed",
@@ -352,7 +649,7 @@ class WorkerSettings:
     """ARQ Worker 配置"""
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     
-    functions = [agent_execute_task]
+    functions = [agent_execute_task, agent_resume_task]
     on_startup = startup
     on_shutdown = shutdown
     

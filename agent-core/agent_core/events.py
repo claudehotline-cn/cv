@@ -5,7 +5,7 @@ Provides abstract EventBus interface and concrete implementations for:
 - RedisEventBus: For distributed communication (using Redis Streams)
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, AsyncIterator, List, Optional
+from typing import Any, Dict, AsyncIterator, List, Optional, Tuple
 import asyncio
 import json
 import logging
@@ -134,6 +134,29 @@ class RedisEventBus(EventBus):
                     for event_id, fields in events:
                         current_id = event_id
                         yield fields
+        finally:
+            await consumer_redis.close()
+
+    async def subscribe_with_ids(
+        self, topic: str, last_id: str = "$"
+    ) -> AsyncIterator[Tuple[str, Dict[str, Any]]]:
+        """Like subscribe(), but also yields the Redis Stream entry id.
+
+        This is useful for durable consumers that need to persist a cursor.
+        """
+        import redis.asyncio as aioredis
+
+        consumer_redis = aioredis.from_url(self.redis_url, decode_responses=True)
+        current_id = last_id
+        try:
+            while True:
+                streams = await consumer_redis.xread({topic: current_id}, count=10, block=1000)
+                if not streams:
+                    continue
+                for _stream_name, events in streams:
+                    for event_id, fields in events:
+                        current_id = event_id
+                        yield event_id, fields
         finally:
             await consumer_redis.close()
 

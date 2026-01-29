@@ -17,6 +17,8 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from agent_core.events import RedisEventBus, AuditEmitter
 from agent_core.settings import get_settings
 from agent_core.audit import AuditCallbackHandler
+from ..utils.interrupts import extract_interrupt_data
+from ..utils.session_memory import extract_recent_messages
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
 _LOGGER = logging.getLogger(__name__)
@@ -160,17 +162,28 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
         
         try:
             state = await graph.aget_state(config)
-            interrupt_data = None
-            if hasattr(state, 'tasks') and state.tasks:
-                for task in state.tasks:
-                    if hasattr(task, 'interrupts') and task.interrupts:
-                        interrupt_data = [i.value if hasattr(i, 'value') else i for i in task.interrupts]
-                        break
-            if not interrupt_data and hasattr(state, 'values') and state.values:
-                if '__interrupt__' in state.values:
-                    interrupt_data = state.values['__interrupt__']
-            if interrupt_data:
+            interrupt_data = extract_interrupt_data(state)
+            if interrupt_data is not None:
                 yield f"data: {json.dumps({'type': 'interrupt', '__interrupt__': interrupt_data})}\n\n"
+
+            # Persist a small, session-scoped "shared memory" snapshot for async jobs.
+            try:
+                from agent_core.store import get_async_store
+
+                session_key = (
+                    config.get("metadata", {}) or {}
+                ).get("session_id") or (config.get("configurable", {}) or {}).get("session_id")
+                if session_key:
+                    recent = extract_recent_messages(state, limit=12)
+                    if recent:
+                        store = await get_async_store()
+                        await store.aput(
+                            ("agent_platform", "sessions", str(session_key)),
+                            "recent_messages",
+                            {"messages": recent},
+                        )
+            except Exception:
+                pass
         except Exception:
             pass
         

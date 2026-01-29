@@ -16,9 +16,10 @@ export interface AsyncTaskBlock {
     taskId: string
     content: string // task name or description
     progress: number
-    status: string // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+    status: string // 'pending' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled'
     resultUrl?: string
     error?: string
+    interruptData?: any
 }
 
 export interface ThinkingBlock {

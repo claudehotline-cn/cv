@@ -149,6 +149,9 @@ class SensitiveToolMiddleware(AgentMiddleware):
                     await self.emitter.emit(
                         event_type="hitl_approved" if decision_type == "approve" else "hitl_rejected",
                         request_id=str(current_request_id),
+                        session_id=str(session_id) if session_id else None,
+                        thread_id=str(thread_id) if thread_id else None,
+                        span_id=None,
                         component="middleware",
                         payload={
                             "tool_name": tool_name,

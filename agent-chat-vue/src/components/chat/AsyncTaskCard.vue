@@ -16,6 +16,18 @@
       <span v-if="status === 'failed'">{{ error || statusMessage || 'Failed' }}</span>
       <span v-else>{{ statusMessage || (status === 'completed' ? 'Completed' : 'Processing...') }}</span>
     </div>
+
+    <div v-if="status === 'waiting_approval' && interruptDescription" class="task-interrupt">
+      <div class="task-interrupt-title">Action required</div>
+      <div class="task-interrupt-desc">{{ interruptDescription }}</div>
+
+      <textarea
+        v-model="feedback"
+        class="task-feedback"
+        placeholder="Optional feedback (for reject reason, etc.)"
+        rows="2"
+      />
+    </div>
     
     <div class="task-footer" v-if="taskId">
       <span class="task-id">ID: {{ taskId.slice(0, 8) }}</span>
@@ -27,6 +39,11 @@
         >
           Cancel
         </button>
+        <template v-else-if="status === 'waiting_approval'">
+          <button class="approve-btn" @click.stop="handleResume('approve')">Approve</button>
+          <button class="reject-btn" @click.stop="handleResume('reject')">Reject</button>
+          <router-link v-if="resultUrl" class="result-link" :to="resultUrl">Details</router-link>
+        </template>
         <router-link
           v-else-if="status === 'completed' && resultUrl"
           class="result-link"
@@ -40,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 
 const props = defineProps<{
@@ -51,11 +68,42 @@ const props = defineProps<{
   taskName?: string
   resultUrl?: string
   error?: string
+  interruptData?: any
 }>()
 
-defineEmits(['cancel'])
+const emit = defineEmits<{
+  (e: 'cancel', taskId: string): void
+  (e: 'resume', taskId: string, decision: 'approve' | 'reject', feedback: string): void
+}>()
 
 const isActive = computed(() => props.status === 'running' || props.status === 'pending')
+
+const feedback = ref('')
+
+function unwrapInterrupt(data: any): any {
+  if (!data) return null
+  if (data.action_requests || data.review_configs) return data
+  if (Array.isArray(data)) return unwrapInterrupt(data[0])
+  if (data.__interrupt__ && Array.isArray(data.__interrupt__)) return unwrapInterrupt(data.__interrupt__[0])
+  return data
+}
+
+const interruptDescription = computed(() => {
+  const data = unwrapInterrupt(props.interruptData)
+  if (!data) return ''
+  if (Array.isArray(data.action_requests)) {
+    return data.action_requests
+      .map((r: any) => r?.description)
+      .filter(Boolean)
+      .join('\n')
+  }
+  return ''
+})
+
+function handleResume(decision: 'approve' | 'reject') {
+  if (!props.taskId) return
+  emit('resume', props.taskId, decision, feedback.value)
+}
 </script>
 
 <style scoped>
@@ -146,6 +194,39 @@ const isActive = computed(() => props.status === 'running' || props.status === '
   align-items: center;
 }
 
+.task-interrupt {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.task-interrupt-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.task-interrupt-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.task-feedback {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  resize: vertical;
+}
+
 .result-link {
   font-size: 11px;
   color: var(--accent-primary);
@@ -158,6 +239,33 @@ const isActive = computed(() => props.status === 'running' || props.status === '
 
 .cancel-btn:hover {
   background: #fee2e2;
+}
+
+.approve-btn,
+.reject-btn {
+  font-size: 11px;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.approve-btn {
+  background: rgba(34, 197, 94, 0.15);
+  color: rgb(22, 163, 74);
+}
+
+.reject-btn {
+  background: rgba(239, 68, 68, 0.12);
+  color: rgb(220, 38, 38);
+}
+
+.approve-btn:hover {
+  background: rgba(34, 197, 94, 0.22);
+}
+
+.reject-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
 }
 
 .spin {

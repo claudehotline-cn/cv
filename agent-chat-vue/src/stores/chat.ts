@@ -115,10 +115,13 @@ export const useChatStore = defineStore('chat', () => {
         message?: string
         resultUrl?: string
         error?: string
+        interruptData?: any
     }
 
     const tasks = ref<AsyncTask[]>([])
-    const activeTasks = computed(() => tasks.value.filter(t => ['pending', 'running'].includes(t.status)))
+    const activeTasks = computed(() =>
+        tasks.value.filter(t => ['pending', 'running', 'waiting_approval'].includes(t.status))
+    )
 
     // 会话任务 SSE 连接持有（单会话单连接）
     let sessionTaskEventSource: (() => void) | null = null
@@ -144,6 +147,7 @@ export const useChatStore = defineStore('chat', () => {
                     message: t.progress_message,
                     resultUrl: result.audit_url,
                     error: t.error,
+                    interruptData: result.interrupt_data,
                 } as AsyncTask
             })
         } catch (e) {
@@ -215,6 +219,26 @@ export const useChatStore = defineStore('chat', () => {
                         progress: progress,
                         status: status || 'running',
                         content: message || '执行中...',
+                    })
+                    return
+                }
+
+                if (data.type === 'task_waiting_approval') {
+                    const interruptData = data.interrupt_data || data.interruptData
+                    upsertTask(taskId, {
+                        name: (data.title || '').slice(0, 20) || undefined,
+                        status: 'waiting_approval',
+                        progress: progress ?? 90,
+                        message: message || '等待人工确认',
+                        resultUrl,
+                        interruptData,
+                    })
+                    updateMessageTaskBlock(taskId, {
+                        progress: progress ?? 90,
+                        status: 'waiting_approval',
+                        content: message || '等待人工确认',
+                        resultUrl,
+                        interruptData,
                     })
                     return
                 }
@@ -350,6 +374,24 @@ export const useChatStore = defineStore('chat', () => {
         await apiClient.cancelTask(taskId)
     }
 
+    async function resumeTask(taskId: string, decision: 'approve' | 'reject', feedback: string = '') {
+        try {
+            await apiClient.resumeTask(taskId, decision, feedback)
+            upsertTask(taskId, {
+                status: 'running',
+                message: '已提交审批，继续执行中...',
+                progress: 90,
+            })
+            updateMessageTaskBlock(taskId, {
+                status: 'running',
+                content: '已提交审批，继续执行中...',
+                progress: 90,
+            })
+        } catch (error) {
+            console.error('Failed to resume task:', error)
+        }
+    }
+
     async function resumeChat(decision: 'approve' | 'reject', feedback: string) {
         if (!currentSessionId.value) return
 
@@ -392,6 +434,7 @@ export const useChatStore = defineStore('chat', () => {
         resetSession,
 
         executeAsync,
-        cancelTask
+        cancelTask,
+        resumeTask,
     }
 })

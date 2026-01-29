@@ -29,6 +29,12 @@ const routes = [
         path: '/data-agent',
         name: 'DataAgent',
         component: () => import('../views/DataAgent.vue')
+    },
+    {
+        path: '/finance-docs',
+        name: 'FinanceDocs',
+        component: () => import('../views/KnowledgeBase.vue'),
+        meta: { layout: 'full' }
     }
 ]
 

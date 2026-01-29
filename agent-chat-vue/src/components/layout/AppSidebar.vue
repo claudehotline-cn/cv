@@ -53,6 +53,15 @@
           </template>
         </el-menu-item>
 
+        <el-menu-item index="/finance-docs">
+           <template #title>
+             <div class="menu-item-content">
+                <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/finance-docs' }">monitor</span>
+                <span class="font-medium">Knowledge Base</span>
+             </div>
+          </template>
+        </el-menu-item>
+
         <el-menu-item index="/analytics" disabled>
            <template #title>
              <div class="menu-item-content opacity-60">

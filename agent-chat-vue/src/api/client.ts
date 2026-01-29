@@ -227,6 +227,10 @@ class ApiClient {
         return this.http.post(`/tasks/${taskId}/cancel`)
     }
 
+    async resumeTask(taskId: string, decision: 'approve' | 'reject', feedback: string = ''): Promise<any> {
+        return this.http.post(`/tasks/${taskId}/resume`, { decision, feedback })
+    }
+
     async listSessionTasks(sessionId: string, params?: { status?: string; limit?: number }): Promise<any> {
         return this.http.get(`/tasks/sessions/${sessionId}`, { params })
     }

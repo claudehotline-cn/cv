@@ -45,6 +45,13 @@ class TaskListResponse(BaseModel):
     tasks: list[TaskResponse]
 
 
+class ResumeTaskRequest(BaseModel):
+    """Resume an interrupted task (HITL)."""
+
+    decision: str
+    feedback: str = ""
+
+
 @router.post("/sessions/{session_id}/execute")
 async def create_execute_task(
     session_id: UUID,
@@ -80,7 +87,17 @@ async def create_execute_task(
         meta={
             "input_message": request.message,
             "agent_key": agent_key,
-            "thread_id": str(session.thread_id) if session.thread_id else str(session_id),
+        },
+    )
+    # Async task runs on its own thread_id for HITL + parallelism.
+    task_thread_id = str(task.id)
+    session_thread_id = str(session.thread_id) if session.thread_id else str(session_id)
+    await task_service.update_status(
+        task.id,
+        status="pending",
+        result={
+            "thread_id": task_thread_id,
+            "session_thread_id": session_thread_id,
         },
     )
     
@@ -94,7 +111,7 @@ async def create_execute_task(
         request.message,
         request.config,
         "default", # user_id
-        str(session.thread_id) if session.thread_id else str(session_id) # thread_id (new arg)
+        task_thread_id,  # thread_id
     )
     await redis_pool.close()
 
@@ -102,7 +119,7 @@ async def create_execute_task(
     try:
         from agent_core.events import AuditEmitter
         emitter = AuditEmitter(redis=req.app.state.event_bus.redis)
-        thread_id = str(session.thread_id) if session.thread_id else str(session_id)
+        thread_id = task_thread_id
         await emitter.emit(
             event_type="job_queued",
             request_id=str(task.id),
@@ -152,7 +169,7 @@ async def list_session_tasks(
     tasks = await task_service.get_tasks_by_session(session_id)
 
     if status == "active":
-        tasks = [t for t in tasks if t.status in ("pending", "running")]
+        tasks = [t for t in tasks if t.status in ("pending", "running", "waiting_approval")]
     elif status:
         tasks = [t for t in tasks if t.status == status]
 
@@ -233,13 +250,16 @@ async def cancel_task(
         await event_bus.publish(f"task:{task_id}:stream", event)
         await event_bus.publish(f"session:{task.session_id}:tasks", event)
 
+        meta = task.result if isinstance(task.result, dict) else {}
+        thread_id = meta.get("thread_id") or str(task_id)
+
         # Also emit audit event (job lifecycle)
         await audit_emitter.emit(
             event_type="job_cancel_requested",
             request_id=str(task_id),
             span_id=str(task_id),
             session_id=str(task.session_id),
-            thread_id=None,
+            thread_id=thread_id,
             component="job",
             actor_type="user",
             actor_id="api",
@@ -249,6 +269,62 @@ async def cancel_task(
         await event_bus.close()
     
     return {"message": "Cancel requested", "task_id": str(task_id)}
+
+
+@router.post("/{task_id}/resume")
+async def resume_task(
+    task_id: UUID,
+    request: ResumeTaskRequest,
+    req: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resume an async task that is waiting for approval."""
+    from arq import create_pool
+    from arq.connections import RedisSettings
+
+    task_service = TaskService(db)
+    task = await task_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    meta = task.result if isinstance(task.result, dict) else {}
+    agent_key = meta.get("agent_key") or "data_agent"
+    thread_id = meta.get("thread_id") or str(task_id)
+
+    redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    await redis_pool.enqueue_job(
+        "agent_resume_task",
+        str(task_id),
+        str(task.session_id),
+        agent_key,
+        request.decision,
+        request.feedback,
+        None,  # config
+        "default",  # user_id
+        thread_id,
+    )
+    await redis_pool.close()
+
+    # Best-effort audit event for the user action
+    try:
+        from agent_core.events import AuditEmitter
+
+        emitter = AuditEmitter(redis=req.app.state.event_bus.redis)
+        await emitter.emit(
+            event_type="job_resume_requested",
+            request_id=str(task_id),
+            span_id=str(task_id),
+            session_id=str(task.session_id),
+            thread_id=thread_id,
+            component="job",
+            actor_type="user",
+            actor_id="api",
+            payload={"decision": request.decision},
+        )
+    except Exception:
+        _LOGGER.exception("Failed to emit job_resume_requested audit event")
+
+    return {"message": "Resume requested", "task_id": str(task_id)}
 
 
 @router.get("/sessions/{session_id}/stream")

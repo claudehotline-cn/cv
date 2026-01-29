@@ -44,6 +44,16 @@ const router = createRouter({
             name: 'audit',
             component: () => import('./views/AuditView.vue'),
         },
+        {
+            path: '/finance-docs',
+            name: 'FinanceDocs',
+            component: () => import('./views/KnowledgeBase.vue'),
+        },
+        {
+            path: '/document-editor',
+            name: 'DocumentEditor',
+            component: () => import('./views/DocumentEditor.vue'),
+        },
     ],
 })
 

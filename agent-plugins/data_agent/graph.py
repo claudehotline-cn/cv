@@ -108,6 +108,7 @@ def get_data_deep_agent_graph(
             routes={"/_shared/": StoreBackend(rt)},
         ),
         # 使用 PostgreSQL 持久化存储（长期记忆 + 会话检查点）
+        store=get_async_store,
         checkpointer=cp,  # 使用注入的或预初始化的实例
         response_format=response_format,
     )

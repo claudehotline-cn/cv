@@ -4,7 +4,10 @@ import MainLayout from './components/MainLayout.vue'
 </script>
 
 <template>
-  <MainLayout>
+  <div v-if="route.meta.layout === 'full'">
+    <RouterView />
+  </div>
+  <MainLayout v-else>
     <RouterView />
   </MainLayout>
 </template>
