@@ -16,7 +16,8 @@ def test_resume_route_uses_session_thread_id() -> None:
 
     If resume uses session.id as thread_id, LangGraph will not resume the interrupted run.
     """
-    src_path = Path("agent-platform-api/app/routes/chat.py")
+    repo_root = Path(__file__).resolve().parents[2]
+    src_path = repo_root / "agent-platform-api/app/routes/chat.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"), filename=str(src_path))
 
     resume_fn = None
@@ -92,4 +93,3 @@ def test_langgraph_resume_requires_same_thread_id(memory_saver: InMemorySaver) -
     # Correct thread_id: resumes and completes.
     out_ok = graph.invoke(Command(resume=[{"type": "approve", "message": "ok"}]), config_a)
     assert out_ok.get("approved") is True
-
