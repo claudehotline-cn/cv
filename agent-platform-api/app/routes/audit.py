@@ -218,10 +218,16 @@ async def get_run_summary(
                  is_interrupt = True
             else:
                  severity = "Error"
+        elif e.event_type == "job_timed_out":
+            severity = "Error"
         elif "start" in e.event_type:
             severity = "Info"
         elif "end" in e.event_type:
             severity = "Success"
+        elif e.event_type == "job_completed":
+            severity = "Success"
+        elif e.event_type == "job_cancelled":
+            severity = "Interrupt"
             
         # Infer Span Name from Payload
         if e.span_id:
@@ -235,7 +241,31 @@ async def get_run_summary(
         # Construct message from payload or type
         msg = e.event_type
         if e.payload:
-            if "error_message" in e.payload:
+            if isinstance(e.event_type, str) and e.event_type.startswith("job_"):
+                if e.event_type == "job_progress":
+                    progress = e.payload.get("progress")
+                    stage_msg = e.payload.get("message") or e.payload.get("stage")
+                    if progress is not None and stage_msg:
+                        msg = f"{progress}% - {stage_msg}"
+                    elif progress is not None:
+                        msg = f"{progress}%"
+                    elif stage_msg:
+                        msg = str(stage_msg)
+                elif e.event_type == "job_queued":
+                    title = e.payload.get("title")
+                    queue = e.payload.get("queue")
+                    msg = f"Queued: {title}" if title else "Job queued"
+                    if queue:
+                        msg += f" (queue={queue})"
+                elif e.event_type == "job_started":
+                    title = e.payload.get("title")
+                    msg = f"Started: {title}" if title else "Job started"
+                elif e.event_type == "job_completed":
+                    result = e.payload.get("result")
+                    audit_url = result.get("audit_url") if isinstance(result, dict) else None
+                    msg = f"Completed: {audit_url}" if audit_url else "Job completed"
+
+            if msg == e.event_type and "error_message" in e.payload:
                 msg = e.payload["error_message"]
             elif "tool_name" in e.payload:
                 msg = f"Tool: {e.payload['tool_name']}"

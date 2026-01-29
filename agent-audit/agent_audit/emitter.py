@@ -5,7 +5,6 @@ import logging
 import time
 import uuid
 import asyncio
-import inspect
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -67,9 +66,24 @@ class AuditEmitter:
             if xadd is None:
                 raise AttributeError("redis client has no xadd()")
 
-            if inspect.iscoroutinefunction(xadd):
+            # redis-py asyncio client methods are awaitable, but bound methods are not reliably
+            # detected by inspect.iscoroutinefunction(). Detect by client type/module and keep
+            # a safety fallback for other implementations.
+            redis_module = getattr(getattr(self.redis, "__class__", object), "__module__", "") or ""
+            is_asyncio_client = redis_module.startswith("redis.asyncio")
+
+            if is_asyncio_client:
                 await xadd(self.stream_key, fields, maxlen=100000, approximate=True)
             else:
-                await asyncio.to_thread(xadd, self.stream_key, fields, maxlen=100000, approximate=True)
+                result = await asyncio.to_thread(
+                    xadd,
+                    self.stream_key,
+                    fields,
+                    maxlen=100000,
+                    approximate=True,
+                )
+                # Fallback: some implementations may still return an awaitable.
+                if asyncio.isfuture(result) or asyncio.iscoroutine(result):
+                    await result
         except Exception as exc:
             _LOGGER.error("Failed to emit audit event %s: %s", event_type, exc)

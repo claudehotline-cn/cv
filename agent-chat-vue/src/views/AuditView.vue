@@ -541,8 +541,11 @@ const getActivityColor = (sev: string) => {
 
 const getSpanTypeColor = (type: string) => {
     switch(type) {
+        case 'job': return 'primary'
+        case 'job_phase': return 'info'
         case 'agent': return 'primary'
         case 'chain': return 'info'
+        case 'node': return 'info'
         case 'tool': return 'warning'
         case 'llm': return 'success'
         default: return 'info'

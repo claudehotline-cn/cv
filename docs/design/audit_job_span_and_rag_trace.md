@@ -90,6 +90,18 @@
 
 > 注意：`span_type` 使用 `job`，避免与 DeepAgent 内部工具名 `task` 混淆。
 
+### 1.1) job 生命周期“阶段节点”（少量、可控）
+为让 Timeline 树在 **不爆炸节点数** 的前提下更可读，平台在落库时会从 `job_*` 事件 **派生少量阶段子 span**（不是事件本身变成节点）：
+
+- `job_phase:queued`（`span_type="job_phase"`，`node_name="Queued"`）：从 `job_queued` 开始，到 `job_started` 结束
+- `job_phase:execute`（`span_type="job_phase"`，`node_name="Running"`）：从 `job_started` 开始，到 `job_completed/job_failed/job_cancelled/job_timed_out` 结束
+
+ID 约定（幂等，可重复计算）：
+- `queued_span_id = uuid5(job_id, "job_phase:queued")`
+- `execute_span_id = uuid5(job_id, "job_phase:execute")`
+
+> 说明：`job_progress` 仍然只作为事件存在（Event 列表可见），不作为树节点。
+
 
 ### 2) job 生命周期事件类型（建议最小集合）
 这些事件用于审计与 UI 状态追踪，全部挂在 `span_id = job_id` 上：

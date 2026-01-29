@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from agent_core.settings import get_settings
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
+_LOGGER = logging.getLogger(__name__)
 
 
 class ExecuteRequest(BaseModel):
@@ -118,7 +120,7 @@ async def create_execute_task(
         )
     except Exception:
         # Best-effort; async task itself should still run
-        pass
+        _LOGGER.exception("Failed to emit job_queued audit event")
     
     return {
         "task_id": str(task.id),

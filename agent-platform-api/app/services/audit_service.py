@@ -1,6 +1,6 @@
 import logging
 import json
-from uuid import UUID
+from uuid import UUID, uuid5
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 
@@ -47,6 +47,7 @@ class AuditPersistenceService:
         event_type = event.get("event_type")
         request_id_str = event.get("request_id")
         span_id_str = event.get("span_id")
+        event_time = self._parse_event_time(event)
         
         if not request_id_str:
             _LOGGER.warning(f"Skipping event {event_type} without request_id")
@@ -79,24 +80,38 @@ class AuditPersistenceService:
         if span_id:
             await self._ensure_span_exists(request_id, span_id, event.get("session_id"), event.get("thread_id"))
 
+        # Derive lightweight job lifecycle phases as child spans so they show in the tree.
+        if is_job_event:
+            await self._handle_job_phase_spans(
+                request_id=request_id,
+                event_type=event_type,
+                event_time=event_time,
+                session_id=event.get("session_id"),
+                thread_id=event.get("thread_id"),
+                payload=payload,
+            )
+
         # 4. Create AuditEventModel
         # Use nested transaction ONLY for savepoint/rollback of THIS insert if conditional
         # But for batching, naive insert is fine. If unique violation, we skip.
         try:
              async with self.db.begin_nested():
-                audit_event = AuditEventModel(
-                    event_id=UUID(event["event_id"]) if event.get("event_id") else None,
-                    request_id=request_id,
-                    span_id=span_id,
-                    session_id=event.get("session_id"),
-                    thread_id=event.get("thread_id"),
-                    event_type=event_type,
-                    actor_type=event.get("actor_type"),
-                    actor_id=event.get("actor_id"),
-                    component=event.get("component"), 
-                    payload=payload,
-                    # event_time handled by default or parsed if string provided
-                )
+                audit_event_kwargs: Dict[str, Any] = {
+                    "event_id": UUID(event["event_id"]) if event.get("event_id") else None,
+                    "request_id": request_id,
+                    "span_id": span_id,
+                    "session_id": event.get("session_id"),
+                    "thread_id": event.get("thread_id"),
+                    "event_type": event_type,
+                    "actor_type": event.get("actor_type"),
+                    "actor_id": event.get("actor_id"),
+                    "component": event.get("component"),
+                    "payload": payload,
+                }
+                if event_time is not None:
+                    audit_event_kwargs["event_time"] = event_time
+
+                audit_event = AuditEventModel(**audit_event_kwargs)
                 self.db.add(audit_event)
                 await self.db.flush()
         except IntegrityError:
@@ -115,8 +130,9 @@ class AuditPersistenceService:
 
         elif event_type in ("job_completed", "job_failed", "job_cancelled", "job_timed_out"):
             await self._handle_job_end(request_id, event_type, payload)
+            await self._handle_span_end(request_id, span_id, event_type, payload)
             
-        elif event_type in ("chain_end", "subagent_finished", "chain_failed", "tool_call_executed", "llm_output_received", "tool_val_failed", "llm_failed", "langgraph_node_finished", "node_failed", "chain_interrupted", "job_completed", "job_failed", "job_cancelled", "job_timed_out"):
+        elif event_type in ("chain_end", "subagent_finished", "chain_failed", "tool_call_executed", "llm_output_received", "tool_val_failed", "llm_failed", "langgraph_node_finished", "node_failed", "chain_interrupted"):
             await self._handle_span_end(request_id, span_id, event_type, payload)
             
             # Extra specialized handling
@@ -129,6 +145,112 @@ class AuditPersistenceService:
         elif event_type in ("hitl_approved", "hitl_rejected"):
             await self._handle_hitl_decision(request_id, span_id, event_type, payload)
             
+    def _parse_event_time(self, event: Dict[str, Any]) -> datetime | None:
+        """Parse emitter epoch seconds into a timezone-aware datetime."""
+        raw = event.get("event_time") or event.get("timestamp")
+        if raw in (None, ""):
+            return None
+        try:
+            return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+        except Exception:
+            return None
+
+    async def _handle_job_phase_spans(
+        self,
+        *,
+        request_id: UUID,
+        event_type: str | None,
+        event_time: datetime | None,
+        session_id: str | None,
+        thread_id: str | None,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Create a tiny, stable set of child spans under the job root for lifecycle phases.
+
+        These are not emitted by LangChain; we derive them from job_* events to make the
+        Timeline tree more informative without exploding node count.
+        """
+        if not isinstance(event_type, str):
+            return
+
+        # In async mode we enforce request_id == job_id. Use request_id as the namespace.
+        job_id = request_id
+        queued_span_id = uuid5(job_id, "job_phase:queued")
+        exec_span_id = uuid5(job_id, "job_phase:execute")
+
+        ts = event_time or datetime.now(timezone.utc)
+
+        async def ensure_phase(span_id: UUID, *, name: str, phase: str, status: str) -> AgentSpanModel:
+            existing = await self.db.get(AgentSpanModel, span_id)
+            if existing:
+                # Keep the earliest started_at (events may arrive out-of-order).
+                if existing.started_at and existing.started_at > ts:
+                    existing.started_at = ts
+                if not existing.node_name:
+                    existing.node_name = name
+                existing.status = existing.status or status
+                self.db.add(existing)
+                await self.db.flush()
+                return existing
+
+            span = AgentSpanModel(
+                span_id=span_id,
+                request_id=job_id,
+                parent_span_id=job_id,
+                span_type="job_phase",
+                agent_name="job",
+                node_name=name,
+                status=status,
+                started_at=ts,
+                meta={
+                    "phase": phase,
+                    "job_id": str(job_id),
+                    "session_id": session_id,
+                    "thread_id": thread_id,
+                },
+            )
+            self.db.add(span)
+            await self.db.flush()
+            return span
+
+        async def close_phase(span_id: UUID, *, status: str) -> None:
+            existing = await self.db.get(AgentSpanModel, span_id)
+            if not existing:
+                return
+            # Keep the latest ended_at (events may arrive out-of-order).
+            if existing.ended_at is None or existing.ended_at < ts:
+                existing.ended_at = ts
+            # Only overwrite "running" with a terminal status.
+            if existing.status == "running" or not existing.status:
+                existing.status = status
+            self.db.add(existing)
+            await self.db.flush()
+
+        if event_type == "job_queued":
+            await ensure_phase(queued_span_id, name="Queued", phase="queued", status="running")
+            return
+
+        if event_type == "job_started":
+            await ensure_phase(queued_span_id, name="Queued", phase="queued", status="running")
+            await close_phase(queued_span_id, status="succeeded")
+            await ensure_phase(exec_span_id, name="Running", phase="execute", status="running")
+            return
+
+        terminal_map = {
+            "job_completed": "succeeded",
+            "job_failed": "failed",
+            "job_cancelled": "cancelled",
+            "job_timed_out": "failed",
+        }
+        if event_type in terminal_map:
+            await ensure_phase(exec_span_id, name="Running", phase="execute", status="running")
+            await close_phase(exec_span_id, status=terminal_map[event_type])
+
+            # If the job terminates before job_started, cap the queued phase too.
+            queued = await ensure_phase(queued_span_id, name="Queued", phase="queued", status="running")
+            if queued.ended_at is None:
+                await close_phase(queued_span_id, status=terminal_map[event_type])
+            return
             
     async def _ensure_run_exists(self, request_id: UUID, session_id: str | None, thread_id: str | None):
         """Ensure AgentRunModel exists. Idempotent."""
@@ -470,8 +592,16 @@ class AuditPersistenceService:
         """Update AgentSpanModel."""
         if not span_id:
             return
-            
-        if "failed" in event_type:
+
+        job_status_map = {
+            "job_completed": "succeeded",
+            "job_failed": "failed",
+            "job_cancelled": "cancelled",
+            "job_timed_out": "failed",
+        }
+        if event_type in job_status_map:
+            status = job_status_map[event_type]
+        elif "failed" in event_type:
             status = "failed"
         elif "interrupted" in event_type:
             status = "interrupted"
