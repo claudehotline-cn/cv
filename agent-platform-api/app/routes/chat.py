@@ -272,8 +272,9 @@ async def resume_chat(
     plugin = registry.get_plugin(agent_key)
     graph = plugin.get_graph()
     
+    thread_id = str(session.thread_id) if session.thread_id else str(session.id)
     configurable = {
-        "thread_id": str(session.id),
+        "thread_id": thread_id,
         "session_id": str(session.id),
         "user_id": "mock_user",
     }
