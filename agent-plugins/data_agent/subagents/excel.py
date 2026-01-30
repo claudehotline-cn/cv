@@ -1,6 +1,7 @@
 """Excel Sub-Agent Module"""
 from __future__ import annotations
 
+import json
 import logging
 import operator
 import re
@@ -31,7 +32,7 @@ class ExcelAgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     task_description: str
     analysis_id: str
-    file_id: str
+    file_path: str
     sheets_info: str       # Step 1: Sheet 列表
     load_result: str       # Step 2: 加载结果
 
@@ -45,44 +46,63 @@ def excel_step1_list_sheets(state: ExcelAgentState, config: RunnableConfig) -> d
     analysis_id = config.get("configurable", {}).get("analysis_id", "")
 
     
-    file_id = ""
+    file_path = ""
     task_description = ""
     
     messages = state.get("messages", [])
     for msg in messages:
         content = getattr(msg, "content", "") if hasattr(msg, "content") else str(msg)
-        # 提取 file_id
-        match_fid = re.search(r'\[file_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
-        if match_fid:
-            file_id = match_fid.group(1).strip()
+        # 提取 file_path (preferred) / file_id (legacy alias)
+        match_fpath = re.search(r'\[file_path[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
+        if match_fpath:
+            file_path = match_fpath.group(1).strip()
+
+        if not file_path:
+            match_fid = re.search(r'\[file_id[=:]?\s*([^\]]+)\]', content, re.IGNORECASE)
+            if match_fid:
+                file_path = match_fid.group(1).strip()
+
+        # Fallback: extract the first absolute path that looks like a spreadsheet
+        if not file_path:
+            match_path = re.search(r'(/[^\s]+\.(?:xlsx|xls|csv))', content, re.IGNORECASE)
+            if match_path:
+                file_path = match_path.group(1).strip()
         task_description = content
 
-    if not file_id:
-        return {"sheets_info": "Error: No file_id provided", "analysis_id": analysis_id, "file_id": file_id, "task_description": task_description}
+    if not file_path:
+        return {"sheets_info": "Error: No file_path provided", "analysis_id": analysis_id, "file_path": file_path, "task_description": task_description}
 
     try:
-        # 调用 list_sheets_tool (假设有 file_id 参数支持)
-        result = excel_list_sheets_tool.invoke({"file_id": file_id})
+        result = excel_list_sheets_tool.invoke({"file_path": file_path})
         _LOGGER.info("[Excel Agent] list_sheets result: %s", result[:300] if len(result) > 300 else result)
-        return {"sheets_info": result, "analysis_id": analysis_id, "file_id": file_id, "task_description": task_description}
+        return {"sheets_info": result, "analysis_id": analysis_id, "file_path": file_path, "task_description": task_description}
     except Exception as e:
         _LOGGER.error("[Excel Agent] list_sheets failed: %s", e)
-        return {"sheets_info": f"Error: {e}", "analysis_id": analysis_id, "file_id": file_id, "task_description": task_description}
+        return {"sheets_info": f"Error: {e}", "analysis_id": analysis_id, "file_path": file_path, "task_description": task_description}
 
 @node_wrapper("load_sheet", graph_id="excel_agent")
 def excel_step2_load_sheet(state: ExcelAgentState, config: RunnableConfig) -> dict:
     """Step 2: 加载 Sheet 数据"""
     _LOGGER.info("[Excel Agent Fixed Flow] Step 2: load_sheet")
     
-    file_id = state.get("file_id", "")
+    file_path = state.get("file_path", "")
     analysis_id = state.get("analysis_id", "")
-    
-    # 默认加载第一个 Sheet (Sheet1 或索引0)
-    sheet_name = "Sheet1"
+
+    # 默认加载第一个 Sheet；CSV 不需要 sheet_name
+    sheet_name = None
+    if file_path and not file_path.lower().endswith(".csv"):
+        sheet_name = "Sheet1"
+        try:
+            sheets_info = state.get("sheets_info", "")
+            info_json = json.loads(sheets_info) if isinstance(sheets_info, str) else sheets_info
+            if isinstance(info_json, dict) and isinstance(info_json.get("sheets"), list) and info_json["sheets"]:
+                sheet_name = str(info_json["sheets"][0])
+        except Exception:
+            pass
     
     try:
         result = excel_load_tool.invoke({
-            "file_id": file_id,
+            "file_path": file_path,
             "sheet_name": sheet_name,
             "analysis_id": analysis_id
         }, config=config)

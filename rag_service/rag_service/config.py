@@ -5,6 +5,9 @@ from typing import Optional
 from functools import lru_cache
 
 
+DEFAULT_VLLM_MODEL = "/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit"
+
+
 class Settings(BaseSettings):
     """RAG服务配置"""
     
@@ -12,6 +15,20 @@ class Settings(BaseSettings):
     app_name: str = "RAG Knowledge Base Service"
     api_prefix: str = "/api"
     debug: bool = False
+
+    # 后台任务/队列
+    redis_url: str = Field(
+        default="redis://langgraph-redis:6379",
+        description="Redis URL (用于任务队列/缓存)"
+    )
+    queue_name: str = Field(
+        default="rag:queue",
+        description="ARQ 队列名称 (避免与其它服务共用默认 arq:queue 冲突)"
+    )
+    use_job_queue: bool = Field(
+        default=True,
+        description="是否使用任务队列执行耗时任务 (推荐生产启用)"
+    )
     
     # MySQL配置（元数据存储）
     mysql_host: str = Field(default="mysql", description="MySQL主机")
@@ -30,7 +47,7 @@ class Settings(BaseSettings):
     pgvector_user: str = Field(default="cv_kb", description="pgvector用户")
     pgvector_password: str = Field(default="cv_kb_pass", description="pgvector密码")
     pgvector_database: str = Field(default="cv_kb", description="pgvector数据库")
-    vector_dimension: int = Field(default=1024, description="向量维度(bge-m3)")
+    vector_dimension: int = Field(default=1024, description="向量维度 (bge-m3)")
     
     @property
     def pgvector_dsn(self) -> str:
@@ -48,26 +65,53 @@ class Settings(BaseSettings):
     neo4j_user: str = Field(default="neo4j", description="Neo4j用户名")
     neo4j_password: str = Field(default="password", description="Neo4j密码")
     
-    # Ollama配置（LLM/Embedding）
+    # Ollama配置（仅用于 Embedding）
     ollama_base_url: str = Field(
         default="http://host.docker.internal:11434",
-        description="Ollama服务地址"
+        description="Ollama服务地址 (Embedding)"
     )
     embedding_model: str = Field(
-        default="nomic-embed-text:latest",
-        description="Embedding模型名称"
+        default="bge-m3:567m",
+        description="Embedding模型名称 (建议中英混合用 bge-m3)"
     )
     reranker_model: str = Field(
         default="BAAI/bge-reranker-base",
         description="重排序模型名称 (推荐使用支持多语言的模型)"
     )
-    vector_dimension: int = Field(
-        default=768,
-        description="向量维度"
+    # vLLM OpenAI-compatible API (LLM/VLM)
+    vllm_base_url: str = Field(
+        default="http://vllm:8000/v1",
+        description="vLLM OpenAI-compatible base URL (include /v1)"
     )
+    vllm_api_key: str = Field(
+        default="EMPTY",
+        description="vLLM API key (not usually enforced, but kept for compatibility)"
+    )
+
     llm_model: str = Field(
-        default="qwen3-vl:30b",
-        description="LLM模型用于问答"
+        default=DEFAULT_VLLM_MODEL,
+        description="LLM 模型 (vLLM /v1/models id)"
+    )
+    llm_timeout_sec: int = Field(
+        default=180,
+        description="LLM 调用超时(秒)"
+    )
+    graph_llm_model: str = Field(
+        default=DEFAULT_VLLM_MODEL,
+        description="GraphRAG 抽取用 LLM 模型 (vLLM)"
+    )
+    graph_llm_timeout_sec: int = Field(
+        default=120,
+        description="GraphRAG 抽取 LLM 调用超时(秒)"
+    )
+
+    query_rewriter_model: str = Field(
+        default=DEFAULT_VLLM_MODEL,
+        description="Multi-query 扩展用 LLM 模型 (vLLM)"
+    )
+    query_rewriter_timeout_sec: int = Field(
+        default=45,
+        description="Multi-query 扩展超时(秒)"
     )
     enable_context_compression: bool = Field(
         default=False,
@@ -78,8 +122,8 @@ class Settings(BaseSettings):
     
     # VLM 视觉语言模型配置
     vlm_model: str = Field(
-        default="qwen3-vl:30b",
-        description="视觉语言模型 (支持图像/视频理解)"
+        default=DEFAULT_VLLM_MODEL,
+        description="VLM 模型 (vLLM /v1/models id)"
     )
     image_vector_dimension: int = Field(
         default=4096,

@@ -1,17 +1,18 @@
-"""RAG 效果评估服务 (LLM-as-a-Judge)"""
+"""RAG evaluation (LLM-as-a-Judge) via vLLM."""
 
-import logging
+from __future__ import annotations
+
 import json
+import logging
+import re
 from enum import Enum
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
+from typing import List, Optional
 
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from pydantic import BaseModel, Field
 
 from ..config import settings
+from .llm_service import llm_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,108 +28,107 @@ class EvaluationResult(BaseModel):
     reasoning: str = Field(description="Reasoning for the score")
 
 
+def _extract_json_object(text: str) -> Optional[dict]:
+    s = (text or "").strip()
+    if not s:
+        return None
+
+    if "</think>" in s:
+        s = s.split("</think>")[-1].strip()
+
+    m = re.search(r"```(?:json)?\s*(.*?)\s*```", s, re.DOTALL)
+    if m:
+        s = m.group(1).strip()
+
+    start = s.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == "{":
+            depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                cand = s[start : i + 1]
+                try:
+                    return json.loads(cand)
+                except Exception:
+                    return None
+    return None
+
+
 class RAGEvaluator:
-    """RAG 评估器"""
-    
-    def __init__(self):
-        # 使用配置的 LLM，通过 JsonOutputParser 强制输出 JSON
-        # 注意: 评估通常需要较强的指令遵循能力
-        self.llm = ChatOllama(
-            model=settings.llm_model,
-            base_url=settings.ollama_base_url,
-            temperature=0.1, # 评估需要确定性
-            format="json",   # 强制 JSON 模式
-        )
-        self.parser = JsonOutputParser(pydantic_object=EvaluationResult)
-
     async def evaluate_faithfulness(self, question: str, answer: str, contexts: List[str]) -> EvaluationResult:
-        """
-        评估信实度 (Faithfulness): 回答是否忠实于上下文?
-        
-        Args:
-            question: 用户问题
-            answer: RAG生成的回答
-            contexts: 检索到的上下文片段列表
-        """
         context_text = "\n\n".join(contexts)
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """你是一个专业的 RAG 系统评估专家。你的任务是评估系统生成的回答（Answer）是否完全基于提供的上下文（Context）推导得出。
-            
-你需要检查：
-1. 回答中的每一条陈述，是否都能在上下文中找到依据？
-2. 回答是否包含上下文中不存在的幻觉信息？
+        system = """你是一个专业的 RAG 系统评估专家。你的任务是评估系统生成的回答（Answer）是否完全基于提供的上下文（Context）推导得出。
 
-请按以下 JSON 格式输出评估结果：
-{{
-    "score": <0.0 到 1.0 之间的分数，1.0 表示完全忠实，0.0 表示完全幻觉>,
-    "reasoning": "<简短的打分理由>"
-}}
-"""),
-            ("user", """
-[Context]
-{context}
+请按 JSON 输出：
+{"score": 0.0-1.0, "reasoning": "..."}
+"""
+        prompt = f"""[Context]
+{context_text}
 
 [Question]
 {question}
 
 [Answer]
 {answer}
-""")
-        ])
-        
-        chain = prompt | self.llm | self.parser
-        
+"""
+
         try:
-            result = await chain.ainvoke({
-                "context": context_text,
-                "question": question,
-                "answer": answer
-            })
-            return EvaluationResult(**result)
+            raw = await llm_service.generate(
+                prompt,
+                model=settings.llm_model,
+                timeout_sec=settings.llm_timeout_sec,
+                temperature=0.1,
+                system_prompt=system,
+            )
+            obj = None
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                obj = _extract_json_object(raw)
+
+            if not isinstance(obj, dict):
+                raise ValueError("Invalid JSON")
+            return EvaluationResult(**obj)
         except Exception as e:
-            logger.error(f"Faithfulness evaluation failed: {e}")
-            return EvaluationResult(score=0.0, reasoning=f"Evaluation Error: {str(e)}")
+            logger.error("Faithfulness evaluation failed: %s", e)
+            return EvaluationResult(score=0.0, reasoning=f"Evaluation Error: {e}")
 
     async def evaluate_answer_relevance(self, question: str, answer: str) -> EvaluationResult:
-        """
-        评估回答相关性 (Answer Relevance): 回答是否解决了用户的问题?
-        """
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """你是一个专业的 RAG 系统评估专家。你的任务是评估系统生成的回答（Answer）是否有效回答了用户的问题（Question）。
-            
-你需要检查：
-1. 回答是否直接切题？
-2. 回答是否完整？
-3. 回答是否因答非所问而显得无用？
+        system = """你是一个专业的 RAG 系统评估专家。你的任务是评估系统生成的回答（Answer）是否有效回答了用户的问题（Question）。
 
-请按以下 JSON 格式输出评估结果：
-{{
-    "score": <0.0 到 1.0 之间的分数，1.0 表示完美回答，0.0 表示完全不相关>,
-    "reasoning": "<简短的打分理由>"
-}}
-"""),
-            ("user", """
-[Question]
+请按 JSON 输出：
+{"score": 0.0-1.0, "reasoning": "..."}
+"""
+        prompt = f"""[Question]
 {question}
 
 [Answer]
 {answer}
-""")
-        ])
-        
-        chain = prompt | self.llm | self.parser
-        
+"""
+
         try:
-            result = await chain.ainvoke({
-                "question": question,
-                "answer": answer
-            })
-            return EvaluationResult(**result)
+            raw = await llm_service.generate(
+                prompt,
+                model=settings.llm_model,
+                timeout_sec=settings.llm_timeout_sec,
+                temperature=0.1,
+                system_prompt=system,
+            )
+            obj = None
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                obj = _extract_json_object(raw)
+            if not isinstance(obj, dict):
+                raise ValueError("Invalid JSON")
+            return EvaluationResult(**obj)
         except Exception as e:
-            logger.error(f"Answer Relevance evaluation failed: {e}")
-            return EvaluationResult(score=0.0, reasoning=f"Evaluation Error: {str(e)}")
+            logger.error("Answer relevance evaluation failed: %s", e)
+            return EvaluationResult(score=0.0, reasoning=f"Evaluation Error: {e}")
 
 
-# 单例
 rag_evaluator = RAGEvaluator()

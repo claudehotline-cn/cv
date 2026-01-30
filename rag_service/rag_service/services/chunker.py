@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import List, Tuple
+from typing import Any, List, Tuple
 from dataclasses import dataclass
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -17,7 +17,7 @@ class TextChunk:
     """文本分块"""
     content: str
     index: int
-    metadata: dict
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -25,9 +25,9 @@ class ParentChildChunk:
     """父子分块结构"""
     content: str
     index: int
-    metadata: dict
+    metadata: dict[str, Any]
     is_parent: bool = False
-    parent_index: int = None  # 子块指向父块的索引 (父块此字段为None)
+    parent_index: int | None = None  # 子块指向父块的索引 (父块此字段为None)
 
 
 class DocumentChunker:
@@ -35,11 +35,13 @@ class DocumentChunker:
     
     def __init__(
         self,
-        chunk_size: int = None,
-        chunk_overlap: int = None,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
+        preprocess: bool = True,
     ):
         self.chunk_size = chunk_size or settings.chunk_size
         self.chunk_overlap = chunk_overlap or settings.chunk_overlap
+        self.preprocess = preprocess
         
         # 使用LangChain的递归字符分割器
         self.splitter = RecursiveCharacterTextSplitter(
@@ -62,13 +64,14 @@ class DocumentChunker:
             ],
         )
     
-    def chunk(self, content: str, metadata: dict = None) -> List[TextChunk]:
+    def chunk(self, content: str, metadata: dict[str, Any] | None = None) -> List[TextChunk]:
         """将文档内容分块 (标准分块)"""
         if not content or not content.strip():
             return []
         
         # 预处理：清理多余空白
-        content = self._preprocess(content)
+        if self.preprocess:
+            content = self._preprocess(content)
         
         # 分块
         texts = self.splitter.split_text(content)
@@ -93,7 +96,7 @@ class DocumentChunker:
     def hierarchical_chunk(
         self, 
         content: str, 
-        metadata: dict = None,
+        metadata: dict[str, Any] | None = None,
         parent_size: int = 2000,
         parent_overlap: int = 200,
         child_size: int = 500,
@@ -109,7 +112,8 @@ class DocumentChunker:
         if not content or not content.strip():
             return [], []
         
-        content = self._preprocess(content)
+        if self.preprocess:
+            content = self._preprocess(content)
         
         # 1. 创建父块分割器
         parent_splitter = RecursiveCharacterTextSplitter(
@@ -204,7 +208,7 @@ class DocumentChunker:
     def semantic_chunk(
         self,
         content: str,
-        metadata: dict = None,
+        metadata: dict[str, Any] | None = None,
         similarity_threshold: float = 0.5,
         min_chunk_size: int = 200,
         max_chunk_size: int = 1500,
@@ -225,7 +229,8 @@ class DocumentChunker:
         if not content or not content.strip():
             return []
         
-        content = self._preprocess(content)
+        if self.preprocess:
+            content = self._preprocess(content)
         sentences = self._split_sentences(content)
         
         if len(sentences) <= 1:
@@ -295,7 +300,7 @@ class DocumentChunker:
     def semantic_hierarchical_chunk(
         self,
         content: str,
-        metadata: dict = None,
+        metadata: dict[str, Any] | None = None,
         similarity_threshold: float = 0.5,
         parent_max_size: int = 2000,
         child_max_size: int = 500,
@@ -371,4 +376,3 @@ class DocumentChunker:
 
 # 单例
 document_chunker = DocumentChunker()
-

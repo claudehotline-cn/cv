@@ -22,6 +22,7 @@ class GraphBuilder:
                 auth=(settings.neo4j_user, settings.neo4j_password)
             )
             # 测试连接并创建约束
+            # 注意：当前使用 namespaced id (kb_id:name) 来满足全局唯一约束。
             with self.driver.session() as session:
                 session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE")
             logger.info("Neo4j connection initialized successfully")
@@ -69,7 +70,11 @@ class GraphBuilder:
 JSON:"""
         
         try:
-            response = await llm_service.generate(prompt)
+            response = await llm_service.generate(
+                prompt,
+                model=settings.graph_llm_model,
+                timeout_sec=settings.graph_llm_timeout_sec,
+            )
             
             # 清理response
             json_str = response.strip()
@@ -142,23 +147,31 @@ JSON:"""
                     continue
                 
                 cypher = """
-                MERGE (h:Entity {id: $head})
-                ON CREATE SET h.type = $head_type
+                MERGE (h:Entity {id: $head_id})
+                ON CREATE SET h.name = $head_name, h.type = $head_type, h.kb_id = $kb_id
                 
-                MERGE (t:Entity {id: $tail})
-                ON CREATE SET t.type = $tail_type
+                MERGE (t:Entity {id: $tail_id})
+                ON CREATE SET t.name = $tail_name, t.type = $tail_type, t.kb_id = $kb_id
                 
-                MERGE (h)-[r:RELATION {type: $relation}]->(t)
+                MERGE (h)-[r:RELATION {type: $relation, kb_id: $kb_id}]->(t)
                 SET r.source = $source
                 """
                 
+                kb_id = metadata.get("kb_id")
+                kb_id_int = int(kb_id) if kb_id is not None else 0
+
+                head_name = str(item["head"]).strip()
+                tail_name = str(item["tail"]).strip()
                 params = {
-                    "head": str(item["head"]).strip(),
+                    "kb_id": kb_id_int,
+                    "head_id": f"{kb_id_int}:{head_name}",
+                    "head_name": head_name,
                     "head_type": str(item.get("head_type", "Unknown")).strip(),
-                    "tail": str(item["tail"]).strip(),
+                    "tail_id": f"{kb_id_int}:{tail_name}",
+                    "tail_name": tail_name,
                     "tail_type": str(item.get("tail_type", "Unknown")).strip(),
                     "relation": str(item["relation"]).upper().replace(" ", "_").strip(),
-                    "source": metadata.get("source", "unknown")
+                    "source": metadata.get("source", "unknown"),
                 }
                 
                 with self.driver.session() as session:

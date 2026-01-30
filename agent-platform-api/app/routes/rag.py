@@ -1,0 +1,358 @@
+import logging
+import os
+import uuid
+from typing import Any, Dict, Optional
+
+import httpx
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Body
+
+from agent_core.events import AuditEmitter
+
+
+router = APIRouter(prefix="/rag", tags=["rag"])
+_LOGGER = logging.getLogger(__name__)
+
+
+def _rag_base_url() -> str:
+    # Inside docker-compose network, rag-service is reachable by container name.
+    return (os.getenv("RAG_SERVICE_URL") or "http://rag-service:8200").rstrip("/")
+
+
+def _dev_user_ctx(req: Request) -> Dict[str, str]:
+    user_id = (req.headers.get("X-User-Id") or "anonymous").strip() or "anonymous"
+    role = (req.headers.get("X-User-Role") or "user").strip().lower()
+    if role not in ("admin", "user"):
+        role = "user"
+    return {"user_id": user_id, "role": role}
+
+
+def _require_admin(ctx: Dict[str, str]) -> None:
+    if ctx.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+
+def _request_id(req: Request) -> str:
+    raw = (req.headers.get("X-Request-Id") or "").strip()
+    if raw:
+        try:
+            return str(uuid.UUID(raw))
+        except Exception:
+            pass
+    return str(uuid.uuid4())
+
+
+async def _emit_audit(
+    *,
+    req: Request,
+    ctx: Dict[str, str],
+    event_type: str,
+    request_id: str,
+    span_id: Optional[str],
+    payload: Dict[str, Any],
+):
+    try:
+        event_bus = req.app.state.event_bus
+        emitter = AuditEmitter(redis=event_bus.redis)
+        await emitter.emit(
+            event_type=event_type,
+            request_id=request_id,
+            span_id=span_id,
+            component="rag",
+            actor_type="user",
+            actor_id=ctx.get("user_id", "anonymous"),
+            payload=payload,
+        )
+    except Exception:
+        _LOGGER.exception("Failed to emit rag audit event")
+
+
+async def _proxy_json(
+    *,
+    method: str,
+    path: str,
+    req: Request,
+    request_id: Optional[str] = None,
+    json_body: Any = None,
+    params: Optional[Dict[str, Any]] = None,
+):
+    url = _rag_base_url() + path
+    headers: Dict[str, str] = {}
+    if request_id:
+        headers["X-Request-Id"] = request_id
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.request(method, url, json=json_body, params=params, headers=headers)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        return r.json()
+
+
+async def _proxy_multipart(
+    *,
+    path: str,
+    req: Request,
+    request_id: str,
+    file: UploadFile,
+):
+    url = _rag_base_url() + path
+    headers = {"X-Request-Id": request_id}
+
+    data = await file.read()
+    files = {"file": (file.filename, data, file.content_type or "application/octet-stream")}
+    async with httpx.AsyncClient(timeout=600) as client:
+        r = await client.post(url, files=files, headers=headers)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        return r.json()
+
+
+@router.get("/knowledge-bases")
+async def list_knowledge_bases(req: Request):
+    return await _proxy_json(method="GET", path="/api/knowledge-bases", req=req)
+
+
+@router.post("/knowledge-bases")
+async def create_knowledge_base(req: Request, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "kb_create", "input": body},
+    )
+    try:
+        out = await _proxy_json(method="POST", path="/api/knowledge-bases", req=req, json_body=body)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "kb_create", "error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "kb_create", "result": out},
+    )
+    return out
+
+
+@router.get("/knowledge-bases/{kb_id}")
+async def get_knowledge_base(req: Request, kb_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}", req=req)
+
+
+@router.put("/knowledge-bases/{kb_id}")
+async def update_knowledge_base(req: Request, kb_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "kb_update", "kb_id": kb_id, "input": body},
+    )
+    try:
+        out = await _proxy_json(method="PUT", path=f"/api/knowledge-bases/{kb_id}", req=req, json_body=body)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "kb_update", "kb_id": kb_id, "error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "kb_update", "kb_id": kb_id, "result": out},
+    )
+    return out
+
+
+@router.delete("/knowledge-bases/{kb_id}")
+async def delete_knowledge_base(req: Request, kb_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "kb_delete", "kb_id": kb_id},
+    )
+    out = await _proxy_json(method="DELETE", path=f"/api/knowledge-bases/{kb_id}", req=req)
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "kb_delete", "kb_id": kb_id, "result": out},
+    )
+    return out
+
+
+@router.get("/knowledge-bases/{kb_id}/stats")
+async def get_kb_stats(req: Request, kb_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/stats", req=req)
+
+
+@router.get("/knowledge-bases/{kb_id}/documents")
+async def list_documents(req: Request, kb_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/documents", req=req)
+
+
+@router.post("/knowledge-bases/{kb_id}/documents/upload")
+async def upload_document(req: Request, kb_id: int, file: UploadFile = File(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="job_queued",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "doc_upload", "kb_id": kb_id, "filename": file.filename, "queue": "rag:queue"},
+    )
+    return await _proxy_multipart(path=f"/api/knowledge-bases/{kb_id}/documents/upload", req=req, request_id=rid, file=file)
+
+
+@router.post("/knowledge-bases/{kb_id}/documents/{doc_id}/reindex")
+async def reindex_document(req: Request, kb_id: int, doc_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="job_queued",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "doc_reindex", "kb_id": kb_id, "doc_id": doc_id, "queue": "rag:queue"},
+    )
+    return await _proxy_json(
+        method="POST",
+        path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/reindex",
+        req=req,
+        request_id=rid,
+    )
+
+
+@router.get("/knowledge-bases/{kb_id}/documents/{doc_id}/chunks")
+async def list_document_chunks(
+    req: Request,
+    kb_id: int,
+    doc_id: int,
+    offset: int = 0,
+    limit: int = 50,
+    include_parents: bool = True,
+):
+    return await _proxy_json(
+        method="GET",
+        path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/chunks",
+        req=req,
+        params={"offset": offset, "limit": limit, "include_parents": include_parents},
+    )
+
+
+@router.post("/knowledge-bases/{kb_id}/documents/{doc_id}/preview-chunks")
+async def preview_document_chunks(req: Request, kb_id: int, doc_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "preview_chunks", "kb_id": kb_id, "doc_id": doc_id, "input": body},
+    )
+    out = await _proxy_json(
+        method="POST",
+        path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/preview-chunks",
+        req=req,
+        request_id=rid,
+        json_body=body,
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "preview_chunks", "kb_id": kb_id, "doc_id": doc_id},
+    )
+    return out
+
+
+@router.post("/knowledge-bases/{kb_id}/rebuild-vectors")
+async def rebuild_vectors(req: Request, kb_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="job_queued",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "rebuild_vectors", "kb_id": kb_id, "queue": "rag:queue"},
+    )
+    return await _proxy_json(
+        method="POST",
+        path=f"/api/knowledge-bases/{kb_id}/rebuild-vectors",
+        req=req,
+        request_id=rid,
+    )
+
+
+@router.post("/knowledge-bases/{kb_id}/build-graph")
+async def build_graph(req: Request, kb_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="job_queued",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "build_graph", "kb_id": kb_id, "queue": "rag:queue"},
+    )
+    return await _proxy_json(
+        method="POST",
+        path=f"/api/knowledge-bases/{kb_id}/build-graph",
+        req=req,
+        request_id=rid,
+    )

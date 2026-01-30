@@ -47,17 +47,29 @@ class GraphRetriever:
 
         for entity in entities:
             # 2. 精确匹配 + 邻居遍历 (不依赖全文索引)
-            cypher = """
-            MATCH (node:Entity)
-            WHERE toLower(node.id) CONTAINS toLower($entity_name)
-            MATCH (node)-[r]-(neighbor)
-            RETURN node.id as head, type(r) as relation, neighbor.id as tail, neighbor.type as tail_type, r.source as source
-            LIMIT 20
-            """
+            if knowledge_base_id is None:
+                cypher = """
+                MATCH (node:Entity)
+                WHERE toLower(node.name) CONTAINS toLower($entity_name)
+                MATCH (node)-[r:RELATION]-(neighbor:Entity)
+                RETURN node.name as head, r.type as relation, neighbor.name as tail, neighbor.type as tail_type, r.source as source
+                LIMIT 20
+                """
+                params = {"entity_name": entity}
+            else:
+                cypher = """
+                MATCH (node:Entity)
+                WHERE node.kb_id = $kb_id AND toLower(node.name) CONTAINS toLower($entity_name)
+                MATCH (node)-[r:RELATION]-(neighbor:Entity)
+                WHERE neighbor.kb_id = $kb_id
+                RETURN node.name as head, r.type as relation, neighbor.name as tail, neighbor.type as tail_type, r.source as source
+                LIMIT 20
+                """
+                params = {"entity_name": entity, "kb_id": int(knowledge_base_id)}
             
             try:
                 with self.driver.session() as session:
-                    result = session.run(cypher, {"entity_name": entity})
+                    result = session.run(cypher, params)
                     for record in result:
                         triple_str = f"{record['head']} - {record['relation']} -> {record['tail']}"
                         if triple_str not in seen_triples:

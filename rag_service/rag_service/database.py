@@ -46,6 +46,31 @@ def init_mysql_db():
     
     # 创建表
     Base.metadata.create_all(bind=mysql_engine)
+
+    # Best-effort schema migration (no Alembic in this repo).
+    # MySQL does not reliably support `ADD COLUMN IF NOT EXISTS` across versions, so we check information_schema.
+    try:
+        with mysql_engine.connect() as conn:
+            res = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = :db
+                      AND table_name = 'rag_knowledge_bases'
+                      AND column_name = 'cleaning_rules'
+                    """
+                ),
+                {"db": settings.mysql_database},
+            )
+            exists = int(res.scalar() or 0) > 0
+            if not exists:
+                conn.execute(text("ALTER TABLE rag_knowledge_bases ADD COLUMN cleaning_rules TEXT NULL"))
+                conn.commit()
+                logger.info("MySQL migration: added rag_knowledge_bases.cleaning_rules")
+    except Exception as e:
+        logger.warning(f"MySQL migration (cleaning_rules) skipped due to error: {e}")
+
     logger.info("MySQL tables initialized")
 
 
@@ -55,24 +80,77 @@ def init_pgvector_db():
         # 创建pgvector扩展
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.commit()
+
+        # 维度迁移：如果现有 rag_vectors 的向量维度与配置不一致，则保留旧表并新建新表。
+        try:
+            reg = conn.execute(text("SELECT to_regclass('public.rag_vectors')"))
+            has_table = reg.scalar() is not None
+            if has_table:
+                type_row = conn.execute(
+                    text(
+                        """
+                        SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type
+                        FROM pg_attribute a
+                        JOIN pg_class c ON a.attrelid = c.oid
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public'
+                          AND c.relname = 'rag_vectors'
+                          AND a.attname = 'embedding'
+                          AND a.attnum > 0
+                          AND NOT a.attisdropped
+                        """
+                    )
+                ).fetchone()
+                if type_row and isinstance(type_row[0], str) and type_row[0].startswith("vector("):
+                    old_dim_str = type_row[0].split("(", 1)[1].split(")", 1)[0]
+                    old_dim = int(old_dim_str)
+                    if old_dim != settings.vector_dimension:
+                        old_table = f"rag_vectors_{old_dim}"
+                        exists_old = conn.execute(
+                            text("SELECT to_regclass(:tname)"),
+                            {"tname": f"public.{old_table}"},
+                        ).scalar()
+
+                        if exists_old is None:
+                            logger.warning(
+                                "pgvector: rag_vectors is vector(%s) but config wants vector(%s); renaming to %s and creating a fresh rag_vectors",
+                                old_dim,
+                                settings.vector_dimension,
+                                old_table,
+                            )
+                            conn.execute(text(f"ALTER TABLE rag_vectors RENAME TO {old_table}"))
+                            conn.commit()
+                        else:
+                            logger.warning(
+                                "pgvector: rag_vectors dimension mismatch (vector(%s) -> vector(%s)); %s already exists; keeping existing tables",
+                                old_dim,
+                                settings.vector_dimension,
+                                old_table,
+                            )
+        except Exception as e:
+            logger.warning(f"pgvector: dimension check/migration skipped due to error: {e}")
         
         # 创建向量存储表
         # 注意: content_ts 用于全文检索 (由应用层分词后写入)
         # parent_id 和 is_parent 用于父子索引策略
-        conn.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS rag_vectors (
-                id SERIAL PRIMARY KEY,
-                document_id INTEGER NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                embedding vector({settings.vector_dimension}) NOT NULL,
-                metadata JSONB DEFAULT '{{}}',
-                content_ts TSVECTOR,
-                parent_id INTEGER,
-                is_parent BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS rag_vectors (
+                    id SERIAL PRIMARY KEY,
+                    document_id INTEGER NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    embedding vector({settings.vector_dimension}) NOT NULL,
+                    metadata JSONB DEFAULT '{{}}',
+                    content_ts TSVECTOR,
+                    parent_id INTEGER,
+                    is_parent BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
-        """))
+        )
         conn.commit()
         
         # 添加缺失的列 (用于现有表的迁移)
@@ -92,30 +170,48 @@ def init_pgvector_db():
                 logger.warning(f"Could not add column {col_name}: {e}")
 
         # 创建索引
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_rag_vectors_document_id 
-            ON rag_vectors(document_id)
-        """))
-        conn.execute(text(f"""
-            CREATE INDEX IF NOT EXISTS idx_rag_vectors_embedding 
-            ON rag_vectors USING ivfflat (embedding vector_cosine_ops)
-            WITH (lists = 100)
-        """))
+        # 注意：如果历史表曾使用过 idx_rag_vectors_* 名称，这里使用带维度后缀的新索引名，避免重名导致新表缺索引。
+        dim_suffix = str(settings.vector_dimension)
+        conn.execute(
+            text(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_rag_vectors_document_id_{dim_suffix}
+                ON rag_vectors(document_id)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_rag_vectors_embedding_{dim_suffix}
+                ON rag_vectors USING ivfflat (embedding vector_cosine_ops)
+                WITH (lists = 100)
+                """
+            )
+        )
         try:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_rag_vectors_content_ts 
-                ON rag_vectors USING GIN (content_ts)
-            """))
+            conn.execute(
+                text(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS idx_rag_vectors_content_ts_{dim_suffix}
+                    ON rag_vectors USING GIN (content_ts)
+                    """
+                )
+            )
             conn.commit()
         except:
             pass # 索引可能已存在
         
         # 父子索引: 为 parent_id 创建索引
         try:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_rag_vectors_parent_id 
-                ON rag_vectors(parent_id)
-            """))
+            conn.execute(
+                text(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS idx_rag_vectors_parent_id_{dim_suffix}
+                    ON rag_vectors(parent_id)
+                    """
+                )
+            )
             conn.commit()
         except:
             pass

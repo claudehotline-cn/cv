@@ -209,9 +209,12 @@ python
     ])]
     
     # 🚀 使用流式输出 + with_config 设置 tags，让 metadata 包含 agent 名称
-    llm_config = {"tags": ["agent:visualizer_agent"], "metadata": {"sub_agent": "Visualizer Agent"}}
+    # Merge with parent config to preserve tracing context (run_id, callbacks)
+    llm_config = config.copy() if config else {}
+    llm_config.setdefault("tags", []).append("agent:visualizer_agent")
+    llm_config.setdefault("metadata", {})["sub_agent"] = "Visualizer Agent"
     full_response = None
-    for chunk in llm.with_config(llm_config).stream(messages):
+    async for chunk in llm.with_config(llm_config).astream(messages):
         if full_response is None:
             full_response = chunk
         else:

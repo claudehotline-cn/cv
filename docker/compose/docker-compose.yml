@@ -149,7 +149,7 @@ services:
       # Excel 文件基础目录（可根据实际需要调整/新增挂载）
       - ../../docs/examples:/data/excel:ro
       - ../../agent-langchain:/app/agent-langchain
-      - ../../policy.yaml:/app/policy.yaml:ro
+      - ../../agent-platform-api/policy.yaml:/app/policy.yaml:ro
       # 工作区目录：用于持久化分析结果（DataFrame、图表、报告）
       - ../../agent-langchain/workspace:/data/workspace:rw
 
@@ -200,7 +200,7 @@ services:
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for API code
       # Workspaces
       - ../../agent-langchain/workspace:/data/workspace:rw
-      - ../../policy.yaml:/app/policy.yaml:ro
+      - ../../agent-platform-api/policy.yaml:/app/policy.yaml:ro
     healthcheck:
       test: [ "CMD-SHELL", "curl -fsS http://localhost:8000/health > /dev/null || exit 1" ]
       interval: 10s
@@ -237,7 +237,7 @@ services:
       - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for worker code
       - ../../agent-langchain/workspace:/data/workspace:rw
-      - ../../policy.yaml:/app/policy.yaml:ro
+      - ../../agent-platform-api/policy.yaml:/app/policy.yaml:ro
 
   # ============================================================================
   # Agent Chat Vue (新 Vue 前端，连接 agent-chat-api)
@@ -348,7 +348,7 @@ services:
       - ../../docs:/docs:ro
       - ../../article_agent/workspace:/data/workspace:rw
       - ../../article_agent:/app/article_agent:rw
-      - ../../policy.yaml:/app/policy.yaml:ro
+      - ../../agent-platform-api/policy.yaml:/app/policy.yaml:ro
       # Persist HuggingFace model cache (Docling models)
       - ../../.hf_cache:/root/.cache/huggingface:rw
     healthcheck:
@@ -385,11 +385,22 @@ services:
       - RAG_PGVECTOR_HOST=pgvector
       - RAG_MINIO_ENDPOINT=minio:9000
       - RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - RAG_VLLM_BASE_URL=http://vllm:8000/v1
+      - RAG_VLLM_API_KEY=EMPTY
+      - RAG_LLM_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
+      - RAG_VLM_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
+      - RAG_REDIS_URL=redis://langgraph-redis:6379
+      - RAG_QUEUE_NAME=rag:queue
+      - RAG_USE_JOB_QUEUE=true
+      - RAG_EMBEDDING_MODEL=bge-m3:567m
+      - RAG_VECTOR_DIMENSION=1024
       - HF_ENDPOINT=https://hf-mirror.com
     depends_on:
       mysql:
         condition: service_healthy
       pgvector:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -397,6 +408,45 @@ services:
         condition: service_healthy
     ports:
       - "18200:8200"
+    volumes:
+      - ../../rag_service/rag_service:/app/rag_service
+      - ../../logs:/logs:rw
+      - rag-model-cache:/root/.cache/huggingface
+      - ../../article_agent/workspace/artifacts:/data/workspace/artifacts:ro
+
+  rag-worker:
+    build:
+      context: ../..
+      dockerfile: docker/rag-service/Dockerfile
+    image: cv/rag-service:latest
+    container_name: rag-worker
+    command: ["arq", "rag_service.worker.WorkerSettings"]
+    environment:
+      - RAG_MYSQL_HOST=mysql
+      - RAG_PGVECTOR_HOST=pgvector
+      - RAG_MINIO_ENDPOINT=minio:9000
+      - RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - RAG_VLLM_BASE_URL=http://vllm:8000/v1
+      - RAG_VLLM_API_KEY=EMPTY
+      - RAG_LLM_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
+      - RAG_VLM_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
+      - RAG_REDIS_URL=redis://langgraph-redis:6379
+      - RAG_QUEUE_NAME=rag:queue
+      - RAG_USE_JOB_QUEUE=true
+      - RAG_EMBEDDING_MODEL=bge-m3:567m
+      - RAG_VECTOR_DIMENSION=1024
+      - HF_ENDPOINT=https://hf-mirror.com
+    depends_on:
+      mysql:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
     volumes:
       - ../../rag_service/rag_service:/app/rag_service
       - ../../logs:/logs:rw

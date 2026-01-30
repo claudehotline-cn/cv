@@ -21,6 +21,7 @@ from ..prompts import (
     PYTHON_AGENT_DESCRIPTION, PYTHON_AGENT_PROMPT
 )
 from ..skills.registry import SKILLS_REGISTRY
+from ..utils.artifacts import list_dataframes
 
 from agent_core.decorators import node_wrapper
 
@@ -36,6 +37,7 @@ class PythonAgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     task_description: str
     analysis_id: str
+    input_df_name: str
     df_profile_result: str  # Step 1 的结果
     python_code: str        # LLM 生成的代码
     python_result: str      # Step 2 的结果
@@ -50,6 +52,8 @@ async def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> d
     # Check for user_id and analysis_id from config
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", "NOT_FOUND")
+    session_id = configurable.get("session_id", "default")
+    task_id = configurable.get("task_id") or None
     analysis_id = configurable.get("analysis_id", "")
     
     task_description = ""
@@ -60,13 +64,43 @@ async def step1_df_profile(state: PythonAgentState, config: RunnableConfig) -> d
     
 
     
+    input_df_name = ""
     try:
-        result = await df_profile_tool.ainvoke({"df_name": "sql_result", "analysis_id": analysis_id}, config=config)
+        available = list_dataframes(
+            analysis_id,
+            user_id=user_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+        for cand in ("sql_result", "excel_data", "result"):
+            if cand in available:
+                input_df_name = cand
+                break
+        if not input_df_name and available:
+            input_df_name = available[0]
+    except Exception as e:
+        _LOGGER.warning("[Python Agent] list_dataframes failed: %s", e)
+
+    if not input_df_name:
+        input_df_name = "sql_result"
+
+    try:
+        result = await df_profile_tool.ainvoke({"df_name": input_df_name, "analysis_id": analysis_id}, config=config)
         _LOGGER.info("[Python Agent] df_profile result: %s", result[:500] if len(result) > 500 else result)
-        return {"df_profile_result": result, "analysis_id": analysis_id, "task_description": task_description}
+        return {
+            "df_profile_result": result,
+            "analysis_id": analysis_id,
+            "task_description": task_description,
+            "input_df_name": input_df_name,
+        }
     except Exception as e:
         _LOGGER.error("[Python Agent] df_profile failed: %s", e)
-        return {"df_profile_result": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
+        return {
+            "df_profile_result": f"Error: {e}",
+            "analysis_id": analysis_id,
+            "task_description": task_description,
+            "input_df_name": input_df_name,
+        }
 
 @node_wrapper("llm_generate", graph_id="python_agent")
 async def step2_llm_generate_code(state: PythonAgentState, config: RunnableConfig) -> dict:
@@ -74,6 +108,7 @@ async def step2_llm_generate_code(state: PythonAgentState, config: RunnableConfi
     _LOGGER.info("[Python Agent Fixed Flow] Step 2: LLM generate code")
     task = state.get("task_description", "")
     df_info = state.get("df_profile_result", "")
+    input_df_name = state.get("input_df_name", "sql_result") or "sql_result"
     
     # 1. 提取 Skill (从 task_description 中解析 [skill=xxx])
     skill_match = re.search(r'\[skill[=:]?\s*([a-zA-Z0-9_]+)\]', task, re.IGNORECASE)
@@ -96,6 +131,9 @@ async def step2_llm_generate_code(state: PythonAgentState, config: RunnableConfi
     
     # 4. 拼接具体任务和数据信息
     final_prompt = f"""{prompt}
+
+## 本次数据源（必须使用）
+你必须加载：`df = load_dataframe('{input_df_name}')`（不要改成别的 name）
 
 【任务描述】
 {task}

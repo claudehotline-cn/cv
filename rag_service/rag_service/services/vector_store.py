@@ -328,33 +328,18 @@ class VectorStore:
         """
         if not images:
             return 0
-            
-        with get_pgvector_session() as session:
-            for image_index, image_path, embedding, description, metadata in images:
-                emb_literal = "[" + ",".join(f"{x:.6f}" for x in embedding) + "]"
-                meta_json = json.dumps(metadata, ensure_ascii=False)
-                
-                # 转义
-                desc_escaped = description.replace("'", "''").replace(":", r"\:")
-                meta_escaped = meta_json.replace("'", "''").replace(":", r"\:")
-                
-                sql = f"""
-                    INSERT INTO rag_document_images (document_id, image_index, image_path, description, embedding, metadata)
-                    VALUES (
-                        {document_id}, 
-                        {image_index}, 
-                        '{image_path}', 
-                        '{desc_escaped}', 
-                        '{emb_literal}'::vector,
-                        '{meta_escaped}'::jsonb
-                    )
-                """
-                session.execute(text(sql))
-            
-            session.commit()
-        
-        logger.info(f"Stored {len(images)} image vectors for document {document_id}")
-        return len(images)
+
+        # 统一走 rag_vectors（与文本向量同表），通过 metadata.type='image' 区分。
+        chunks = []
+        for image_index, image_path, embedding, description, metadata in images:
+            meta = dict(metadata or {})
+            meta.setdefault("type", "image")
+            meta.setdefault("minio_path", image_path)
+            chunks.append((image_index, description, embedding, meta))
+
+        stored = self.store_vectors(document_id=document_id, chunks=chunks)
+        logger.info(f"Stored {stored} image vectors for document {document_id}")
+        return stored
 
     def search_images(
         self,
@@ -362,9 +347,9 @@ class VectorStore:
         knowledge_base_id: Optional[int] = None,
         top_k: int = 5,
     ) -> List[dict]:
-        """图像向量检索"""
+        """图像向量检索 (在 rag_vectors 中按 metadata.type 过滤)"""
         emb_literal = "[" + ",".join(f"{x:.6f}" for x in query_embedding) + "]"
-        
+
         doc_filter_sql = ""
         if knowledge_base_id is not None:
             doc_ids = self._get_kb_doc_ids(knowledge_base_id)
@@ -372,37 +357,57 @@ class VectorStore:
                 return []
             doc_ids_str = ",".join(str(d) for d in doc_ids)
             doc_filter_sql = f"AND document_id IN ({doc_ids_str})"
-            
+
         with get_pgvector_session() as session:
             sql = f"""
                 SELECT 
                     id,
                     document_id,
-                    image_index,
-                    image_path,
-                    description,
+                    chunk_index,
+                    content as description,
                     metadata,
                     1 - (embedding <=> '{emb_literal}'::vector) as score
-                FROM rag_document_images
-                WHERE 1=1
+                FROM rag_vectors
+                WHERE (is_parent = FALSE OR is_parent IS NULL)
+                AND (metadata->>'type') = 'image'
                 {doc_filter_sql}
                 ORDER BY embedding <=> '{emb_literal}'::vector
                 LIMIT {top_k}
             """
-            
+
             result = session.execute(text(sql))
-            return [
-                {
-                    "id": row.id,
-                    "document_id": row.document_id,
-                    "image_index": row.image_index,
-                    "image_path": row.image_path,
-                    "description": row.description,
-                    "metadata": row.metadata if isinstance(row.metadata, dict) else json.loads(row.metadata or "{}"),
-                    "score": float(row.score),
-                }
-                for row in result
-            ]
+
+            # 批量补齐 image_path/filename（来自 MySQL rag_documents）
+            rows = list(result)
+            doc_ids = sorted({int(r.document_id) for r in rows})
+            doc_map = {}
+            if doc_ids:
+                try:
+                    from ..database import MySQLSessionLocal
+                    from ..models import Document
+                    with MySQLSessionLocal() as mysql_db:
+                        docs = mysql_db.query(Document).filter(Document.id.in_(doc_ids)).all()
+                        doc_map = {d.id: d for d in docs}
+                except Exception:
+                    doc_map = {}
+
+            out = []
+            for row in rows:
+                meta = row.metadata if isinstance(row.metadata, dict) else json.loads(row.metadata or "{}")
+                doc = doc_map.get(int(row.document_id))
+                image_path = meta.get("minio_path") or (doc.file_path if doc else None)
+                out.append(
+                    {
+                        "id": row.id,
+                        "document_id": row.document_id,
+                        "image_index": row.chunk_index,
+                        "image_path": image_path,
+                        "description": row.description,
+                        "metadata": meta,
+                        "score": float(row.score),
+                    }
+                )
+
+            return out
 # 单例
 vector_store = VectorStore()
-

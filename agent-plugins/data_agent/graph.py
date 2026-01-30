@@ -9,7 +9,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
 
 from agent_core.runtime import build_chat_llm
-from agent_core.middleware import SensitiveToolMiddleware, FixedTodoListMiddleware
+from agent_core.middleware import SensitiveToolMiddleware, FixedTodoListMiddleware, FileAttachmentMiddleware
 import deepagents.graph
 # Explicitly patch locally to ensure it takes effect before create_deep_agent uses it
 deepagents.graph.TodoListMiddleware = FixedTodoListMiddleware
@@ -88,6 +88,8 @@ def get_data_deep_agent_graph(
         tools=[],
         system_prompt=MAIN_AGENT_PROMPT,
         middleware=[
+            # 文件上传处理（将上传文件落盘并把路径注入到用户消息）
+            FileAttachmentMiddleware(),
             SensitiveToolMiddleware(
                 emitter=_get_audit_emitter(),
                 sensitive_tools=["visualizer_agent", "report_agent"],

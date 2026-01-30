@@ -77,7 +77,7 @@ class MultiModalRetriever:
         result = MultiModalSearchResult()
         
         # 1. 文本检索 (使用现有 RAG retriever)
-        text_results = self.text_retriever.retrieve(
+        text_results = await self.text_retriever.retrieve(
             query=query,
             knowledge_base_id=knowledge_base_id,
             top_k=top_k
@@ -93,7 +93,7 @@ class MultiModalRetriever:
                     # 将图像描述加入查询
                     enhanced_query = f"{query}\n相关图像描述：{description}"
                     # 补充检索
-                    additional_results = self.text_retriever.retrieve(
+                    additional_results = await self.text_retriever.retrieve(
                         query=enhanced_query,
                         knowledge_base_id=knowledge_base_id,
                         top_k=top_k // 2
@@ -217,7 +217,7 @@ class MultiModalRetriever:
             has_multimodal = True
         else:
             # 使用现有的 RAG 问答
-            rag_response = self.text_retriever.answer(
+            rag_response = await self.text_retriever.answer(
                 query=query,
                 knowledge_base_id=knowledge_base_id,
                 top_k=top_k

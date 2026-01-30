@@ -7,6 +7,8 @@ import logging
 import ast
 import uuid
 import os
+import sys
+from pathlib import Path
 import pandas as pd
 from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, List, Optional
@@ -47,6 +49,38 @@ def _json_default(obj):
 _FORBIDDEN_IMPORTS = {"os", "subprocess", "shutil", "sys", "pathlib", "socket", "requests", "urllib"}
 _FORBIDDEN_BUILTINS = {"open", "exec", "eval", "compile"}
 _CODE_REVIEW_ENABLED = True
+
+
+def _build_python_runner_env() -> Dict[str, str]:
+    """Ensure the python_runner subprocess can import in-repo packages."""
+    env = os.environ.copy()
+
+    try:
+        this_file = Path(__file__).resolve()
+        # .../agent-plugins/data_agent/tools/python.py
+        agent_plugins_dir = this_file.parents[2]
+        repo_root = this_file.parents[3]
+        agent_core_dir = repo_root / "agent-core"
+
+        parts: List[str] = [str(agent_plugins_dir), str(agent_core_dir), str(repo_root)]
+        existing = env.get("PYTHONPATH", "")
+        if existing:
+            parts.extend([p for p in existing.split(os.pathsep) if p])
+
+        # De-duplicate while preserving order
+        seen = set()
+        unique: List[str] = []
+        for p in parts:
+            if p and p not in seen:
+                unique.append(p)
+                seen.add(p)
+
+        env["PYTHONPATH"] = os.pathsep.join(unique)
+    except Exception:
+        # Best effort: if path calculation fails, inherit env.
+        pass
+
+    return env
 
 
 def _create_safe_globals(
@@ -279,9 +313,73 @@ async def python_execute_tool(
         code: 要执行的 Python 代码
         analysis_id: 分析任务 ID（必填，用于持久化结果和加载已有 DataFrame）
     """
-    # Use asyncio.to_thread to run the synchronous execution in a separate thread
-    # while maintaining the asyncio context (unlike run_in_executor which might lose context)
-    return await asyncio.to_thread(_python_execute_sync, code, analysis_id, config)
+    configurable = (config or {}).get("configurable", {})
+    user_id = configurable.get("user_id", "anonymous")
+    session_id = configurable.get("session_id", "default")
+    task_id = configurable.get("task_id") or None
+
+    cfg_analysis_id = configurable.get("analysis_id", "")
+    if cfg_analysis_id:
+        analysis_id = cfg_analysis_id
+
+    timeout_sec = int(os.environ.get("DATA_AGENT_PY_TIMEOUT_SEC", "20"))
+
+    payload = {
+        "code": code,
+        "analysis_id": analysis_id,
+        "user_id": user_id,
+        "session_id": session_id,
+        "task_id": task_id,
+        "timeout_sec": timeout_sec,
+    }
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "data_agent.tools.python_runner",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=_build_python_runner_env(),
+    )
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(input=json.dumps(payload).encode("utf-8")),
+            timeout=timeout_sec,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return PythonResultSchema(
+            success=False,
+            error=f"Execution timed out after {timeout_sec}s",
+            suggestion="Try reducing data size or simplifying the code.",
+        ).model_dump_json(exclude_none=True)
+
+    stdout = (stdout_b or b"").decode("utf-8", errors="replace")
+    stderr = (stderr_b or b"").decode("utf-8", errors="replace")
+
+    if not stdout.strip():
+        return PythonResultSchema(
+            success=False,
+            stdout="",
+            stderr=stderr,
+            error="python_runner produced no output",
+        ).model_dump_json(exclude_none=True)
+
+    # Validate runner output is JSON; if not, wrap it.
+    try:
+        json.loads(stdout)
+    except Exception:
+        return PythonResultSchema(
+            success=False,
+            stdout=stdout,
+            stderr=stderr,
+            error="python_runner returned invalid JSON",
+        ).model_dump_json(exclude_none=True)
+
+    return stdout
 
 
 @tool("df_profile")

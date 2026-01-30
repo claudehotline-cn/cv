@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import apiClient, { DEV_USER_ROLE } from '@/api/client'
 import {
   Setting,
   Folder,
@@ -20,68 +22,194 @@ import {
   Grid
 } from '@element-plus/icons-vue'
 
-// Mock Data
 const router = useRouter()
-const stats = ref([
-  { label: 'Total Documents', value: '142' },
-  { label: 'Total Tokens', value: '8.4M' },
-  { label: 'Last Synced', value: '2h ago' }
-])
 
-const activeFilter = ref('All Types')
-const filters = ['All Types', 'PDF', 'Spreadsheets']
+const isAdmin = DEV_USER_ROLE === 'admin'
 
-const handleRowClick = (_row: any) => {
-  router.push('/document-editor')
+type KB = {
+  id: number
+  name: string
+  description?: string
+  document_count?: number
+  chunk_size?: number
+  chunk_overlap?: number
+  cleaning_rules?: Record<string, any> | null
 }
 
-const tableData = ref([
-  {
-    icon: Document,
-    iconClass: 'icon-pdf',
-    name: 'Q3_Financial_Report_Final.pdf',
-    meta: '2.4 MB • PDF Document',
-    date: 'Oct 24, 2023',
-    status: 'Ready',
-    statusType: 'success'
-  },
-  {
-    icon: Document,
-    iconClass: 'icon-word',
-    name: 'Competitor_Analysis_2024.docx',
-    meta: '1.1 MB • Word Document',
-    date: 'Just now',
-    status: 'Processing',
-    statusType: 'warning'
-  },
-  {
-    icon: IconLink,
-    iconClass: 'icon-link',
-    name: 'https://stripe.com/docs/api',
-    meta: 'URL Scrape • External',
-    date: 'Yesterday',
-    status: 'Failed',
-    statusType: 'danger'
-  },
-  {
-    icon: DataAnalysis,
-    iconClass: 'icon-csv',
-    name: 'Q1-Q2_Raw_Data.csv',
-    meta: '4.8 MB • CSV Spreadsheet',
-    date: 'Oct 20, 2023',
-    status: 'Ready',
-    statusType: 'success'
-  },
-  {
-    icon: Document,
-    iconClass: 'icon-pdf',
-    name: 'Employee_Handbook_v4.pdf',
-    meta: '8.2 MB • PDF Document',
-    date: 'Oct 18, 2023',
-    status: 'Ready',
-    statusType: 'success'
+type Doc = {
+  id: number
+  knowledge_base_id: number
+  filename: string
+  file_type: string
+  file_size?: number
+  source_url?: string
+  chunk_count?: number
+  status: string
+  error_message?: string
+  created_at?: string
+}
+
+const knowledgeBases = ref<KB[]>([])
+const selectedKbId = ref<number | null>(null)
+const selectedKb = computed(() => knowledgeBases.value.find(k => k.id === selectedKbId.value) || null)
+
+const kbStats = ref<any | null>(null)
+
+const activeFilter = ref('All Types')
+const filters = ['All Types', 'PDF', 'Spreadsheets', 'Word', 'Images', 'Audio', 'Video', 'Web']
+
+const documents = ref<Doc[]>([])
+
+function formatBytes(bytes?: number) {
+  if (!bytes || bytes <= 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let n = bytes
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i++
   }
-])
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+function formatDate(iso?: string) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString()
+}
+
+function iconForType(fileType: string) {
+  const t = (fileType || '').toLowerCase()
+  if (t === 'pdf') return { icon: Document, iconClass: 'icon-pdf' }
+  if (t === 'word') return { icon: Document, iconClass: 'icon-word' }
+  if (t === 'excel' || t === 'csv') return { icon: DataAnalysis, iconClass: 'icon-csv' }
+  if (t === 'webpage') return { icon: IconLink, iconClass: 'icon-link' }
+  return { icon: Document, iconClass: 'icon-link' }
+}
+
+function statusFor(doc: Doc) {
+  const s = (doc.status || '').toLowerCase()
+  if (s === 'completed') return { status: 'Ready', statusType: 'success' }
+  if (s === 'failed') return { status: 'Failed', statusType: 'danger' }
+  if (s === 'processing' || s === 'queued' || s === 'pending') return { status: 'Processing', statusType: 'warning' }
+  return { status: doc.status || 'Unknown', statusType: 'info' }
+}
+
+const tableData = computed(() => {
+  const filter = activeFilter.value
+  const rows = documents.value
+    .filter((d) => {
+      if (filter === 'All Types') return true
+      const ft = (d.file_type || '').toLowerCase()
+      if (filter === 'PDF') return ft === 'pdf'
+      if (filter === 'Spreadsheets') return ft === 'excel' || ft === 'csv'
+      if (filter === 'Word') return ft === 'word'
+      if (filter === 'Images') return ft === 'image'
+      if (filter === 'Audio') return ft === 'audio'
+      if (filter === 'Video') return ft === 'video'
+      if (filter === 'Web') return ft === 'webpage'
+      return true
+    })
+    .map((d) => {
+      const { icon, iconClass } = iconForType(d.file_type)
+      const { status, statusType } = statusFor(d)
+      const meta = `${formatBytes(d.file_size)} • ${(d.file_type || 'Document').toUpperCase()}`
+      return {
+        docId: d.id,
+        kbId: d.knowledge_base_id,
+        icon,
+        iconClass,
+        name: d.filename,
+        meta,
+        date: formatDate(d.created_at),
+        status,
+        statusType,
+        raw: d,
+      }
+    })
+  return rows
+})
+
+const stats = computed(() => {
+  const docCount = kbStats.value?.documents?.total ?? selectedKb.value?.document_count ?? documents.value.length
+  const totalVectors = kbStats.value?.vectors?.total
+  const avgSize = kbStats.value?.vectors?.avg_chunk_size
+  return [
+    { label: 'Total Documents', value: String(docCount ?? 0) },
+    { label: 'Total Vectors', value: totalVectors !== undefined ? String(totalVectors) : '—' },
+    { label: 'Avg Chunk Size', value: avgSize !== undefined ? String(avgSize) : '—' },
+  ]
+})
+
+async function refreshKb(kbId: number) {
+  selectedKbId.value = kbId
+  try {
+    const [docRes, statsRes] = await Promise.all([
+      apiClient.listKnowledgeBaseDocuments(kbId),
+      apiClient.getKnowledgeBaseStats(kbId),
+    ])
+    documents.value = (docRes.items || []) as Doc[]
+    kbStats.value = statsRes
+  } catch (e: any) {
+    ElMessage.error('Failed to load knowledge base')
+    documents.value = []
+    kbStats.value = null
+  }
+}
+
+async function loadKbs() {
+  const res = await apiClient.listKnowledgeBases()
+  knowledgeBases.value = (res.items || []) as KB[]
+  if (!knowledgeBases.value.length) {
+    selectedKbId.value = null
+    documents.value = []
+    kbStats.value = null
+    return
+  }
+
+  const preferred = knowledgeBases.value.find(k => k.name.toLowerCase() === 'finance docs')
+  await refreshKb((preferred || knowledgeBases.value[0]).id)
+}
+
+const fileInputRef = ref<HTMLInputElement | null>(null)
+function openFilePicker() {
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  fileInputRef.value?.click()
+}
+
+async function onFileSelected(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!selectedKbId.value) return
+  try {
+    await apiClient.uploadKnowledgeBaseDocument(selectedKbId.value, file)
+    ElMessage.success('Upload queued')
+    await refreshKb(selectedKbId.value)
+  } catch (err: any) {
+    ElMessage.error('Upload failed')
+  } finally {
+    input.value = ''
+  }
+}
+
+const handleRowClick = (row: any) => {
+  const kbId = row.kbId
+  const docId = row.docId
+  router.push({ path: '/document-editor', query: { kbId: String(kbId), docId: String(docId) } })
+}
+
+onMounted(async () => {
+  try {
+    await loadKbs()
+  } catch {
+    // handled in loadKbs
+  }
+})
 </script>
 
 <template>

@@ -18,6 +18,7 @@ class KnowledgeBase(Base):
     embedding_model = Column(String(100), default="bge-m3:567m", comment="Embedding模型")
     chunk_size = Column(Integer, default=500, comment="分块大小")
     chunk_overlap = Column(Integer, default=50, comment="分块重叠")
+    cleaning_rules = Column(Text, nullable=True, comment="清洗规则(JSON)")
     document_count = Column(Integer, default=0, comment="文档数量")
     is_active = Column(Boolean, default=True, comment="是否启用")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
@@ -27,6 +28,13 @@ class KnowledgeBase(Base):
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
     
     def to_dict(self) -> dict:
+        import json as _json
+        rules = None
+        if self.cleaning_rules:
+            try:
+                rules = _json.loads(self.cleaning_rules)
+            except Exception:
+                rules = None
         return {
             "id": self.id,
             "name": self.name,
@@ -34,6 +42,7 @@ class KnowledgeBase(Base):
             "embedding_model": self.embedding_model,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
+            "cleaning_rules": rules,
             "document_count": self.document_count,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,

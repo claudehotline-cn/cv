@@ -4,13 +4,10 @@ import logging
 from typing import List, Optional
 from dataclasses import dataclass
 
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-
 from ..config import settings
 from .embedder import embedding_service
 from .vector_store import vector_store, SearchResult
+from .llm_service import llm_service
 
 logger = logging.getLogger(__name__)
 
@@ -26,34 +23,7 @@ class RAGRetriever:
     """RAG检索器"""
     
     def __init__(self):
-        # 初始化LLM
-        self.llm = ChatOllama(
-            model=settings.llm_model,
-            base_url=settings.ollama_base_url,
-            temperature=0.7,
-        )
-        
-        # RAG提示模板
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """你是一个专业的智能知识库助手。请**结合**你的专业知识和提供的上下文信息，全面、准确地回答用户的问题。
-
-要求:
-1. **深度结合**：以提供的上下文信息为事实基础，利用你的专业知识（如数学公式、代码实现、原理解释）对内容进行补充和完善，使答案更加完整和易懂。
-2. **准确性**：确保引用的上下文内容准确无误，补充的专业知识必须也是客观正确的。
-3. **诚实**：如果问题与上下文完全无关，且无法仅凭专业知识给出有上下文关联的回答，请说明"根据现有资料无法回答该问题"。
-4. **格式规范**：请使用 **Markdown** 格式优化排版，数学公式**必须**使用 LaTeX 格式（如 $E=mc^2$）。
-5. **来源标注**：回答中请在相关陈述后标注引用来源，例如 [1], [2]。
-
-上下文信息:
-{context}"""),
-            ("human", "{question}"),
-        ])
-        
-        # 输出解析器
-        self.output_parser = StrOutputParser()
-        
-        # 构建链
-        self.chain = self.prompt | self.llm | self.output_parser
+        pass
     
     
     
@@ -64,7 +34,7 @@ class RAGRetriever:
         top_k: int = 5,
         enable_query_expansion: bool = True,
         expand_to_parent: bool = True,  # 是否扩展到父块内容
-        compress_context: bool = None,  # 是否压缩上下文，默认读取配置
+        compress_context: Optional[bool] = None,  # 是否压缩上下文，默认读取配置
     ) -> List[SearchResult]:
         """
         混合检索 (Vector + Keyword) + Multi-Query Expansion + Reranking + Parent Expansion + Context Compression
@@ -283,12 +253,27 @@ class RAGRetriever:
             )
         
         context = "\n\n".join(context_parts)
-        
-        # 3. 生成回答
-        answer = await self.chain.ainvoke({
-            "context": context,
-            "question": query,
-        })
+
+        system_prompt = f"""你是一个专业的智能知识库助手。请**结合**你的专业知识和提供的上下文信息，全面、准确地回答用户的问题。
+
+要求:
+1. **深度结合**：以提供的上下文信息为事实基础，利用你的专业知识（如数学公式、代码实现、原理解释）对内容进行补充和完善，使答案更加完整和易懂。
+2. **准确性**：确保引用的上下文内容准确无误，补充的专业知识必须也是客观正确的。
+3. **诚实**：如果问题与上下文完全无关，且无法仅凭专业知识给出有上下文关联的回答，请说明"根据现有资料无法回答该问题"。
+4. **格式规范**：请使用 **Markdown** 格式优化排版，数学公式**必须**使用 LaTeX 格式（如 $E=mc^2$）。
+5. **来源标注**：回答中请在相关陈述后标注引用来源，例如 [1], [2]。
+
+上下文信息:
+{context}"""
+
+        # 3. 生成回答（vLLM）
+        answer = await llm_service.generate(
+            query,
+            model=settings.llm_model,
+            timeout_sec=settings.llm_timeout_sec,
+            temperature=0.7,
+            system_prompt=system_prompt,
+        )
         
         return RAGResponse(
             answer=answer,

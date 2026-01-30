@@ -5,6 +5,17 @@ import axios, { type AxiosInstance } from 'axios'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
+// Dev-only identity headers (temporary until real auth is added)
+export const DEV_USER_ID = 'dev_user_001'
+export const DEV_USER_ROLE: 'admin' | 'user' = 'user'
+
+function devHeaders() {
+    return {
+        'X-User-Id': DEV_USER_ID,
+        'X-User-Role': DEV_USER_ROLE,
+    }
+}
+
 export interface CreateSessionRequest {
     title?: string
 }
@@ -28,7 +39,8 @@ class ApiClient {
         this.http = axios.create({
             baseURL: baseUrl,
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                ...devHeaders(),
             }
         })
 
@@ -100,7 +112,7 @@ class ApiClient {
             try {
                 const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/chat`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...devHeaders() },
                     body: JSON.stringify({ message }),
                     signal: controller.signal,
                 })
@@ -159,7 +171,7 @@ class ApiClient {
             try {
                 const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/resume`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...devHeaders() },
                     body: JSON.stringify(request),
                     signal: controller.signal,
                 })
@@ -245,6 +257,7 @@ class ApiClient {
         const fetchStream = async () => {
             try {
                 const response = await fetch(`${this.baseUrl}/tasks/sessions/${sessionId}/stream`, {
+                    headers: devHeaders(),
                     signal: controller.signal,
                 })
 
@@ -305,6 +318,76 @@ class ApiClient {
         return this.http.get(`/audit/runs/${runId}/summary`)
     }
 
+    // RAG (via agent-api /rag gateway)
+    async listKnowledgeBases(): Promise<{ items: any[] }> {
+        return this.http.get('/rag/knowledge-bases')
+    }
+
+    async createKnowledgeBase(input: {
+        name: string
+        description?: string
+        chunk_size?: number
+        chunk_overlap?: number
+        cleaning_rules?: Record<string, any>
+    }): Promise<any> {
+        return this.http.post('/rag/knowledge-bases', input)
+    }
+
+    async getKnowledgeBase(kbId: number): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}`)
+    }
+
+    async updateKnowledgeBase(kbId: number, patch: Record<string, any>): Promise<any> {
+        return this.http.put(`/rag/knowledge-bases/${kbId}`, patch)
+    }
+
+    async getKnowledgeBaseStats(kbId: number): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/stats`)
+    }
+
+    async listKnowledgeBaseDocuments(kbId: number): Promise<{ items: any[] }> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/documents`)
+    }
+
+    async uploadKnowledgeBaseDocument(kbId: number, file: File): Promise<any> {
+        const form = new FormData()
+        form.append('file', file)
+        return this.http.post(`/rag/knowledge-bases/${kbId}/documents/upload`, form, {
+            headers: {
+                ...devHeaders(),
+                'Content-Type': 'multipart/form-data',
+            },
+        })
+    }
+
+    async reindexDocument(kbId: number, docId: number): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/documents/${docId}/reindex`, {})
+    }
+
+    async listDocumentChunks(
+        kbId: number,
+        docId: number,
+        params?: { offset?: number; limit?: number; include_parents?: boolean }
+    ): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/documents/${docId}/chunks`, { params })
+    }
+
+    async previewDocumentChunks(
+        kbId: number,
+        docId: number,
+        input: { chunk_size?: number; chunk_overlap?: number; cleaning_rules?: Record<string, any>; limit?: number }
+    ): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/documents/${docId}/preview-chunks`, input)
+    }
+
+    async rebuildKnowledgeBaseVectors(kbId: number): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/rebuild-vectors`, {})
+    }
+
+    async buildKnowledgeBaseGraph(kbId: number): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/build-graph`, {})
+    }
+
     streamTask(
         taskId: string,
         onEvent: (data: any) => void,
@@ -315,6 +398,7 @@ class ApiClient {
         const fetchStream = async () => {
             try {
                 const response = await fetch(`${this.baseUrl}/tasks/${taskId}/stream`, {
+                    headers: devHeaders(),
                     signal: controller.signal,
                 })
 

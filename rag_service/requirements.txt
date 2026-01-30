@@ -40,6 +40,10 @@ jieba>=0.42.1
 # Object Storage
 minio>=7.2.0
 
+# Job Queue
+arq>=0.26.0
+redis>=5.0.0
+
 # Utilities
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
@@ -52,4 +56,3 @@ faster-whisper>=1.0.0       # 语音转写 (Whisper)
 ffmpeg-python>=0.2.0        # 音视频处理
 opencv-python>=4.8.0        # 视频帧提取
 pymupdf>=1.23.0             # PDF图片提取
-

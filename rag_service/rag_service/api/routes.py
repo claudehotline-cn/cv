@@ -1,9 +1,10 @@
 """API路由定义"""
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, HttpUrl
 from typing import List, Optional
+import json
 import tempfile
 import os
 import logging
@@ -16,6 +17,10 @@ from ..services.chunker import document_chunker
 from ..services.embedder import embedding_service
 from ..services.vector_store import vector_store
 from ..services.retriever import rag_retriever
+from ..services.ingestion import process_document as ingest_process_document
+from ..services.ingestion import rebuild_vectors as ingest_rebuild_vectors
+from ..services.ingestion import build_graph as ingest_build_graph
+from ..queue import enqueue_job
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -30,12 +35,23 @@ class KnowledgeBaseCreate(BaseModel):
     description: Optional[str] = None
     chunk_size: Optional[int] = 500
     chunk_overlap: Optional[int] = 50
+    cleaning_rules: Optional[dict] = None
 
 
 class KnowledgeBaseUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    cleaning_rules: Optional[dict] = None
+
+
+class PreviewChunksRequest(BaseModel):
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    cleaning_rules: Optional[dict] = None
+    limit: int = 50
 
 
 class URLImportRequest(BaseModel):
@@ -80,6 +96,8 @@ def create_knowledge_base(
         chunk_size=data.chunk_size,
         chunk_overlap=data.chunk_overlap,
     )
+    if data.cleaning_rules is not None:
+        kb.cleaning_rules = json.dumps(data.cleaning_rules, ensure_ascii=False)
     db.add(kb)
     db.commit()
     db.refresh(kb)
@@ -113,6 +131,12 @@ def update_knowledge_base(
         kb.description = data.description
     if data.is_active is not None:
         kb.is_active = data.is_active
+    if data.chunk_size is not None:
+        kb.chunk_size = data.chunk_size
+    if data.chunk_overlap is not None:
+        kb.chunk_overlap = data.chunk_overlap
+    if data.cleaning_rules is not None:
+        kb.cleaning_rules = json.dumps(data.cleaning_rules, ensure_ascii=False)
     
     db.commit()
     db.refresh(kb)
@@ -231,6 +255,37 @@ def update_kb_document_count(db: Session, kb_id: int):
         db.commit()
 
 
+async def _schedule_job(
+    background_tasks: BackgroundTasks,
+    queue_function: str,
+    fallback,
+    request_id: str | None,
+    *args,
+):
+    """Schedule a job via ARQ when enabled, otherwise fallback to BackgroundTasks."""
+    if settings.use_job_queue:
+        try:
+            return await enqueue_job(queue_function, *args, job_id=request_id)
+        except Exception as e:
+            logger.warning(f"Failed to enqueue job {queue_function}, falling back to BackgroundTasks: {e}")
+
+    background_tasks.add_task(fallback, *args)
+    return None
+
+
+def _get_request_id_from_headers(req: Request) -> str | None:
+    """Best-effort extract UUID request id for job/audit correlation."""
+    raw = (req.headers.get("X-Request-Id") or "").strip()
+    if not raw:
+        return None
+    try:
+        import uuid
+
+        return str(uuid.UUID(raw))
+    except Exception:
+        return None
+
+
 # ==================== Document APIs ====================
 
 @router.get("/knowledge-bases/{kb_id}/documents")
@@ -240,86 +295,190 @@ def list_documents(kb_id: int, db: Session = Depends(get_mysql_db)):
     return {"items": [doc.to_dict() for doc in docs]}
 
 
-def process_document_async(document_id: int, file_path: str, filename: str):
-    """异步处理文档 (使用父子索引策略)"""
-    db = MySQLSessionLocal()
-    try:
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if not doc:
-            return
-        
-        doc.status = "processing"
-        db.commit()
-        
-        # 加载文档
-        loaded = document_loader.load(file_path, filename)
-        
-        # 获取知识库配置
-        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.knowledge_base_id).first()
-        
-        # 语义父子分块 (Semantic Hierarchical Chunking)
-        from ..services.chunker import DocumentChunker
-        chunker = DocumentChunker()
-        
-        parent_chunks, child_chunks = chunker.semantic_hierarchical_chunk(
-            content=loaded.content,
-            metadata=loaded.metadata,
-            similarity_threshold=0.5,  # 相似度低于0.5时分割
-            parent_max_size=kb.chunk_size * 4 if kb else 2000,
-            child_max_size=kb.chunk_size if kb else 500,
+@router.post("/knowledge-bases/{kb_id}/documents/{doc_id}/reindex")
+async def reindex_document(
+    kb_id: int,
+    doc_id: int,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_mysql_db),
+):
+    """重建单个文档的向量（仅该文档）。"""
+    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc.status = "queued"
+    doc.error_message = None
+    db.commit()
+    db.refresh(doc)
+
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "process_document_job", ingest_process_document, request_id, doc.id)
+
+    payload = doc.to_dict()
+    payload["job_id"] = job_id
+    return payload
+
+
+@router.get("/knowledge-bases/{kb_id}/documents/{doc_id}/chunks")
+def list_document_chunks(
+    kb_id: int,
+    doc_id: int,
+    offset: int = 0,
+    limit: int = 50,
+    include_parents: bool = True,
+    db: Session = Depends(get_mysql_db),
+):
+    """列出某文档的分块（来自 pgvector rag_vectors）。"""
+    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    from sqlalchemy import text
+    from ..database import get_pgvector_session
+
+    where = "document_id = :doc_id"
+    if not include_parents:
+        where += " AND (is_parent = FALSE OR is_parent IS NULL)"
+
+    # Parents first (outline), then children.
+    sql = f"""
+        SELECT id, chunk_index, content, metadata, parent_id, is_parent, created_at
+        FROM rag_vectors
+        WHERE {where}
+        ORDER BY is_parent DESC, chunk_index ASC
+        LIMIT :limit OFFSET :offset
+    """
+
+    with get_pgvector_session() as pg:
+        rows = pg.execute(text(sql), {"doc_id": doc_id, "limit": limit, "offset": offset}).fetchall()
+
+    items = []
+    for r in rows:
+        meta = r[3]
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        content = r[2] or ""
+        items.append(
+            {
+                "id": int(r[0]),
+                "chunk_index": int(r[1]),
+                "content": content,
+                "metadata": meta or {},
+                "parent_id": r[4],
+                "is_parent": bool(r[5]) if r[5] is not None else False,
+                "created_at": r[6].isoformat() if r[6] else None,
+                "tokens_estimate": max(1, len(content) // 4),
+            }
         )
-        
-        # 向量化
-        if parent_chunks or child_chunks:
-            # Embed 父块
-            parent_texts = [p.content for p in parent_chunks]
-            parent_embeddings = embedding_service.embed_texts(parent_texts) if parent_texts else []
-            
-            # Embed 子块
-            child_texts = [c.content for c in child_chunks]
-            child_embeddings = embedding_service.embed_texts(child_texts) if child_texts else []
-            
-            # 构建存储数据
-            parent_data = [
-                (p.index, p.content, emb, p.metadata)
-                for p, emb in zip(parent_chunks, parent_embeddings)
-            ]
-            
-            child_data = [
-                (c.index, c.content, emb, c.metadata, c.parent_index)
-                for c, emb in zip(child_chunks, child_embeddings)
-            ]
-            
-            # 存储
-            vector_store.store_hierarchical_vectors(document_id, parent_data, child_data)
-        
-        # 更新文档状态
-        total_chunks = len(parent_chunks) + len(child_chunks)
-        doc.chunk_count = total_chunks
-        doc.status = "completed"
-        db.commit()
-        
-        logger.info(f"Document {document_id} processed: {len(parent_chunks)} parents + {len(child_chunks)} children = {total_chunks} chunks")
-        
-    except Exception as e:
-        logger.error(f"Error processing document {document_id}: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if doc:
-            doc.status = "failed"
-            doc.error_message = str(e)
-            db.commit()
+
+    return {
+        "document": doc.to_dict(),
+        "offset": offset,
+        "limit": limit,
+        "items": items,
+    }
+
+
+@router.post("/knowledge-bases/{kb_id}/documents/{doc_id}/preview-chunks")
+async def preview_document_chunks(
+    kb_id: int,
+    doc_id: int,
+    req: PreviewChunksRequest,
+    db: Session = Depends(get_mysql_db),
+):
+    """预览某文档在指定规则/参数下的分块结果（dry-run，不写入向量表）。"""
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.file_type in ("image", "audio", "video"):
+        raise HTTPException(status_code=400, detail=f"Preview is not supported for file_type={doc.file_type}")
+
+    from ..services.minio_service import minio_service
+    from ..services.ingestion import _ensure_loader_filename
+    from ..services.text_cleaner import apply_cleaning_rules
+    from ..services.chunker import DocumentChunker
+
+    local_path = minio_service.download_file(doc.file_path) if doc.file_path else None
+    if not local_path or not os.path.exists(local_path):
+        raise HTTPException(status_code=500, detail="Failed to download document from storage")
+
+    try:
+        filename = _ensure_loader_filename(doc)
+        loaded = document_loader.load(local_path, filename)
+
+        # Resolve effective config (request overrides KB default)
+        base_rules = None
+        if kb.cleaning_rules:
+            try:
+                base_rules = json.loads(kb.cleaning_rules)
+            except Exception:
+                base_rules = None
+
+        effective_rules = req.cleaning_rules if req.cleaning_rules is not None else base_rules
+        chunk_size = int(req.chunk_size if req.chunk_size is not None else kb.chunk_size)
+        chunk_overlap = int(req.chunk_overlap if req.chunk_overlap is not None else kb.chunk_overlap)
+
+        cleaned = apply_cleaning_rules(loaded.content, effective_rules)
+
+        # We already applied cleaning; do not preprocess again in chunker.
+        chunker = DocumentChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap, preprocess=False)
+        parents, children = chunker.semantic_hierarchical_chunk(
+            content=cleaned,
+            metadata=loaded.metadata,
+            similarity_threshold=0.5,
+            parent_max_size=chunk_size * 4,
+            child_max_size=chunk_size,
+        )
+
+        # Build preview items (truncate content)
+        limit = max(1, min(int(req.limit or 50), 200))
+        preview = []
+        for c in (parents + children)[:limit]:
+            text = c.content or ""
+            preview.append(
+                {
+                    "chunk_index": c.index,
+                    "is_parent": bool(c.is_parent),
+                    "parent_index": c.parent_index,
+                    "content": text[:800],
+                    "tokens_estimate": max(1, len(text) // 4),
+                    "metadata": c.metadata,
+                }
+            )
+
+        return {
+            "document": doc.to_dict(),
+            "knowledge_base": kb.to_dict(),
+            "effective": {
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "cleaning_rules": effective_rules,
+            },
+            "counts": {"parents": len(parents), "children": len(children)},
+            "items": preview,
+        }
     finally:
-        db.close()
-        # 清理临时文件 (原件已存储在 MinIO)
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        try:
+            if local_path and os.path.exists(local_path):
+                os.remove(local_path)
+        except Exception:
+            pass
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/upload")
 async def upload_document(
     kb_id: int,
+    req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_mysql_db),
@@ -362,12 +521,6 @@ async def upload_document(
     if not minio_path:
         raise HTTPException(status_code=500, detail="Failed to upload file to storage")
     
-    # 同时保存到临时目录用于处理
-    suffix = os.path.splitext(file.filename)[1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-    
     # 创建文档记录
     doc = Document(
         knowledge_base_id=kb_id,
@@ -384,16 +537,22 @@ async def upload_document(
     # 更新知识库文档计数
     update_kb_document_count(db, kb_id)
     
-    # 后台处理 (使用临时文件路径)
-    background_tasks.add_task(process_document_async, doc.id, tmp_path, file.filename)
-    
-    return doc.to_dict()
+    # 入队/后台处理：从 MinIO 下载后处理
+    doc.status = "queued"
+    db.commit()
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "process_document_job", ingest_process_document, request_id, doc.id)
+
+    payload = doc.to_dict()
+    payload["job_id"] = job_id
+    return payload
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/import-url")
 async def import_url(
     kb_id: int,
     data: URLImportRequest,
+    req: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_mysql_db),
 ):
@@ -437,14 +596,14 @@ async def import_url(
     # 更新知识库文档计数
     update_kb_document_count(db, kb_id)
     
-    # 保存内容到临时文件并处理
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode='w', encoding='utf-8') as tmp:
-        tmp.write(page.content)
-        tmp_path = tmp.name
-    
-    background_tasks.add_task(process_document_async, doc.id, tmp_path, f"{page.title}.txt")
-    
-    return doc.to_dict()
+    doc.status = "queued"
+    db.commit()
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "process_document_job", ingest_process_document, request_id, doc.id)
+
+    payload = doc.to_dict()
+    payload["job_id"] = job_id
+    return payload
 
 
 @router.delete("/documents/{doc_id}")
@@ -607,8 +766,7 @@ async def chat_stream(data: StreamChatRequest):
     - data: {"type": "done"}                      # 完成标记
     """
     from fastapi.responses import StreamingResponse
-    from langchain_ollama import ChatOllama
-    from langchain_core.prompts import ChatPromptTemplate
+    from ..services.llm_service import llm_service
     import json
     
     async def generate():
@@ -685,25 +843,21 @@ async def chat_stream(data: StreamChatRequest):
                 if history_text:
                     system_prompt += f"\n\n对话历史：\n{history_text}"
                 
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", system_prompt),
-                    ("human", "{query}")
-                ])
-                
-                llm = ChatOllama(
-                    model=settings.llm_model,
-                    base_url=settings.ollama_base_url,
-                    temperature=0.7,
-                )
-                
-                chain = prompt | llm
                 full_answer = ""
-                
-                async for chunk in chain.astream({"context": context, "query": data.query}):
-                    content = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                    if content:
-                        full_answer += content
-                        yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
+
+                messages = [
+                    {"role": "system", "content": system_prompt.format(context=context)},
+                    {"role": "user", "content": data.query},
+                ]
+
+                async for content in llm_service.stream_messages(
+                    messages,
+                    model=settings.llm_model,
+                    temperature=0.7,
+                    timeout_sec=settings.llm_timeout_sec,
+                ):
+                    full_answer += content
+                    yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
             else:
                 # ===== 无知识库：纯 LLM 对话模式 =====
                 yield f"data: {json.dumps({'type': 'sources', 'sources': []}, ensure_ascii=False)}\n\n"
@@ -715,25 +869,21 @@ async def chat_stream(data: StreamChatRequest):
                 if history_text:
                     system_prompt += f"\n\n对话历史：\n{history_text}"
                 
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", system_prompt),
-                    ("human", "{query}")
-                ])
-                
-                llm = ChatOllama(
-                    model=settings.llm_model,
-                    base_url=settings.ollama_base_url,
-                    temperature=0.7,
-                )
-                
-                chain = prompt | llm
                 full_answer = ""
-                
-                async for chunk in chain.astream({"query": data.query}):
-                    content = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                    if content:
-                        full_answer += content
-                        yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
+
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": data.query},
+                ]
+
+                async for content in llm_service.stream_messages(
+                    messages,
+                    model=settings.llm_model,
+                    temperature=0.7,
+                    timeout_sec=settings.llm_timeout_sec,
+                ):
+                    full_answer += content
+                    yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
             
             # 保存对话历史
             if data.session_id:
@@ -821,17 +971,16 @@ from langchain_core.documents import Document as LangChainDocument
 @router.post("/knowledge-bases/{kb_id}/build-graph")
 async def build_knowledge_graph(
     kb_id: int,
+    req: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_mysql_db),
 ):
     """
     触发构建知识图谱任务
     """
-    # 检查知识库是否存在已解析的文档
-    # 这里简化处理，以后台任务运行
-    background_tasks.add_task(_run_graph_build_task, kb_id)
-    
-    return {"message": "Graph build task started", "kb_id": kb_id}
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "build_graph_job", ingest_build_graph, request_id, kb_id)
+    return {"message": "Graph build queued" if job_id else "Graph build started", "kb_id": kb_id, "job_id": job_id}
 
 async def _run_graph_build_task(kb_id: int):
     """后台运行图构建 - 从 MinIO 下载原始文档构建"""
@@ -941,6 +1090,7 @@ async def _run_graph_build_task(kb_id: int):
 @router.post("/knowledge-bases/{kb_id}/rebuild-vectors")
 async def rebuild_vectors(
     kb_id: int,
+    req: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_mysql_db),
 ):
@@ -955,11 +1105,13 @@ async def rebuild_vectors(
     
     doc_count = db.query(Document).filter(Document.knowledge_base_id == kb_id).count()
     
-    background_tasks.add_task(_run_rebuild_vectors_task, kb_id)
-    
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "rebuild_vectors_job", ingest_rebuild_vectors, request_id, kb_id)
+
     return {
-        "message": "Rebuild vectors task started",
+        "message": "Rebuild vectors queued" if job_id else "Rebuild vectors started",
         "kb_id": kb_id,
+        "job_id": job_id,
         "document_count": doc_count
     }
 
@@ -1238,8 +1390,10 @@ async def upload_image_generic(
 # Note: Generic /upload-file endpoint moved to end of file (line ~2086)
 # to support all file types including video/audio without validation
 
+@router.post("/knowledge-bases/{kb_id}/upload-image")
 async def upload_image(
     kb_id: int,
+    req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_mysql_db),
@@ -1288,49 +1442,25 @@ async def upload_image(
     db.add(doc)
     db.commit()
     db.refresh(doc)
-    
-    # 后台处理图片
-    async def process_image():
-        try:
-            # 预处理并编码
-            embedding, description = await image_encoder.encode(content)
-            
-            # 存储向量
-            if embedding:
-                vector_store.store_vectors(
-                    document_id=doc.id,
-                    chunks=[(0, description, embedding, {"type": "image", "filename": file.filename})]
-                )
-            
-            # 更新状态
-            with MySQLSessionLocal() as update_db:
-                d = update_db.query(Document).filter(Document.id == doc.id).first()
-                if d:
-                    d.status = "completed"
-                    d.chunk_count = 1
-                    update_db.commit()
-        except Exception as e:
-            logger.error(f"Error processing image: {e}")
-            with MySQLSessionLocal() as update_db:
-                d = update_db.query(Document).filter(Document.id == doc.id).first()
-                if d:
-                    d.status = "failed"
-                    d.error_message = str(e)
-                    update_db.commit()
-    
-    background_tasks.add_task(process_image)
-    
+
+    doc.status = "queued"
+    db.commit()
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "process_document_job", ingest_process_document, request_id, doc.id)
+
     return {
         "document_id": doc.id,
         "filename": file.filename,
-        "status": "processing",
-        "message": "Image upload started, processing in background"
+        "status": doc.status,
+        "job_id": job_id,
+        "message": "Image upload queued"
     }
 
 
 @router.post("/knowledge-bases/{kb_id}/upload-audio")
 async def upload_audio(
     kb_id: int,
+    req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_mysql_db),
@@ -1375,58 +1505,25 @@ async def upload_audio(
     db.add(doc)
     db.commit()
     db.refresh(doc)
-    
-    # 后台处理
-    async def process_audio():
-        try:
-            # 转写
-            result = await speech_service.transcribe(content)
-            
-            # 分块并向量化
-            from ..services.chunker import document_chunker
-            chunks = document_chunker.chunk(result.text, {"type": "audio", "language": result.language})
-            
-            if chunks:
-                texts = [c.content for c in chunks]
-                embeddings = embedding_service.embed_texts(texts)
-                
-                chunk_data = [
-                    (i, c.content, emb, {"type": "audio", "language": result.language})
-                    for i, (c, emb) in enumerate(zip(chunks, embeddings))
-                ]
-                vector_store.store_vectors(doc.id, chunk_data)
-            
-            # 更新状态
-            with MySQLSessionLocal() as update_db:
-                d = update_db.query(Document).filter(Document.id == doc.id).first()
-                if d:
-                    d.status = "completed"
-                    d.chunk_count = len(chunks)
-                    update_db.commit()
-        except Exception as e:
-            logger.error(f"Error processing audio: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            with MySQLSessionLocal() as update_db:
-                d = update_db.query(Document).filter(Document.id == doc.id).first()
-                if d:
-                    d.status = "failed"
-                    d.error_message = str(e)
-                    update_db.commit()
-    
-    background_tasks.add_task(process_audio)
-    
+
+    doc.status = "queued"
+    db.commit()
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "process_document_job", ingest_process_document, request_id, doc.id)
+
     return {
         "document_id": doc.id,
         "filename": file.filename,
-        "status": "processing",
-        "message": "Audio upload started, transcription in progress"
+        "status": doc.status,
+        "job_id": job_id,
+        "message": "Audio upload queued"
     }
 
 
 @router.post("/knowledge-bases/{kb_id}/upload-video")
 async def upload_video(
     kb_id: int,
+    req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_mysql_db),
@@ -1471,57 +1568,18 @@ async def upload_video(
     db.add(doc)
     db.commit()
     db.refresh(doc)
-    
-    # 后台处理
-    async def process_video():
-        try:
-            # 分析视频
-            result = await video_service.analyze(content, include_transcript=True)
-            
-            # 组合内容
-            full_content = result.summary
-            if result.transcript:
-                full_content += f"\n\n音频内容：\n{result.transcript}"
-            
-            # 分块并向量化
-            from ..services.chunker import document_chunker
-            chunks = document_chunker.chunk(full_content, {"type": "video"})
-            
-            if chunks:
-                texts = [c.content for c in chunks]
-                embeddings = embedding_service.embed_texts(texts)
-                
-                chunk_data = [
-                    (i, c.content, emb, {"type": "video"})
-                    for i, (c, emb) in enumerate(zip(chunks, embeddings))
-                ]
-                vector_store.store_vectors(doc.id, chunk_data)
-            
-            # 更新状态
-            with MySQLSessionLocal() as update_db:
-                d = update_db.query(Document).filter(Document.id == doc.id).first()
-                if d:
-                    d.status = "completed"
-                    d.chunk_count = len(chunks)
-                    update_db.commit()
-        except Exception as e:
-            logger.error(f"Error processing video: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            with MySQLSessionLocal() as update_db:
-                d = update_db.query(Document).filter(Document.id == doc.id).first()
-                if d:
-                    d.status = "failed"
-                    d.error_message = str(e)
-                    update_db.commit()
-    
-    background_tasks.add_task(process_video)
-    
+
+    doc.status = "queued"
+    db.commit()
+    request_id = _get_request_id_from_headers(req)
+    job_id = await _schedule_job(background_tasks, "process_document_job", ingest_process_document, request_id, doc.id)
+
     return {
         "document_id": doc.id,
         "filename": file.filename,
-        "status": "processing",
-        "message": "Video upload started, analysis in progress"
+        "status": doc.status,
+        "job_id": job_id,
+        "message": "Video upload queued"
     }
 
 
@@ -1536,6 +1594,7 @@ async def multimodal_query_generic(
     直接调用 VLM 进行问答
     """
     from ..services.vlm_service import vlm_service
+    from ..services.llm_service import llm_service
     
     text_query = request.get("text_query", "")
     image_desc = request.get("image_description", "")
@@ -1543,26 +1602,16 @@ async def multimodal_query_generic(
     # 构造组合 prompt
     prompt = f"用户问题: {text_query}\n\n图片内容描述:\n{image_desc}\n\n请结合图片内容回答用户问题。"
     
-    # 这里简化处理：直接调用 VLM 的文本问答能力 (或 LLM)
-    # 因为图片内容已经转化为文本描述了，所以可以视为纯文本上下文处理
-    # 为了保持一致性，我们这里调用 LLM
-    from langchain_ollama import ChatOllama
-    from langchain_core.messages import HumanMessage, SystemMessage
-    
-    llm = ChatOllama(
+    answer = await llm_service.generate(
+        prompt,
         model=settings.llm_model,
-        base_url=settings.ollama_base_url,
+        timeout_sec=settings.llm_timeout_sec,
+        temperature=0.7,
+        system_prompt="你是一个多模态助手。请根据提供的图片描述和用户问题进行回答。",
     )
     
-    messages = [
-        SystemMessage(content="你是一个多模态助手。请根据提供的图片描述和用户问题进行回答。"),
-        HumanMessage(content=prompt)
-    ]
-    
-    response = llm.invoke(messages)
-    
     return MultiModalQueryResponse(
-        answer=response.content if hasattr(response, 'content') else str(response),
+        answer=answer,
         sources=[],
         images=[],
         has_multimodal_context=True
@@ -1580,7 +1629,7 @@ async def multimodal_query_stream(
     以 Server-Sent Events 格式流式返回响应
     """
     from fastapi.responses import StreamingResponse
-    from langchain_ollama import ChatOllama
+    from ..services.llm_service import llm_service
     
     text_query = request.get("text_query", "")
     image_desc = request.get("image_description", "")
@@ -1589,17 +1638,18 @@ async def multimodal_query_stream(
     prompt = f"用户问题: {text_query}\n\n图片内容描述:\n{image_desc}\n\n请结合图片内容回答用户问题。"
     
     async def generate():
-        llm = ChatOllama(
+        messages = [
+            {"role": "system", "content": "你是一个多模态助手。请根据提供的图片描述和用户问题进行回答。"},
+            {"role": "user", "content": prompt},
+        ]
+        async for content in llm_service.stream_messages(
+            messages,
             model=settings.llm_model,
-            base_url=settings.ollama_base_url,
-        )
-        
-        # 使用流式调用
-        async for chunk in llm.astream(prompt):
-            if hasattr(chunk, 'content') and chunk.content:
-                # SSE 格式
-                yield f"data: {chunk.content}\n\n"
-        
+            temperature=0.7,
+            timeout_sec=settings.llm_timeout_sec,
+        ):
+            yield f"data: {content}\n\n"
+
         yield "data: [DONE]\n\n"
     
     return StreamingResponse(
@@ -1677,8 +1727,7 @@ async def vlm_rag_stream(
     """
     from fastapi.responses import StreamingResponse
     from ..services.vlm_service import vlm_service
-    from langchain_ollama import ChatOllama
-    from langchain_core.prompts import ChatPromptTemplate
+    from ..services.llm_service import llm_service
     import json as _json
     
     # 解析历史对话
@@ -1750,13 +1799,7 @@ async def vlm_rag_stream(
                 for i, r in enumerate(results)
             ])
             
-            # 4. LLM 生成回答
-            llm = ChatOllama(
-                model=settings.llm_model,
-                base_url=settings.ollama_base_url,
-                temperature=0.7,
-            )
-            
+            # 4. LLM 生成回答 (vLLM)
             # 构建历史对话
             history_text = ""
             if history_list:
@@ -1783,21 +1826,21 @@ async def vlm_rag_stream(
             if history_text:
                 system_prompt += f"\n\n对话历史：\n{history_text}"
             
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", "{query}")
-            ])
-            
-            chain = prompt | llm
-            
-            async for chunk in chain.astream({
-                "image_description": image_description,
-                "context": context,
-                "query": query
-            }):
-                content = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                if content:
-                    yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
+            messages = [
+                {
+                    "role": "system",
+                    "content": system_prompt.format(image_description=image_description, context=context),
+                },
+                {"role": "user", "content": query},
+            ]
+
+            async for content in llm_service.stream_messages(
+                messages,
+                model=settings.llm_model,
+                temperature=0.7,
+                timeout_sec=settings.llm_timeout_sec,
+            ):
+                yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n"
             
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             

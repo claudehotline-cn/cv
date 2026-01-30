@@ -1,75 +1,330 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import apiClient, { DEV_USER_ROLE } from '@/api/client'
 import {
   ArrowRight,
   Refresh,
-  Edit,
-  Delete,
-	  Search,
-	  View,
-	  Coin,
-	  Setting,
-	  Document,
-	  Share,
-	  Connection
-	} from '@element-plus/icons-vue'
+  Search,
+  View,
+  Coin,
+  Setting,
+  Document,
+  Connection
+} from '@element-plus/icons-vue'
 
 // Custom icons or Material Symbols aliases if needed
 // For now using Element Plus Icons
 
-const chunks = ref([
-  {
-    id: '#001',
-    tag: 'Executive Summary',
-    tokens: 45,
-    content: 'The company reported a 15% increase in Q3 revenue, driven largely by the successful launch of the new enterprise suite in the North American market. This marks the fourth consecutive quarter of double-digit growth.',
-    isActive: true
-  },
-  {
-    id: '#002',
-    tag: 'Financials',
-    tokens: 32,
-    content: 'Operating expenses remained flat due to strategic cost-cutting measures implemented earlier in the fiscal year, specifically within the supply chain logistics division.',
-    isActive: false
-  },
-  {
-    id: '#003',
-    tag: 'Risk Factors',
-    tokens: 50,
-    content: 'Risk factors include market volatility in the APAC region, pending regulatory changes in the EU regarding data privacy (GDPR 2.0), and potential currency fluctuations affecting international margins.',
-    isActive: false
-  },
-  {
-    id: '#004',
-    tag: 'Conclusion',
-    tokens: 28,
-    content: 'The outlook for Q4 remains positive with projected bookings expected to exceed $50M. Management recommends maintaining the current investment strategy.',
-    isActive: false
-  }
-])
+const route = useRoute()
+const router = useRouter()
+const isAdmin = DEV_USER_ROLE === 'admin'
+
+type KB = {
+  id: number
+  name: string
+  description?: string
+  chunk_size?: number
+  chunk_overlap?: number
+  cleaning_rules?: Record<string, any> | null
+}
+
+type Doc = {
+  id: number
+  knowledge_base_id: number
+  filename: string
+  file_type: string
+  file_size?: number
+  chunk_count?: number
+  status: string
+  error_message?: string
+  created_at?: string
+}
+
+type ChunkRow = {
+  id: number
+  chunk_index: number
+  content: string
+  metadata?: Record<string, any>
+  parent_id?: number | null
+  is_parent: boolean
+  created_at?: string | null
+  tokens_estimate?: number
+}
+
+type ChunkView = {
+  id: number
+  displayId: string
+  tag: string
+  tokens: number
+  content: string
+  isParent: boolean
+  chunkIndex: number
+}
+
+const kbId = computed(() => {
+  const raw = String(route.query.kbId || '')
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) ? n : null
+})
+
+const docId = computed(() => {
+  const raw = String(route.query.docId || '')
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) ? n : null
+})
+
+const kb = ref<KB | null>(null)
+const doc = ref<Doc | null>(null)
+
+const loading = ref(false)
+const loadingMore = ref(false)
+const saving = ref(false)
+
+const offset = ref(0)
+const pageSize = 50
+const hasMore = ref(true)
+
+const activeChunkId = ref<number | null>(null)
+const searchText = ref('')
+
+const chunks = ref<ChunkView[]>([])
 
 const cleaningRules = ref({
   removeWhitespace: true,
   stripHtml: true,
   fixEncoding: false,
-  consolidateShortParagraphs: true
+  consolidateShortParagraphs: true,
 })
 
 const chunkingStrategy = ref({
-  maxTokenLimit: 512,
-  chunkOverlap: 20
+  maxTokenLimit: 500,
+  chunkOverlap: 50,
 })
 
-const outline = [
-  { label: '1. Executive Summary', icon: Document, active: true },
-  { label: '1.1 Key Metrics', icon: Connection, indent: true },
-  { label: '1.2 Strategic Goals', icon: Connection, indent: true },
-  { label: '2. Revenue Streams', icon: Document },
-  { label: '3. Risk Factors', icon: Document },
-  { label: '3.1 Market Volatility', icon: Connection, indent: true },
-  { label: '3.2 Compliance', icon: Connection, indent: true },
-  { label: '4. Conclusion', icon: Document }
-]
+const previewDialogOpen = ref(false)
+const previewData = ref<any | null>(null)
+
+function truncate(text: string, max = 260) {
+  const s = (text || '').trim()
+  if (s.length <= max) return s
+  return s.slice(0, max).trimEnd() + '…'
+}
+
+function formatBytes(bytes?: number) {
+  if (!bytes || bytes <= 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let n = bytes
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i++
+  }
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+function normalizeCleaningRules(input: any) {
+  const base = {
+    removeWhitespace: true,
+    stripHtml: true,
+    fixEncoding: false,
+    consolidateShortParagraphs: true,
+  }
+  if (!input || typeof input !== 'object') return base
+  return {
+    removeWhitespace: Boolean((input as any).removeWhitespace ?? base.removeWhitespace),
+    stripHtml: Boolean((input as any).stripHtml ?? base.stripHtml),
+    fixEncoding: Boolean((input as any).fixEncoding ?? base.fixEncoding),
+    consolidateShortParagraphs: Boolean((input as any).consolidateShortParagraphs ?? base.consolidateShortParagraphs),
+  }
+}
+
+function mapChunkRow(r: ChunkRow): ChunkView {
+  const idx = Number.isFinite(r.chunk_index) ? r.chunk_index : 0
+  const displayId = `#${String(idx).padStart(3, '0')}`
+  const tokens = Math.max(1, Number(r.tokens_estimate || 0) || Math.floor((r.content || '').length / 4) || 1)
+  return {
+    id: r.id,
+    displayId,
+    tag: r.is_parent ? 'Parent' : 'Chunk',
+    tokens,
+    content: r.content || '',
+    isParent: Boolean(r.is_parent),
+    chunkIndex: idx,
+  }
+}
+
+const filteredChunks = computed(() => {
+  const q = searchText.value.trim().toLowerCase()
+  if (!q) return chunks.value
+  return chunks.value.filter((c) => (c.content || '').toLowerCase().includes(q))
+})
+
+const outlineItems = computed(() => {
+  const parents = chunks.value.filter((c) => c.isParent)
+  return parents.map((c) => ({
+    key: String(c.id),
+    label: truncate(c.content, 36) || `Parent ${c.displayId}`,
+    icon: Document,
+    indent: false,
+    chunkId: c.id,
+    active: c.id === activeChunkId.value,
+  }))
+})
+
+const chunkCountLabel = computed(() => {
+  const count = doc.value?.chunk_count ?? chunks.value.length
+  return `${count} Chunks Generated`
+})
+
+const totalTokensEstimate = computed(() => chunks.value.reduce((sum, c) => sum + (c.tokens || 0), 0))
+
+const docMetaLabel = computed(() => {
+  const d = doc.value
+  if (!d) return '—'
+  const parts = [formatBytes(d.file_size), (d.file_type || 'document').toUpperCase()]
+  return parts.filter(Boolean).join(' • ')
+})
+
+function setActiveChunk(id: number) {
+  activeChunkId.value = id
+}
+
+async function loadInitial() {
+  if (!kbId.value || !docId.value) {
+    ElMessage.error('Missing kbId/docId in URL')
+    return
+  }
+  loading.value = true
+  try {
+    const [kbRes, chunkRes] = await Promise.all([
+      apiClient.getKnowledgeBase(kbId.value),
+      apiClient.listDocumentChunks(kbId.value, docId.value, { offset: 0, limit: pageSize, include_parents: true }),
+    ])
+
+    kb.value = kbRes as KB
+    doc.value = (chunkRes.document || null) as Doc | null
+
+    cleaningRules.value = normalizeCleaningRules((kbRes as any)?.cleaning_rules)
+    chunkingStrategy.value = {
+      maxTokenLimit: Number((kbRes as any)?.chunk_size ?? 500) || 500,
+      chunkOverlap: Number((kbRes as any)?.chunk_overlap ?? 50) || 50,
+    }
+
+    const rows = (chunkRes.items || []) as ChunkRow[]
+    chunks.value = rows.map(mapChunkRow)
+    offset.value = rows.length
+    hasMore.value = rows.length >= pageSize
+
+    if (!activeChunkId.value && chunks.value.length) {
+      activeChunkId.value = chunks.value[0].id
+    }
+  } catch (e: any) {
+    ElMessage.error('Failed to load document')
+    kb.value = null
+    doc.value = null
+    chunks.value = []
+    hasMore.value = false
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadMore() {
+  if (!kbId.value || !docId.value) return
+  if (!hasMore.value || loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const res = await apiClient.listDocumentChunks(kbId.value, docId.value, {
+      offset: offset.value,
+      limit: pageSize,
+      include_parents: true,
+    })
+    const rows = (res.items || []) as ChunkRow[]
+    chunks.value = chunks.value.concat(rows.map(mapChunkRow))
+    offset.value += rows.length
+    hasMore.value = rows.length >= pageSize
+  } catch {
+    ElMessage.error('Failed to load more chunks')
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+async function saveKbSettings() {
+  if (!kbId.value) return
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  saving.value = true
+  try {
+    const patch = {
+      chunk_size: Number(chunkingStrategy.value.maxTokenLimit) || 500,
+      chunk_overlap: Number(chunkingStrategy.value.chunkOverlap) || 0,
+      cleaning_rules: { ...cleaningRules.value },
+    }
+    const updated = await apiClient.updateKnowledgeBase(kbId.value, patch)
+    kb.value = updated as KB
+    ElMessage.success('Saved')
+  } catch (e: any) {
+    ElMessage.error('Save failed')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function previewChunks() {
+  if (!kbId.value || !docId.value) return
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  try {
+    const res = await apiClient.previewDocumentChunks(kbId.value, docId.value, {
+      chunk_size: Number(chunkingStrategy.value.maxTokenLimit) || 500,
+      chunk_overlap: Number(chunkingStrategy.value.chunkOverlap) || 0,
+      cleaning_rules: { ...cleaningRules.value },
+      limit: 80,
+    })
+    previewData.value = res
+    previewDialogOpen.value = true
+  } catch (e: any) {
+    ElMessage.error('Preview failed')
+  }
+}
+
+async function regenerateDocument() {
+  if (!kbId.value || !docId.value) return
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  try {
+    await apiClient.reindexDocument(kbId.value, docId.value)
+    ElMessage.success('Reindex queued')
+  } catch {
+    ElMessage.error('Failed to queue reindex')
+  }
+}
+
+function exitEditor() {
+  router.push('/finance-docs')
+}
+
+onMounted(loadInitial)
+
+watch(
+  () => [kbId.value, docId.value],
+  () => {
+    chunks.value = []
+    offset.value = 0
+    hasMore.value = true
+    activeChunkId.value = null
+    loadInitial()
+  }
+)
 </script>
 
 <template>
@@ -84,12 +339,12 @@ const outline = [
         <div class="divider"></div>
         <el-breadcrumb :separator-icon="ArrowRight">
           <el-breadcrumb-item>Documents</el-breadcrumb-item>
-          <el-breadcrumb-item class="active-crumb">Q3 Financial Report.pdf</el-breadcrumb-item>
+          <el-breadcrumb-item class="active-crumb">{{ doc?.filename || 'Document' }}</el-breadcrumb-item>
         </el-breadcrumb>
       </div>
       <div class="header-right">
-        <el-button plain class="btn-secondary">Exit Editor</el-button>
-        <el-button type="primary" class="btn-primary">Deploy Agent</el-button>
+        <el-button plain class="btn-secondary" @click="exitEditor">Exit Editor</el-button>
+        <el-button type="primary" class="btn-primary" disabled>Deploy Agent</el-button>
         <el-avatar :size="36" class="user-avatar">AM</el-avatar>
       </div>
     </el-header>
@@ -103,18 +358,18 @@ const outline = [
               <el-icon><Document /></el-icon>
             </div>
             <div class="doc-details">
-              <div class="doc-title">Q3 Financial Report.pdf</div>
-              <div class="doc-sub">1.4 MB • English</div>
+              <div class="doc-title">{{ doc?.filename || '—' }}</div>
+              <div class="doc-sub">{{ docMetaLabel }}</div>
             </div>
           </div>
           <div class="doc-stats">
             <div class="stat-box">
               <span class="stat-label">Total Tokens</span>
-              <span class="stat-value">14,500</span>
+              <span class="stat-value">{{ totalTokensEstimate.toLocaleString() }}</span>
             </div>
             <div class="stat-box">
               <span class="stat-label">Chunks</span>
-              <span class="stat-value">42</span>
+              <span class="stat-value">{{ (doc?.chunk_count ?? chunks.length).toLocaleString() }}</span>
             </div>
           </div>
         </div>
@@ -124,10 +379,11 @@ const outline = [
           <el-scrollbar>
             <div class="nav-list">
               <div 
-                v-for="item in outline" 
-                :key="item.label" 
+                v-for="item in outlineItems" 
+                :key="item.key" 
                 class="nav-item"
                 :class="{ active: item.active, indent: item.indent }"
+                @click="item.chunkId && setActiveChunk(item.chunkId)"
               >
                 <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
                 <span>{{ item.label }}</span>
@@ -145,34 +401,40 @@ const outline = [
       <el-main class="editor-main">
         <div class="toolbar-sticky">
           <div class="toolbar-left">
-            <span class="chunk-count">42 Chunks Generated</span>
+            <span class="chunk-count">{{ chunkCountLabel }}</span>
             <div class="v-divider"></div>
-            <el-button link type="primary" :icon="Refresh" class="regenerate-btn">Regenerate All</el-button>
+            <el-button
+              link
+              type="primary"
+              :icon="Refresh"
+              class="regenerate-btn"
+              :disabled="!isAdmin"
+              @click="regenerateDocument"
+            >
+              Regenerate Document
+            </el-button>
           </div>
           <div class="toolbar-right">
-            <el-button-group>
-              <el-button plain :icon="Share" />
-              <el-button plain :icon="Connection" />
-            </el-button-group>
-            <div class="v-divider"></div>
             <el-input
               placeholder="Find in chunks..."
               :prefix-icon="Search"
               class="chunk-search"
+              v-model="searchText"
             />
           </div>
         </div>
 
         <div class="chunk-list">
           <div 
-            v-for="chunk in chunks" 
+            v-for="chunk in filteredChunks" 
             :key="chunk.id" 
             class="chunk-card"
-            :class="{ active: chunk.isActive }"
+            :class="{ active: chunk.id === activeChunkId }"
+            @click="setActiveChunk(chunk.id)"
           >
             <div class="chunk-header">
               <div class="header-info">
-                <span class="chunk-id">{{ chunk.id }}</span>
+                <span class="chunk-id">{{ chunk.displayId }}</span>
                 <el-tag size="small" effect="light" class="chunk-tag">{{ chunk.tag }}</el-tag>
               </div>
               <div class="header-actions">
@@ -180,25 +442,15 @@ const outline = [
                   <el-icon><Coin /></el-icon>
                   {{ chunk.tokens }} Tokens
                 </div>
-                <el-button link :icon="Edit" />
-                <el-button link :icon="Delete" class="delete-btn" />
               </div>
             </div>
             <div class="chunk-content">
-              <el-input
-                v-if="chunk.isActive"
-                v-model="chunk.content"
-                type="textarea"
-                :rows="3"
-                resize="none"
-                class="content-editor"
-              />
-              <p v-else class="content-text">{{ chunk.content }}</p>
+              <p class="content-text">{{ chunk.id === activeChunkId ? chunk.content : truncate(chunk.content) }}</p>
             </div>
           </div>
 
-          <div class="load-more">
-            <el-button round class="load-more-btn">
+          <div class="load-more" v-if="hasMore">
+            <el-button round class="load-more-btn" :loading="loadingMore" @click="loadMore">
               Load More Chunks
               <el-icon class="el-icon--right"><ArrowRight /></el-icon>
             </el-button>
@@ -245,24 +497,24 @@ const outline = [
             <div class="section-title">CHUNKING STRATEGY</div>
             <div class="slider-item">
               <div class="slider-label">
-                <span>Max Token Limit</span>
+                <span>Chunk Size</span>
                 <el-tag size="small" type="primary" class="slider-value">{{ chunkingStrategy.maxTokenLimit }}</el-tag>
               </div>
-              <el-slider v-model="chunkingStrategy.maxTokenLimit" :min="128" :max="2048" />
+              <el-slider v-model="chunkingStrategy.maxTokenLimit" :min="128" :max="4096" />
               <div class="slider-range">
                 <span>128</span>
-                <span>2048</span>
+                <span>4096</span>
               </div>
             </div>
             <div class="slider-item">
               <div class="slider-label">
                 <span>Chunk Overlap</span>
-                <el-tag size="small" type="primary" class="slider-value">{{ chunkingStrategy.chunkOverlap }}%</el-tag>
+                <el-tag size="small" type="primary" class="slider-value">{{ chunkingStrategy.chunkOverlap }}</el-tag>
               </div>
-              <el-slider v-model="chunkingStrategy.chunkOverlap" :min="0" :max="50" />
+              <el-slider v-model="chunkingStrategy.chunkOverlap" :min="0" :max="512" />
               <div class="slider-range">
-                <span>0%</span>
-                <span>50%</span>
+                <span>0</span>
+                <span>512</span>
               </div>
             </div>
           </div>
@@ -281,8 +533,8 @@ const outline = [
         </el-scrollbar>
 
         <div class="rules-footer">
-          <el-button type="primary" class="btn-save">Save Changes</el-button>
-          <el-button plain class="btn-preview">
+          <el-button type="primary" class="btn-save" :loading="saving" :disabled="!isAdmin" @click="saveKbSettings">Save Changes</el-button>
+          <el-button plain class="btn-preview" :disabled="!isAdmin" @click="previewChunks">
             <el-icon><View /></el-icon> Preview Result
           </el-button>
           <p class="reindex-note">Changes will require re-indexing.</p>
@@ -290,6 +542,38 @@ const outline = [
       </el-aside>
     </el-container>
   </el-container>
+
+  <el-dialog v-model="previewDialogOpen" title="Preview Chunks" width="900px">
+    <div v-if="!previewData">No preview data.</div>
+    <div v-else>
+      <div style="display:flex; justify-content: space-between; margin-bottom: 12px; gap: 12px; flex-wrap: wrap;">
+        <div>
+          <div style="font-weight: 600;">Effective Settings</div>
+          <div style="font-size: 12px; color: #6b7280;">
+            chunk_size={{ previewData.effective?.chunk_size }} • chunk_overlap={{ previewData.effective?.chunk_overlap }}
+          </div>
+        </div>
+        <div style="font-size: 12px; color: #6b7280;">
+          parents={{ previewData.counts?.parents }} • children={{ previewData.counts?.children }}
+        </div>
+      </div>
+      <el-scrollbar height="520px">
+        <div style="display:flex; flex-direction: column; gap: 12px;">
+          <div v-for="(it, i) in (previewData.items || [])" :key="i" style="border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; background: #fff;">
+            <div style="display:flex; justify-content: space-between; gap: 12px; margin-bottom: 6px;">
+              <div style="font-size: 12px; color: #6b7280; font-family: monospace;">
+                #{{ String(it.chunk_index).padStart(3, '0') }}
+              </div>
+              <div style="font-size: 12px; color: #6b7280;">
+                {{ it.is_parent ? 'Parent' : 'Chunk' }} • {{ it.tokens_estimate }} tokens
+              </div>
+            </div>
+            <div style="font-size: 13px; line-height: 1.6; white-space: pre-wrap;">{{ it.content }}</div>
+          </div>
+        </div>
+      </el-scrollbar>
+    </div>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -687,6 +971,7 @@ const outline = [
   line-height: 1.6;
   color: #2e3136;
   margin: 0;
+  white-space: pre-wrap;
 }
 
 :deep(.content-editor .el-textarea__inner) {
