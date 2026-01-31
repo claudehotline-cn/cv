@@ -54,6 +54,11 @@ const router = createRouter({
             name: 'DocumentEditor',
             component: () => import('./views/DocumentEditor.vue'),
         },
+        {
+            path: '/rag-eval',
+            name: 'RagEval',
+            component: () => import('./views/RagEval.vue'),
+        },
     ],
 })
 

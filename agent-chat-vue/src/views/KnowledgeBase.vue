@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import apiClient, { DEV_USER_ROLE } from '@/api/client'
 import {
   Setting,
@@ -19,7 +19,8 @@ import {
   MoreFilled,
   Refresh,
   View,
-  Grid
+  Grid,
+  Delete
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -223,6 +224,69 @@ async function submitCreateKb() {
   }
 }
 
+const deletingKb = ref(false)
+async function confirmDeleteKb(kbId: number) {
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  const kb = knowledgeBases.value.find(k => k.id === kbId)
+  const name = kb?.name || String(kbId)
+  try {
+    await ElMessageBox.confirm(
+      `Delete collection "${name}"? This cannot be undone.`,
+      'Delete Collection',
+      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' }
+    )
+  } catch {
+    return
+  }
+
+  deletingKb.value = true
+  try {
+    await apiClient.deleteKnowledgeBase(kbId)
+    ElMessage.success('Collection deleted')
+    await loadKbs()
+  } catch {
+    ElMessage.error('Failed to delete collection')
+  } finally {
+    deletingKb.value = false
+  }
+}
+
+const deletingDoc = ref(false)
+async function confirmDeleteDoc(row: any) {
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  const kbId = Number(row.kbId)
+  const docId = Number(row.docId)
+  if (!Number.isFinite(kbId) || !Number.isFinite(docId)) return
+  const name = String(row.name || `Document ${docId}`)
+
+  try {
+    await ElMessageBox.confirm(
+      `Delete document "${name}"? This will also delete its vectors.`,
+      'Delete Document',
+      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' }
+    )
+  } catch {
+    return
+  }
+
+  deletingDoc.value = true
+  try {
+    await apiClient.deleteKnowledgeBaseDocument(kbId, docId)
+    ElMessage.success('Document deleted')
+    if (selectedKbId.value) await refreshKb(selectedKbId.value)
+  } catch {
+    ElMessage.error('Failed to delete document')
+  } finally {
+    deletingDoc.value = false
+  }
+}
+
 const fileInputRef = ref<HTMLInputElement | null>(null)
 function openFilePicker() {
   if (!isAdmin) {
@@ -328,10 +392,16 @@ async function buildGraph() {
   }
 }
 
-const handleRowClick = (row: any) => {
+function openDocument(row: any) {
   const kbId = row.kbId
   const docId = row.docId
   router.push({ path: '/document-editor', query: { kbId: String(kbId), docId: String(docId) } })
+}
+
+const handleRowClick = (row: any, column: any) => {
+  // Only navigate when user clicks the document cell; keep actions/other columns interactive.
+  if ((column?.label || '') !== 'DOCUMENT NAME') return
+  openDocument(row)
 }
 
 onMounted(async () => {
@@ -370,6 +440,16 @@ onMounted(async () => {
             </el-menu-item>
           </router-link>
 
+          <router-link
+            :to="selectedKbId ? { path: '/rag-eval', query: { kbId: String(selectedKbId) } } : { path: '/rag-eval' }"
+            style="text-decoration: none;"
+          >
+            <el-menu-item index="3">
+              <el-icon><DataAnalysis /></el-icon>
+              <span>RAG Evaluation</span>
+            </el-menu-item>
+          </router-link>
+
 
           <el-menu-item index="4">
             <el-icon><Setting /></el-icon>
@@ -386,19 +466,27 @@ onMounted(async () => {
              class="custom-menu collections-menu"
              :default-active="selectedKbId ? String(selectedKbId) : ''"
            >
-             <el-menu-item
-               v-for="kb in knowledgeBases"
-               :key="kb.id"
-               :index="String(kb.id)"
-               :class="{ 'collection-active': kb.id === selectedKbId }"
-               @click="refreshKb(kb.id)"
-             >
-               <el-icon><Folder /></el-icon>
-               <span class="flex-1">{{ kb.name }}</span>
-               <span class="badge">{{ kb.document_count ?? 0 }}</span>
-             </el-menu-item>
-           </el-menu>
-         </div>
+              <el-menu-item
+                v-for="kb in knowledgeBases"
+                :key="kb.id"
+                :index="String(kb.id)"
+                :class="{ 'collection-active': kb.id === selectedKbId }"
+                @click="refreshKb(kb.id)"
+              >
+                <el-icon><Folder /></el-icon>
+                <span class="flex-1">{{ kb.name }}</span>
+                <span class="badge">{{ kb.document_count ?? 0 }}</span>
+                <el-button
+                  v-if="isAdmin"
+                  link
+                  :icon="Delete"
+                  class="kb-delete-btn"
+                  :disabled="deletingKb"
+                  @click.stop="confirmDeleteKb(kb.id)"
+                />
+              </el-menu-item>
+            </el-menu>
+          </div>
       </div>
 
       <div class="storage-widget">
@@ -555,9 +643,27 @@ onMounted(async () => {
                 <el-table-column label="ACTIONS" width="200" align="right">
                   <template #default="{ row }">
                     <div class="action-buttons">
-                      <el-button v-if="row.status === 'Failed'" size="small" type="danger" plain :icon="Refresh">Retry</el-button>
-                      <el-button v-else size="small" plain>Segments</el-button>
-                      <el-button size="small" text :icon="MoreFilled" />
+                      <el-button
+                        v-if="row.status === 'Failed'"
+                        size="small"
+                        type="danger"
+                        plain
+                        :icon="Refresh"
+                        @click.stop
+                      >
+                        Retry
+                      </el-button>
+                      <el-button v-else size="small" plain @click.stop="openDocument(row)">Segments</el-button>
+                      <el-button size="small" text :icon="MoreFilled" @click.stop />
+                      <el-button
+                        v-if="isAdmin"
+                        size="small"
+                        text
+                        :icon="Delete"
+                        class="doc-delete-btn"
+                        :disabled="deletingDoc"
+                        @click.stop="confirmDeleteDoc(row)"
+                      />
                     </div>
                   </template>
                 </el-table-column>
@@ -710,12 +816,49 @@ onMounted(async () => {
 }
 
 .badge {
-  background: white;
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(20, 108, 240, 0.14), rgba(20, 108, 240, 0.06));
+  border: 1px solid rgba(20, 108, 240, 0.18);
+  color: #0b3b8a;
+  padding: 2px 10px;
+  border-radius: 999px;
   font-size: 11px;
-  border: 1px solid #e2e8f0;
-  color: #64748b;
+  line-height: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+.collection-active .badge {
+  background: linear-gradient(180deg, rgba(20, 108, 240, 0.22), rgba(20, 108, 240, 0.1));
+  border-color: rgba(20, 108, 240, 0.28);
+  color: #082f75;
+}
+
+.kb-delete-btn {
+  margin-left: 8px;
+  color: #94a3b8;
+  opacity: 0;
+  transform: translateX(2px);
+  transition: opacity 160ms ease, transform 160ms ease, color 160ms ease;
+}
+
+.kb-delete-btn:hover {
+  color: #ef4444;
+}
+
+:deep(.collections-menu .el-menu-item:hover) .kb-delete-btn,
+:deep(.collections-menu .el-menu-item.is-active) .kb-delete-btn {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.doc-delete-btn {
+  color: #94a3b8;
+}
+
+.doc-delete-btn:hover {
+  color: #ef4444;
 }
 
 /* Storage Widget */

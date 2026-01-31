@@ -7,7 +7,7 @@ const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 // Dev-only identity headers (temporary until real auth is added)
 export const DEV_USER_ID = 'dev_user_001'
-export const DEV_USER_ROLE: 'admin' | 'user' = 'user'
+export const DEV_USER_ROLE: 'admin' | 'user' = 'admin'
 
 function devHeaders() {
     return {
@@ -341,12 +341,20 @@ class ApiClient {
         return this.http.put(`/rag/knowledge-bases/${kbId}`, patch)
     }
 
+    async deleteKnowledgeBase(kbId: number): Promise<any> {
+        return this.http.delete(`/rag/knowledge-bases/${kbId}`)
+    }
+
     async getKnowledgeBaseStats(kbId: number): Promise<any> {
         return this.http.get(`/rag/knowledge-bases/${kbId}/stats`)
     }
 
     async listKnowledgeBaseDocuments(kbId: number): Promise<{ items: any[] }> {
         return this.http.get(`/rag/knowledge-bases/${kbId}/documents`)
+    }
+
+    async deleteKnowledgeBaseDocument(kbId: number, docId: number): Promise<any> {
+        return this.http.delete(`/rag/knowledge-bases/${kbId}/documents/${docId}`)
     }
 
     async uploadKnowledgeBaseDocument(kbId: number, file: File): Promise<any> {
@@ -393,6 +401,18 @@ class ApiClient {
 
     async buildKnowledgeBaseGraph(kbId: number): Promise<any> {
         return this.http.post(`/rag/knowledge-bases/${kbId}/build-graph`, {})
+    }
+
+    async ragRetrieve(input: { query: string; knowledge_base_id?: number; top_k?: number }): Promise<any> {
+        return this.http.post('/rag/retrieve', input)
+    }
+
+    async ragGraphRetrieve(input: { query: string; knowledge_base_id?: number; top_k?: number }): Promise<any> {
+        return this.http.post('/rag/graph/retrieve', input)
+    }
+
+    async ragEvaluate(input: { question: string; answer: string; contexts?: string[] }): Promise<any> {
+        return this.http.post('/rag/evaluate', input)
     }
 
     streamTask(

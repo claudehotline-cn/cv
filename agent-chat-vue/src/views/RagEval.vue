@@ -1,0 +1,1324 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import apiClient, { DEV_USER_ROLE } from '@/api/client'
+import { useTheme } from '@/composables/useTheme'
+import {
+  ArrowDown,
+  Download,
+  InfoFilled,
+  MoreFilled,
+  Refresh,
+  Search,
+  Star,
+  Bell,
+} from '@element-plus/icons-vue'
+
+type Mode = 'vector' | 'graph'
+
+type KB = {
+  id: number
+  name: string
+  description?: string
+}
+
+type ResultRow = {
+  id: string
+  rank: number
+  score: number
+  source: string
+  snippet: string
+  documentId?: number
+  label: number // 0..3
+}
+
+type SavedCase = {
+  id: string
+  title: string
+  meta: string
+  query: string
+  mode: Mode
+  topK: number
+  createdAt: string
+}
+
+const router = useRouter()
+const route = useRoute()
+
+const { toggleTheme } = useTheme()
+
+const isAdmin = DEV_USER_ROLE === 'admin'
+
+const kbList = ref<KB[]>([])
+const selectedKbId = ref<number | null>(null)
+
+const mode = ref<Mode>('vector')
+const topK = ref(12)
+
+const headerSearch = ref('')
+const query = ref("What are the liability limitations in Section 4.2?")
+
+const loading = ref(false)
+const evaluating = ref(false)
+
+const savedCases = ref<SavedCase[]>([])
+const selectedCaseId = ref<string | null>(null)
+
+const results = ref<ResultRow[]>([])
+
+const judgeAnswer = ref(
+  "Based on the retrieved context, Section 4.2 specifies that the provider's total liability is limited to the fees paid by the customer in the 12 months preceding the claim. However, this cap does not apply in cases of gross negligence."
+)
+const judgeReasoning = ref(
+  'The model correctly identified the liability cap from document SLA_v2.pdf and cross-referenced the exceptions from annex_B.docx. No hallucinations detected.'
+)
+
+function makeMockResults(): ResultRow[] {
+  return [
+    {
+      id: 'r1',
+      rank: 1,
+      score: 0.942,
+      source: 'legal/contracts/SLA_v2.pdf',
+      snippet: '"The total liability of the provider shall not exceed the fees paid during the..."',
+      documentId: 1,
+      label: 3,
+    },
+    {
+      id: 'r2',
+      rank: 2,
+      score: 0.887,
+      source: 'legal/annex_B.docx',
+      snippet: '"Exceptions to the liability cap include gross negligence or willful misconduct..."',
+      documentId: 2,
+      label: 2,
+    },
+    {
+      id: 'r3',
+      rank: 3,
+      score: 0.812,
+      source: 'policies/compliance.pdf',
+      snippet: '"Employees must report all potential liability issues to the compliance officer..."',
+      documentId: 3,
+      label: 1,
+    },
+  ]
+}
+
+function makeMockCases(): SavedCase[] {
+  return [
+    {
+      id: 'c1',
+      title: 'Compliance_Test_A',
+      meta: 'TopK: 5 • Vector • Oct 24',
+      query: 'What are the SOC2 Type II requirements for encryption at rest?',
+      mode: 'vector',
+      topK: 5,
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
+    },
+    {
+      id: 'c2',
+      title: 'Edge_Cases_v2',
+      meta: 'TopK: 10 • Hybrid • Oct 22',
+      query: 'List exceptions to liability cap and their conditions.',
+      mode: 'graph',
+      topK: 10,
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 9).toISOString(),
+    },
+  ]
+}
+
+function formatScore(v: number) {
+  if (!Number.isFinite(v)) return '—'
+  return v.toFixed(3)
+}
+
+const selectedKbName = computed(() => {
+  const kb = kbList.value.find((k) => k.id === selectedKbId.value)
+  return kb?.name || 'Select Knowledge Base'
+})
+
+const chunksFoundLabel = computed(() => {
+  const n = results.value.length
+  return n ? `${n} CHUNKS FOUND` : ''
+})
+
+function setLabel(rowId: string, next: number) {
+  const n = Math.max(0, Math.min(3, next))
+  results.value = results.value.map((r) => (r.id === rowId ? { ...r, label: n } : r))
+}
+
+function onLabelClick(row: ResultRow, idx: number) {
+  // idx: 1..3
+  // Toggle off if user clicks the already-selected level.
+  if (row.label === idx) setLabel(row.id, 0)
+  else setLabel(row.id, idx)
+}
+
+function openDoc(row: ResultRow) {
+  if (!row.documentId || !selectedKbId.value) return
+  router.push({ path: '/document-editor', query: { kbId: String(selectedKbId.value), docId: String(row.documentId) } })
+}
+
+function resetLabels() {
+  results.value = results.value.map((r) => ({ ...r, label: 0 }))
+}
+
+function exportJson() {
+  const payload = {
+    kb_id: selectedKbId.value,
+    kb_name: selectedKbName.value,
+    mode: mode.value,
+    top_k: topK.value,
+    query: query.value,
+    results: results.value,
+    judge: {
+      answer: judgeAnswer.value,
+      reasoning: judgeReasoning.value,
+    },
+    exported_at: new Date().toISOString(),
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `rag-eval-${Date.now()}.json`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+async function runRetrieve() {
+  if (!query.value.trim()) {
+    ElMessage.warning('请输入 Query')
+    return
+  }
+
+  // Keep the UI alive even if API is missing.
+  loading.value = true
+  try {
+    const payload = {
+      query: query.value.trim(),
+      knowledge_base_id: selectedKbId.value || undefined,
+      top_k: topK.value,
+    }
+
+    const res = mode.value === 'graph'
+      ? await apiClient.ragGraphRetrieve(payload)
+      : await apiClient.ragRetrieve(payload)
+
+    const rows = Array.isArray((res as any)?.results) ? (res as any).results : []
+    if (!rows.length) {
+      ElMessage.warning('检索接口返回空结果，暂时使用 mock 结果')
+      return
+    }
+
+    results.value = rows.slice(0, topK.value).map((r: any, i: number) => ({
+      id: `api_${i}_${String(r.document_id || '')}_${String(r.chunk_index || '')}`,
+      rank: i + 1,
+      score: Number(r.score || 0),
+      source: String(r?.metadata?.source || `doc:${r.document_id}`),
+      snippet: String((r.content || '').slice(0, 220)).replace(/\s+/g, ' ').trim(),
+      documentId: Number(r.document_id || 0) || undefined,
+      label: 0,
+    }))
+  } catch {
+    ElMessage.warning('检索接口暂不可用，使用 mock 结果')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function evaluate() {
+  if (!isAdmin) {
+    ElMessage.warning('需要 admin 才能调用 Evaluate')
+    return
+  }
+  evaluating.value = true
+  try {
+    await apiClient.ragEvaluate({ question: query.value.trim(), answer: judgeAnswer.value.trim(), contexts: results.value.map((r) => r.snippet) })
+    ElMessage.success('Evaluate request sent')
+  } catch {
+    ElMessage.warning('Evaluate 接口暂不可用（mock 展示不受影响）')
+  } finally {
+    evaluating.value = false
+  }
+}
+
+function loadCase(c: SavedCase) {
+  selectedCaseId.value = c.id
+  mode.value = c.mode
+  topK.value = c.topK
+  query.value = c.query
+  results.value = makeMockResults()
+}
+
+async function loadKbs() {
+  try {
+    const res = await apiClient.listKnowledgeBases()
+    kbList.value = (res.items || []) as KB[]
+  } catch {
+    kbList.value = []
+  }
+}
+
+onMounted(async () => {
+  savedCases.value = makeMockCases()
+  results.value = makeMockResults()
+
+  const rawKbId = String(route.query.kbId || '')
+  const kbId = Number.parseInt(rawKbId, 10)
+  if (Number.isFinite(kbId)) selectedKbId.value = kbId
+
+  await loadKbs()
+  if (!selectedKbId.value && kbList.value.length) selectedKbId.value = kbList.value[0].id
+})
+</script>
+
+<template>
+  <div class="rag-eval">
+    <div class="page">
+      <header class="header">
+        <div class="header-left">
+          <div class="brand">
+            <div class="brand-icon">
+              <span class="ms">biotech</span>
+            </div>
+            <div class="brand-title">Retrieval Quality Lab</div>
+          </div>
+          <div class="sep" />
+          <nav class="nav">
+            <router-link class="nav-link" to="/finance-docs">Knowledge Base</router-link>
+            <span class="nav-link active">Dashboard</span>
+            <span class="nav-link">Benchmarks</span>
+            <span class="nav-link">Datasets</span>
+          </nav>
+        </div>
+
+        <div class="header-right">
+          <el-input v-model="headerSearch" class="header-search" :prefix-icon="Search" placeholder="Search benchmarks..." clearable />
+          <el-button class="icon-button" circle :icon="Bell" />
+          <el-button class="icon-button" circle :icon="MoreFilled" @click="toggleTheme" />
+          <el-avatar :size="40" class="avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA5FL-nB-IA5tIut7DpxuCLF-OImVaJQWmRDYr_fmptoIFbyhVtKWV0Jf1ly_PoPSIHgtUSgPMgJh_UeZX7vexUkRvQTXl2YL4rEq-Agq6Pzpl2_dTz7Bx4Fr0AQVFsYfkHKZYxEypo1tUOluSDJSwaDPbSvqIVJXw7pbWJ3K124o-BpRmkoC7F6GAmE5A1MYwli5fWsVu0BnoVoywK17ZbxnY4goAF74LYT7kmPkw3jF0NlFXrNuVD7akbkhg73xIa_1rcFo_9TbE" />
+        </div>
+      </header>
+
+      <div class="body">
+        <aside class="left no-scrollbar">
+          <div class="left-inner">
+            <div class="block">
+              <div class="label">Knowledge Base</div>
+              <el-dropdown trigger="click" class="kb-dd" :hide-on-click="true">
+                <el-button class="kb-btn" plain>
+                  <span class="kb-name">{{ selectedKbName }}</span>
+                  <el-icon class="kb-caret"><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="kb in kbList" :key="kb.id" @click="selectedKbId = kb.id">
+                      {{ kb.name }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+
+            <div class="block">
+              <div class="label">Retriever Type</div>
+              <div class="seg">
+                <button class="seg-btn" :class="{ on: mode === 'vector' }" @click="mode = 'vector'">VECTOR</button>
+                <button class="seg-btn" :class="{ on: mode === 'graph' }" @click="mode = 'graph'">GRAPH</button>
+              </div>
+            </div>
+
+            <div class="block">
+              <div class="row">
+                <div class="label">TopK Results</div>
+                <div class="topk">{{ topK }}</div>
+              </div>
+              <el-slider v-model="topK" :min="1" :max="20" :show-tooltip="false" />
+            </div>
+
+            <el-button class="run" type="primary" :loading="loading" @click="runRetrieve">Run Retrieve</el-button>
+
+            <div class="block">
+              <h3 class="saved-title">Saved Cases</h3>
+              <div class="saved-list">
+                <div
+                  v-for="c in savedCases"
+                  :key="c.id"
+                  class="case"
+                  :class="{ active: c.id === selectedCaseId }"
+                  @click="loadCase(c)"
+                >
+                  <p class="case-title">{{ c.title }}</p>
+                  <p class="case-meta">{{ c.meta }}</p>
+                  <el-button class="case-load" plain size="small" @click.stop="loadCase(c)">
+                    Load Case
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <main class="main">
+          <div class="main-inner">
+            <section class="card query">
+              <div class="card-head">
+                <h3 class="card-title">Query Context</h3>
+                <div class="actions">
+                  <el-button class="ghost" text :icon="Refresh" @click="resetLabels">Reset</el-button>
+                  <el-button class="ghost" text :icon="Download" @click="exportJson">Export</el-button>
+                  <el-button class="save" type="primary" :icon="Star">Save Case</el-button>
+                </div>
+              </div>
+              <el-input v-model="query" type="textarea" :rows="3" class="query-input" placeholder="Enter your evaluation query here..." />
+            </section>
+
+            <section class="card table">
+              <div class="card-head row-head">
+                <h3 class="card-title">Retrieved Chunks</h3>
+                <div v-if="chunksFoundLabel" class="pill">{{ chunksFoundLabel }}</div>
+              </div>
+
+              <div class="table-wrap">
+                <table class="t">
+                  <thead>
+                    <tr>
+                      <th>Rank</th>
+                      <th>Score</th>
+                      <th>Source/Path</th>
+                      <th>Snippet</th>
+                      <th class="center">Relevance</th>
+                      <th class="col-open"><span class="sr-only">Open</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in results" :key="row.id">
+                      <td class="rank">#{{ row.rank }}</td>
+                      <td>
+                        <span class="score">{{ formatScore(row.score) }}</span>
+                      </td>
+                      <td class="source">{{ row.source }}</td>
+                      <td class="snippet">{{ row.snippet }}</td>
+                      <td class="center">
+                        <div class="rel">
+                          <button
+                            class="dot"
+                            :class="{ teal: row.label >= 1, orange: row.label === 1 }"
+                            @click="onLabelClick(row, 1)"
+                            aria-label="relevance 1"
+                          />
+                          <button
+                            class="dot"
+                            :class="{ teal: row.label >= 2 }"
+                            @click="onLabelClick(row, 2)"
+                            aria-label="relevance 2"
+                          />
+                          <button
+                            class="dot"
+                            :class="{ teal: row.label >= 3 }"
+                            @click="onLabelClick(row, 3)"
+                            aria-label="relevance 3"
+                          />
+                        </div>
+                      </td>
+                      <td class="right col-open">
+                        <button
+                          class="open"
+                          :disabled="!row.documentId || !selectedKbId"
+                          @click="openDoc(row)"
+                          aria-label="Open in editor"
+                        >
+                          <span class="material-symbols-outlined">open_in_new</span>
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="card judge">
+              <div class="judge-head">
+                <div class="judge-title">
+                  <span class="ms teal">auto_awesome</span>
+                  <h3>LLM-as-a-Judge</h3>
+                </div>
+                <el-button type="primary" :loading="evaluating" @click="evaluate">Evaluate Results</el-button>
+              </div>
+              <div class="judge-grid">
+                <div>
+                  <div class="label">Generated Answer</div>
+                  <el-input v-model="judgeAnswer" type="textarea" :autosize="{ minRows: 6, maxRows: 10 }" readonly class="judge-answer" />
+                </div>
+                <div>
+                  <div class="label">Metrics & Reasoning</div>
+                  <div class="chips">
+                    <span class="chip teal"><span class="ms">verified</span> Faithfulness: High</span>
+                    <span class="chip blue"><span class="ms">target</span> Relevance: High</span>
+                  </div>
+                  <div class="reason">
+                    <div class="reason-title">Reasoning:</div>
+                    <div class="reason-text">{{ judgeReasoning }}</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </main>
+
+        <aside class="right no-scrollbar">
+          <div class="right-inner">
+            <div class="right-head">
+              <div class="right-title">Retrieval Metrics</div>
+              <el-button text class="info" :icon="InfoFilled" />
+            </div>
+
+            <div class="metric">
+              <div class="metric-row">
+                <div class="metric-name">Precision@K</div>
+                <div class="metric-value">0.82</div>
+              </div>
+              <div class="bar"><div class="bar-fill" style="width: 82%"></div></div>
+              <div class="metric-note">+12% from previous run</div>
+            </div>
+
+            <div class="metric">
+              <div class="metric-row">
+                <div class="metric-name">MRR</div>
+                <div class="metric-value">0.74</div>
+              </div>
+              <div class="bar"><div class="bar-fill" style="width: 74%"></div></div>
+            </div>
+
+            <div class="metric">
+              <div class="metric-row">
+                <div class="metric-name">nDCG</div>
+                <div class="metric-value">0.89</div>
+              </div>
+              <div class="bar"><div class="bar-fill" style="width: 89%"></div></div>
+            </div>
+
+            <div class="sample">
+              <div class="sample-row">
+                <div class="label">Sample Size</div>
+                <div class="sample-value">124 Labels</div>
+              </div>
+              <el-button class="export" plain :icon="Download" @click="exportJson">Export Full Report</el-button>
+            </div>
+
+            <div class="heat">
+              <div class="heat-title">Retrieval Density</div>
+              <div class="heat-grid">
+                <span class="h teal" />
+                <span class="h teal" />
+                <span class="h teal faint" />
+                <span class="h teal" />
+                <span class="h gray" />
+                <span class="h teal" />
+                <span class="h teal" />
+                <span class="h orange faint" />
+                <span class="h teal" />
+                <span class="h gray" />
+                <span class="h teal" />
+                <span class="h teal" />
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+/* Match Stitch HTML structure and tone (Element Plus + custom CSS) */
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.rag-eval {
+  --primary: #137fec;
+  --teal: #2dd4bf;
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --muted-2: #94a3b8;
+  --shadow: 0 1px 0 rgba(15, 23, 42, 0.03), 0 10px 22px rgba(2, 6, 23, 0.06);
+
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+
+  /* page-local Element Plus colors */
+  --el-color-primary: var(--primary);
+}
+
+:root.dark .rag-eval {
+  --bg: #101922;
+  --surface: #101922;
+  --surface-2: #0f172a;
+  --border: #1f2937;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --muted-2: #64748b;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 16px 26px rgba(0, 0, 0, 0.35);
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 32px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-icon {
+  color: var(--primary);
+}
+
+.brand-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.sep {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.nav-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.nav-link:hover {
+  color: var(--text);
+}
+
+.nav-link.active {
+  color: var(--primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex: 1;
+}
+
+.header-search {
+  width: 380px;
+}
+
+.icon-button {
+  background: #f1f5f9;
+  border: 1px solid transparent;
+  color: #475569;
+}
+
+:root.dark .icon-button {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.avatar {
+  border: 1px solid var(--border);
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.left {
+  width: 320px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  padding: 24px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.left-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.right {
+  width: 288px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  padding: 24px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.main {
+  flex: 1;
+  padding: 32px;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.main-inner {
+  max-width: 1024px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.kb-btn {
+  width: 100%;
+  justify-content: space-between;
+  border: 1px solid var(--border);
+}
+
+.kb-name {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seg {
+  display: flex;
+  gap: 6px;
+  background: #f1f5f9;
+  padding: 6px;
+  border-radius: 10px;
+}
+
+:root.dark .seg {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.seg-btn {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.seg-btn.on {
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.topk {
+  color: var(--primary);
+  font-weight: 900;
+}
+
+.run {
+  width: 100%;
+  border-radius: 10px;
+  height: 44px;
+  font-weight: 800;
+  box-shadow: 0 14px 22px rgba(19, 127, 236, 0.20);
+}
+
+.saved-title {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--text);
+  margin: 0;
+}
+
+.saved-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.case {
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(241, 245, 249, 0.55);
+  border-radius: 16px;
+  padding: 14px;
+  cursor: pointer;
+}
+
+:root.dark .case {
+  border-color: rgba(31, 41, 55, 0.9);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.case.active {
+  border-color: rgba(19, 127, 236, 0.35);
+}
+
+.case-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.case-meta {
+  margin: 6px 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.case-load {
+  width: 100%;
+  font-weight: 800;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid rgba(226, 232, 240, 0.7);
+  border-radius: 12px;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+}
+
+:root.dark .card {
+  border-color: rgba(31, 41, 55, 0.8);
+}
+
+.card-head {
+  padding: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.query {
+  padding-bottom: 0;
+}
+
+.query-input {
+  padding: 0 24px 24px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ghost {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.save {
+  font-weight: 900;
+}
+
+.table .row-head {
+  border-bottom: 1px solid rgba(226, 232, 240, 0.7);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(45, 212, 191, 0.12);
+  color: rgba(6, 95, 70, 1);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 900;
+}
+
+:root.dark .pill {
+  color: var(--teal);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  overflow: hidden;
+}
+
+.t {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.t thead th {
+  background: rgba(241, 245, 249, 0.9);
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 16px 24px;
+}
+
+:root.dark .t thead th {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.t tbody td {
+  padding: 16px 24px;
+  border-top: 1px solid rgba(226, 232, 240, 0.7);
+  color: var(--muted);
+}
+
+:root.dark .t tbody td {
+  border-top-color: rgba(31, 41, 55, 0.8);
+}
+
+.t tbody tr:hover {
+  background: rgba(241, 245, 249, 0.55);
+}
+
+:root.dark .t tbody tr:hover {
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.rank {
+  font-weight: 900;
+  color: var(--muted-2);
+}
+
+.score {
+  display: inline-block;
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: rgba(19, 127, 236, 0.10);
+  color: var(--primary);
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.source {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.snippet {
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.center {
+  text-align: center;
+}
+
+.right {
+  text-align: right;
+}
+
+.col-open {
+  width: 48px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.rel {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 0;
+  background: rgba(226, 232, 240, 1);
+  cursor: pointer;
+}
+
+:root.dark .dot {
+  background: rgba(51, 65, 85, 1);
+}
+
+.dot.teal {
+  background: var(--teal);
+}
+
+.dot.orange {
+  background: #fb923c;
+}
+
+.open {
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--muted-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 10px;
+}
+
+.open:hover {
+  color: var(--primary);
+  background: rgba(15, 23, 42, 0.04);
+}
+
+:root.dark .open:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.open:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.open :deep(.material-symbols-outlined) {
+  font-size: 20px;
+}
+
+.ms {
+  font-family: 'Material Symbols Outlined', sans-serif;
+  font-variation-settings: 'FILL' 1;
+  font-size: 24px;
+  color: var(--primary);
+}
+
+.ms.teal {
+  color: var(--teal);
+}
+
+.judge {
+  border: 2px solid rgba(19, 127, 236, 0.08);
+}
+
+.judge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px;
+}
+
+.judge-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.judge-title h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.judge-grid {
+  padding: 0 22px 22px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.judge-answer :deep(textarea) {
+  color: var(--muted);
+}
+
+.chips {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.chip.teal {
+  background: rgba(45, 212, 191, 0.12);
+  color: #059669;
+}
+
+.chip.blue {
+  background: rgba(19, 127, 236, 0.10);
+  color: var(--primary);
+}
+
+.reason {
+  border-radius: 12px;
+  background: rgba(241, 245, 249, 0.9);
+  padding: 14px;
+}
+
+:root.dark .reason {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.reason-title {
+  font-weight: 900;
+  color: var(--text);
+}
+
+.reason-text {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.right-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.right-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.right-title {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metric-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.metric-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.metric-value {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(241, 245, 249, 0.9);
+  overflow: hidden;
+}
+
+:root.dark .bar {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--teal);
+}
+
+.metric-note {
+  font-size: 10px;
+  color: var(--muted-2);
+}
+
+.sample {
+  border-top: 1px solid rgba(226, 232, 240, 0.7);
+  padding-top: 18px;
+}
+
+:root.dark .sample {
+  border-top-color: rgba(31, 41, 55, 0.8);
+}
+
+.sample-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.sample-value {
+  font-weight: 900;
+  color: var(--text);
+}
+
+.export {
+  width: 100%;
+  font-weight: 800;
+}
+
+.heat {
+  background: rgba(241, 245, 249, 0.9);
+  padding: 14px;
+  border-radius: 16px;
+}
+
+:root.dark .heat {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.heat-title {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  margin-bottom: 10px;
+}
+
+.heat-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.h {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background: rgba(226, 232, 240, 1);
+}
+
+.h.teal {
+  background: var(--teal);
+}
+
+.h.orange {
+  background: #fb923c;
+}
+
+.h.gray {
+  background: rgba(226, 232, 240, 1);
+}
+
+:root.dark .h.gray {
+  background: rgba(51, 65, 85, 1);
+}
+
+.faint {
+  opacity: 0.5;
+}
+
+@media (max-width: 1180px) {
+  .right { display: none; }
+}
+
+@media (max-width: 980px) {
+  .left { display: none; }
+  .header { padding: 12px 18px; }
+  .header-search { width: 240px; }
+  .main { padding: 18px; }
+}
+
+@media (max-width: 720px) {
+  .nav { display: none; }
+  .sep { display: none; }
+  .header-search { display: none; }
+  .judge-grid { grid-template-columns: 1fr; }
+}
+</style>

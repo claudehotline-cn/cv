@@ -160,5 +160,6 @@ agent-cli --help
 ## mcp 服务
 - 更多 langchain 开发文档可以使用 Langchain-doc mcp 服务
 - 其他开发文档可以使用 context7 的 mcp 服务
+- 前端 UI 设计稿可以使用 stitch mcp 服务，使用的时候模型用 GEMINI_3_PRO
 
 **请使用中文与我交流。**

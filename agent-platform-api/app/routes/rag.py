@@ -473,6 +473,72 @@ async def list_document_chunks(
     )
 
 
+@router.delete("/knowledge-bases/{kb_id}/documents/{doc_id}")
+async def delete_document(req: Request, kb_id: int, doc_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "doc_delete", "kb_id": kb_id, "doc_id": doc_id},
+    )
+
+    try:
+        out = await _proxy_json(method="DELETE", path=f"/api/documents/{doc_id}", req=req, request_id=rid)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "doc_delete", "kb_id": kb_id, "doc_id": doc_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "doc_delete", "kb_id": kb_id, "doc_id": doc_id, "result": out},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
 @router.post("/knowledge-bases/{kb_id}/documents/{doc_id}/preview-chunks")
 async def preview_document_chunks(req: Request, kb_id: int, doc_id: int, body: Dict[str, Any] = Body(...)):
     ctx = _dev_user_ctx(req)
@@ -626,6 +692,199 @@ async def build_graph(req: Request, kb_id: int):
             payload={"error_message": str(e)},
         )
         raise
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.post("/retrieve")
+async def retrieve(req: Request, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "retrieve", "input": body},
+    )
+
+    try:
+        out = await _proxy_json(method="POST", path="/api/retrieve", req=req, request_id=rid, json_body=body)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "retrieve", "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "retrieve"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.post("/graph/retrieve")
+async def graph_retrieve(req: Request, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "graph_retrieve", "input": body},
+    )
+
+    try:
+        out = await _proxy_json(method="POST", path="/api/graph/retrieve", req=req, request_id=rid, json_body=body)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "graph_retrieve", "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "graph_retrieve"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.post("/evaluate")
+async def evaluate(req: Request, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "evaluate", "input": {k: body.get(k) for k in ("question", "answer") if k in body}},
+    )
+
+    try:
+        out = await _proxy_json(method="POST", path="/api/evaluate", req=req, request_id=rid, json_body=body)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "evaluate", "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "evaluate"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
     return out

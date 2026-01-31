@@ -55,9 +55,18 @@
 
         <el-menu-item index="/finance-docs">
            <template #title>
+              <div class="menu-item-content">
+                 <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/finance-docs' }">monitor</span>
+                 <span class="font-medium">Knowledge Base</span>
+              </div>
+           </template>
+        </el-menu-item>
+
+        <el-menu-item index="/rag-eval">
+           <template #title>
              <div class="menu-item-content">
-                <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/finance-docs' }">monitor</span>
-                <span class="font-medium">Knowledge Base</span>
+                <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/rag-eval' }">query_stats</span>
+                <span class="font-medium">RAG Evaluation</span>
              </div>
           </template>
         </el-menu-item>
