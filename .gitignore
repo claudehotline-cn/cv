@@ -56,9 +56,13 @@ video-analyzer/build-ninja/
 
 article_agent/outputs/
 article_agent/workspace/
+legacy/article_agent/outputs/
+legacy/article_agent/workspace/
 models/
 .hf_cache/
 agent-langchain/workspace/
+legacy/agent-langchain/workspace/
+legacy/agent-langchain/.venv-langgraph/
 
 # Logs
 logs/
