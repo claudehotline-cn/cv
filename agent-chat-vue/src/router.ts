@@ -59,6 +59,16 @@ const router = createRouter({
             name: 'RagEval',
             component: () => import('./views/RagEval.vue'),
         },
+        {
+            path: '/rag/datasets',
+            name: 'RagDatasets',
+            component: () => import('./views/rag/RagDatasets.vue'),
+        },
+        {
+            path: '/rag/benchmarks',
+            name: 'RagBenchmarks',
+            component: () => import('./views/rag/RagBenchmarks.vue'),
+        },
     ],
 })
 
