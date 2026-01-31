@@ -179,6 +179,50 @@ async function loadKbs() {
   await refreshKb((preferred || knowledgeBases.value[0]).id)
 }
 
+const createKbDialogOpen = ref(false)
+const creatingKb = ref(false)
+const createKbForm = ref({
+  name: '',
+  description: '',
+})
+
+function openCreateKbDialog() {
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  createKbForm.value = { name: '', description: '' }
+  createKbDialogOpen.value = true
+}
+
+async function submitCreateKb() {
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  const name = createKbForm.value.name.trim()
+  const description = createKbForm.value.description.trim()
+  if (!name) {
+    ElMessage.warning('Please enter a name')
+    return
+  }
+  creatingKb.value = true
+  try {
+    const created = await apiClient.createKnowledgeBase({ name, description: description || undefined })
+    const kbId = Number((created as any)?.id)
+    ElMessage.success('Knowledge base created')
+    createKbDialogOpen.value = false
+    await loadKbs()
+    if (Number.isFinite(kbId)) {
+      await refreshKb(kbId)
+    }
+  } catch {
+    ElMessage.error('Failed to create knowledge base')
+  } finally {
+    creatingKb.value = false
+  }
+}
+
 const fileInputRef = ref<HTMLInputElement | null>(null)
 function openFilePicker() {
   if (!isAdmin) {
@@ -333,11 +377,11 @@ onMounted(async () => {
           </el-menu-item>
         </el-menu>
 
-         <div class="collections">
-           <div class="section-header">
-             <span>COLLECTIONS</span>
-             <el-button link type="primary" size="small" disabled>+</el-button>
-           </div>
+          <div class="collections">
+            <div class="section-header">
+              <span>COLLECTIONS</span>
+              <el-button v-if="isAdmin" link type="primary" size="small" @click="openCreateKbDialog">+</el-button>
+            </div>
            <el-menu
              class="custom-menu collections-menu"
              :default-active="selectedKbId ? String(selectedKbId) : ''"
@@ -412,14 +456,18 @@ onMounted(async () => {
                <h1>{{ selectedKb?.name || 'Knowledge Base' }}</h1>
                <p class="subtitle">{{ selectedKb?.description || 'Manage documents and vectors for agent context.' }}</p>
              </div>
-             <div class="actions">
+              <div class="actions">
                 <el-button-group>
                   <el-button :icon="View" />
                   <el-button :icon="Grid" />
                 </el-button-group>
-                <el-button type="primary" :icon="Upload" :disabled="!isAdmin || !selectedKbId" @click="openFilePicker">Upload Data</el-button>
-                <el-dropdown trigger="click" @command="(cmd: string) => { if (cmd === 'import_url') openImportUrlDialog(); if (cmd === 'rebuild_vectors') rebuildVectors(); if (cmd === 'build_graph') buildGraph(); }">
-                  <el-button :icon="MoreFilled" :disabled="!isAdmin || !selectedKbId" :loading="queueingKbJob" />
+                <el-button v-if="isAdmin" type="primary" :icon="Upload" :disabled="!selectedKbId" @click="openFilePicker">Upload Data</el-button>
+                <el-dropdown
+                  v-if="isAdmin"
+                  trigger="click"
+                  @command="(cmd: string) => { if (cmd === 'import_url') openImportUrlDialog(); if (cmd === 'rebuild_vectors') rebuildVectors(); if (cmd === 'build_graph') buildGraph(); }"
+                >
+                  <el-button :icon="MoreFilled" :disabled="!selectedKbId" :loading="queueingKbJob" />
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="import_url">Import URL</el-dropdown-item>
@@ -428,7 +476,7 @@ onMounted(async () => {
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
-             </div>
+              </div>
            </div>
 
           <!-- Stats -->
@@ -545,6 +593,21 @@ onMounted(async () => {
     <template #footer>
       <el-button @click="importUrlDialogOpen = false" :disabled="importingUrl">Cancel</el-button>
       <el-button type="primary" :loading="importingUrl" @click="submitImportUrl">Import</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="createKbDialogOpen" title="Create Knowledge Base" width="640px">
+    <el-form label-position="top">
+      <el-form-item label="Name">
+        <el-input v-model="createKbForm.name" placeholder="e.g. Finance Docs" :disabled="creatingKb" />
+      </el-form-item>
+      <el-form-item label="Description">
+        <el-input v-model="createKbForm.description" placeholder="Optional" :disabled="creatingKb" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="createKbDialogOpen = false" :disabled="creatingKb">Cancel</el-button>
+      <el-button type="primary" :loading="creatingKb" @click="submitCreateKb">Create</el-button>
     </template>
   </el-dialog>
 </template>

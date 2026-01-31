@@ -120,6 +120,15 @@ async def create_knowledge_base(req: Request, body: Dict[str, Any] = Body(...)):
     await _emit_audit(
         req=req,
         ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
         event_type="tool_call_requested",
         request_id=rid,
         span_id=rid,
@@ -136,6 +145,14 @@ async def create_knowledge_base(req: Request, body: Dict[str, Any] = Body(...)):
             span_id=rid,
             payload={"action": "kb_create", "error_message": str(e)},
         )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
         raise
 
     await _emit_audit(
@@ -145,6 +162,14 @@ async def create_knowledge_base(req: Request, body: Dict[str, Any] = Body(...)):
         request_id=rid,
         span_id=rid,
         payload={"action": "kb_create", "result": out},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
     )
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
@@ -165,6 +190,15 @@ async def update_knowledge_base(req: Request, kb_id: int, body: Dict[str, Any] =
     await _emit_audit(
         req=req,
         ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
         event_type="tool_call_requested",
         request_id=rid,
         span_id=rid,
@@ -181,6 +215,14 @@ async def update_knowledge_base(req: Request, kb_id: int, body: Dict[str, Any] =
             span_id=rid,
             payload={"action": "kb_update", "kb_id": kb_id, "error_message": str(e)},
         )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
         raise
 
     await _emit_audit(
@@ -190,6 +232,14 @@ async def update_knowledge_base(req: Request, kb_id: int, body: Dict[str, Any] =
         request_id=rid,
         span_id=rid,
         payload={"action": "kb_update", "kb_id": kb_id, "result": out},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
     )
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
@@ -205,12 +255,40 @@ async def delete_knowledge_base(req: Request, kb_id: int):
     await _emit_audit(
         req=req,
         ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
         event_type="tool_call_requested",
         request_id=rid,
         span_id=rid,
         payload={"action": "kb_delete", "kb_id": kb_id},
     )
-    out = await _proxy_json(method="DELETE", path=f"/api/knowledge-bases/{kb_id}", req=req)
+    try:
+        out = await _proxy_json(method="DELETE", path=f"/api/knowledge-bases/{kb_id}", req=req)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "kb_delete", "kb_id": kb_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
     await _emit_audit(
         req=req,
         ctx=ctx,
@@ -218,6 +296,14 @@ async def delete_knowledge_base(req: Request, kb_id: int):
         request_id=rid,
         span_id=rid,
         payload={"action": "kb_delete", "kb_id": kb_id, "result": out},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
     )
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
@@ -243,12 +329,32 @@ async def upload_document(req: Request, kb_id: int, file: UploadFile = File(...)
     await _emit_audit(
         req=req,
         ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
         event_type="job_queued",
         request_id=rid,
         span_id=rid,
         payload={"action": "doc_upload", "kb_id": kb_id, "filename": file.filename, "queue": "rag:queue"},
     )
-    out = await _proxy_multipart(path=f"/api/knowledge-bases/{kb_id}/documents/upload", req=req, request_id=rid, file=file)
+    try:
+        out = await _proxy_multipart(path=f"/api/knowledge-bases/{kb_id}/documents/upload", req=req, request_id=rid, file=file)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
     return out
@@ -263,6 +369,15 @@ async def import_url(req: Request, kb_id: int, body: Dict[str, Any] = Body(...))
     await _emit_audit(
         req=req,
         ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
         event_type="job_queued",
         request_id=rid,
         span_id=rid,
@@ -273,13 +388,24 @@ async def import_url(req: Request, kb_id: int, body: Dict[str, Any] = Body(...))
     if "knowledge_base_id" not in body:
         body = {**body, "knowledge_base_id": kb_id}
 
-    out = await _proxy_json(
-        method="POST",
-        path=f"/api/knowledge-bases/{kb_id}/documents/import-url",
-        req=req,
-        request_id=rid,
-        json_body=body,
-    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/documents/import-url",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
     return out
@@ -294,17 +420,37 @@ async def reindex_document(req: Request, kb_id: int, doc_id: int):
     await _emit_audit(
         req=req,
         ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
         event_type="job_queued",
         request_id=rid,
         span_id=rid,
         payload={"action": "doc_reindex", "kb_id": kb_id, "doc_id": doc_id, "queue": "rag:queue"},
     )
-    out = await _proxy_json(
-        method="POST",
-        path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/reindex",
-        req=req,
-        request_id=rid,
-    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/reindex",
+            req=req,
+            request_id=rid,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
     return out
@@ -336,18 +482,46 @@ async def preview_document_chunks(req: Request, kb_id: int, doc_id: int, body: D
     await _emit_audit(
         req=req,
         ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
         event_type="tool_call_requested",
         request_id=rid,
         span_id=rid,
         payload={"action": "preview_chunks", "kb_id": kb_id, "doc_id": doc_id, "input": body},
     )
-    out = await _proxy_json(
-        method="POST",
-        path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/preview-chunks",
-        req=req,
-        request_id=rid,
-        json_body=body,
-    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/preview-chunks",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "preview_chunks", "kb_id": kb_id, "doc_id": doc_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
     await _emit_audit(
         req=req,
         ctx=ctx,
@@ -358,6 +532,14 @@ async def preview_document_chunks(req: Request, kb_id: int, doc_id: int, body: D
     )
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
     return out
 
 
@@ -366,6 +548,15 @@ async def rebuild_vectors(req: Request, kb_id: int):
     ctx = _dev_user_ctx(req)
     _require_admin(ctx)
     rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
     await _emit_audit(
         req=req,
         ctx=ctx,
@@ -374,12 +565,23 @@ async def rebuild_vectors(req: Request, kb_id: int):
         span_id=rid,
         payload={"action": "rebuild_vectors", "kb_id": kb_id, "queue": "rag:queue"},
     )
-    out = await _proxy_json(
-        method="POST",
-        path=f"/api/knowledge-bases/{kb_id}/rebuild-vectors",
-        req=req,
-        request_id=rid,
-    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/rebuild-vectors",
+            req=req,
+            request_id=rid,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
     return out
@@ -390,6 +592,15 @@ async def build_graph(req: Request, kb_id: int):
     ctx = _dev_user_ctx(req)
     _require_admin(ctx)
     rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
     await _emit_audit(
         req=req,
         ctx=ctx,
@@ -398,12 +609,23 @@ async def build_graph(req: Request, kb_id: int):
         span_id=rid,
         payload={"action": "build_graph", "kb_id": kb_id, "queue": "rag:queue"},
     )
-    out = await _proxy_json(
-        method="POST",
-        path=f"/api/knowledge-bases/{kb_id}/build-graph",
-        req=req,
-        request_id=rid,
-    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/build-graph",
+            req=req,
+            request_id=rid,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
     return out
