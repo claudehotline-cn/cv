@@ -360,6 +360,13 @@ class ApiClient {
         })
     }
 
+    async importKnowledgeBaseUrl(kbId: number, url: string): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/documents/import-url`, {
+            url,
+            knowledge_base_id: kbId,
+        })
+    }
+
     async reindexDocument(kbId: number, docId: number): Promise<any> {
         return this.http.post(`/rag/knowledge-bases/${kbId}/documents/${docId}/reindex`, {})
     }

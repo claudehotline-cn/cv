@@ -146,6 +146,8 @@ async def create_knowledge_base(req: Request, body: Dict[str, Any] = Body(...)):
         span_id=rid,
         payload={"action": "kb_create", "result": out},
     )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
     return out
 
 
@@ -189,6 +191,8 @@ async def update_knowledge_base(req: Request, kb_id: int, body: Dict[str, Any] =
         span_id=rid,
         payload={"action": "kb_update", "kb_id": kb_id, "result": out},
     )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
     return out
 
 
@@ -215,6 +219,8 @@ async def delete_knowledge_base(req: Request, kb_id: int):
         span_id=rid,
         payload={"action": "kb_delete", "kb_id": kb_id, "result": out},
     )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
     return out
 
 
@@ -242,7 +248,41 @@ async def upload_document(req: Request, kb_id: int, file: UploadFile = File(...)
         span_id=rid,
         payload={"action": "doc_upload", "kb_id": kb_id, "filename": file.filename, "queue": "rag:queue"},
     )
-    return await _proxy_multipart(path=f"/api/knowledge-bases/{kb_id}/documents/upload", req=req, request_id=rid, file=file)
+    out = await _proxy_multipart(path=f"/api/knowledge-bases/{kb_id}/documents/upload", req=req, request_id=rid, file=file)
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.post("/knowledge-bases/{kb_id}/documents/import-url")
+async def import_url(req: Request, kb_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="job_queued",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "doc_import_url", "kb_id": kb_id, "queue": "rag:queue", "input": body},
+    )
+
+    # rag-service expects URLImportRequest {url, knowledge_base_id}
+    if "knowledge_base_id" not in body:
+        body = {**body, "knowledge_base_id": kb_id}
+
+    out = await _proxy_json(
+        method="POST",
+        path=f"/api/knowledge-bases/{kb_id}/documents/import-url",
+        req=req,
+        request_id=rid,
+        json_body=body,
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/{doc_id}/reindex")
@@ -259,12 +299,15 @@ async def reindex_document(req: Request, kb_id: int, doc_id: int):
         span_id=rid,
         payload={"action": "doc_reindex", "kb_id": kb_id, "doc_id": doc_id, "queue": "rag:queue"},
     )
-    return await _proxy_json(
+    out = await _proxy_json(
         method="POST",
         path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/reindex",
         req=req,
         request_id=rid,
     )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
 
 
 @router.get("/knowledge-bases/{kb_id}/documents/{doc_id}/chunks")
@@ -313,6 +356,8 @@ async def preview_document_chunks(req: Request, kb_id: int, doc_id: int, body: D
         span_id=rid,
         payload={"action": "preview_chunks", "kb_id": kb_id, "doc_id": doc_id},
     )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
     return out
 
 
@@ -329,12 +374,15 @@ async def rebuild_vectors(req: Request, kb_id: int):
         span_id=rid,
         payload={"action": "rebuild_vectors", "kb_id": kb_id, "queue": "rag:queue"},
     )
-    return await _proxy_json(
+    out = await _proxy_json(
         method="POST",
         path=f"/api/knowledge-bases/{kb_id}/rebuild-vectors",
         req=req,
         request_id=rid,
     )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
 
 
 @router.post("/knowledge-bases/{kb_id}/build-graph")
@@ -350,9 +398,12 @@ async def build_graph(req: Request, kb_id: int):
         span_id=rid,
         payload={"action": "build_graph", "kb_id": kb_id, "queue": "rag:queue"},
     )
-    return await _proxy_json(
+    out = await _proxy_json(
         method="POST",
         path=f"/api/knowledge-bases/{kb_id}/build-graph",
         req=req,
         request_id=rid,
     )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out

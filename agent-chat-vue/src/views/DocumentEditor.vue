@@ -309,6 +309,36 @@ async function regenerateDocument() {
   }
 }
 
+async function rebuildKbVectors() {
+  if (!kbId.value) return
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  try {
+    const res = await apiClient.rebuildKnowledgeBaseVectors(kbId.value)
+    const jobId = (res as any)?.job_id
+    ElMessage.success(jobId ? `KB rebuild queued (job_id=${jobId})` : 'KB rebuild queued')
+  } catch {
+    ElMessage.error('Failed to queue KB rebuild')
+  }
+}
+
+async function buildKbGraph() {
+  if (!kbId.value) return
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  try {
+    const res = await apiClient.buildKnowledgeBaseGraph(kbId.value)
+    const jobId = (res as any)?.job_id
+    ElMessage.success(jobId ? `KB graph queued (job_id=${jobId})` : 'KB graph queued')
+  } catch {
+    ElMessage.error('Failed to queue KB graph build')
+  }
+}
+
 function exitEditor() {
   router.push('/finance-docs')
 }
@@ -536,6 +566,15 @@ watch(
           <el-button type="primary" class="btn-save" :loading="saving" :disabled="!isAdmin" @click="saveKbSettings">Save Changes</el-button>
           <el-button plain class="btn-preview" :disabled="!isAdmin" @click="previewChunks">
             <el-icon><View /></el-icon> Preview Result
+          </el-button>
+          <el-button plain class="btn-preview" :disabled="!isAdmin" @click="regenerateDocument">
+            <el-icon><Refresh /></el-icon> Reindex Document
+          </el-button>
+          <el-button plain class="btn-preview" :disabled="!isAdmin" @click="rebuildKbVectors">
+            <el-icon><Refresh /></el-icon> Rebuild KB Vectors
+          </el-button>
+          <el-button plain class="btn-preview" :disabled="!isAdmin" @click="buildKbGraph">
+            <el-icon><Connection /></el-icon> Build KB Graph
           </el-button>
           <p class="reindex-note">Changes will require re-indexing.</p>
         </div>

@@ -131,6 +131,13 @@ const tableData = computed(() => {
   return rows
 })
 
+const totalItemsLabel = computed(() => {
+  const total = kbStats.value?.documents?.total ?? documents.value.length
+  return Number.isFinite(total) ? String(total) : String(documents.value.length)
+})
+
+const showingItemsLabel = computed(() => String(tableData.value.length))
+
 const stats = computed(() => {
   const docCount = kbStats.value?.documents?.total ?? selectedKb.value?.document_count ?? documents.value.length
   const totalVectors = kbStats.value?.vectors?.total
@@ -178,6 +185,10 @@ function openFilePicker() {
     ElMessage.warning('Admin role required')
     return
   }
+  if (!selectedKbId.value) {
+    ElMessage.warning('Select a knowledge base first')
+    return
+  }
   fileInputRef.value?.click()
 }
 
@@ -194,6 +205,82 @@ async function onFileSelected(e: Event) {
     ElMessage.error('Upload failed')
   } finally {
     input.value = ''
+  }
+}
+
+const importUrlDialogOpen = ref(false)
+const importUrlValue = ref('')
+const importingUrl = ref(false)
+
+function openImportUrlDialog() {
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  if (!selectedKbId.value) {
+    ElMessage.warning('Select a knowledge base first')
+    return
+  }
+  importUrlValue.value = ''
+  importUrlDialogOpen.value = true
+}
+
+async function submitImportUrl() {
+  if (!selectedKbId.value) return
+  const url = importUrlValue.value.trim()
+  if (!url) {
+    ElMessage.warning('Please enter a URL')
+    return
+  }
+  importingUrl.value = true
+  try {
+    const res = await apiClient.importKnowledgeBaseUrl(selectedKbId.value, url)
+    const jobId = (res as any)?.job_id
+    ElMessage.success(jobId ? `Import queued (job_id=${jobId})` : 'Import queued')
+    importUrlDialogOpen.value = false
+    await refreshKb(selectedKbId.value)
+  } catch {
+    ElMessage.error('Import failed')
+  } finally {
+    importingUrl.value = false
+  }
+}
+
+const queueingKbJob = ref(false)
+
+async function rebuildVectors() {
+  if (!selectedKbId.value) return
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  queueingKbJob.value = true
+  try {
+    const res = await apiClient.rebuildKnowledgeBaseVectors(selectedKbId.value)
+    const jobId = (res as any)?.job_id
+    ElMessage.success(jobId ? `Rebuild queued (job_id=${jobId})` : 'Rebuild queued')
+  } catch {
+    ElMessage.error('Failed to queue rebuild')
+  } finally {
+    queueingKbJob.value = false
+  }
+}
+
+async function buildGraph() {
+  if (!selectedKbId.value) return
+  if (!isAdmin) {
+    ElMessage.warning('Admin role required')
+    return
+  }
+  queueingKbJob.value = true
+  try {
+    const res = await apiClient.buildKnowledgeBaseGraph(selectedKbId.value)
+    const jobId = (res as any)?.job_id
+    ElMessage.success(jobId ? `Build graph queued (job_id=${jobId})` : 'Build graph queued')
+  } catch {
+    ElMessage.error('Failed to queue build graph')
+  } finally {
+    queueingKbJob.value = false
   }
 }
 
@@ -246,36 +333,28 @@ onMounted(async () => {
           </el-menu-item>
         </el-menu>
 
-        <div class="collections">
-          <div class="section-header">
-            <span>COLLECTIONS</span>
-            <el-button link type="primary" size="small">+</el-button>
-          </div>
-          <el-menu class="custom-menu collections-menu" default-active="finance">
-             <el-menu-item index="all">
+         <div class="collections">
+           <div class="section-header">
+             <span>COLLECTIONS</span>
+             <el-button link type="primary" size="small" disabled>+</el-button>
+           </div>
+           <el-menu
+             class="custom-menu collections-menu"
+             :default-active="selectedKbId ? String(selectedKbId) : ''"
+           >
+             <el-menu-item
+               v-for="kb in knowledgeBases"
+               :key="kb.id"
+               :index="String(kb.id)"
+               :class="{ 'collection-active': kb.id === selectedKbId }"
+               @click="refreshKb(kb.id)"
+             >
                <el-icon><Folder /></el-icon>
-               <span>All Files</span>
+               <span class="flex-1">{{ kb.name }}</span>
+               <span class="badge">{{ kb.document_count ?? 0 }}</span>
              </el-menu-item>
-             <!-- Active Collection -->
-             <el-menu-item index="finance" class="collection-active">
-               <el-icon color="#475569"><Folder /></el-icon>
-               <span class="flex-1">Finance Docs</span>
-               <span class="badge">24</span>
-             </el-menu-item>
-             <el-menu-item index="tech">
-               <el-icon><Folder /></el-icon>
-               <span>Tech Wiki</span>
-             </el-menu-item>
-             <el-menu-item index="hr">
-               <el-icon><Folder /></el-icon>
-               <span>HR Policies</span>
-             </el-menu-item>
-             <el-menu-item index="product">
-               <el-icon><Folder /></el-icon>
-               <span>Product Specs</span>
-             </el-menu-item>
-          </el-menu>
-        </div>
+           </el-menu>
+         </div>
       </div>
 
       <div class="storage-widget">
@@ -301,13 +380,13 @@ onMounted(async () => {
           <el-breadcrumb separator="/">
             <el-breadcrumb-item>Knowledge Base</el-breadcrumb-item>
             <el-breadcrumb-item>Collections</el-breadcrumb-item>
-            <el-breadcrumb-item>
-              <span class="active-crumb">
-                <el-icon><Folder /></el-icon> Finance Docs
-              </span>
-            </el-breadcrumb-item>
-          </el-breadcrumb>
-        </div>
+             <el-breadcrumb-item>
+               <span class="active-crumb">
+                 <el-icon><Folder /></el-icon> {{ selectedKb?.name || '—' }}
+               </span>
+             </el-breadcrumb-item>
+           </el-breadcrumb>
+         </div>
         
         <div class="header-actions">
            <el-input 
@@ -330,17 +409,27 @@ onMounted(async () => {
           <!-- Page Title -->
           <div class="page-title-row">
             <div>
-              <h1>Finance Docs</h1>
-              <p class="subtitle">Manage financial reports, quarterly reviews, and raw data for agent context.</p>
-            </div>
-            <div class="actions">
-               <el-button-group>
-                 <el-button :icon="View" />
-                 <el-button :icon="Grid" />
-               </el-button-group>
-               <el-button type="primary" :icon="Upload">Upload Data</el-button>
-            </div>
-          </div>
+               <h1>{{ selectedKb?.name || 'Knowledge Base' }}</h1>
+               <p class="subtitle">{{ selectedKb?.description || 'Manage documents and vectors for agent context.' }}</p>
+             </div>
+             <div class="actions">
+                <el-button-group>
+                  <el-button :icon="View" />
+                  <el-button :icon="Grid" />
+                </el-button-group>
+                <el-button type="primary" :icon="Upload" :disabled="!isAdmin || !selectedKbId" @click="openFilePicker">Upload Data</el-button>
+                <el-dropdown trigger="click" @command="(cmd: string) => { if (cmd === 'import_url') openImportUrlDialog(); if (cmd === 'rebuild_vectors') rebuildVectors(); if (cmd === 'build_graph') buildGraph(); }">
+                  <el-button :icon="MoreFilled" :disabled="!isAdmin || !selectedKbId" :loading="queueingKbJob" />
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="import_url">Import URL</el-dropdown-item>
+                      <el-dropdown-item command="rebuild_vectors">Rebuild Vectors</el-dropdown-item>
+                      <el-dropdown-item command="build_graph">Build Graph</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+             </div>
+           </div>
 
           <!-- Stats -->
           <el-row :gutter="16" class="stats-row">
@@ -379,8 +468,8 @@ onMounted(async () => {
                    {{ f }}
                  </el-check-tag>
                </div>
-               <span class="count">Showing 5 of 142 items</span>
-             </div>
+                <span class="count">Showing {{ showingItemsLabel }} of {{ totalItemsLabel }} items</span>
+              </div>
 
              <!-- Table -->
              <el-table 
@@ -443,6 +532,21 @@ onMounted(async () => {
       </el-main>
     </el-container>
   </el-container>
+
+  <input ref="fileInputRef" type="file" style="display:none" @change="onFileSelected" />
+
+  <el-dialog v-model="importUrlDialogOpen" title="Import URL" width="640px">
+    <el-input
+      v-model="importUrlValue"
+      placeholder="https://example.com/page"
+      clearable
+      :disabled="importingUrl"
+    />
+    <template #footer>
+      <el-button @click="importUrlDialogOpen = false" :disabled="importingUrl">Cancel</el-button>
+      <el-button type="primary" :loading="importingUrl" @click="submitImportUrl">Import</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
