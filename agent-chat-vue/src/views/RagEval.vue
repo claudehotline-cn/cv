@@ -287,10 +287,29 @@ onMounted(async () => {
           </div>
           <div class="sep" />
           <nav class="nav">
-            <router-link class="nav-link" to="/finance-docs">Knowledge Base</router-link>
-            <span class="nav-link active">Dashboard</span>
-            <span class="nav-link">Benchmarks</span>
-            <span class="nav-link">Datasets</span>
+            <router-link class="nav-link" :class="{ active: route.path === '/' }" to="/">Dashboard</router-link>
+            <router-link class="nav-link" :class="{ active: route.path === '/finance-docs' }" to="/finance-docs">Knowledge Base</router-link>
+            <router-link
+              class="nav-link"
+              :class="{ active: route.path === '/rag-eval' }"
+              :to="selectedKbId ? { path: '/rag-eval', query: { kbId: String(selectedKbId) } } : { path: '/rag-eval' }"
+            >
+              Retrieval Lab
+            </router-link>
+            <router-link
+              class="nav-link"
+              :class="{ active: route.path === '/rag/datasets' }"
+              :to="selectedKbId ? { path: '/rag/datasets', query: { kbId: String(selectedKbId) } } : { path: '/rag/datasets' }"
+            >
+              Datasets
+            </router-link>
+            <router-link
+              class="nav-link"
+              :class="{ active: route.path === '/rag/benchmarks' }"
+              :to="selectedKbId ? { path: '/rag/benchmarks', query: { kbId: String(selectedKbId) } } : { path: '/rag/benchmarks' }"
+            >
+              Benchmarks
+            </router-link>
           </nav>
         </div>
 

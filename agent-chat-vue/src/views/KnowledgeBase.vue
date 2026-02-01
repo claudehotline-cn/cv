@@ -446,12 +446,33 @@ onMounted(async () => {
           >
             <el-menu-item index="3">
               <el-icon><DataAnalysis /></el-icon>
-              <span>RAG Evaluation</span>
+              <span>Retrieval Lab</span>
             </el-menu-item>
           </router-link>
 
 
-          <el-menu-item index="4">
+          <router-link
+            :to="selectedKbId ? { path: '/rag/datasets', query: { kbId: String(selectedKbId) } } : { path: '/rag/datasets' }"
+            style="text-decoration: none;"
+          >
+            <el-menu-item index="4">
+              <el-icon><Folder /></el-icon>
+              <span>Datasets</span>
+            </el-menu-item>
+          </router-link>
+
+          <router-link
+            :to="selectedKbId ? { path: '/rag/benchmarks', query: { kbId: String(selectedKbId) } } : { path: '/rag/benchmarks' }"
+            style="text-decoration: none;"
+          >
+            <el-menu-item index="5">
+              <el-icon><DataAnalysis /></el-icon>
+              <span>Benchmarks</span>
+            </el-menu-item>
+          </router-link>
+
+
+          <el-menu-item index="6">
             <el-icon><Setting /></el-icon>
             <span>Settings</span>
           </el-menu-item>
