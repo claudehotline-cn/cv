@@ -35,6 +35,7 @@ class RAGRetriever:
         enable_query_expansion: bool = True,
         expand_to_parent: bool = True,  # 是否扩展到父块内容
         compress_context: Optional[bool] = None,  # 是否压缩上下文，默认读取配置
+        enable_rerank: bool = True,
     ) -> List[SearchResult]:
         """
         混合检索 (Vector + Keyword) + Multi-Query Expansion + Reranking + Parent Expansion + Context Compression
@@ -76,20 +77,23 @@ class RAGRetriever:
             return []
             
         # 4. 重排序 (Rerank)
-        try:
-            from .reranker import reranker
-            
-            candidate_texts = [c.content for c in fused_candidates]
-            ranked_results = reranker.rerank(query, candidate_texts, top_k=top_k)
-            
-            final_results = []
-            for idx, score in ranked_results:
-                candidate = fused_candidates[idx]
-                candidate.score = float(score)
-                final_results.append(candidate)
-                
-        except Exception as e:
-            logger.error(f"Reranking failed, falling back to fused results: {e}")
+        if enable_rerank:
+            try:
+                from .reranker import reranker
+
+                candidate_texts = [c.content for c in fused_candidates]
+                ranked_results = reranker.rerank(query, candidate_texts, top_k=top_k)
+
+                final_results = []
+                for idx, score in ranked_results:
+                    candidate = fused_candidates[idx]
+                    candidate.score = float(score)
+                    final_results.append(candidate)
+
+            except Exception as e:
+                logger.error(f"Reranking failed, falling back to fused results: {e}")
+                final_results = fused_candidates[:top_k]
+        else:
             final_results = fused_candidates[:top_k]
         
         # final_results = fused_candidates[:top_k]
@@ -193,6 +197,10 @@ class RAGRetriever:
         knowledge_base_id: Optional[int] = None,
         top_k: int = 5,
         use_graph: bool = True,  # 默认启用图谱融合
+        enable_query_expansion: bool = True,
+        expand_to_parent: bool = True,
+        compress_context: Optional[bool] = None,
+        enable_rerank: bool = True,
     ) -> RAGResponse:
         """Hybrid RAG问答 - 融合向量检索和图谱检索"""
         import asyncio
@@ -202,6 +210,10 @@ class RAGRetriever:
             query=query,
             knowledge_base_id=knowledge_base_id,
             top_k=top_k,
+            enable_query_expansion=enable_query_expansion,
+            expand_to_parent=expand_to_parent,
+            compress_context=compress_context,
+            enable_rerank=enable_rerank,
         )
         
         graph_results = []

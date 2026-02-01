@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import RagModuleShell from '@/components/rag/RagModuleShell.vue'
 import apiClient from '@/api/client'
@@ -10,11 +10,22 @@ type RunItem = {
   id: number
   knowledge_base_id: number
   dataset_id: number
-  mode: 'vector' | 'graph'
+  mode: 'vector' | 'graph' | 'qa'
   top_k: number
   status: string
   created_at?: string
   metrics?: any
+}
+
+type QaResult = {
+  id: number
+  run_id: number
+  case_id: number
+  expected_answer?: string | null
+  answer?: string | null
+  score?: number | null
+  judge?: any
+  sources?: any
 }
 
 type ResultItem = {
@@ -25,6 +36,7 @@ type ResultItem = {
   mrr: number
   ndcg: number
   retrieved: any
+  qa?: QaResult | null
 }
 
 const route = useRoute()
@@ -35,6 +47,14 @@ const loading = ref(false)
 const datasets = ref<DatasetItem[]>([])
 const runs = ref<RunItem[]>([])
 const results = ref<ResultItem[]>([])
+
+const runDialogOpen = ref(false)
+const runSaving = ref(false)
+const runForm = ref<{ datasetId: number | null; mode: 'vector' | 'graph' | 'qa'; top_k: number }>({
+  datasetId: null,
+  mode: 'vector',
+  top_k: 5,
+})
 
 const selectedRunId = ref<number | null>(null)
 
@@ -145,46 +165,47 @@ async function onNewRun() {
     return
   }
   await refreshDatasets()
-  const listing = datasets.value.map((d) => `${d.id}: ${d.name}`).join('\n') || '(no datasets)'
   if (!datasets.value.length) {
     ElMessage.warning('Create a dataset first')
     return
   }
+  runForm.value = {
+    datasetId: datasets.value[0].id,
+    mode: 'vector',
+    top_k: 5,
+  }
+  runDialogOpen.value = true
+}
 
+async function createRun() {
+  if (!kbId.value) return
+  if (!runForm.value.datasetId) {
+    ElMessage.warning('Select a dataset')
+    return
+  }
+  const top_k = Number(runForm.value.top_k)
+  if (!Number.isFinite(top_k) || top_k <= 0 || top_k > 50) {
+    ElMessage.warning('top_k must be 1-50')
+    return
+  }
+  runSaving.value = true
   try {
-    const { value: dsIdRaw } = await ElMessageBox.prompt(`Pick dataset id:\n${listing}`, 'New Run', {
-      confirmButtonText: 'Next',
-      cancelButtonText: 'Cancel',
-      inputPlaceholder: String(datasets.value[0].id),
+    const created = await apiClient.createBenchmarkRun(kbId.value, {
+      dataset_id: runForm.value.datasetId,
+      mode: runForm.value.mode,
+      top_k,
     })
-    const dataset_id = Number.parseInt(String(dsIdRaw).trim(), 10)
-    if (!Number.isFinite(dataset_id)) throw new Error('Invalid dataset id')
-
-    const { value: modeRaw } = await ElMessageBox.prompt("Mode: vector or graph", 'New Run', {
-      confirmButtonText: 'Next',
-      cancelButtonText: 'Cancel',
-      inputValue: 'vector',
-    })
-    const mode = String(modeRaw).trim().toLowerCase()
-    if (mode !== 'vector' && mode !== 'graph') throw new Error('Invalid mode')
-
-    const { value: topKRaw } = await ElMessageBox.prompt('top_k (1-50)', 'New Run', {
-      confirmButtonText: 'Create',
-      cancelButtonText: 'Cancel',
-      inputValue: '5',
-    })
-    const top_k = Number.parseInt(String(topKRaw).trim(), 10)
-    if (!Number.isFinite(top_k) || top_k <= 0 || top_k > 50) throw new Error('Invalid top_k')
-
-    const created = await apiClient.createBenchmarkRun(kbId.value, { dataset_id, mode: mode as any, top_k })
     ElMessage.success('Run created')
+    runDialogOpen.value = false
     await refreshRuns()
     if (created?.id) {
       selectedRunId.value = Number(created.id)
       await refreshResults(selectedRunId.value)
     }
   } catch {
-    // cancelled or invalid
+    ElMessage.error('Create run failed')
+  } finally {
+    runSaving.value = false
   }
 }
 
@@ -267,7 +288,7 @@ watch(
             <div class="kicker">All Runs</div>
             <div class="sub">{{ filteredRuns.length }} total</div>
           </div>
-          <div class="pill">Vector + Graph</div>
+          <div class="pill">Vector / Graph / QA</div>
         </div>
 
         <div class="rows">
@@ -314,6 +335,9 @@ watch(
                 <div class="case-title">Metrics</div>
                 <div class="case-meta">
                   hit_rate={{ selected.metrics?.hit_rate ?? '—' }}, mrr={{ selected.metrics?.mrr ?? '—' }}, ndcg={{ selected.metrics?.ndcg ?? '—' }}
+                  <span v-if="selected.metrics?.qa">
+                    , qa_avg={{ selected.metrics?.qa?.avg_score ?? '—' }}, qa_pass={{ selected.metrics?.qa?.pass_rate ?? '—' }}
+                  </span>
                 </div>
               </div>
 
@@ -322,6 +346,13 @@ watch(
                 <div class="case-meta">
                   hit_rank={{ c.hit_rank ?? '-' }} • mrr={{ c.mrr.toFixed(3) }} • ndcg={{ c.ndcg.toFixed(3) }}
                 </div>
+
+                <div v-if="c.qa" class="case-meta" style="margin-top: 8px;">
+                  qa_score={{ c.qa.score ?? '—' }}
+                </div>
+                <div v-if="c.qa?.answer" class="case-meta" style="margin-top: 8px; white-space: pre-wrap;">
+                  {{ String(c.qa.answer).slice(0, 260) }}
+                </div>
               </div>
               <button class="ghost full" type="button" @click="onExportReport">Export Full Report</button>
             </div>
@@ -329,6 +360,37 @@ watch(
         </div>
       </section>
     </div>
+
+    <el-dialog v-model="runDialogOpen" title="New Run" width="560px">
+      <el-form label-position="top">
+        <el-form-item label="Dataset">
+          <el-select v-model="runForm.datasetId" placeholder="Select dataset" style="width: 100%">
+            <el-option v-for="d in datasets" :key="d.id" :label="`${d.id}: ${d.name}`" :value="d.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Mode">
+          <el-radio-group v-model="runForm.mode">
+            <el-radio label="vector">vector</el-radio>
+            <el-radio label="graph">graph</el-radio>
+            <el-radio label="qa">qa</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="top_k">
+          <el-input-number v-model="runForm.top_k" :min="1" :max="50" />
+        </el-form-item>
+        <div style="font-size: 12px; color: #64748b; line-height: 1.5;">
+          qa mode generates answers via RAG and scores them against the case's expected answer.
+        </div>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <button class="ghost" type="button" @click="runDialogOpen = false">Cancel</button>
+          <button class="primary" type="button" :disabled="runSaving" @click="createRun">
+            {{ runSaving ? 'Creating...' : 'Create' }}
+          </button>
+        </div>
+      </template>
+    </el-dialog>
   </RagModuleShell>
 </template>
 
@@ -545,6 +607,12 @@ watch(
 .ghost.full {
   margin-top: 12px;
   width: 100%;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .detail-body {

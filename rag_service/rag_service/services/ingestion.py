@@ -206,13 +206,32 @@ async def process_document(document_id: int) -> None:
                 preprocess=False,
             )
 
-            parent_chunks, child_chunks = chunker.semantic_hierarchical_chunk(
-                content=cleaned,
-                metadata=loaded.metadata,
-                similarity_threshold=0.5,
-                parent_max_size=(kb.chunk_size * 4 if kb else 2000),
-                child_max_size=(kb.chunk_size if kb else 500),
-            )
+            # If extracted content looks like Markdown (e.g., PDF containing .md source),
+            # use heading-aware chunking so parent chunks align with document structure.
+            try:
+                import re as _re
+
+                md_heading_count = len(
+                    _re.findall(r"(^|[\s>])#{1,6}\s+", cleaned)
+                )
+            except Exception:
+                md_heading_count = 0
+
+            if md_heading_count >= 2:
+                parent_chunks, child_chunks = chunker.markdown_hierarchical_chunk(
+                    content=cleaned,
+                    metadata=loaded.metadata,
+                    child_max_size=(kb.chunk_size if kb else 500),
+                    child_overlap=(kb.chunk_overlap if kb else 50),
+                )
+            else:
+                parent_chunks, child_chunks = chunker.semantic_hierarchical_chunk(
+                    content=cleaned,
+                    metadata=loaded.metadata,
+                    similarity_threshold=0.5,
+                    parent_max_size=(kb.chunk_size * 4 if kb else 2000),
+                    child_max_size=(kb.chunk_size if kb else 500),
+                )
 
             # Vectorize
             parent_texts = [p.content for p in parent_chunks]

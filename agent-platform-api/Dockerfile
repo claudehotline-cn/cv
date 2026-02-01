@@ -13,7 +13,9 @@ RUN sed -i '/agent-core/d' requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers (Chromium)
-RUN playwright install --with-deps chromium
+# NOTE: downloading browsers can be flaky in some environments; keep it optional.
+ARG INSTALL_PLAYWRIGHT_BROWSERS=0
+RUN if [ "$INSTALL_PLAYWRIGHT_BROWSERS" = "1" ]; then playwright install --with-deps chromium; else echo "Skipping playwright browser install"; fi
 # Copy app code
 COPY . .
 

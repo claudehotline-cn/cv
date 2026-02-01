@@ -374,5 +374,91 @@ class DocumentChunker:
         return parent_chunks, child_chunks
 
 
+    def markdown_hierarchical_chunk(
+        self,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        child_max_size: int = 500,
+        child_overlap: int = 50,
+    ) -> Tuple[List[ParentChildChunk], List[ParentChildChunk]]:
+        """Markdown-aware parent/child chunking.
+
+        Splits parents by markdown headings (`#`..`######`) and then splits each section into child chunks.
+        Works even when PDF extraction flattens newlines by allowing headings preceded by whitespace or `>`.
+        """
+        if not content or not content.strip():
+            return [], []
+
+        text = content if not self.preprocess else self._preprocess(content)
+
+        # Match headings preceded by start, whitespace or '>' and followed by whitespace.
+        heading_re = re.compile(r"(^|[\s>])(#{1,6})\s+", re.MULTILINE)
+        matches = list(heading_re.finditer(text))
+        if len(matches) < 2:
+            # Not markdown-like; fall back to semantic hierarchical chunking.
+            return self.semantic_hierarchical_chunk(content=text, metadata=metadata)
+
+        # Section boundaries at heading markers.
+        starts = [m.start(2) for m in matches]  # position of the hash group
+        # Include prefix text into the first section.
+        if starts and starts[0] > 0:
+            starts[0] = 0
+
+        parent_texts: list[str] = []
+        for i, s in enumerate(starts):
+            e = starts[i + 1] if i + 1 < len(starts) else len(text)
+            seg = text[s:e].strip()
+            if seg:
+                parent_texts.append(seg)
+
+        child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=child_max_size,
+            chunk_overlap=child_overlap,
+            length_function=len,
+            separators=["\n\n", "\n", "。", ".", " ", ""],
+        )
+
+        parent_chunks: list[ParentChildChunk] = []
+        child_chunks: list[ParentChildChunk] = []
+        child_global_index = 0
+
+        for parent_idx, parent_text in enumerate(parent_texts):
+            parent_chunks.append(
+                ParentChildChunk(
+                    content=parent_text,
+                    index=parent_idx,
+                    metadata={
+                        **(metadata or {}),
+                        "chunk_type": "markdown_parent",
+                        "parent_index": parent_idx,
+                        "parent_total": len(parent_texts),
+                    },
+                    is_parent=True,
+                    parent_index=None,
+                )
+            )
+
+            child_texts = child_splitter.split_text(parent_text)
+            for local_idx, child_text in enumerate(child_texts):
+                child_chunks.append(
+                    ParentChildChunk(
+                        content=child_text.strip(),
+                        index=child_global_index,
+                        metadata={
+                            **(metadata or {}),
+                            "chunk_type": "markdown_child",
+                            "parent_index": parent_idx,
+                            "child_local_index": local_idx,
+                        },
+                        is_parent=False,
+                        parent_index=parent_idx,
+                    )
+                )
+                child_global_index += 1
+
+        logger.info(f"Markdown hierarchical split: {len(parent_chunks)} parents, {len(child_chunks)} children")
+        return parent_chunks, child_chunks
+
+
 # 单例
 document_chunker = DocumentChunker()

@@ -1192,6 +1192,86 @@ async def create_eval_case(req: Request, kb_id: int, dataset_id: int, body: Dict
     return out
 
 
+@router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases/bulk-delete")
+async def bulk_delete_eval_cases(req: Request, kb_id: int, dataset_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={
+            "action": "eval_cases_bulk_delete",
+            "kb_id": kb_id,
+            "dataset_id": dataset_id,
+            "input": body,
+        },
+    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases/bulk-delete",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={
+                "action": "eval_cases_bulk_delete",
+                "kb_id": kb_id,
+                "dataset_id": dataset_id,
+                "error_message": str(e),
+            },
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_cases_bulk_delete", "kb_id": kb_id, "dataset_id": dataset_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
 @router.put("/eval/cases/{case_id}")
 async def update_eval_case(req: Request, case_id: int, body: Dict[str, Any] = Body(...)):
     ctx = _dev_user_ctx(req)

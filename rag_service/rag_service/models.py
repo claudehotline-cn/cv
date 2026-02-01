@@ -378,3 +378,69 @@ class BenchmarkCaseResult(Base):
             "retrieved": retrieved,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class EvalCaseExpectation(Base):
+    """评测用例期望（单独表，避免改动已有 rag_eval_cases 结构）"""
+
+    __tablename__ = "rag_eval_case_expectations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    case_id = Column(Integer, ForeignKey("rag_eval_cases.id"), nullable=False, unique=True, index=True)
+    expected_answer = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "case_id": self.case_id,
+            "expected_answer": self.expected_answer,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class BenchmarkQaResult(Base):
+    """Answer-level 评测结果（按 run/case 存储生成答案与评分）"""
+
+    __tablename__ = "rag_benchmark_qa_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("rag_benchmark_runs.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("rag_eval_cases.id"), nullable=False, index=True)
+    expected_answer = Column(Text, nullable=True)
+    answer = Column(Text, nullable=True)
+    score = Column(Float, nullable=True)
+    judge = Column(Text, nullable=True)  # JSON
+    sources = Column(Text, nullable=True)  # JSON
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        import json as _json
+
+        judge = None
+        if self.judge:
+            try:
+                judge = _json.loads(self.judge)
+            except Exception:
+                judge = None
+
+        sources = None
+        if self.sources:
+            try:
+                sources = _json.loads(self.sources)
+            except Exception:
+                sources = None
+
+        return {
+            "id": self.id,
+            "run_id": self.run_id,
+            "case_id": self.case_id,
+            "expected_answer": self.expected_answer,
+            "answer": self.answer,
+            "score": float(self.score) if self.score is not None else None,
+            "judge": judge,
+            "sources": sources,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

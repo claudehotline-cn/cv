@@ -20,6 +20,7 @@ langchain-text-splitters>=0.3.0
 
 # Document Loaders
 pdfplumber>=0.10.0
+marker-pdf==1.10.2
 python-docx>=1.1.0
 openpyxl>=3.1.0
 xlrd>=2.0.1

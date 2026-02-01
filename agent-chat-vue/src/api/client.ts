@@ -439,7 +439,16 @@ class ApiClient {
     async importEvalDataset(
         kbId: number,
         datasetId: number,
-        input: { replace?: boolean; cases: Array<{ query: string; expected_sources?: string[]; notes?: string; tags?: string[] }> }
+        input: {
+            replace?: boolean
+            cases: Array<{
+                query: string
+                expected_sources?: string[]
+                expected_answer?: string
+                notes?: string
+                tags?: string[]
+            }>
+        }
     ): Promise<any> {
         return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/import`, input)
     }
@@ -451,9 +460,15 @@ class ApiClient {
     async createEvalCase(
         kbId: number,
         datasetId: number,
-        input: { query: string; expected_sources?: string[]; notes?: string; tags?: string[] }
+        input: { query: string; expected_sources?: string[]; expected_answer?: string; notes?: string; tags?: string[] }
     ): Promise<any> {
         return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/cases`, input)
+    }
+
+    async bulkDeleteEvalCases(kbId: number, datasetId: number, caseIds: number[]): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/cases/bulk-delete`, {
+            case_ids: caseIds,
+        })
     }
 
     async updateEvalCase(caseId: number, patch: Record<string, any>): Promise<any> {
@@ -466,7 +481,7 @@ class ApiClient {
 
     async createBenchmarkRun(
         kbId: number,
-        input: { dataset_id: number; mode: 'vector' | 'graph'; top_k: number }
+        input: { dataset_id: number; mode: 'vector' | 'graph' | 'qa'; top_k: number }
     ): Promise<any> {
         return this.http.post(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs`, input)
     }

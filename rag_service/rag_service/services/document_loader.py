@@ -69,9 +69,38 @@ class DocumentLoader:
     def _load_pdf(self, file_path: str, filename: str) -> LoadedDocument:
         """加载PDF文档"""
         logger.info(f"Loading PDF: {filename}")
+
+        # 1) Prefer Marker (PDF -> Markdown) for better structure, then fallback to pdfplumber.
+        # Marker can preserve headings/lists/tables far better than plain text extraction.
+        try:
+            from marker.converters.pdf import PdfConverter
+            from marker.models import create_model_dict
+            from marker.output import text_from_rendered
+
+            converter = PdfConverter(artifact_dict=create_model_dict())
+            rendered = converter(file_path)
+            md_text, _, _images = text_from_rendered(rendered)
+
+            if md_text and str(md_text).strip():
+                page_count = 0
+                try:
+                    with pdfplumber.open(file_path) as pdf:
+                        page_count = len(pdf.pages)
+                except Exception:
+                    page_count = 0
+
+                images = image_encoder.extract_from_pdf(file_path) if settings.vlm_model else []
+                return LoadedDocument(
+                    content=str(md_text),
+                    metadata={"source": filename, "type": "pdf", "pages": page_count, "extraction": "marker"},
+                    images=[{"data": img[0], "page": img[1], "name": f"page_{img[1]}_img"} for img in images],
+                )
+        except Exception as e:
+            logger.warning(f"Marker PDF->Markdown failed for {filename}, falling back to pdfplumber: {e}")
+
+        # 2) Fallback: pdfplumber text extraction
         text_parts = []
         page_count = 0
-        
         try:
             with pdfplumber.open(file_path) as pdf:
                 page_count = len(pdf.pages)
@@ -79,8 +108,7 @@ class DocumentLoader:
                     page_text = page.extract_text()
                     if page_text:
                         text_parts.append(f"[Page {i+1}]\n{page_text}")
-                        
-                    # 提取表格
+
                     tables = page.extract_tables()
                     for table in tables:
                         if table:
@@ -89,12 +117,12 @@ class DocumentLoader:
         except Exception as e:
             logger.error(f"Error loading PDF {filename}: {e}")
             raise
-        
+
         content = "\n\n".join(text_parts)
-         
+          
         # 提取图片
         images = image_encoder.extract_from_pdf(file_path) if settings.vlm_model else []
-         
+          
         return LoadedDocument(
             content=content,
             metadata={"source": filename, "type": "pdf", "pages": page_count},

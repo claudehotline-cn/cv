@@ -12,7 +12,15 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_mysql_db
-from ..models import BenchmarkCaseResult, BenchmarkRun, EvalCase, EvalDataset, KnowledgeBase
+from ..models import (
+    BenchmarkCaseResult,
+    BenchmarkQaResult,
+    BenchmarkRun,
+    EvalCase,
+    EvalCaseExpectation,
+    EvalDataset,
+    KnowledgeBase,
+)
 from ..queue import enqueue_job
 
 logger = logging.getLogger(__name__)
@@ -64,6 +72,7 @@ class EvalDatasetUpdate(BaseModel):
 class EvalCaseCreate(BaseModel):
     query: str
     expected_sources: List[str] = []
+    expected_answer: Optional[str] = None
     notes: Optional[str] = None
     tags: List[str] = []
 
@@ -71,8 +80,15 @@ class EvalCaseCreate(BaseModel):
 class EvalCaseUpdate(BaseModel):
     query: Optional[str] = None
     expected_sources: Optional[List[str]] = None
+    expected_answer: Optional[str] = None
     notes: Optional[str] = None
     tags: Optional[List[str]] = None
+
+
+def _case_out(case: EvalCase, expected_answer: str | None) -> dict:
+    d = case.to_dict()
+    d["expected_answer"] = expected_answer
+    return d
 
 
 class EvalDatasetImport(BaseModel):
@@ -82,7 +98,7 @@ class EvalDatasetImport(BaseModel):
 
 class BenchmarkRunCreate(BaseModel):
     dataset_id: int
-    mode: str  # vector|graph
+    mode: str  # vector|graph|qa
     top_k: int = 5
     created_by: Optional[str] = None
 
@@ -206,8 +222,14 @@ def list_eval_cases(kb_id: int, dataset_id: int, db: Session = Depends(get_mysql
     if not ds or not ds.is_active:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    cases = db.query(EvalCase).filter(EvalCase.dataset_id == dataset_id).order_by(EvalCase.id.asc()).all()
-    return {"items": [c.to_dict() for c in cases]}
+    rows = (
+        db.query(EvalCase, EvalCaseExpectation)
+        .outerjoin(EvalCaseExpectation, EvalCaseExpectation.case_id == EvalCase.id)
+        .filter(EvalCase.dataset_id == dataset_id)
+        .order_by(EvalCase.id.asc())
+        .all()
+    )
+    return {"items": [_case_out(c, (e.expected_answer if e else None)) for (c, e) in rows]}
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")
@@ -234,7 +256,13 @@ def create_eval_case(kb_id: int, dataset_id: int, data: EvalCaseCreate, db: Sess
     db.add(row)
     db.commit()
     db.refresh(row)
-    return row.to_dict()
+
+    expected_answer = (data.expected_answer or "").strip() if data.expected_answer is not None else None
+    if expected_answer:
+        db.add(EvalCaseExpectation(case_id=int(row.id), expected_answer=expected_answer))
+        db.commit()
+
+    return _case_out(row, expected_answer)
 
 
 @router.put("/eval/cases/{case_id}")
@@ -255,9 +283,24 @@ def update_eval_case(case_id: int, data: EvalCaseUpdate, db: Session = Depends(g
     if data.tags is not None:
         row.tags = json.dumps(list(data.tags or []), ensure_ascii=False)
 
+    expected_answer: str | None = None
+    exp = db.query(EvalCaseExpectation).filter(EvalCaseExpectation.case_id == row.id).first()
+    if data.expected_answer is not None:
+        expected_answer = (data.expected_answer or "").strip()
+        if expected_answer:
+            if exp:
+                exp.expected_answer = expected_answer
+            else:
+                db.add(EvalCaseExpectation(case_id=int(row.id), expected_answer=expected_answer))
+        else:
+            if exp:
+                db.delete(exp)
+    else:
+        expected_answer = exp.expected_answer if exp else None
+
     db.commit()
     db.refresh(row)
-    return row.to_dict()
+    return _case_out(row, expected_answer)
 
 
 @router.delete("/eval/cases/{case_id}")
@@ -266,9 +309,42 @@ def delete_eval_case(case_id: int, db: Session = Depends(get_mysql_db)):
     if not row:
         raise HTTPException(status_code=404, detail="Case not found")
 
+    exp = db.query(EvalCaseExpectation).filter(EvalCaseExpectation.case_id == row.id).first()
+    if exp:
+        db.delete(exp)
+
     db.delete(row)
     db.commit()
     return {"message": "Case deleted"}
+
+
+class BulkDeleteCases(BaseModel):
+    case_ids: List[int]
+
+
+@router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases/bulk-delete")
+def bulk_delete_eval_cases(kb_id: int, dataset_id: int, data: BulkDeleteCases, db: Session = Depends(get_mysql_db)):
+    ds = (
+        db.query(EvalDataset)
+        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
+        .first()
+    )
+    if not ds or not ds.is_active:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    ids = [int(x) for x in (data.case_ids or []) if int(x) > 0]
+    if not ids:
+        return {"message": "No cases", "deleted": 0}
+
+    rows = db.query(EvalCase).filter(EvalCase.dataset_id == dataset_id, EvalCase.id.in_(ids)).all()
+    case_ids = [int(r.id) for r in rows]
+    if not case_ids:
+        return {"message": "No cases", "deleted": 0}
+
+    db.query(EvalCaseExpectation).filter(EvalCaseExpectation.case_id.in_(case_ids)).delete(synchronize_session=False)
+    db.query(EvalCase).filter(EvalCase.id.in_(case_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"message": "Deleted", "deleted": len(case_ids)}
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/import")
@@ -282,7 +358,10 @@ def import_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetImport, db
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     if data.replace:
-        db.query(EvalCase).filter(EvalCase.dataset_id == dataset_id).delete()
+        old_ids = [r[0] for r in db.query(EvalCase.id).filter(EvalCase.dataset_id == dataset_id).all()]
+        if old_ids:
+            db.query(EvalCaseExpectation).filter(EvalCaseExpectation.case_id.in_(old_ids)).delete(synchronize_session=False)
+        db.query(EvalCase).filter(EvalCase.dataset_id == dataset_id).delete(synchronize_session=False)
 
     created = 0
     for c in data.cases or []:
@@ -297,6 +376,11 @@ def import_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetImport, db
             tags=json.dumps(list(c.tags or []), ensure_ascii=False),
         )
         db.add(row)
+        db.flush()
+
+        expected_answer = (c.expected_answer or "").strip() if c.expected_answer is not None else None
+        if expected_answer:
+            db.add(EvalCaseExpectation(case_id=int(row.id), expected_answer=expected_answer))
         created += 1
 
     db.commit()
@@ -313,8 +397,14 @@ def export_eval_dataset(kb_id: int, dataset_id: int, db: Session = Depends(get_m
     if not ds or not ds.is_active:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    cases = db.query(EvalCase).filter(EvalCase.dataset_id == dataset_id).order_by(EvalCase.id.asc()).all()
-    return {"dataset": ds.to_dict(), "cases": [c.to_dict() for c in cases]}
+    rows = (
+        db.query(EvalCase, EvalCaseExpectation)
+        .outerjoin(EvalCaseExpectation, EvalCaseExpectation.case_id == EvalCase.id)
+        .filter(EvalCase.dataset_id == dataset_id)
+        .order_by(EvalCase.id.asc())
+        .all()
+    )
+    return {"dataset": ds.to_dict(), "cases": [_case_out(c, (e.expected_answer if e else None)) for (c, e) in rows]}
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/benchmarks/runs")
@@ -323,8 +413,8 @@ def create_benchmark_run(kb_id: int, data: BenchmarkRunCreate, db: Session = Dep
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-    if data.mode not in ("vector", "graph"):
-        raise HTTPException(status_code=400, detail="mode must be 'vector' or 'graph'")
+    if data.mode not in ("vector", "graph", "qa"):
+        raise HTTPException(status_code=400, detail="mode must be 'vector', 'graph' or 'qa'")
     if data.top_k <= 0 or data.top_k > 50:
         raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
 
@@ -383,13 +473,31 @@ def list_benchmark_results(kb_id: int, run_id: int, db: Session = Depends(get_my
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    rows = (
+    base_rows = (
         db.query(BenchmarkCaseResult)
         .filter(BenchmarkCaseResult.run_id == run_id)
         .order_by(BenchmarkCaseResult.id.asc())
         .all()
     )
-    return {"items": [r.to_dict() for r in rows]}
+
+    if run.mode != "qa":
+        return {"items": [r.to_dict() for r in base_rows]}
+
+    qa_rows = (
+        db.query(BenchmarkQaResult)
+        .filter(BenchmarkQaResult.run_id == run_id)
+        .order_by(BenchmarkQaResult.id.asc())
+        .all()
+    )
+    qa_map = {int(r.case_id): r for r in qa_rows}
+
+    items = []
+    for r in base_rows:
+        d = r.to_dict()
+        qa = qa_map.get(int(r.case_id))
+        d["qa"] = qa.to_dict() if qa else None
+        items.append(d)
+    return {"items": items}
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/export")
@@ -402,14 +510,30 @@ def export_benchmark_run(kb_id: int, run_id: int, db: Session = Depends(get_mysq
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    rows = (
+    base_rows = (
         db.query(BenchmarkCaseResult)
         .filter(BenchmarkCaseResult.run_id == run_id)
         .order_by(BenchmarkCaseResult.id.asc())
         .all()
     )
 
-    return {"run": run.to_dict(), "results": [r.to_dict() for r in rows]}
+    if run.mode != "qa":
+        return {"run": run.to_dict(), "results": [r.to_dict() for r in base_rows]}
+
+    qa_rows = (
+        db.query(BenchmarkQaResult)
+        .filter(BenchmarkQaResult.run_id == run_id)
+        .order_by(BenchmarkQaResult.id.asc())
+        .all()
+    )
+    qa_map = {int(r.case_id): r for r in qa_rows}
+    results = []
+    for r in base_rows:
+        d = r.to_dict()
+        qa = qa_map.get(int(r.case_id))
+        d["qa"] = qa.to_dict() if qa else None
+        results.append(d)
+    return {"run": run.to_dict(), "results": results}
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/execute")

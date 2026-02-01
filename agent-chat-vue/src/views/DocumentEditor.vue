@@ -91,6 +91,16 @@ const activeChunkId = ref<number | null>(null)
 const activeParentId = ref<number | null>(null)
 const searchText = ref('')
 
+const expandedParents = ref<Record<string, boolean>>({})
+
+type OutlineNode = {
+  id: string
+  label: string
+  level: number
+  parentChunkId: number
+  children?: OutlineNode[]
+}
+
 const chunks = ref<ChunkView[]>([])
 
 const cleaningRules = ref({
@@ -112,6 +122,55 @@ function truncate(text: string, max = 260) {
   const s = (text || '').trim()
   if (s.length <= max) return s
   return s.slice(0, max).trimEnd() + '…'
+}
+
+function extractSectionTitle(content: string) {
+  const lines = String(content || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  const heading = lines.find((l) => /^#{1,6}\s+/.test(l))
+  if (heading) return heading.replace(/^#{1,6}\s+/, '').trim()
+
+  const page = lines.find((l) => /^\[Page\s+\d+\]/i.test(l))
+  if (page) return page.replace(/^\[(.+?)\].*$/, '$1').trim()
+
+  return lines[0] ? truncate(lines[0], 60) : ''
+}
+
+function extractHeadings(content: string): Array<{ level: number; title: string }> {
+  const raw = String(content || '')
+  // Headings may not be line-broken after PDF extraction; allow whitespace or '>' before '#'.
+  const re = /(^|[\s>])(?<hash>#{1,6})\s+(?<rest>[^#]+)/g
+
+  const out: Array<{ level: number; title: string }> = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(raw))) {
+    const hash = (m.groups?.hash || '')
+    const rest = (m.groups?.rest || '').trim()
+    const level = Math.max(1, Math.min(6, hash.length || 1))
+
+    let title = rest
+    // Prefer cutting at common separators seen in extracted text.
+    for (const delim of [' > ', '  > ', ' | ', ' — ', ' - ']) {
+      const idx = title.indexOf(delim)
+      if (idx > 0) {
+        title = title.slice(0, idx).trim()
+        break
+      }
+    }
+    // If the next token looks like prose, keep the label short.
+    if (title.length > 90) title = title.slice(0, 90).trimEnd()
+    title = title.replace(/\s+/g, ' ').trim()
+    if (!title) continue
+
+    // Avoid immediate duplicates.
+    const prev = out[out.length - 1]
+    if (prev && prev.level === level && prev.title === title) continue
+    out.push({ level, title })
+  }
+  return out
 }
 
 function formatBytes(bytes?: number) {
@@ -149,7 +208,7 @@ function mapChunkRow(r: ChunkRow): ChunkView {
   return {
     id: r.id,
     displayId,
-    tag: r.is_parent ? 'Parent' : 'Chunk',
+    tag: r.is_parent ? 'Parent' : 'Child',
     tokens,
     content: r.content || '',
     isParent: Boolean(r.is_parent),
@@ -161,27 +220,114 @@ function mapChunkRow(r: ChunkRow): ChunkView {
 const parentChunks = computed(() => chunks.value.filter((c) => c.isParent))
 const childChunks = computed(() => chunks.value.filter((c) => !c.isParent))
 
-const filteredChildChunks = computed(() => {
+const childrenByParentId = computed<Record<string, ChunkView[]>>(() => {
+  const out: Record<string, ChunkView[]> = {}
+  for (const c of childChunks.value) {
+    if (!c.parentId) continue
+    const key = String(c.parentId)
+    if (!out[key]) out[key] = []
+    out[key].push(c)
+  }
+  for (const key of Object.keys(out)) {
+    out[key].sort((a, b) => a.chunkIndex - b.chunkIndex)
+  }
+  return out
+})
+
+const searchActive = computed(() => searchText.value.trim().length > 0)
+
+function isExpanded(parentId: number) {
+  return Boolean(expandedParents.value[String(parentId)])
+}
+
+function toggleExpanded(parentId: number) {
+  const key = String(parentId)
+  expandedParents.value[key] = !expandedParents.value[key]
+}
+
+function scrollToParent(parentId: number) {
+  activeParentId.value = parentId
+  expandedParents.value[String(parentId)] = true
+  const el = document.getElementById(`parent-${parentId}`)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function childrenForParent(parentId: number) {
+  const kids = childrenByParentId.value[String(parentId)] || []
   const q = searchText.value.trim().toLowerCase()
-  const allChildren = childChunks.value
-  const base = q
-    ? allChildren
-    : (activeParentId.value ? allChildren.filter((c) => c.parentId === activeParentId.value) : allChildren)
+  if (!q) return kids
+  return kids.filter((c) => (c.content || '').toLowerCase().includes(q))
+}
 
-  if (!q) return base
-  return base.filter((c) => (c.content || '').toLowerCase().includes(q))
+const parentLabelById = computed<Record<string, string>>(() => {
+  const out: Record<string, string> = {}
+  for (const p of parentChunks.value) {
+    out[String(p.id)] = extractSectionTitle(p.content) || p.displayId
+  }
+  return out
 })
 
-const outlineItems = computed(() => {
-  return parentChunks.value.map((c) => ({
-    key: String(c.id),
-    label: truncate(c.content, 36) || `Parent ${c.displayId}`,
-    icon: Document,
-    indent: false,
-    chunkId: c.id,
-    active: c.id === activeParentId.value,
-  }))
+const filteredParents = computed(() => {
+  const q = searchText.value.trim().toLowerCase()
+  if (!q) return parentChunks.value
+
+  return parentChunks.value.filter((p) => {
+    if ((p.content || '').toLowerCase().includes(q)) return true
+    const kids = childrenByParentId.value[String(p.id)] || []
+    return kids.some((c) => (c.content || '').toLowerCase().includes(q))
+  })
 })
+
+const outlineTree = computed<OutlineNode[]>(() => {
+  const nodes: OutlineNode[] = []
+  let seq = 0
+
+  for (const p of filteredParents.value) {
+    const hs = extractHeadings(p.content)
+    if (!hs.length) continue
+    for (const h of hs) {
+      nodes.push({
+        id: `h-${p.id}-${seq++}`,
+        label: h.title,
+        level: h.level,
+        parentChunkId: p.id,
+        children: [],
+      })
+    }
+  }
+
+  // Fallback: no headings detected -> use parents as a flat outline.
+  if (!nodes.length) {
+    return filteredParents.value.map((p) => ({
+      id: `p-${p.id}`,
+      label: parentLabelById.value[String(p.id)] || `Section ${p.displayId}`,
+      level: 1,
+      parentChunkId: p.id,
+      children: [],
+    }))
+  }
+
+  const roots: OutlineNode[] = []
+  const stack: OutlineNode[] = []
+
+  for (const node of nodes) {
+    while (stack.length && stack[stack.length - 1].level >= node.level) {
+      stack.pop()
+    }
+    const parent = stack[stack.length - 1]
+    if (parent) {
+      parent.children = parent.children || []
+      parent.children.push(node)
+    } else {
+      roots.push(node)
+    }
+    stack.push(node)
+  }
+
+  return roots
+})
+
+// outlineTree is used for the left outline panel.
 
 const chunkCountLabel = computed(() => {
   const count = doc.value?.chunk_count ?? chunks.value.length
@@ -201,13 +347,6 @@ function setActiveChunk(id: number) {
   activeChunkId.value = id
   const hit = chunks.value.find((c) => c.id === id)
   if (hit?.parentId) activeParentId.value = hit.parentId
-}
-
-function setActiveParent(id: number) {
-  activeParentId.value = id
-  if (searchText.value.trim()) return
-  const firstChild = childChunks.value.find((c) => c.parentId === id)
-  if (firstChild) activeChunkId.value = firstChild.id
 }
 
 async function loadInitial() {
@@ -236,18 +375,15 @@ async function loadInitial() {
     offset.value = rows.length
     hasMore.value = rows.length >= pageSize
 
-    // Prefer a parent-selected view when hierarchical chunks exist.
+    // Default: select the first section (collapsed).
     if (parentChunks.value.length) {
-      const candidate = parentChunks.value[0]
-      if (!activeParentId.value || !parentChunks.value.some((p) => p.id === activeParentId.value)) {
-        activeParentId.value = candidate.id
-      }
-      if (!activeChunkId.value || chunks.value.find((c) => c.id === activeChunkId.value)?.isParent) {
-        const firstChild = childChunks.value.find((c) => c.parentId === activeParentId.value)
-        activeChunkId.value = firstChild ? firstChild.id : null
-      }
-    } else if (!activeChunkId.value && chunks.value.length) {
-      activeChunkId.value = chunks.value[0].id
+      const candidate =
+        parentChunks.value.find((p) => childChunks.value.some((c) => c.parentId === p.id)) || parentChunks.value[0]
+      activeParentId.value = candidate.id
+    }
+
+    if (!activeChunkId.value) {
+      activeChunkId.value = childChunks.value[0]?.id ?? chunks.value[0]?.id ?? null
     }
   } catch (e: any) {
     ElMessage.error('Failed to load document')
@@ -271,14 +407,16 @@ async function loadMore() {
       include_parents: true,
     })
     const rows = (res.items || []) as ChunkRow[]
-    chunks.value = chunks.value.concat(rows.map(mapChunkRow))
+    const existing = new Set(chunks.value.map((c) => c.id))
+    for (const r of rows) {
+      const mapped = mapChunkRow(r)
+      if (!existing.has(mapped.id)) {
+        chunks.value.push(mapped)
+        existing.add(mapped.id)
+      }
+    }
     offset.value += rows.length
     hasMore.value = rows.length >= pageSize
-
-    if (activeParentId.value && !activeChunkId.value) {
-      const firstChild = childChunks.value.find((c) => c.parentId === activeParentId.value)
-      if (firstChild) activeChunkId.value = firstChild.id
-    }
   } catch {
     ElMessage.error('Failed to load more chunks')
   } finally {
@@ -439,23 +577,26 @@ watch(
           </div>
         </div>
 
-        <div class="outline-nav">
-          <div class="nav-title">DOCUMENT OUTLINE</div>
-          <el-scrollbar>
-            <div class="nav-list">
-               <div 
-                v-for="item in outlineItems" 
-                :key="item.key" 
-                class="nav-item"
-                :class="{ active: item.active, indent: item.indent }"
-                @click="item.chunkId && setActiveParent(item.chunkId)"
-              >
-                <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
-                <span>{{ item.label }}</span>
-              </div>
-            </div>
-          </el-scrollbar>
-        </div>
+         <div class="outline-nav">
+           <div class="nav-title">DOCUMENT OUTLINE</div>
+           <el-scrollbar>
+             <el-tree
+               class="outline-tree"
+               :data="outlineTree"
+               node-key="id"
+               :expand-on-click-node="false"
+               :default-expand-all="false"
+               @node-click="(n: any) => n?.parentChunkId && scrollToParent(Number(n.parentChunkId))"
+             >
+               <template #default="{ data }">
+                 <div class="tree-row" :class="{ active: Number(data.parentChunkId) === activeParentId }">
+                   <span class="tree-dot" />
+                   <span class="tree-label">{{ data.label }}</span>
+                 </div>
+               </template>
+             </el-tree>
+           </el-scrollbar>
+         </div>
         
         <div class="sidebar-footer">
           Last synced: Today, 10:23 AM
@@ -490,36 +631,73 @@ watch(
         </div>
 
         <div class="chunk-list">
-          <div v-if="!filteredChildChunks.length" class="empty-chunks">
-            <div class="empty-title">No chunks to show</div>
+          <div v-if="!filteredParents.length" class="empty-chunks">
+            <div class="empty-title">No sections to show</div>
             <div class="empty-sub">
               <span v-if="searchText.trim()">Try a different search query.</span>
-              <span v-else-if="hasMore">Load more to fetch child chunks.</span>
-              <span v-else>Document has no child chunks.</span>
+              <span v-else-if="hasMore">Load more to fetch chunks.</span>
+              <span v-else>Document has no hierarchical chunks.</span>
             </div>
           </div>
 
-          <div 
-            v-for="chunk in filteredChildChunks" 
-            :key="chunk.id" 
-            class="chunk-card"
-            :class="{ active: chunk.id === activeChunkId }"
-            @click="setActiveChunk(chunk.id)"
+          <div
+            v-for="p in filteredParents"
+            :id="`parent-${p.id}`"
+            :key="p.id"
+            class="parent-card"
           >
-            <div class="chunk-header">
-              <div class="header-info">
-                <span class="chunk-id">{{ chunk.displayId }}</span>
-                <el-tag size="small" effect="light" class="chunk-tag">{{ chunk.tag }}</el-tag>
+            <div class="parent-head" @click="activeParentId = p.id">
+              <div class="parent-head-left">
+                <span class="chunk-id">{{ p.displayId }}</span>
+                <el-tag size="small" effect="light" class="chunk-tag">Section</el-tag>
+                <span class="parent-title">{{ parentLabelById[String(p.id)] || p.displayId }}</span>
               </div>
-              <div class="header-actions">
+              <div class="parent-head-right">
                 <div class="token-badge">
                   <el-icon><Coin /></el-icon>
-                  {{ chunk.tokens }} Tokens
+                  {{ p.tokens }} Tokens
                 </div>
+                <el-button link type="primary" @click.stop="toggleExpanded(p.id)">
+                  {{ isExpanded(p.id) ? 'Collapse' : 'Expand' }}
+                </el-button>
               </div>
             </div>
-            <div class="chunk-content">
-              <p class="content-text">{{ chunk.id === activeChunkId ? chunk.content : truncate(chunk.content) }}</p>
+
+            <div class="parent-content">
+              <p class="content-text">{{ isExpanded(p.id) ? p.content : truncate(p.content, 360) }}</p>
+            </div>
+
+            <div v-if="isExpanded(p.id) || searchActive" class="children-block">
+              <div class="children-title">
+                Child Chunks ({{ childrenForParent(p.id).length }})
+              </div>
+              <div v-if="!childrenForParent(p.id).length" class="children-empty">
+                No child chunks loaded. <span v-if="hasMore">Use "Load More Chunks" to fetch more.</span>
+              </div>
+
+              <div
+                v-for="chunk in childrenForParent(p.id)"
+                :key="chunk.id"
+                class="chunk-card child-card"
+                :class="{ active: chunk.id === activeChunkId }"
+                @click="setActiveChunk(chunk.id)"
+              >
+                <div class="chunk-header">
+                  <div class="header-info">
+                    <span class="chunk-id">{{ chunk.displayId }}</span>
+                    <el-tag size="small" effect="light" class="chunk-tag">{{ chunk.tag }}</el-tag>
+                  </div>
+                  <div class="header-actions">
+                    <div class="token-badge">
+                      <el-icon><Coin /></el-icon>
+                      {{ chunk.tokens }} Tokens
+                    </div>
+                  </div>
+                </div>
+                <div class="chunk-content">
+                  <p class="content-text">{{ chunk.id === activeChunkId ? chunk.content : truncate(chunk.content) }}</p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -832,6 +1010,53 @@ watch(
   flex-direction: column;
 }
 
+.outline-tree {
+  background: transparent;
+}
+
+:deep(.outline-tree .el-tree-node__content) {
+  height: 34px;
+  padding: 0 6px;
+  border-radius: 6px;
+}
+
+:deep(.outline-tree .el-tree-node__content:hover) {
+  background: rgba(13, 119, 110, 0.06);
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  color: #2e3136;
+  font-weight: 600;
+}
+
+.tree-row.active {
+  color: #0d776e;
+}
+
+.tree-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(13, 119, 110, 0.35);
+  flex-shrink: 0;
+}
+
+.tree-row.active .tree-dot {
+  background: #0d776e;
+}
+
+.tree-label {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nav-title {
   font-size: 11px;
   font-weight: 700;
@@ -965,6 +1190,81 @@ watch(
   max-width: 900px;
   margin: 0 auto;
   width: 100%;
+}
+
+
+.parent-card {
+  border: 1px solid rgba(220, 226, 229, 0.9);
+  background: #ffffff;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.parent-head {
+  padding: 10px 14px;
+  background: rgba(249, 250, 251, 0.7);
+  border-bottom: 1px solid #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.parent-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.parent-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #0f181a;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parent-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.parent-content {
+  padding: 12px 14px;
+}
+
+.children-block {
+  padding: 10px 14px 14px;
+  border-top: 1px solid rgba(220, 226, 229, 0.7);
+  background: rgba(248, 250, 252, 0.7);
+}
+
+.children-title {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin-bottom: 10px;
+}
+
+.children-empty {
+  padding: 10px 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+}
+
+.child-card {
+  margin-top: 10px;
 }
 
 .empty-chunks {
