@@ -38,8 +38,8 @@
 1. Dashboard -> `/`
 2. Knowledge Base -> `/finance-docs`
 3. Retrieval Lab -> `/rag-eval?kbId=<selectedKbId>`
-4. Datasets -> `/rag-datasets?kbId=<selectedKbId>`
-5. Benchmarks -> `/rag-benchmarks?kbId=<selectedKbId>`
+4. Datasets -> `/rag/datasets?kbId=<selectedKbId>`
+5. Benchmarks -> `/rag/benchmarks?kbId=<selectedKbId>`
 6. Audit (RAG) -> `/audit?agent=rag`
 
 实现建议：抽组件复用
@@ -169,8 +169,8 @@ Graph 模式注意点
 ## 5. 前端：RAG 模块页面
 
 新增路由
-- `/rag-datasets` -> `agent-chat-vue/src/views/RagDatasets.vue`
-- `/rag-benchmarks` -> `agent-chat-vue/src/views/RagBenchmarks.vue`
+- `/rag/datasets` -> `agent-chat-vue/src/views/rag/RagDatasets.vue`
+- `/rag/benchmarks` -> `agent-chat-vue/src/views/rag/RagBenchmarks.vue`
 
 涉及文件
 - `agent-chat-vue/src/router.ts`

@@ -60,6 +60,7 @@ type ChunkView = {
   tokens: number
   content: string
   isParent: boolean
+  parentId: number | null
   chunkIndex: number
 }
 
@@ -87,6 +88,7 @@ const pageSize = 50
 const hasMore = ref(true)
 
 const activeChunkId = ref<number | null>(null)
+const activeParentId = ref<number | null>(null)
 const searchText = ref('')
 
 const chunks = ref<ChunkView[]>([])
@@ -151,25 +153,33 @@ function mapChunkRow(r: ChunkRow): ChunkView {
     tokens,
     content: r.content || '',
     isParent: Boolean(r.is_parent),
+    parentId: r.parent_id ?? null,
     chunkIndex: idx,
   }
 }
 
-const filteredChunks = computed(() => {
+const parentChunks = computed(() => chunks.value.filter((c) => c.isParent))
+const childChunks = computed(() => chunks.value.filter((c) => !c.isParent))
+
+const filteredChildChunks = computed(() => {
   const q = searchText.value.trim().toLowerCase()
-  if (!q) return chunks.value
-  return chunks.value.filter((c) => (c.content || '').toLowerCase().includes(q))
+  const allChildren = childChunks.value
+  const base = q
+    ? allChildren
+    : (activeParentId.value ? allChildren.filter((c) => c.parentId === activeParentId.value) : allChildren)
+
+  if (!q) return base
+  return base.filter((c) => (c.content || '').toLowerCase().includes(q))
 })
 
 const outlineItems = computed(() => {
-  const parents = chunks.value.filter((c) => c.isParent)
-  return parents.map((c) => ({
+  return parentChunks.value.map((c) => ({
     key: String(c.id),
     label: truncate(c.content, 36) || `Parent ${c.displayId}`,
     icon: Document,
     indent: false,
     chunkId: c.id,
-    active: c.id === activeChunkId.value,
+    active: c.id === activeParentId.value,
   }))
 })
 
@@ -189,6 +199,15 @@ const docMetaLabel = computed(() => {
 
 function setActiveChunk(id: number) {
   activeChunkId.value = id
+  const hit = chunks.value.find((c) => c.id === id)
+  if (hit?.parentId) activeParentId.value = hit.parentId
+}
+
+function setActiveParent(id: number) {
+  activeParentId.value = id
+  if (searchText.value.trim()) return
+  const firstChild = childChunks.value.find((c) => c.parentId === id)
+  if (firstChild) activeChunkId.value = firstChild.id
 }
 
 async function loadInitial() {
@@ -217,7 +236,17 @@ async function loadInitial() {
     offset.value = rows.length
     hasMore.value = rows.length >= pageSize
 
-    if (!activeChunkId.value && chunks.value.length) {
+    // Prefer a parent-selected view when hierarchical chunks exist.
+    if (parentChunks.value.length) {
+      const candidate = parentChunks.value[0]
+      if (!activeParentId.value || !parentChunks.value.some((p) => p.id === activeParentId.value)) {
+        activeParentId.value = candidate.id
+      }
+      if (!activeChunkId.value || chunks.value.find((c) => c.id === activeChunkId.value)?.isParent) {
+        const firstChild = childChunks.value.find((c) => c.parentId === activeParentId.value)
+        activeChunkId.value = firstChild ? firstChild.id : null
+      }
+    } else if (!activeChunkId.value && chunks.value.length) {
       activeChunkId.value = chunks.value[0].id
     }
   } catch (e: any) {
@@ -245,6 +274,11 @@ async function loadMore() {
     chunks.value = chunks.value.concat(rows.map(mapChunkRow))
     offset.value += rows.length
     hasMore.value = rows.length >= pageSize
+
+    if (activeParentId.value && !activeChunkId.value) {
+      const firstChild = childChunks.value.find((c) => c.parentId === activeParentId.value)
+      if (firstChild) activeChunkId.value = firstChild.id
+    }
   } catch {
     ElMessage.error('Failed to load more chunks')
   } finally {
@@ -352,6 +386,7 @@ watch(
     offset.value = 0
     hasMore.value = true
     activeChunkId.value = null
+    activeParentId.value = null
     loadInitial()
   }
 )
@@ -408,12 +443,12 @@ watch(
           <div class="nav-title">DOCUMENT OUTLINE</div>
           <el-scrollbar>
             <div class="nav-list">
-              <div 
+               <div 
                 v-for="item in outlineItems" 
                 :key="item.key" 
                 class="nav-item"
                 :class="{ active: item.active, indent: item.indent }"
-                @click="item.chunkId && setActiveChunk(item.chunkId)"
+                @click="item.chunkId && setActiveParent(item.chunkId)"
               >
                 <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
                 <span>{{ item.label }}</span>
@@ -455,8 +490,17 @@ watch(
         </div>
 
         <div class="chunk-list">
+          <div v-if="!filteredChildChunks.length" class="empty-chunks">
+            <div class="empty-title">No chunks to show</div>
+            <div class="empty-sub">
+              <span v-if="searchText.trim()">Try a different search query.</span>
+              <span v-else-if="hasMore">Load more to fetch child chunks.</span>
+              <span v-else>Document has no child chunks.</span>
+            </div>
+          </div>
+
           <div 
-            v-for="chunk in filteredChunks" 
+            v-for="chunk in filteredChildChunks" 
             :key="chunk.id" 
             class="chunk-card"
             :class="{ active: chunk.id === activeChunkId }"
@@ -921,6 +965,24 @@ watch(
   max-width: 900px;
   margin: 0 auto;
   width: 100%;
+}
+
+.empty-chunks {
+  border: 1px dashed #cbd5e1;
+  background: rgba(248, 250, 252, 0.7);
+  border-radius: 10px;
+  padding: 18px;
+}
+
+.empty-title {
+  font-weight: 700;
+  color: #0f181a;
+}
+
+.empty-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #538893;
 }
 
 .chunk-card {

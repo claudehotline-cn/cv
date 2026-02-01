@@ -1,54 +1,91 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import RagModuleShell from '@/components/rag/RagModuleShell.vue'
+import apiClient from '@/api/client'
 
-type Dataset = {
-  id: string
+type DatasetItem = {
+  id: number
+  knowledge_base_id: number
   name: string
-  description: string
-  casesCount: number
-  updatedLabel: string
-  status: 'Active' | 'Draft'
-  cases: { id: string; title: string; meta: string }[]
+  description?: string
+  is_active: boolean
+  cases_count?: number
+  updated_at?: string
 }
 
+type CaseItem = {
+  id: number
+  dataset_id: number
+  query: string
+  expected_sources: string[]
+  notes?: string
+  tags: string[]
+}
+
+const route = useRoute()
+const router = useRouter()
+
 const search = ref('')
+const loading = ref(false)
+const datasets = ref<DatasetItem[]>([])
+const selectedDatasetId = ref<number | null>(null)
+const cases = ref<CaseItem[]>([])
 
-const datasets = ref<Dataset[]>([
-  {
-    id: 'ds_contract_ca',
-    name: 'Contract_CA_Set',
-    description: 'Contracts and agreements: liability cap',
-    casesCount: 2,
-    updatedLabel: 'Oct 24',
-    status: 'Active',
-    cases: [
-      {
-        id: 'c1',
-        title: 'What are the liability limitations in Section 4.2?',
-        meta: 'output_source_1 • 2 KBs selected (within)',
-      },
-    ],
-  },
-  {
-    id: 'ds_gdpr',
-    name: 'GDPR_Compliance',
-    description: 'Privacy controls: retention and consent',
-    casesCount: 1,
-    updatedLabel: 'Oct 22',
-    status: 'Draft',
-    cases: [
-      {
-        id: 'c2',
-        title: 'List retention requirements and permitted exceptions.',
-        meta: 'output_source_2 • 1 KB selected (within)',
-      },
-    ],
-  },
-])
+const kbId = computed(() => {
+  const raw = String(route.query.kbId || '')
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) ? n : null
+})
 
-const selectedDatasetId = ref(datasets.value[0]?.id || null)
+async function ensureKbSelected() {
+  if (kbId.value) return
+  try {
+    const res = await apiClient.listKnowledgeBases()
+    const first = res.items?.[0]
+    const id = Number(first?.id)
+    if (Number.isFinite(id)) {
+      await router.replace({ path: '/rag/datasets', query: { kbId: String(id) } })
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function formatUpdatedLabel(iso?: string) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' })
+}
+
+async function refreshDatasets() {
+  if (!kbId.value) return
+  loading.value = true
+  try {
+    const res = await apiClient.listEvalDatasets(kbId.value)
+    datasets.value = (res.items || []) as DatasetItem[]
+    if (!selectedDatasetId.value && datasets.value.length) {
+      selectedDatasetId.value = datasets.value[0].id
+    }
+  } catch (e) {
+    ElMessage.error('Failed to load datasets')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function refreshCases(datasetId: number) {
+  if (!kbId.value) return
+  try {
+    const res = await apiClient.listEvalCases(kbId.value, datasetId)
+    cases.value = (res.items || []) as CaseItem[]
+  } catch {
+    cases.value = []
+    ElMessage.error('Failed to load cases')
+  }
+}
 
 const filteredDatasets = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -56,8 +93,7 @@ const filteredDatasets = computed(() => {
   return datasets.value.filter((d) => {
     return (
       d.name.toLowerCase().includes(q) ||
-      d.description.toLowerCase().includes(q) ||
-      d.status.toLowerCase().includes(q)
+      (d.description || '').toLowerCase().includes(q)
     )
   })
 })
@@ -67,25 +103,146 @@ const selected = computed(() => {
   return datasets.value.find((d) => d.id === id) || null
 })
 
-function pick(id: string) {
+async function pick(id: number) {
   selectedDatasetId.value = id
+  await refreshCases(id)
 }
 
-function onNewDataset() {
-  ElMessage.info('New Dataset: UI only (no backend wired)')
+async function onNewDataset() {
+  if (!kbId.value) {
+    ElMessage.warning('Missing kbId')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt('Dataset name', 'New Dataset', {
+      confirmButtonText: 'Create',
+      cancelButtonText: 'Cancel',
+      inputPlaceholder: 'e.g. Finance_Facts_v1',
+      inputPattern: /\S+/, 
+      inputErrorMessage: 'Name is required',
+    })
+    const created = await apiClient.createEvalDataset(kbId.value, { name: String(value).trim() })
+    ElMessage.success('Dataset created')
+    await refreshDatasets()
+    if (created?.id) await pick(Number(created.id))
+  } catch {
+    // cancelled
+  }
 }
 
-function onImport() {
-  ElMessage.info('Import: UI only')
+async function onExport() {
+  if (!kbId.value || !selectedDatasetId.value) {
+    ElMessage.warning('Select a dataset first')
+    return
+  }
+  try {
+    const payload = await apiClient.exportEvalDataset(kbId.value, selectedDatasetId.value)
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `rag-dataset-${selectedDatasetId.value}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('Export failed')
+  }
 }
 
-function onExport() {
-  ElMessage.info('Export: UI only')
+async function onImport() {
+  if (!kbId.value || !selectedDatasetId.value) {
+    ElMessage.warning('Select a dataset first')
+    return
+  }
+
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'application/json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      const parsed = JSON.parse(text)
+      const rawCases = Array.isArray(parsed?.cases) ? parsed.cases : []
+      const normalized = rawCases
+        .map((c: any) => ({
+          query: String(c?.query || '').trim(),
+          expected_sources: Array.isArray(c?.expected_sources) ? c.expected_sources.map((x: any) => String(x)) : [],
+          notes: c?.notes ? String(c.notes) : undefined,
+          tags: Array.isArray(c?.tags) ? c.tags.map((x: any) => String(x)) : [],
+        }))
+        .filter((c: any) => c.query)
+      await apiClient.importEvalDataset(kbId.value!, selectedDatasetId.value!, { replace: true, cases: normalized })
+      ElMessage.success('Imported')
+      await refreshCases(selectedDatasetId.value!)
+      await refreshDatasets()
+    } catch (e) {
+      ElMessage.error('Import failed')
+    }
+  }
+  input.click()
 }
 
-function onAddCase() {
-  ElMessage.info('Add Case: UI only')
+async function onAddCase() {
+  if (!kbId.value || !selectedDatasetId.value) {
+    ElMessage.warning('Select a dataset first')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt('Case query', 'Add Case', {
+      confirmButtonText: 'Add',
+      cancelButtonText: 'Cancel',
+      inputPlaceholder: 'Ask a question you expect the KB to answer',
+      inputType: 'textarea',
+      inputPattern: /\S+/,
+      inputErrorMessage: 'Query is required',
+    })
+
+    const { value: sources } = await ElMessageBox.prompt(
+      'Expected sources (comma-separated, match metadata.source)',
+      'Add Case',
+      {
+        confirmButtonText: 'Save',
+        cancelButtonText: 'Cancel',
+        inputPlaceholder: 'e.g. contract.pdf, policy.md',
+      }
+    )
+
+    const expected_sources = String(sources)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+    await apiClient.createEvalCase(kbId.value, selectedDatasetId.value, { query: String(value).trim(), expected_sources })
+    ElMessage.success('Case added')
+    await refreshCases(selectedDatasetId.value)
+    await refreshDatasets()
+  } catch {
+    // cancelled
+  }
 }
+
+onMounted(async () => {
+  await ensureKbSelected()
+  await refreshDatasets()
+  if (selectedDatasetId.value) {
+    await refreshCases(selectedDatasetId.value)
+  }
+})
+
+watch(
+  () => kbId.value,
+  async (id) => {
+    if (!id) return
+    selectedDatasetId.value = null
+    cases.value = []
+    await refreshDatasets()
+    if (selectedDatasetId.value) await refreshCases(selectedDatasetId.value)
+  }
+)
 </script>
 
 <template>
@@ -104,7 +261,7 @@ function onAddCase() {
             <div class="kicker">All Datasets</div>
             <div class="sub">{{ filteredDatasets.length }} total</div>
           </div>
-          <button class="head-action" type="button" @click="onExport">Full export</button>
+          <button class="head-action" type="button" :disabled="loading" @click="onExport">Full export</button>
         </div>
 
         <div class="rows">
@@ -121,8 +278,8 @@ function onAddCase() {
               <div class="row-desc">{{ d.description }}</div>
             </div>
             <div class="row-meta">
-              <div class="row-updated">{{ d.updatedLabel }}</div>
-              <div class="chip" :class="d.status === 'Active' ? 'chip-active' : 'chip-draft'">{{ d.status }}</div>
+              <div class="row-updated">{{ formatUpdatedLabel(d.updated_at) }}</div>
+              <div class="chip" :class="d.is_active ? 'chip-active' : 'chip-draft'">{{ d.is_active ? 'Active' : 'Draft' }}</div>
             </div>
           </button>
         </div>
@@ -147,9 +304,11 @@ function onAddCase() {
           <div class="cases">
             <div v-if="!selected" class="empty">Pick a dataset from the left.</div>
             <div v-else>
-              <div v-for="c in selected.cases" :key="c.id" class="case">
-                <div class="case-title">{{ c.title }}</div>
-                <div class="case-meta">{{ c.meta }}</div>
+              <div v-for="c in cases" :key="c.id" class="case">
+                <div class="case-title">{{ c.query }}</div>
+                <div class="case-meta">
+                  {{ (c.expected_sources || []).slice(0, 3).join(', ') || 'No expected sources' }}
+                </div>
               </div>
               <button class="add" type="button" @click="onAddCase">Add Case</button>
             </div>

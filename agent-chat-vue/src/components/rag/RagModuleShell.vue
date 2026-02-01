@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, type RouteLocationRaw } from 'vue-router'
 
 type NavItem = {
   label: string
   icon: string
-  to: string
+  to: RouteLocationRaw
 }
 
 type Props = {
@@ -22,19 +22,32 @@ const emit = defineEmits<{ (e: 'primary'): void }>()
 
 const route = useRoute()
 const activePath = computed(() => route.path)
+const activeKbId = computed(() => {
+  const raw = route.query.kbId
+  if (raw === undefined || raw === null) return null
+  const s = String(raw).trim()
+  return s ? s : null
+})
+
+function withKb(path: string): RouteLocationRaw {
+  if (!activeKbId.value) return path
+  return { path, query: { kbId: activeKbId.value } }
+}
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', icon: 'dashboard', to: '/' },
-  { label: 'Knowledge Base', icon: 'monitor', to: '/finance-docs' },
-  { label: 'Retrieval Lab', icon: 'science', to: '/rag-eval' },
-  { label: 'Datasets', icon: 'database', to: '/rag/datasets' },
-  { label: 'Benchmarks', icon: 'fact_check', to: '/rag/benchmarks' },
+  { label: 'Knowledge Base', icon: 'monitor', to: withKb('/finance-docs') },
+  { label: 'Retrieval Lab', icon: 'science', to: withKb('/rag-eval') },
+  { label: 'Datasets', icon: 'database', to: withKb('/rag/datasets') },
+  { label: 'Benchmarks', icon: 'fact_check', to: withKb('/rag/benchmarks') },
   { label: 'Audit', icon: 'article', to: '/audit' },
 ]
 
-function isActive(to: string) {
-  if (to === '/') return activePath.value === '/'
-  return activePath.value.startsWith(to)
+function isActive(to: RouteLocationRaw) {
+  const path = typeof to === 'string' ? to : (to as any)?.path
+  if (!path) return false
+  if (path === '/') return activePath.value === '/'
+  return activePath.value.startsWith(String(path))
 }
 </script>
 
@@ -49,7 +62,7 @@ function isActive(to: string) {
       <nav class="nav">
         <router-link
           v-for="item in navItems"
-          :key="item.to"
+          :key="item.label"
           class="nav-item"
           :class="{ active: isActive(item.to) }"
           :to="item.to"

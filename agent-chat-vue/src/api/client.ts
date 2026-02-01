@@ -415,6 +415,82 @@ class ApiClient {
         return this.http.post('/rag/evaluate', input)
     }
 
+    // RAG Eval (Datasets / Benchmarks)
+    async listEvalDatasets(kbId: number): Promise<{ items: any[] }> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/datasets`)
+    }
+
+    async createEvalDataset(kbId: number, input: { name: string; description?: string }): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets`, input)
+    }
+
+    async updateEvalDataset(kbId: number, datasetId: number, patch: Record<string, any>): Promise<any> {
+        return this.http.put(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}`, patch)
+    }
+
+    async deleteEvalDataset(kbId: number, datasetId: number): Promise<any> {
+        return this.http.delete(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}`)
+    }
+
+    async exportEvalDataset(kbId: number, datasetId: number): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/export`)
+    }
+
+    async importEvalDataset(
+        kbId: number,
+        datasetId: number,
+        input: { replace?: boolean; cases: Array<{ query: string; expected_sources?: string[]; notes?: string; tags?: string[] }> }
+    ): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/import`, input)
+    }
+
+    async listEvalCases(kbId: number, datasetId: number): Promise<{ items: any[] }> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/cases`)
+    }
+
+    async createEvalCase(
+        kbId: number,
+        datasetId: number,
+        input: { query: string; expected_sources?: string[]; notes?: string; tags?: string[] }
+    ): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/cases`, input)
+    }
+
+    async updateEvalCase(caseId: number, patch: Record<string, any>): Promise<any> {
+        return this.http.put(`/rag/eval/cases/${caseId}`, patch)
+    }
+
+    async deleteEvalCase(caseId: number): Promise<any> {
+        return this.http.delete(`/rag/eval/cases/${caseId}`)
+    }
+
+    async createBenchmarkRun(
+        kbId: number,
+        input: { dataset_id: number; mode: 'vector' | 'graph'; top_k: number }
+    ): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs`, input)
+    }
+
+    async listBenchmarkRuns(kbId: number): Promise<{ items: any[] }> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs`)
+    }
+
+    async getBenchmarkRun(kbId: number, runId: number): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs/${runId}`)
+    }
+
+    async executeBenchmarkRun(kbId: number, runId: number): Promise<any> {
+        return this.http.post(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs/${runId}/execute`, {})
+    }
+
+    async listBenchmarkResults(kbId: number, runId: number): Promise<{ items: any[] }> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs/${runId}/results`)
+    }
+
+    async exportBenchmarkRun(kbId: number, runId: number): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs/${runId}/export`)
+    }
+
     streamTask(
         taskId: string,
         onEvent: (data: any) => void,

@@ -1,60 +1,131 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import RagModuleShell from '@/components/rag/RagModuleShell.vue'
+import apiClient from '@/api/client'
 
-type Run = {
-  id: string
-  title: string
-  meta: string
-  updatedLabel: string
-  status: 'Completed' | 'Running'
-  results: { id: string; title: string; meta: string }[]
+type DatasetItem = { id: number; name: string }
+type RunItem = {
+  id: number
+  knowledge_base_id: number
+  dataset_id: number
+  mode: 'vector' | 'graph'
+  top_k: number
+  status: string
+  created_at?: string
+  metrics?: any
 }
 
+type ResultItem = {
+  id: number
+  run_id: number
+  case_id: number
+  hit_rank?: number | null
+  mrr: number
+  ndcg: number
+  retrieved: any
+}
+
+const route = useRoute()
+const router = useRouter()
+
 const search = ref('')
+const loading = ref(false)
+const datasets = ref<DatasetItem[]>([])
+const runs = ref<RunItem[]>([])
+const results = ref<ResultItem[]>([])
 
-const runs = ref<Run[]>([
-  {
-    id: 'run_2026_02_01',
-    title: 'Run 2026-02-01 12:45',
-    meta: 'vector + graph • 2 KBs • 2 datasets • 10 cases',
-    updatedLabel: 'Yesterday',
-    status: 'Completed',
-    results: [
-      {
-        id: 'r1',
-        title: 'Case liability limitation in Section 4.2',
-        meta: 'F1=0.92 (VLM) • nDCG 0.82',
-      },
-    ],
-  },
-  {
-    id: 'run_2026_01_28',
-    title: 'Run 2026-01-28 09:48',
-    meta: 'vector • 1 KB • 1 dataset • 6 cases',
-    updatedLabel: 'Oct 24',
-    status: 'Completed',
-    results: [
-      {
-        id: 'r2',
-        title: 'Case retention requirements and exceptions',
-        meta: 'Faithfulness: High • Relevance: Med',
-      },
-    ],
-  },
-])
+const selectedRunId = ref<number | null>(null)
 
-const selectedRunId = ref(runs.value[0]?.id || null)
+const kbId = computed(() => {
+  const raw = String(route.query.kbId || '')
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) ? n : null
+})
+
+async function ensureKbSelected() {
+  if (kbId.value) return
+  try {
+    const res = await apiClient.listKnowledgeBases()
+    const first = res.items?.[0]
+    const id = Number(first?.id)
+    if (Number.isFinite(id)) {
+      await router.replace({ path: '/rag/benchmarks', query: { kbId: String(id) } })
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function formatUpdatedLabel(iso?: string) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' })
+}
+
+function runTitle(r: RunItem) {
+  return `Run #${r.id}`
+}
+
+function runMeta(r: RunItem) {
+  return `${r.mode} • dataset ${r.dataset_id} • top_k=${r.top_k}`
+}
+
+function runStatusLabel(r: RunItem) {
+  const s = (r.status || '').toLowerCase()
+  if (s === 'succeeded') return 'Completed'
+  if (s === 'running') return 'Running'
+  if (s === 'failed') return 'Failed'
+  return 'Queued'
+}
+
+async function refreshDatasets() {
+  if (!kbId.value) return
+  try {
+    const res = await apiClient.listEvalDatasets(kbId.value)
+    datasets.value = (res.items || []).map((d: any) => ({ id: Number(d.id), name: String(d.name || '') }))
+  } catch {
+    datasets.value = []
+  }
+}
+
+async function refreshRuns() {
+  if (!kbId.value) return
+  loading.value = true
+  try {
+    const res = await apiClient.listBenchmarkRuns(kbId.value)
+    runs.value = (res.items || []) as RunItem[]
+    if (!selectedRunId.value && runs.value.length) {
+      selectedRunId.value = runs.value[0].id
+    }
+  } catch {
+    ElMessage.error('Failed to load runs')
+    runs.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+async function refreshResults(runId: number) {
+  if (!kbId.value) return
+  try {
+    const res = await apiClient.listBenchmarkResults(kbId.value, runId)
+    results.value = (res.items || []) as ResultItem[]
+  } catch {
+    results.value = []
+  }
+}
 
 const filteredRuns = computed(() => {
   const q = search.value.trim().toLowerCase()
   if (!q) return runs.value
   return runs.value.filter((r) => {
     return (
-      r.title.toLowerCase().includes(q) ||
-      r.meta.toLowerCase().includes(q) ||
-      r.status.toLowerCase().includes(q)
+      runTitle(r).toLowerCase().includes(q) ||
+      runMeta(r).toLowerCase().includes(q) ||
+      runStatusLabel(r).toLowerCase().includes(q)
     )
   })
 })
@@ -65,20 +136,119 @@ const selected = computed(() => {
 })
 
 function pick(id: string) {
-  selectedRunId.value = id
+  selectedRunId.value = Number(id)
 }
 
-function onNewRun() {
-  ElMessage.info('New Run: UI only (no backend wired)')
+async function onNewRun() {
+  if (!kbId.value) {
+    ElMessage.warning('Missing kbId')
+    return
+  }
+  await refreshDatasets()
+  const listing = datasets.value.map((d) => `${d.id}: ${d.name}`).join('\n') || '(no datasets)'
+  if (!datasets.value.length) {
+    ElMessage.warning('Create a dataset first')
+    return
+  }
+
+  try {
+    const { value: dsIdRaw } = await ElMessageBox.prompt(`Pick dataset id:\n${listing}`, 'New Run', {
+      confirmButtonText: 'Next',
+      cancelButtonText: 'Cancel',
+      inputPlaceholder: String(datasets.value[0].id),
+    })
+    const dataset_id = Number.parseInt(String(dsIdRaw).trim(), 10)
+    if (!Number.isFinite(dataset_id)) throw new Error('Invalid dataset id')
+
+    const { value: modeRaw } = await ElMessageBox.prompt("Mode: vector or graph", 'New Run', {
+      confirmButtonText: 'Next',
+      cancelButtonText: 'Cancel',
+      inputValue: 'vector',
+    })
+    const mode = String(modeRaw).trim().toLowerCase()
+    if (mode !== 'vector' && mode !== 'graph') throw new Error('Invalid mode')
+
+    const { value: topKRaw } = await ElMessageBox.prompt('top_k (1-50)', 'New Run', {
+      confirmButtonText: 'Create',
+      cancelButtonText: 'Cancel',
+      inputValue: '5',
+    })
+    const top_k = Number.parseInt(String(topKRaw).trim(), 10)
+    if (!Number.isFinite(top_k) || top_k <= 0 || top_k > 50) throw new Error('Invalid top_k')
+
+    const created = await apiClient.createBenchmarkRun(kbId.value, { dataset_id, mode: mode as any, top_k })
+    ElMessage.success('Run created')
+    await refreshRuns()
+    if (created?.id) {
+      selectedRunId.value = Number(created.id)
+      await refreshResults(selectedRunId.value)
+    }
+  } catch {
+    // cancelled or invalid
+  }
 }
 
-function onRun() {
-  ElMessage.info('Run: UI only')
+async function onRun() {
+  if (!kbId.value || !selectedRunId.value) {
+    ElMessage.warning('Select a run first')
+    return
+  }
+  try {
+    await apiClient.executeBenchmarkRun(kbId.value, selectedRunId.value)
+    ElMessage.success('Benchmark queued')
+    await refreshRuns()
+  } catch {
+    ElMessage.error('Failed to execute run')
+  }
 }
 
-function onExportReport() {
-  ElMessage.info('Export report: UI only')
+async function onExportReport() {
+  if (!kbId.value || !selectedRunId.value) {
+    ElMessage.warning('Select a run first')
+    return
+  }
+  try {
+    const payload = await apiClient.exportBenchmarkRun(kbId.value, selectedRunId.value)
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `rag-benchmark-run-${selectedRunId.value}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('Export failed')
+  }
 }
+
+onMounted(async () => {
+  await ensureKbSelected()
+  await refreshDatasets()
+  await refreshRuns()
+  if (selectedRunId.value) await refreshResults(selectedRunId.value)
+})
+
+watch(
+  () => kbId.value,
+  async (id) => {
+    if (!id) return
+    selectedRunId.value = null
+    results.value = []
+    await refreshDatasets()
+    await refreshRuns()
+    if (selectedRunId.value) await refreshResults(selectedRunId.value)
+  }
+)
+
+watch(
+  () => selectedRunId.value,
+  async (id) => {
+    if (!kbId.value || !id) return
+    await refreshResults(id)
+  }
+)
 </script>
 
 <template>
@@ -107,15 +277,15 @@ function onExportReport() {
             class="row"
             :class="{ active: r.id === selectedRunId }"
             type="button"
-            @click="pick(r.id)"
+            @click="pick(String(r.id))"
           >
             <div class="row-main">
-              <div class="row-title">{{ r.title }}</div>
-              <div class="row-desc">{{ r.meta }}</div>
+              <div class="row-title">{{ runTitle(r) }}</div>
+              <div class="row-desc">{{ runMeta(r) }}</div>
             </div>
             <div class="row-meta">
-              <div class="row-updated">{{ r.updatedLabel }}</div>
-              <div class="chip" :class="r.status === 'Completed' ? 'chip-ok' : 'chip-run'">{{ r.status }}</div>
+              <div class="row-updated">{{ formatUpdatedLabel(r.created_at) }}</div>
+              <div class="chip" :class="runStatusLabel(r) === 'Completed' ? 'chip-ok' : 'chip-run'">{{ runStatusLabel(r) }}</div>
             </div>
           </button>
         </div>
@@ -124,7 +294,7 @@ function onExportReport() {
       <section class="card detail">
         <div class="detail-head">
           <div>
-            <div class="detail-title">{{ selected?.title || 'Select a run' }}</div>
+            <div class="detail-title">{{ selected ? runTitle(selected) : 'Select a run' }}</div>
             <div class="detail-sub">
               Benchmarks run datasets in batch and track metrics over time.
             </div>
@@ -140,9 +310,18 @@ function onExportReport() {
           <div class="cases">
             <div v-if="!selected" class="empty">Pick a run from the left.</div>
             <div v-else>
-              <div v-for="c in selected.results" :key="c.id" class="case">
-                <div class="case-title">{{ c.title }}</div>
-                <div class="case-meta">{{ c.meta }}</div>
+              <div v-if="selected?.metrics" class="case" style="margin-bottom: 10px;">
+                <div class="case-title">Metrics</div>
+                <div class="case-meta">
+                  hit_rate={{ selected.metrics?.hit_rate ?? '—' }}, mrr={{ selected.metrics?.mrr ?? '—' }}, ndcg={{ selected.metrics?.ndcg ?? '—' }}
+                </div>
+              </div>
+
+              <div v-for="c in results" :key="c.id" class="case">
+                <div class="case-title">Case #{{ c.case_id }}</div>
+                <div class="case-meta">
+                  hit_rank={{ c.hit_rank ?? '-' }} • mrr={{ c.mrr.toFixed(3) }} • ndcg={{ c.ndcg.toFixed(3) }}
+                </div>
               </div>
               <button class="ghost full" type="button" @click="onExportReport">Export Full Report</button>
             </div>
