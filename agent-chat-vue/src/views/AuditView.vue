@@ -562,6 +562,12 @@ onMounted(async () => {
         searchQuery.value = q
     }
 
+    // Support deep-linking by agent: /audit?agent=rag
+    const agent = route.query.agent
+    if (typeof agent === 'string' && agent) {
+        selectedAgent.value = agent
+    }
+
     try {
         const agents = await apiClient.listAgents()
         agentOptions.value = agents.map((a: any) => a.name)

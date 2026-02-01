@@ -40,7 +40,7 @@ const navItems: NavItem[] = [
   { label: 'Retrieval Lab', icon: 'science', to: withKb('/rag-eval') },
   { label: 'Datasets', icon: 'database', to: withKb('/rag/datasets') },
   { label: 'Benchmarks', icon: 'fact_check', to: withKb('/rag/benchmarks') },
-  { label: 'Audit', icon: 'article', to: '/audit' },
+  { label: 'Audit', icon: 'article', to: { path: '/audit', query: { agent: 'rag' } } },
 ]
 
 function isActive(to: RouteLocationRaw) {
@@ -136,6 +136,7 @@ function isActive(to: RouteLocationRaw) {
   min-height: 0;
 }
 
+
 .brand {
   height: 64px;
   display: flex;
@@ -200,6 +201,8 @@ function isActive(to: RouteLocationRaw) {
 .nav-label {
   font-size: 13px;
 }
+
+
 
 .spacer {
   flex: 1;

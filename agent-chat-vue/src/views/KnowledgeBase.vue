@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch, markRaw } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import apiClient, { DEV_USER_ROLE } from '@/api/client'
 import {
@@ -23,6 +23,7 @@ import {
   Delete
 } from '@element-plus/icons-vue'
 
+const route = useRoute()
 const router = useRouter()
 
 const isAdmin = DEV_USER_ROLE === 'admin'
@@ -54,6 +55,12 @@ const knowledgeBases = ref<KB[]>([])
 const selectedKbId = ref<number | null>(null)
 const selectedKb = computed(() => knowledgeBases.value.find(k => k.id === selectedKbId.value) || null)
 
+const routeKbId = computed(() => {
+  const raw = String(route.query.kbId || '')
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) ? n : null
+})
+
 const kbStats = ref<any | null>(null)
 
 const activeFilter = ref('All Types')
@@ -80,13 +87,17 @@ function formatDate(iso?: string) {
   return d.toLocaleDateString()
 }
 
+const ICON_DOCUMENT = markRaw(Document)
+const ICON_CHART = markRaw(DataAnalysis)
+const ICON_LINK = markRaw(IconLink)
+
 function iconForType(fileType: string) {
   const t = (fileType || '').toLowerCase()
-  if (t === 'pdf') return { icon: Document, iconClass: 'icon-pdf' }
-  if (t === 'word') return { icon: Document, iconClass: 'icon-word' }
-  if (t === 'excel' || t === 'csv') return { icon: DataAnalysis, iconClass: 'icon-csv' }
-  if (t === 'webpage') return { icon: IconLink, iconClass: 'icon-link' }
-  return { icon: Document, iconClass: 'icon-link' }
+  if (t === 'pdf') return { icon: ICON_DOCUMENT, iconClass: 'icon-pdf' }
+  if (t === 'word') return { icon: ICON_DOCUMENT, iconClass: 'icon-word' }
+  if (t === 'excel' || t === 'csv') return { icon: ICON_CHART, iconClass: 'icon-csv' }
+  if (t === 'webpage') return { icon: ICON_LINK, iconClass: 'icon-link' }
+  return { icon: ICON_DOCUMENT, iconClass: 'icon-link' }
 }
 
 function statusFor(doc: Doc) {
@@ -177,8 +188,29 @@ async function loadKbs() {
   }
 
   const preferred = knowledgeBases.value.find(k => k.name.toLowerCase() === 'finance docs')
-  await refreshKb((preferred || knowledgeBases.value[0]).id)
+  const fromRoute = routeKbId.value
+  const fromRouteExists = fromRoute !== null && knowledgeBases.value.some((k) => k.id === fromRoute)
+  const target = fromRouteExists ? (fromRoute as number) : ((preferred || knowledgeBases.value[0]).id)
+  await refreshKb(target)
 }
+
+watch(
+  () => routeKbId.value,
+  async (id) => {
+    if (!id) return
+    if (selectedKbId.value === id) return
+    await refreshKb(id)
+  }
+)
+
+watch(
+  () => selectedKbId.value,
+  async (id) => {
+    if (!id) return
+    if (String(route.query.kbId || '') === String(id)) return
+    await router.replace({ path: '/finance-docs', query: { ...route.query, kbId: String(id) } })
+  }
+)
 
 const createKbDialogOpen = ref(false)
 const creatingKb = ref(false)
@@ -433,7 +465,10 @@ onMounted(async () => {
             </el-menu-item>
           </router-link>
           
-          <router-link to="/finance-docs" style="text-decoration: none;">
+          <router-link
+            :to="selectedKbId ? { path: '/finance-docs', query: { kbId: String(selectedKbId) } } : { path: '/finance-docs' }"
+            style="text-decoration: none;"
+          >
             <el-menu-item index="2">
               <el-icon><Files /></el-icon>
               <span>Knowledge Base</span>
@@ -471,8 +506,14 @@ onMounted(async () => {
             </el-menu-item>
           </router-link>
 
+          <router-link :to="{ path: '/audit', query: { agent: 'rag' } }" style="text-decoration: none;">
+            <el-menu-item index="6">
+              <el-icon><Document /></el-icon>
+              <span>Audit</span>
+            </el-menu-item>
+          </router-link>
 
-          <el-menu-item index="6">
+          <el-menu-item index="7">
             <el-icon><Setting /></el-icon>
             <span>Settings</span>
           </el-menu-item>
