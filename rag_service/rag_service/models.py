@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Float
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
@@ -218,5 +218,163 @@ class ChatMessage(Base):
             "role": self.role,
             "content": self.content,
             "image_paths": _json.loads(self.image_paths) if self.image_paths else [],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ========== RAG Eval / Benchmarks ==========
+
+
+class EvalDataset(Base):
+    """评测数据集（按 KB 隔离）"""
+
+    __tablename__ = "rag_eval_datasets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    created_by = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    cases = relationship("EvalCase", back_populates="dataset", cascade="all, delete-orphan")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "knowledge_base_id": self.knowledge_base_id,
+            "name": self.name,
+            "description": self.description,
+            "created_by": self.created_by,
+            "is_active": bool(self.is_active),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class EvalCase(Base):
+    """评测用例（query + 期望来源）"""
+
+    __tablename__ = "rag_eval_cases"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(Integer, ForeignKey("rag_eval_datasets.id"), nullable=False, index=True)
+    query = Column(Text, nullable=False)
+    expected_sources = Column(Text, nullable=True)  # JSON list[str]
+    notes = Column(Text, nullable=True)
+    tags = Column(Text, nullable=True)  # JSON list[str]
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    dataset = relationship("EvalDataset", back_populates="cases")
+
+    def to_dict(self) -> dict:
+        import json as _json
+
+        def _load_list(raw: str | None):
+            if not raw:
+                return []
+            try:
+                val = _json.loads(raw)
+                return val if isinstance(val, list) else []
+            except Exception:
+                return []
+
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "query": self.query,
+            "expected_sources": _load_list(self.expected_sources),
+            "notes": self.notes,
+            "tags": _load_list(self.tags),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class BenchmarkRun(Base):
+    """Benchmark Run 元数据（按 KB + Dataset）"""
+
+    __tablename__ = "rag_benchmark_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=False, index=True)
+    dataset_id = Column(Integer, ForeignKey("rag_eval_datasets.id"), nullable=False, index=True)
+    mode = Column(String(20), nullable=False)  # vector|graph
+    top_k = Column(Integer, default=5)
+    status = Column(String(20), default="queued")  # queued|running|succeeded|failed
+    created_by = Column(String(255), nullable=True)
+    request_id = Column(String(36), nullable=True, index=True)  # UUID for audit correlation
+    metrics = Column(Text, nullable=True)  # JSON
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+
+    results = relationship("BenchmarkCaseResult", back_populates="run", cascade="all, delete-orphan")
+
+    def to_dict(self) -> dict:
+        import json as _json
+
+        metrics = None
+        if self.metrics:
+            try:
+                metrics = _json.loads(self.metrics)
+            except Exception:
+                metrics = None
+
+        return {
+            "id": self.id,
+            "knowledge_base_id": self.knowledge_base_id,
+            "dataset_id": self.dataset_id,
+            "mode": self.mode,
+            "top_k": self.top_k,
+            "status": self.status,
+            "created_by": self.created_by,
+            "request_id": self.request_id,
+            "metrics": metrics,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+        }
+
+
+class BenchmarkCaseResult(Base):
+    """逐 case 结果"""
+
+    __tablename__ = "rag_benchmark_case_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("rag_benchmark_runs.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("rag_eval_cases.id"), nullable=False, index=True)
+    hit_rank = Column(Integer, nullable=True)
+    mrr = Column(Float, default=0.0)
+    ndcg = Column(Float, default=0.0)
+    retrieved = Column(Text, nullable=True)  # JSON
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    run = relationship("BenchmarkRun", back_populates="results")
+
+    def to_dict(self) -> dict:
+        import json as _json
+
+        retrieved = None
+        if self.retrieved:
+            try:
+                retrieved = _json.loads(self.retrieved)
+            except Exception:
+                retrieved = None
+
+        return {
+            "id": self.id,
+            "run_id": self.run_id,
+            "case_id": self.case_id,
+            "hit_rank": self.hit_rank,
+            "mrr": float(self.mrr or 0.0),
+            "ndcg": float(self.ndcg or 0.0),
+            "retrieved": retrieved,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

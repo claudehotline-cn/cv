@@ -9,6 +9,7 @@ from arq.connections import RedisSettings
 
 from .config import settings
 from .services.ingestion import build_graph, process_document, rebuild_vectors
+from .services.benchmark_runner import execute_benchmark_run
 from .audit_emitter import AuditEmitter
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,55 @@ async def build_graph_job(ctx: Dict[str, Any], kb_id: int) -> None:
         raise
 
 
+async def execute_benchmark_run_job(ctx: Dict[str, Any], run_id: int) -> None:
+    job_id = _ctx_job_id(ctx)
+    logger.info("[job] execute_benchmark_run run_id=%s job_id=%s", run_id, job_id)
+
+    if job_id:
+        emitter = await _get_audit_emitter()
+        await emitter.emit(
+            event_type="job_started",
+            request_id=job_id,
+            span_id=job_id,
+            component="job",
+            actor_type="service",
+            actor_id="rag-worker",
+            payload={"action": "benchmark_execute", "run_id": run_id},
+        )
+
+    try:
+        await execute_benchmark_run(run_id)
+        if job_id:
+            emitter = await _get_audit_emitter()
+            await emitter.emit(
+                event_type="job_completed",
+                request_id=job_id,
+                span_id=job_id,
+                component="job",
+                actor_type="service",
+                actor_id="rag-worker",
+                payload={"action": "benchmark_execute", "run_id": run_id},
+            )
+    except Exception as e:
+        if job_id:
+            emitter = await _get_audit_emitter()
+            await emitter.emit(
+                event_type="job_failed",
+                request_id=job_id,
+                span_id=job_id,
+                component="job",
+                actor_type="service",
+                actor_id="rag-worker",
+                payload={
+                    "action": "benchmark_execute",
+                    "run_id": run_id,
+                    "error_message": str(e),
+                    "error_class": type(e).__name__,
+                },
+            )
+        raise
+
+
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     queue_name = settings.queue_name
@@ -191,6 +241,7 @@ class WorkerSettings:
         process_document_job,
         rebuild_vectors_job,
         build_graph_job,
+        execute_benchmark_run_job,
     ]
     job_timeout = 60 * 60  # 1 hour
     max_jobs = 1

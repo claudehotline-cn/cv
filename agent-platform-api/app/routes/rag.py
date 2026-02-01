@@ -888,3 +888,647 @@ async def evaluate(req: Request, body: Dict[str, Any] = Body(...)):
     if isinstance(out, dict):
         out.setdefault("request_id", rid)
     return out
+
+
+# ==================== RAG Eval / Benchmarks ====================
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/datasets")
+async def list_eval_datasets(req: Request, kb_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/datasets", req=req)
+
+
+@router.post("/knowledge-bases/{kb_id}/eval/datasets")
+async def create_eval_dataset(req: Request, kb_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+    body = {**body, "created_by": ctx.get("user_id")}
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_create", "kb_id": kb_id, "input": body},
+    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/eval/datasets",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "eval_dataset_create", "kb_id": kb_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_create", "kb_id": kb_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}")
+async def get_eval_dataset(req: Request, kb_id: int, dataset_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}", req=req)
+
+
+@router.put("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}")
+async def update_eval_dataset(req: Request, kb_id: int, dataset_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_update", "kb_id": kb_id, "dataset_id": dataset_id, "input": body},
+    )
+    try:
+        out = await _proxy_json(
+            method="PUT",
+            path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={
+                "action": "eval_dataset_update",
+                "kb_id": kb_id,
+                "dataset_id": dataset_id,
+                "error_message": str(e),
+            },
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_update", "kb_id": kb_id, "dataset_id": dataset_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.delete("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}")
+async def delete_eval_dataset(req: Request, kb_id: int, dataset_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_delete", "kb_id": kb_id, "dataset_id": dataset_id},
+    )
+    try:
+        out = await _proxy_json(
+            method="DELETE",
+            path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}",
+            req=req,
+            request_id=rid,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "eval_dataset_delete", "kb_id": kb_id, "dataset_id": dataset_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_delete", "kb_id": kb_id, "dataset_id": dataset_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")
+async def list_eval_cases(req: Request, kb_id: int, dataset_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases", req=req)
+
+
+@router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")
+async def create_eval_case(req: Request, kb_id: int, dataset_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_case_create", "kb_id": kb_id, "dataset_id": dataset_id, "input": body},
+    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "eval_case_create", "kb_id": kb_id, "dataset_id": dataset_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_case_create", "kb_id": kb_id, "dataset_id": dataset_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.put("/eval/cases/{case_id}")
+async def update_eval_case(req: Request, case_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_case_update", "case_id": case_id, "input": body},
+    )
+    try:
+        out = await _proxy_json(
+            method="PUT",
+            path=f"/api/eval/cases/{case_id}",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "eval_case_update", "case_id": case_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_case_update", "case_id": case_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.delete("/eval/cases/{case_id}")
+async def delete_eval_case(req: Request, case_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_case_delete", "case_id": case_id},
+    )
+    try:
+        out = await _proxy_json(method="DELETE", path=f"/api/eval/cases/{case_id}", req=req, request_id=rid)
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "eval_case_delete", "case_id": case_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_case_delete", "case_id": case_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/import")
+async def import_eval_dataset(req: Request, kb_id: int, dataset_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_import", "kb_id": kb_id, "dataset_id": dataset_id},
+    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/import",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "eval_dataset_import", "kb_id": kb_id, "dataset_id": dataset_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "eval_dataset_import", "kb_id": kb_id, "dataset_id": dataset_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/export")
+async def export_eval_dataset(req: Request, kb_id: int, dataset_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/export", req=req)
+
+
+@router.post("/knowledge-bases/{kb_id}/eval/benchmarks/runs")
+async def create_benchmark_run(req: Request, kb_id: int, body: Dict[str, Any] = Body(...)):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+    body = {**body, "created_by": ctx.get("user_id")}
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_requested",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "benchmark_run_create", "kb_id": kb_id, "input": body},
+    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/eval/benchmarks/runs",
+            req=req,
+            request_id=rid,
+            json_body=body,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="tool_val_failed",
+            request_id=rid,
+            span_id=rid,
+            payload={"action": "benchmark_run_create", "kb_id": kb_id, "error_message": str(e)},
+        )
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="tool_call_executed",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "benchmark_run_create", "kb_id": kb_id},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_finished",
+        request_id=rid,
+        span_id=None,
+        payload={},
+    )
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs")
+async def list_benchmark_runs(req: Request, kb_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/benchmarks/runs", req=req)
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}")
+async def get_benchmark_run(req: Request, kb_id: int, run_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}", req=req)
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/results")
+async def list_benchmark_results(req: Request, kb_id: int, run_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/results", req=req)
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/export")
+async def export_benchmark_run(req: Request, kb_id: int, run_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/export", req=req)
+
+
+@router.post("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/execute")
+async def execute_benchmark(req: Request, kb_id: int, run_id: int):
+    ctx = _dev_user_ctx(req)
+    _require_admin(ctx)
+    rid = _request_id(req)
+
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="run_started",
+        request_id=rid,
+        span_id=None,
+        payload={"root_agent_name": "rag"},
+    )
+    await _emit_audit(
+        req=req,
+        ctx=ctx,
+        event_type="job_queued",
+        request_id=rid,
+        span_id=rid,
+        payload={"action": "benchmark_execute", "kb_id": kb_id, "run_id": run_id, "queue": "rag:queue"},
+    )
+    try:
+        out = await _proxy_json(
+            method="POST",
+            path=f"/api/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/execute",
+            req=req,
+            request_id=rid,
+        )
+    except Exception as e:
+        await _emit_audit(
+            req=req,
+            ctx=ctx,
+            event_type="run_failed",
+            request_id=rid,
+            span_id=None,
+            payload={"error_message": str(e)},
+        )
+        raise
+    if isinstance(out, dict):
+        out.setdefault("request_id", rid)
+    return out

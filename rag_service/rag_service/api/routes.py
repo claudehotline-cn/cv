@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Eval / Benchmarks APIs
+from .eval_routes import router as eval_router
+
+router.include_router(eval_router)
+
 
 # ==================== Schemas ====================
 
