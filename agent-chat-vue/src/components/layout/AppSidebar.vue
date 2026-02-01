@@ -44,41 +44,32 @@
           </template>
         </el-menu-item>
 
-        <el-menu-item index="/audit">
-           <template #title>
-             <div class="menu-item-content">
-                <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/audit' }">article</span>
-                <span class="font-medium">Audit</span>
-             </div>
-          </template>
-        </el-menu-item>
-
-        <el-menu-item index="/finance-docs">
-           <template #title>
+         <el-menu-item index="/audit">
+            <template #title>
               <div class="menu-item-content">
-                 <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/finance-docs' }">monitor</span>
-                 <span class="font-medium">Knowledge Base</span>
+                 <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/audit' }">article</span>
+                 <span class="font-medium">Audit</span>
               </div>
            </template>
-        </el-menu-item>
-
-        <el-menu-item index="/rag-eval">
+         </el-menu-item>
+ 
+         <el-menu-item index="/finance-docs">
            <template #title>
              <div class="menu-item-content">
-                <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/rag-eval' }">query_stats</span>
-                <span class="font-medium">RAG Evaluation</span>
-             </div>
-          </template>
-        </el-menu-item>
-
-        <el-menu-item index="/analytics" disabled>
-           <template #title>
-             <div class="menu-item-content opacity-60">
-                <span class="material-symbols-outlined">analytics</span>
-                <span class="font-medium">Analytics</span>
+               <span class="material-symbols-outlined" :class="{ 'filled': activeRoute === '/finance-docs' }">monitor</span>
+               <span class="font-medium">Knowledge Base</span>
              </div>
            </template>
-        </el-menu-item>
+         </el-menu-item>
+
+         <el-menu-item index="/analytics" disabled>
+           <template #title>
+             <div class="menu-item-content opacity-60">
+               <span class="material-symbols-outlined">analytics</span>
+               <span class="font-medium">Analytics</span>
+             </div>
+           </template>
+         </el-menu-item>
 
         <!-- Divider & Subheader -->
         <div class="menu-divider"></div>
