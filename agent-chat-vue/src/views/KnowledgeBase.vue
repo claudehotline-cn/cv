@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, markRaw } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, markRaw } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import apiClient, { DEV_USER_ROLE } from '@/api/client'
@@ -67,6 +67,50 @@ const activeFilter = ref('All Types')
 const filters = ['All Types', 'PDF', 'Spreadsheets', 'Word', 'Images', 'Audio', 'Video', 'Web']
 
 const documents = ref<Doc[]>([])
+
+const hasInFlightDocs = computed(() =>
+  documents.value.some((d) => {
+    const s = String(d.status || '').toLowerCase()
+    return s === 'processing' || s === 'queued' || s === 'pending'
+  })
+)
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollInFlight = false
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+async function pollOnce() {
+  const kbId = selectedKbId.value
+  if (!kbId) return
+  if (pollInFlight) return
+  pollInFlight = true
+  try {
+    const docRes = await apiClient.listKnowledgeBaseDocuments(kbId)
+    documents.value = (docRes.items || []) as Doc[]
+  } catch {
+    // Best-effort polling; keep last known UI state.
+  } finally {
+    pollInFlight = false
+  }
+}
+
+function startPolling() {
+  if (pollTimer) return
+  pollOnce()
+  pollTimer = setInterval(() => {
+    if (!hasInFlightDocs.value) {
+      stopPolling()
+      return
+    }
+    pollOnce()
+  }, 5000)
+}
 
 function formatBytes(bytes?: number) {
   if (!bytes || bytes <= 0) return '—'
@@ -211,6 +255,20 @@ watch(
     await router.replace({ path: '/finance-docs', query: { ...route.query, kbId: String(id) } })
   }
 )
+
+watch(
+  () => [selectedKbId.value, hasInFlightDocs.value] as const,
+  ([kbId, inflight]) => {
+    stopPolling()
+    if (!kbId) return
+    if (inflight) startPolling()
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  stopPolling()
+})
 
 const createKbDialogOpen = ref(false)
 const creatingKb = ref(false)

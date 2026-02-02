@@ -89,6 +89,40 @@ class Document(Base):
         }
 
 
+class DocumentOutline(Base):
+    """文档结构大纲（用于 UI Outline，不依赖 chunk 展示逻辑）"""
+
+    __tablename__ = "rag_document_outlines"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("rag_documents.id"), nullable=False, unique=True, index=True)
+    extraction = Column(String(50), nullable=True)  # marker|pdfplumber|...
+    outline_json = Column(Text, nullable=True)  # JSON tree
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+
+    def to_dict(self) -> dict:
+        import json as _json
+
+        outline = None
+        if self.outline_json:
+            try:
+                outline = _json.loads(self.outline_json)
+            except Exception:
+                outline = None
+
+        return {
+            "id": self.id,
+            "knowledge_base_id": self.knowledge_base_id,
+            "document_id": self.document_id,
+            "extraction": self.extraction,
+            "outline": outline,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 # ========== 多媒体模型 ==========
 
 class DocumentImage(Base):

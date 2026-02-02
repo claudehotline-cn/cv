@@ -11,6 +11,7 @@ import logging
 
 from ..database import get_mysql_db, MySQLSessionLocal
 from ..models import KnowledgeBase, Document
+from ..models import DocumentOutline
 from ..services.document_loader import document_loader
 from ..services.web_crawler import web_crawler
 from ..services.chunker import document_chunker
@@ -387,6 +388,24 @@ def list_document_chunks(
         "limit": limit,
         "items": items,
     }
+
+
+@router.get("/knowledge-bases/{kb_id}/documents/{doc_id}/outline")
+def get_document_outline(
+    kb_id: int,
+    doc_id: int,
+    db: Session = Depends(get_mysql_db),
+):
+    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    row = db.query(DocumentOutline).filter(DocumentOutline.document_id == doc_id).first()
+    if not row:
+        return {"document": doc.to_dict(), "items": []}
+
+    payload = row.to_dict()
+    return {"document": doc.to_dict(), "extraction": payload.get("extraction"), "items": payload.get("outline") or []}
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/{doc_id}/preview-chunks")

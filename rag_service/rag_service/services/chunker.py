@@ -391,17 +391,34 @@ class DocumentChunker:
 
         text = content if not self.preprocess else self._preprocess(content)
 
-        # Match headings preceded by start, whitespace or '>' and followed by whitespace.
-        heading_re = re.compile(r"(^|[\s>])(#{1,6})\s+", re.MULTILINE)
-        matches = list(heading_re.finditer(text))
-        if len(matches) < 2:
-            # Not markdown-like; fall back to semantic hierarchical chunking.
+        # Find heading lines, excluding fenced code blocks.
+        in_code = False
+        fence = None
+        starts: list[int] = []
+        offset = 0
+        for line in text.splitlines(True):
+            stripped = line.lstrip()
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                f = stripped[:3]
+                if not in_code:
+                    in_code = True
+                    fence = f
+                elif fence == f:
+                    in_code = False
+                    fence = None
+
+            if not in_code:
+                # Only treat real markdown headings at line start (after optional whitespace / blockquote prefix).
+                if re.match(r"^\s*(?:>\s*)?#{1,6}\s+", line):
+                    starts.append(offset)
+
+            offset += len(line)
+
+        if len(starts) < 2:
             return self.semantic_hierarchical_chunk(content=text, metadata=metadata)
 
-        # Section boundaries at heading markers.
-        starts = [m.start(2) for m in matches]  # position of the hash group
-        # Include prefix text into the first section.
-        if starts and starts[0] > 0:
+        # Include any prefix text into the first section.
+        if starts[0] > 0:
             starts[0] = 0
 
         parent_texts: list[str] = []

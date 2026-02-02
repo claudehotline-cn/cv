@@ -473,6 +473,11 @@ async def list_document_chunks(
     )
 
 
+@router.get("/knowledge-bases/{kb_id}/documents/{doc_id}/outline")
+async def get_document_outline(req: Request, kb_id: int, doc_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/documents/{doc_id}/outline", req=req)
+
+
 @router.delete("/knowledge-bases/{kb_id}/documents/{doc_id}")
 async def delete_document(req: Request, kb_id: int, doc_id: int):
     ctx = _dev_user_ctx(req)

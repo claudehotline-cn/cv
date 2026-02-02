@@ -95,11 +95,14 @@ const expandedParents = ref<Record<string, boolean>>({})
 
 type OutlineNode = {
   id: string
-  label: string
+  title: string
   level: number
-  parentChunkId: number
+  parent_chunk_index: number
   children?: OutlineNode[]
 }
+
+const outlineItems = ref<OutlineNode[]>([])
+const outlineExtraction = ref<string | null>(null)
 
 const chunks = ref<ChunkView[]>([])
 
@@ -124,53 +127,51 @@ function truncate(text: string, max = 260) {
   return s.slice(0, max).trimEnd() + '…'
 }
 
+function extractFirstHeading(content: string): { level: number; title: string } | null {
+  const lines = String(content || '').split('\n')
+  let inCode = false
+  let fence: string | null = null
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      const f = trimmed.slice(0, 3)
+      if (!inCode) {
+        inCode = true
+        fence = f
+      } else if (fence === f) {
+        inCode = false
+        fence = null
+      }
+      continue
+    }
+
+    if (inCode) continue
+
+    const m = line.match(/^\s*(?:>\s*)?(#{1,6})\s+(.+?)\s*$/)
+    if (m) {
+      const level = m[1].length
+      const title = m[2].trim()
+      if (title) return { level, title }
+    }
+  }
+
+  return null
+}
+
 function extractSectionTitle(content: string) {
+  const h = extractFirstHeading(content)
+  if (h) return h.title
+
   const lines = String(content || '')
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
 
-  const heading = lines.find((l) => /^#{1,6}\s+/.test(l))
-  if (heading) return heading.replace(/^#{1,6}\s+/, '').trim()
-
   const page = lines.find((l) => /^\[Page\s+\d+\]/i.test(l))
   if (page) return page.replace(/^\[(.+?)\].*$/, '$1').trim()
 
   return lines[0] ? truncate(lines[0], 60) : ''
-}
-
-function extractHeadings(content: string): Array<{ level: number; title: string }> {
-  const raw = String(content || '')
-  // Headings may not be line-broken after PDF extraction; allow whitespace or '>' before '#'.
-  const re = /(^|[\s>])(?<hash>#{1,6})\s+(?<rest>[^#]+)/g
-
-  const out: Array<{ level: number; title: string }> = []
-  let m: RegExpExecArray | null
-  while ((m = re.exec(raw))) {
-    const hash = (m.groups?.hash || '')
-    const rest = (m.groups?.rest || '').trim()
-    const level = Math.max(1, Math.min(6, hash.length || 1))
-
-    let title = rest
-    // Prefer cutting at common separators seen in extracted text.
-    for (const delim of [' > ', '  > ', ' | ', ' — ', ' - ']) {
-      const idx = title.indexOf(delim)
-      if (idx > 0) {
-        title = title.slice(0, idx).trim()
-        break
-      }
-    }
-    // If the next token looks like prose, keep the label short.
-    if (title.length > 90) title = title.slice(0, 90).trimEnd()
-    title = title.replace(/\s+/g, ' ').trim()
-    if (!title) continue
-
-    // Avoid immediate duplicates.
-    const prev = out[out.length - 1]
-    if (prev && prev.level === level && prev.title === title) continue
-    out.push({ level, title })
-  }
-  return out
 }
 
 function formatBytes(bytes?: number) {
@@ -252,6 +253,24 @@ function scrollToParent(parentId: number) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+function scrollToOutlineNode(node: any) {
+  const idxRaw = node?.parent_chunk_index
+  const idx = Number.parseInt(String(idxRaw ?? ''), 10)
+  if (!Number.isFinite(idx)) return
+
+  const p = parentChunks.value.find((x) => x.chunkIndex === idx)
+  if (p) {
+    scrollToParent(p.id)
+    return
+  }
+
+  if (hasMore.value) {
+    ElMessage.info('该章节对应的 chunk 还没加载，先点 “Load More Chunks”')
+  } else {
+    ElMessage.warning('未找到该章节对应的 parent chunk')
+  }
+}
+
 function childrenForParent(parentId: number) {
   const kids = childrenByParentId.value[String(parentId)] || []
   const q = searchText.value.trim().toLowerCase()
@@ -279,55 +298,17 @@ const filteredParents = computed(() => {
 })
 
 const outlineTree = computed<OutlineNode[]>(() => {
-  const nodes: OutlineNode[] = []
-  let seq = 0
-
-  for (const p of filteredParents.value) {
-    const hs = extractHeadings(p.content)
-    if (!hs.length) continue
-    for (const h of hs) {
-      nodes.push({
-        id: `h-${p.id}-${seq++}`,
-        label: h.title,
-        level: h.level,
-        parentChunkId: p.id,
-        children: [],
-      })
-    }
-  }
-
-  // Fallback: no headings detected -> use parents as a flat outline.
-  if (!nodes.length) {
-    return filteredParents.value.map((p) => ({
-      id: `p-${p.id}`,
-      label: parentLabelById.value[String(p.id)] || `Section ${p.displayId}`,
-      level: 1,
-      parentChunkId: p.id,
-      children: [],
-    }))
-  }
-
-  const roots: OutlineNode[] = []
-  const stack: OutlineNode[] = []
-
-  for (const node of nodes) {
-    while (stack.length && stack[stack.length - 1].level >= node.level) {
-      stack.pop()
-    }
-    const parent = stack[stack.length - 1]
-    if (parent) {
-      parent.children = parent.children || []
-      parent.children.push(node)
-    } else {
-      roots.push(node)
-    }
-    stack.push(node)
-  }
-
-  return roots
+  return outlineItems.value || []
 })
 
 // outlineTree is used for the left outline panel.
+
+const activeParentChunkIndex = computed<number | null>(() => {
+  const id = activeParentId.value
+  if (!id) return null
+  const hit = parentChunks.value.find((p) => p.id === id)
+  return hit ? hit.chunkIndex : null
+})
 
 const chunkCountLabel = computed(() => {
   const count = doc.value?.chunk_count ?? chunks.value.length
@@ -356,9 +337,10 @@ async function loadInitial() {
   }
   loading.value = true
   try {
-    const [kbRes, chunkRes] = await Promise.all([
+    const [kbRes, chunkRes, outlineRes] = await Promise.all([
       apiClient.getKnowledgeBase(kbId.value),
       apiClient.listDocumentChunks(kbId.value, docId.value, { offset: 0, limit: pageSize, include_parents: true }),
+      apiClient.getDocumentOutline(kbId.value, docId.value).catch(() => null),
     ])
 
     kb.value = kbRes as KB
@@ -374,6 +356,9 @@ async function loadInitial() {
     chunks.value = rows.map(mapChunkRow)
     offset.value = rows.length
     hasMore.value = rows.length >= pageSize
+
+    outlineItems.value = ((outlineRes as any)?.items || []) as OutlineNode[]
+    outlineExtraction.value = (outlineRes as any)?.extraction ?? null
 
     // Default: select the first section (collapsed).
     if (parentChunks.value.length) {
@@ -521,6 +506,8 @@ watch(
   () => [kbId.value, docId.value],
   () => {
     chunks.value = []
+    outlineItems.value = []
+    outlineExtraction.value = null
     offset.value = 0
     hasMore.value = true
     activeChunkId.value = null
@@ -586,12 +573,12 @@ watch(
                node-key="id"
                :expand-on-click-node="false"
                :default-expand-all="false"
-               @node-click="(n: any) => n?.parentChunkId && scrollToParent(Number(n.parentChunkId))"
+               @node-click="scrollToOutlineNode"
              >
                <template #default="{ data }">
-                 <div class="tree-row" :class="{ active: Number(data.parentChunkId) === activeParentId }">
+                  <div class="tree-row" :class="{ active: Number(data.parent_chunk_index) === activeParentChunkIndex }">
                    <span class="tree-dot" />
-                   <span class="tree-label">{{ data.label }}</span>
+                   <span class="tree-label">{{ data.title }}</span>
                  </div>
                </template>
              </el-tree>

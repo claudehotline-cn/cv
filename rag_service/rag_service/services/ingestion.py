@@ -13,6 +13,7 @@ from typing import Optional
 
 from ..database import MySQLSessionLocal
 from ..models import Document, KnowledgeBase
+from ..models import DocumentOutline
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,99 @@ async def process_document(document_id: int) -> None:
             loader_filename = _ensure_loader_filename(doc)
             loaded = document_loader.load(local_path, loader_filename)
 
-            cleaned = apply_cleaning_rules(loaded.content, kb_rules)
+            raw_text = loaded.content
+
+            # Marker sometimes returns Markdown with headings flattened into a single line.
+            # Normalize it so `# ...` headings start on their own lines, improving chunking + outline.
+            try:
+                import re as _re
+
+                extraction = (loaded.metadata or {}).get("extraction")
+                if extraction == "marker" and raw_text:
+                    lines = str(raw_text).split("\n")
+
+                    # Heuristic: drop a stray leading fence (```/~~~) if it isn't closed and a real heading appears soon.
+                    first_idx = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+                    if first_idx is not None:
+                        first = lines[first_idx].strip()
+                        if first in ("```", "~~~"):
+                            saw_close = False
+                            saw_heading = False
+                            for ln in lines[first_idx + 1 : first_idx + 60]:
+                                t = ln.strip()
+                                if not t:
+                                    continue
+                                if t == first:
+                                    saw_close = True
+                                    break
+                                if _re.match(r"^\s*(?:>\s*)?#{1,6}\s+\S+", ln):
+                                    saw_heading = True
+                                    break
+                            if saw_heading and not saw_close:
+                                lines.pop(first_idx)
+
+                    out_lines: list[str] = []
+                    in_code = False
+                    fence = None
+                    for line in lines:
+                        t = line.strip()
+                        if t.startswith("```") or t.startswith("~~~"):
+                            f = t[:3]
+                            if not in_code:
+                                in_code = True
+                                fence = f
+                            elif fence == f:
+                                in_code = False
+                                fence = None
+                            out_lines.append(line)
+                            continue
+
+                        if in_code:
+                            out_lines.append(line)
+                            continue
+
+                        # Split inline headings onto their own lines.
+                        normalized = _re.sub(r"\s+(#{1,6})\s+", r"\n\\1 ", line)
+                        out_lines.extend(normalized.split("\n"))
+
+                    raw_text = "\n".join(out_lines)
+            except Exception:
+                pass
+
+            # Markdown-like docs (e.g., marker PDF->Markdown) should keep heading lines intact.
+            # The default rule `consolidateShortParagraphs` can merge headings into previous paragraphs,
+            # breaking outline extraction and heading-aware chunking.
+            structure_rules = kb_rules
+            try:
+                import re as _re
+
+                in_code = False
+                fence = None
+                heading_lines = 0
+                for line in str(raw_text or "").split("\n"):
+                    t = line.strip()
+                    if t.startswith("```") or t.startswith("~~~"):
+                        f = t[:3]
+                        if not in_code:
+                            in_code = True
+                            fence = f
+                        elif fence == f:
+                            in_code = False
+                            fence = None
+                        continue
+                    if in_code:
+                        continue
+                    if _re.match(r"^\s*(?:>\s*)?#{1,6}\s+\S+", line):
+                        heading_lines += 1
+                        if heading_lines >= 2:
+                            break
+
+                if heading_lines >= 2 and isinstance(kb_rules, dict):
+                    structure_rules = {**kb_rules, "consolidateShortParagraphs": False}
+            except Exception:
+                pass
+
+            cleaned = apply_cleaning_rules(raw_text, structure_rules)
 
             chunker = DocumentChunker(
                 chunk_size=(kb.chunk_size if kb else None),
@@ -206,32 +299,103 @@ async def process_document(document_id: int) -> None:
                 preprocess=False,
             )
 
-            # If extracted content looks like Markdown (e.g., PDF containing .md source),
-            # use heading-aware chunking so parent chunks align with document structure.
+            # Try markdown-aware chunking first; it will auto-fallback if not markdown-like.
+            parent_chunks, child_chunks = chunker.markdown_hierarchical_chunk(
+                content=cleaned,
+                metadata=loaded.metadata,
+                child_max_size=(kb.chunk_size if kb else 500),
+                child_overlap=(kb.chunk_overlap if kb else 50),
+            )
+
+            # Persist document outline based on extracted Markdown headings.
+            # This is independent from the chunk list UI; we only attach a best-effort mapping
+            # to parent chunk_index for scroll-to-section.
             try:
+                import json as _json
                 import re as _re
 
-                md_heading_count = len(
-                    _re.findall(r"(^|[\s>])#{1,6}\s+", cleaned)
-                )
-            except Exception:
-                md_heading_count = 0
+                def _extract_markdown_headings(md: str) -> list[tuple[int, str]]:
+                    lines = str(md or "").split("\n")
+                    in_code = False
+                    fence = None
+                    out: list[tuple[int, str]] = []
+                    for line in lines:
+                        t = line.strip()
+                        if t.startswith("```") or t.startswith("~~~"):
+                            f = t[:3]
+                            if not in_code:
+                                in_code = True
+                                fence = f
+                            elif fence == f:
+                                in_code = False
+                                fence = None
+                            continue
+                        if in_code:
+                            continue
 
-            if md_heading_count >= 2:
-                parent_chunks, child_chunks = chunker.markdown_hierarchical_chunk(
-                    content=cleaned,
-                    metadata=loaded.metadata,
-                    child_max_size=(kb.chunk_size if kb else 500),
-                    child_overlap=(kb.chunk_overlap if kb else 50),
-                )
-            else:
-                parent_chunks, child_chunks = chunker.semantic_hierarchical_chunk(
-                    content=cleaned,
-                    metadata=loaded.metadata,
-                    similarity_threshold=0.5,
-                    parent_max_size=(kb.chunk_size * 4 if kb else 2000),
-                    child_max_size=(kb.chunk_size if kb else 500),
-                )
+                        m = _re.match(r"^\s*(?:>\s*)?(#{1,6})\s+(.+?)\s*$", line)
+                        if not m:
+                            continue
+                        level = len(m.group(1))
+                        title = " ".join(m.group(2).strip().split())
+                        if not title:
+                            continue
+                        out.append((level, title))
+                    return out
+
+                def _build_outline_tree(
+                    headings: list[tuple[int, str]],
+                    parent_chunk_indices: list[int],
+                ) -> list[dict]:
+                    nodes: list[dict] = []
+                    for i, (level, title) in enumerate(headings):
+                        if parent_chunk_indices:
+                            mapped = parent_chunk_indices[i] if i < len(parent_chunk_indices) else parent_chunk_indices[-1]
+                        else:
+                            mapped = i
+
+                        nodes.append(
+                            {
+                                "id": f"h-{i}",
+                                "title": title,
+                                "level": level,
+                                "parent_chunk_index": int(mapped),
+                                "children": [],
+                            }
+                        )
+
+                    roots: list[dict] = []
+                    stack: list[dict] = []
+                    for n in nodes:
+                        while stack and int(stack[-1].get("level") or 1) >= int(n.get("level") or 1):
+                            stack.pop()
+                        if stack:
+                            stack[-1].setdefault("children", []).append(n)
+                        else:
+                            roots.append(n)
+                        stack.append(n)
+                    return roots
+
+                extraction = (loaded.metadata or {}).get("extraction")
+                headings = _extract_markdown_headings(cleaned)
+                parent_chunk_indices = [int(p.index) for p in parent_chunks]
+                outline_tree = _build_outline_tree(headings, parent_chunk_indices)
+
+                row = db.query(DocumentOutline).filter(DocumentOutline.document_id == doc.id).first()
+                if row:
+                    row.extraction = extraction
+                    row.outline_json = _json.dumps(outline_tree, ensure_ascii=False)
+                else:
+                    db.add(
+                        DocumentOutline(
+                            knowledge_base_id=int(doc.knowledge_base_id),
+                            document_id=int(doc.id),
+                            extraction=extraction,
+                            outline_json=_json.dumps(outline_tree, ensure_ascii=False),
+                        )
+                    )
+            except Exception as e:
+                logger.warning("Failed to persist outline for doc %s: %s", doc.id, e)
 
             # Vectorize
             parent_texts = [p.content for p in parent_chunks]

@@ -387,6 +387,10 @@ class ApiClient {
         return this.http.get(`/rag/knowledge-bases/${kbId}/documents/${docId}/chunks`, { params })
     }
 
+    async getDocumentOutline(kbId: number, docId: number): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/documents/${docId}/outline`)
+    }
+
     async previewDocumentChunks(
         kbId: number,
         docId: number,

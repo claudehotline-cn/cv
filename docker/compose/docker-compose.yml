@@ -412,6 +412,7 @@ services:
       - ../../rag_service/rag_service:/app/rag_service
       - ../../logs:/logs:rw
       - rag-model-cache:/root/.cache/huggingface
+      - rag-datalab-cache:/root/.cache/datalab
       - ../../article_agent/workspace/artifacts:/data/workspace/artifacts:ro
 
   rag-worker:
@@ -451,6 +452,7 @@ services:
       - ../../rag_service/rag_service:/app/rag_service
       - ../../logs:/logs:rw
       - rag-model-cache:/root/.cache/huggingface
+      - rag-datalab-cache:/root/.cache/datalab
       - ../../article_agent/workspace/artifacts:/data/workspace/artifacts:ro
 
   rag-ui:
@@ -533,6 +535,7 @@ volumes:
   agent-checkpoints:
   neo4j-data:
   rag-model-cache:
+  rag-datalab-cache:
   ollama-vl-data:
   rag-ui-node-modules:
   langgraph-redis-data:
