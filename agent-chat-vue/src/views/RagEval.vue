@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import apiClient, { DEV_USER_ROLE } from '@/api/client'
 import { useTheme } from '@/composables/useTheme'
 import {
@@ -14,6 +14,7 @@ import {
   Star,
   Bell,
 } from '@element-plus/icons-vue'
+import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
 
 type Mode = 'vector' | 'graph'
 
@@ -29,18 +30,19 @@ type ResultRow = {
   score: number
   source: string
   snippet: string
+  fullSnippet: string
   documentId?: number
   label: number // 0..3
 }
 
-type SavedCase = {
-  id: string
-  title: string
-  meta: string
+type EvalCase = {
+  id: number
   query: string
-  mode: Mode
-  topK: number
-  createdAt: string
+  expected_sources: string[]
+  notes?: string | null
+  tags: string[]
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 const router = useRouter()
@@ -52,6 +54,7 @@ const isAdmin = DEV_USER_ROLE === 'admin'
 
 const kbList = ref<KB[]>([])
 const selectedKbId = ref<number | null>(null)
+const labDatasetId = ref<number | null>(null)
 
 const mode = ref<Mode>('vector')
 const topK = ref(12)
@@ -62,76 +65,79 @@ const query = ref("What are the liability limitations in Section 4.2?")
 const loading = ref(false)
 const evaluating = ref(false)
 
-const savedCases = ref<SavedCase[]>([])
-const selectedCaseId = ref<string | null>(null)
+const savedCases = ref<EvalCase[]>([])
+const selectedCaseId = ref<number | null>(null)
+const selectedCase = ref<EvalCase | null>(null)
 
 const results = ref<ResultRow[]>([])
 
-const judgeAnswer = ref(
-  "Based on the retrieved context, Section 4.2 specifies that the provider's total liability is limited to the fees paid by the customer in the 12 months preceding the claim. However, this cap does not apply in cases of gross negligence."
-)
-const judgeReasoning = ref(
-  'The model correctly identified the liability cap from document SLA_v2.pdf and cross-referenced the exceptions from annex_B.docx. No hallucinations detected.'
-)
+const snippetDialogOpen = ref(false)
+const snippetDialogTitle = ref('')
+const snippetDialogText = ref('')
 
-function makeMockResults(): ResultRow[] {
-  return [
-    {
-      id: 'r1',
-      rank: 1,
-      score: 0.942,
-      source: 'legal/contracts/SLA_v2.pdf',
-      snippet: '"The total liability of the provider shall not exceed the fees paid during the..."',
-      documentId: 1,
-      label: 3,
-    },
-    {
-      id: 'r2',
-      rank: 2,
-      score: 0.887,
-      source: 'legal/annex_B.docx',
-      snippet: '"Exceptions to the liability cap include gross negligence or willful misconduct..."',
-      documentId: 2,
-      label: 2,
-    },
-    {
-      id: 'r3',
-      rank: 3,
-      score: 0.812,
-      source: 'policies/compliance.pdf',
-      snippet: '"Employees must report all potential liability issues to the compliance officer..."',
-      documentId: 3,
-      label: 1,
-    },
-  ]
+const expectedSources = ref<string[]>([])
+
+const judgeAnswer = ref(
+  ''
+)
+const judgeMetrics = ref<any>(null)
+
+function _tagValue(tags: string[], key: string): string | null {
+  const prefix = `${key}=`
+  for (const t of tags || []) {
+    if (typeof t === 'string' && t.startsWith(prefix)) return t.slice(prefix.length)
+    if (typeof t === 'string' && t.startsWith(`lab:${prefix}`)) return t.slice(`lab:`.length + prefix.length)
+  }
+  return null
 }
 
-function makeMockCases(): SavedCase[] {
-  return [
-    {
-      id: 'c1',
-      title: 'Compliance_Test_A',
-      meta: 'TopK: 5 • Vector • Oct 24',
-      query: 'What are the SOC2 Type II requirements for encryption at rest?',
-      mode: 'vector',
-      topK: 5,
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
-    },
-    {
-      id: 'c2',
-      title: 'Edge_Cases_v2',
-      meta: 'TopK: 10 • Hybrid • Oct 22',
-      query: 'List exceptions to liability cap and their conditions.',
-      mode: 'graph',
-      topK: 10,
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 9).toISOString(),
-    },
-  ]
+function caseMeta(c: EvalCase): { mode: Mode; topK: number } {
+  const m = (_tagValue(c.tags || [], 'mode') || '').toLowerCase()
+  const k = Number.parseInt(_tagValue(c.tags || [], 'topk') || '', 10)
+  const modeVal: Mode = m === 'graph' ? 'graph' : 'vector'
+  const topKVal = Number.isFinite(k) && k > 0 ? k : 12
+  return { mode: modeVal, topK: topKVal }
+}
+
+function caseTitle(c: EvalCase): string {
+  const q = String(c.query || '').trim()
+  if (!q) return `Case #${c.id}`
+  return q.length > 36 ? q.slice(0, 36).trimEnd() + '…' : q
+}
+
+function formatCaseMeta(c: EvalCase): string {
+  const { mode: m, topK: k } = caseMeta(c)
+  const dt = c.created_at ? new Date(c.created_at) : null
+  const d = dt && !Number.isNaN(dt.getTime()) ? dt.toLocaleDateString() : ''
+  return `TopK: ${k} • ${m.toUpperCase()}${d ? ` • ${d}` : ''}`
 }
 
 function formatScore(v: number) {
   if (!Number.isFinite(v)) return '—'
   return v.toFixed(3)
+}
+
+function formatSnippet(s: string, max = 220) {
+  const oneLine = String(s || '').replace(/\s+/g, ' ').trim()
+  if (oneLine.length <= max) return oneLine
+  return oneLine.slice(0, max).trimEnd() + '…'
+}
+
+function openSnippet(row: ResultRow) {
+  snippetDialogTitle.value = row.source
+  snippetDialogText.value = row.fullSnippet || row.snippet || ''
+  snippetDialogOpen.value = true
+}
+
+async function copySnippet() {
+  const text = snippetDialogText.value || ''
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('Copied')
+  } catch {
+    ElMessage.warning('Copy failed')
+  }
 }
 
 const selectedKbName = computed(() => {
@@ -144,6 +150,25 @@ const chunksFoundLabel = computed(() => {
   return n ? `${n} CHUNKS FOUND` : ''
 })
 
+const labelCount = computed(() => results.value.filter((r) => r.label > 0).length)
+
+const heatCells = computed(() => results.value.slice(0, 12).map((r) => r.label))
+
+const judgeFaithfulness = computed(() => {
+  const v = Number((judgeMetrics.value as any)?.faithfulness)
+  return Number.isFinite(v) ? v : null
+})
+const judgeRelevance = computed(() => {
+  const v = Number((judgeMetrics.value as any)?.answer_relevance)
+  return Number.isFinite(v) ? v : null
+})
+const judgeReasoningText = computed(() => {
+  const a = String((judgeMetrics.value as any)?.reasoning_faithfulness || '').trim()
+  const b = String((judgeMetrics.value as any)?.reasoning_relevance || '').trim()
+  if (!a && !b) return '—'
+  return [a && `Faithfulness: ${a}`, b && `Relevance: ${b}`].filter(Boolean).join('\n\n')
+})
+
 function setLabel(rowId: string, next: number) {
   const n = Math.max(0, Math.min(3, next))
   results.value = results.value.map((r) => (r.id === rowId ? { ...r, label: n } : r))
@@ -154,6 +179,7 @@ function onLabelClick(row: ResultRow, idx: number) {
   // Toggle off if user clicks the already-selected level.
   if (row.label === idx) setLabel(row.id, 0)
   else setLabel(row.id, idx)
+  syncExpectedSourcesFromLabels()
 }
 
 function openDoc(row: ResultRow) {
@@ -163,6 +189,7 @@ function openDoc(row: ResultRow) {
 
 function resetLabels() {
   results.value = results.value.map((r) => ({ ...r, label: 0 }))
+  expectedSources.value = []
 }
 
 function exportJson() {
@@ -173,9 +200,10 @@ function exportJson() {
     top_k: topK.value,
     query: query.value,
     results: results.value,
+    expected_sources: expectedSources.value,
     judge: {
       answer: judgeAnswer.value,
-      reasoning: judgeReasoning.value,
+      metrics: judgeMetrics.value,
     },
     exported_at: new Date().toISOString(),
   }
@@ -208,21 +236,30 @@ async function runRetrieve() {
 
     const rows = Array.isArray((res as any)?.results) ? (res as any).results : []
     if (!rows.length) {
-      ElMessage.warning('检索接口返回空结果，暂时使用 mock 结果')
+      results.value = []
+      ElMessage.warning('检索接口返回空结果')
       return
     }
 
-    results.value = rows.slice(0, topK.value).map((r: any, i: number) => ({
-      id: `api_${i}_${String(r.document_id || '')}_${String(r.chunk_index || '')}`,
-      rank: i + 1,
-      score: Number(r.score || 0),
-      source: String(r?.metadata?.source || `doc:${r.document_id}`),
-      snippet: String((r.content || '').slice(0, 220)).replace(/\s+/g, ' ').trim(),
-      documentId: Number(r.document_id || 0) || undefined,
-      label: 0,
-    }))
+    const expected = new Set((expectedSources.value || []).map((s) => String(s || '').trim().toLowerCase()).filter(Boolean))
+
+    results.value = rows.slice(0, topK.value).map((r: any, i: number) => {
+      const source = String(r?.metadata?.source || `doc:${r.document_id}`)
+      const isExpected = expected.has(source.trim().toLowerCase())
+      const full = String(r.content || r.content_preview || '').trim()
+      return {
+        id: `api_${i}_${String(r.document_id || '')}_${String(r.chunk_index || '')}`,
+        rank: i + 1,
+        score: Number(r.score || 0),
+        source,
+        snippet: formatSnippet(full, 220),
+        fullSnippet: full,
+        documentId: Number(r.document_id || 0) || undefined,
+        label: isExpected ? 3 : 0,
+      }
+    })
   } catch {
-    ElMessage.warning('检索接口暂不可用，使用 mock 结果')
+    ElMessage.error('检索接口暂不可用')
   } finally {
     loading.value = false
   }
@@ -235,21 +272,120 @@ async function evaluate() {
   }
   evaluating.value = true
   try {
-    await apiClient.ragEvaluate({ question: query.value.trim(), answer: judgeAnswer.value.trim(), contexts: results.value.map((r) => r.snippet) })
-    ElMessage.success('Evaluate request sent')
+    const res = await apiClient.ragEvaluate({
+      question: query.value.trim(),
+      answer: judgeAnswer.value.trim(),
+      contexts: results.value.map((r) => r.fullSnippet || r.snippet),
+    })
+    judgeMetrics.value = res
+    ElMessage.success('Evaluate completed')
   } catch {
-    ElMessage.warning('Evaluate 接口暂不可用（mock 展示不受影响）')
+    judgeMetrics.value = null
+    ElMessage.warning('Evaluate 接口暂不可用')
   } finally {
     evaluating.value = false
   }
 }
 
-function loadCase(c: SavedCase) {
+async function loadCase(c: EvalCase) {
   selectedCaseId.value = c.id
-  mode.value = c.mode
-  topK.value = c.topK
+  selectedCase.value = c
+  const meta = caseMeta(c)
+  mode.value = meta.mode
+  topK.value = meta.topK
   query.value = c.query
-  results.value = makeMockResults()
+  expectedSources.value = Array.isArray(c.expected_sources) ? c.expected_sources : []
+  await runRetrieve()
+}
+
+async function ensureLabDataset() {
+  const kbId = selectedKbId.value
+  if (!kbId) return
+  const res = await apiClient.listEvalDatasets(kbId)
+  const items = (res.items || []) as any[]
+  const hit = items.find((d) => String(d.name || '').trim() === 'Retrieval Lab')
+  if (hit?.id) {
+    labDatasetId.value = Number(hit.id)
+    return
+  }
+  const created = await apiClient.createEvalDataset(kbId, { name: 'Retrieval Lab', description: 'Saved cases from /rag-eval' })
+  labDatasetId.value = Number(created?.id)
+}
+
+async function refreshCases() {
+  const kbId = selectedKbId.value
+  const dsId = labDatasetId.value
+  if (!kbId || !dsId) {
+    savedCases.value = []
+    return
+  }
+  const res = await apiClient.listEvalCases(kbId, dsId)
+  savedCases.value = (res.items || []) as any
+}
+
+function syncExpectedSourcesFromLabels() {
+  const picked = results.value
+    .filter((r) => r.label >= 2)
+    .map((r) => String(r.source || '').trim())
+    .filter(Boolean)
+  expectedSources.value = Array.from(new Set(picked))
+}
+
+async function saveCurrentCase() {
+  if (!selectedKbId.value) {
+    ElMessage.warning('请选择 Knowledge Base')
+    return
+  }
+  await ensureLabDataset()
+  if (!labDatasetId.value) {
+    ElMessage.error('Failed to init Retrieval Lab dataset')
+    return
+  }
+  const q = query.value.trim()
+  if (!q) {
+    ElMessage.warning('请输入 Query')
+    return
+  }
+
+  syncExpectedSourcesFromLabels()
+
+  const created = await apiClient.createEvalCase(selectedKbId.value, labDatasetId.value, {
+    query: q,
+    expected_sources: expectedSources.value,
+    notes: undefined,
+    tags: ['lab', `lab:mode=${mode.value}`, `lab:topk=${topK.value}`],
+  })
+  await refreshCases()
+  selectedCaseId.value = Number(created?.id)
+  selectedCase.value = created as any
+  ElMessage.success('Case saved')
+}
+
+async function saveLabelsToCase() {
+  if (!selectedCaseId.value) {
+    ElMessage.warning('先选择一个 Saved Case')
+    return
+  }
+  syncExpectedSourcesFromLabels()
+  await apiClient.updateEvalCase(selectedCaseId.value, { expected_sources: expectedSources.value, tags: ['lab', `lab:mode=${mode.value}`, `lab:topk=${topK.value}`] })
+  await refreshCases()
+  ElMessage.success('Labels saved')
+}
+
+async function deleteCase(c: EvalCase) {
+  if (!isAdmin) {
+    ElMessage.warning('需要 admin')
+    return
+  }
+  await ElMessageBox.confirm('删除这个 Saved Case？', 'Confirm', { type: 'warning' })
+  await apiClient.deleteEvalCase(c.id)
+  if (selectedCaseId.value === c.id) {
+    selectedCaseId.value = null
+    selectedCase.value = null
+    expectedSources.value = []
+  }
+  await refreshCases()
+  ElMessage.success('Deleted')
 }
 
 async function loadKbs() {
@@ -261,17 +397,90 @@ async function loadKbs() {
   }
 }
 
-onMounted(async () => {
-  savedCases.value = makeMockCases()
-  results.value = makeMockResults()
+const filteredCases = computed(() => {
+  const q = headerSearch.value.trim().toLowerCase()
+  if (!q) return (savedCases.value as any as EvalCase[])
+  return (savedCases.value as any as EvalCase[]).filter((c) => {
+    const s = `${c.query || ''} ${(c.tags || []).join(' ')} ${c.notes || ''}`.toLowerCase()
+    return s.includes(q)
+  })
+})
 
+function computeRetrievalMetrics(expected: string[], retrieved: string[]) {
+  const exp = new Set((expected || []).map((s) => String(s || '').trim().toLowerCase()).filter(Boolean))
+  if (!exp.size) {
+    return { precision: null as number | null, mrr: null as number | null, ndcg: null as number | null, hitRank: null as number | null, hit: 0 }
+  }
+  const rels: number[] = []
+  let hitRank: number | null = null
+  for (let i = 0; i < retrieved.length; i++) {
+    const src = String(retrieved[i] || '').trim().toLowerCase()
+    const rel = exp.has(src) ? 1 : 0
+    rels.push(rel)
+    if (hitRank === null && rel) hitRank = i + 1
+  }
+  const mrr = hitRank ? 1 / hitRank : 0
+  let dcg = 0
+  for (let i = 0; i < rels.length; i++) {
+    if (!rels[i]) continue
+    dcg += 1 / Math.log2(i + 2)
+  }
+  const idealCount = Math.min(exp.size, rels.length)
+  let idcg = 0
+  for (let i = 0; i < idealCount; i++) {
+    idcg += 1 / Math.log2(i + 2)
+  }
+  const ndcg = idcg > 0 ? dcg / idcg : 0
+  const hit = hitRank ? 1 : 0
+  const precision = retrieved.length ? (rels.reduce((a, b) => a + b, 0) / retrieved.length) : 0
+  return { precision, mrr, ndcg, hitRank, hit }
+}
+
+const retrievalMetrics = computed(() => {
+  const retrieved = results.value.map((r) => r.source).slice(0, topK.value)
+  return computeRetrievalMetrics(expectedSources.value, retrieved)
+})
+
+onMounted(async () => {
   const rawKbId = String(route.query.kbId || '')
   const kbId = Number.parseInt(rawKbId, 10)
   if (Number.isFinite(kbId)) selectedKbId.value = kbId
 
   await loadKbs()
   if (!selectedKbId.value && kbList.value.length) selectedKbId.value = kbList.value[0].id
+
+  try {
+    await ensureLabDataset()
+    await refreshCases()
+  } catch {
+    // ignore
+  }
 })
+
+watch(
+  () => route.query.kbId,
+  async (v) => {
+    const kbId = Number.parseInt(String(v || ''), 10)
+    if (!Number.isFinite(kbId)) return
+    selectedKbId.value = kbId
+  }
+)
+
+watch(
+  () => selectedKbId.value,
+  async (kbId) => {
+    if (!kbId) return
+    selectedCaseId.value = null
+    selectedCase.value = null
+    expectedSources.value = []
+    results.value = []
+    judgeMetrics.value = null
+    judgeAnswer.value = ''
+    await ensureLabDataset()
+    await refreshCases()
+    router.replace({ path: '/rag-eval', query: { ...route.query, kbId: String(kbId) } })
+  }
+)
 </script>
 
 <template>
@@ -363,17 +572,27 @@ onMounted(async () => {
               <h3 class="saved-title">Saved Cases</h3>
               <div class="saved-list">
                 <div
-                  v-for="c in savedCases"
+                  v-for="c in filteredCases"
                   :key="c.id"
                   class="case"
                   :class="{ active: c.id === selectedCaseId }"
                   @click="loadCase(c)"
                 >
-                  <p class="case-title">{{ c.title }}</p>
-                  <p class="case-meta">{{ c.meta }}</p>
-                  <el-button class="case-load" plain size="small" @click.stop="loadCase(c)">
-                    Load Case
-                  </el-button>
+                  <p class="case-title">{{ caseTitle(c) }}</p>
+                  <p class="case-meta">{{ formatCaseMeta(c) }}</p>
+                  <div style="display:flex; gap: 8px; align-items: center;">
+                    <el-button class="case-load" plain size="small" @click.stop="loadCase(c)">Load</el-button>
+                    <el-button
+                      v-if="isAdmin"
+                      class="case-load"
+                      plain
+                      size="small"
+                      type="danger"
+                      @click.stop="deleteCase(c)"
+                    >
+                      Delete
+                    </el-button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -388,7 +607,8 @@ onMounted(async () => {
                 <div class="actions">
                   <el-button class="ghost" text :icon="Refresh" @click="resetLabels">Reset</el-button>
                   <el-button class="ghost" text :icon="Download" @click="exportJson">Export</el-button>
-                  <el-button class="save" type="primary" :icon="Star">Save Case</el-button>
+                  <el-button class="ghost" text :disabled="!selectedCaseId" @click="saveLabelsToCase">Save Labels</el-button>
+                  <el-button class="save" type="primary" :icon="Star" @click="saveCurrentCase">Save Case</el-button>
                 </div>
               </div>
               <el-input v-model="query" type="textarea" :rows="3" class="query-input" placeholder="Enter your evaluation query here..." />
@@ -419,7 +639,9 @@ onMounted(async () => {
                         <span class="score">{{ formatScore(row.score) }}</span>
                       </td>
                       <td class="source">{{ row.source }}</td>
-                      <td class="snippet">{{ row.snippet }}</td>
+                      <td class="snippet">
+                        <button class="snippet-btn" type="button" @click="openSnippet(row)">{{ row.snippet }}</button>
+                      </td>
                       <td class="center">
                         <div class="rel">
                           <button
@@ -458,6 +680,15 @@ onMounted(async () => {
               </div>
             </section>
 
+            <el-dialog v-model="snippetDialogOpen" :title="snippetDialogTitle" width="720px">
+              <div style="display:flex; justify-content: flex-end; margin-bottom: 10px;">
+                <el-button size="small" plain @click="copySnippet">Copy</el-button>
+              </div>
+              <div class="snippet-md">
+                <MarkdownRenderer :content="snippetDialogText" />
+              </div>
+            </el-dialog>
+
             <section class="card judge">
               <div class="judge-head">
                 <div class="judge-title">
@@ -468,18 +699,18 @@ onMounted(async () => {
               </div>
               <div class="judge-grid">
                 <div>
-                  <div class="label">Generated Answer</div>
-                  <el-input v-model="judgeAnswer" type="textarea" :autosize="{ minRows: 6, maxRows: 10 }" readonly class="judge-answer" />
+                  <div class="label">Answer (Paste / Generate)</div>
+                  <el-input v-model="judgeAnswer" type="textarea" :autosize="{ minRows: 6, maxRows: 10 }" class="judge-answer" />
                 </div>
                 <div>
-                  <div class="label">Metrics & Reasoning</div>
+                  <div class="label">Judge Output</div>
                   <div class="chips">
-                    <span class="chip teal"><span class="ms">verified</span> Faithfulness: High</span>
-                    <span class="chip blue"><span class="ms">target</span> Relevance: High</span>
+                    <span class="chip teal"><span class="ms">verified</span> Faithfulness: {{ judgeFaithfulness === null ? '—' : judgeFaithfulness.toFixed(2) }}</span>
+                    <span class="chip blue"><span class="ms">target</span> Relevance: {{ judgeRelevance === null ? '—' : judgeRelevance.toFixed(2) }}</span>
                   </div>
                   <div class="reason">
                     <div class="reason-title">Reasoning:</div>
-                    <div class="reason-text">{{ judgeReasoning }}</div>
+                    <div class="reason-text" style="white-space: pre-wrap;">{{ judgeReasoningText }}</div>
                   </div>
                 </div>
               </div>
@@ -497,32 +728,32 @@ onMounted(async () => {
             <div class="metric">
               <div class="metric-row">
                 <div class="metric-name">Precision@K</div>
-                <div class="metric-value">0.82</div>
+                <div class="metric-value">{{ retrievalMetrics.precision === null ? '—' : retrievalMetrics.precision.toFixed(2) }}</div>
               </div>
-              <div class="bar"><div class="bar-fill" style="width: 82%"></div></div>
-              <div class="metric-note">+12% from previous run</div>
+              <div class="bar"><div class="bar-fill" :style="{ width: `${Math.round(((retrievalMetrics.precision || 0) as number) * 100)}%` }"></div></div>
+              <div class="metric-note">expected_sources={{ expectedSources.length }} • labeled={{ labelCount }} / {{ results.length }}</div>
             </div>
 
             <div class="metric">
               <div class="metric-row">
                 <div class="metric-name">MRR</div>
-                <div class="metric-value">0.74</div>
+                <div class="metric-value">{{ retrievalMetrics.mrr === null ? '—' : retrievalMetrics.mrr.toFixed(2) }}</div>
               </div>
-              <div class="bar"><div class="bar-fill" style="width: 74%"></div></div>
+              <div class="bar"><div class="bar-fill" :style="{ width: `${Math.round(((retrievalMetrics.mrr || 0) as number) * 100)}%` }"></div></div>
             </div>
 
             <div class="metric">
               <div class="metric-row">
                 <div class="metric-name">nDCG</div>
-                <div class="metric-value">0.89</div>
+                <div class="metric-value">{{ retrievalMetrics.ndcg === null ? '—' : retrievalMetrics.ndcg.toFixed(2) }}</div>
               </div>
-              <div class="bar"><div class="bar-fill" style="width: 89%"></div></div>
+              <div class="bar"><div class="bar-fill" :style="{ width: `${Math.round(((retrievalMetrics.ndcg || 0) as number) * 100)}%` }"></div></div>
             </div>
 
             <div class="sample">
               <div class="sample-row">
-                <div class="label">Sample Size</div>
-                <div class="sample-value">124 Labels</div>
+                <div class="label">Expected Sources</div>
+                <div class="sample-value">{{ expectedSources.length }}</div>
               </div>
               <el-button class="export" plain :icon="Download" @click="exportJson">Export Full Report</el-button>
             </div>
@@ -530,18 +761,12 @@ onMounted(async () => {
             <div class="heat">
               <div class="heat-title">Retrieval Density</div>
               <div class="heat-grid">
-                <span class="h teal" />
-                <span class="h teal" />
-                <span class="h teal faint" />
-                <span class="h teal" />
-                <span class="h gray" />
-                <span class="h teal" />
-                <span class="h teal" />
-                <span class="h orange faint" />
-                <span class="h teal" />
-                <span class="h gray" />
-                <span class="h teal" />
-                <span class="h teal" />
+                <span
+                  v-for="(v, i) in heatCells"
+                  :key="i"
+                  class="h"
+                  :class="{ teal: v >= 2, orange: v === 1, gray: v === 0, faint: v === 1 }"
+                />
               </div>
             </div>
           </div>
@@ -1001,6 +1226,31 @@ onMounted(async () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.snippet-btn {
+  display: inline-block;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.snippet-btn:hover {
+  color: var(--primary);
+}
+
+.snippet-md {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--surface-2);
 }
 
 .center {

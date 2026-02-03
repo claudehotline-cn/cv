@@ -5,8 +5,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
+import markdownItKatex from 'markdown-it-katex'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
+import 'katex/dist/katex.min.css'
 
 const props = defineProps<{
   content: string
@@ -31,6 +33,18 @@ const md = new MarkdownIt({
   }
 })
 
+md.use(markdownItKatex)
+
+function normalizeMathDelimiters(input: string) {
+  // Support common LaTeX bracket delimiters in addition to $/$$.
+  // KaTeX plugin handles $...$ and $$...$$.
+  return String(input || '')
+    .replace(/\\\[/g, '$$')
+    .replace(/\\\]/g, '$$')
+    .replace(/\\\(/g, '$')
+    .replace(/\\\)/g, '$')
+}
+
 // Configure renderer rules for better styling
 const defaultFence = md.renderer.rules.fence
 
@@ -49,7 +63,7 @@ md.renderer.rules.fence = function(tokens, idx, options, env, self) {
 }
 
 const renderedContent = computed(() => {
-  return md.render(props.content || '')
+  return md.render(normalizeMathDelimiters(props.content || ''))
 })
 </script>
 
@@ -161,6 +175,12 @@ const renderedContent = computed(() => {
   border-collapse: collapse;
   margin: 1.5em 0;
   font-size: 14px;
+}
+
+.markdown-body :deep(.katex-display) {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 0;
 }
 
 .markdown-body :deep(th),
