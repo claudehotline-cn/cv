@@ -251,7 +251,7 @@ async def process_document(document_id: int) -> None:
                             continue
 
                         # Split inline headings onto their own lines.
-                        normalized = _re.sub(r"\s+(#{1,6})\s+", r"\n\\1 ", line)
+                        normalized = _re.sub(r"\s+(#{1,6})\s*", r"\n\\1 ", line)
                         out_lines.extend(normalized.split("\n"))
 
                     raw_text = "\n".join(out_lines)
@@ -281,7 +281,7 @@ async def process_document(document_id: int) -> None:
                         continue
                     if in_code:
                         continue
-                    if _re.match(r"^\s*(?:>\s*)?#{1,6}\s+\S+", line):
+                    if _re.match(r"^\s*(?:>\s*)?#{1,6}\s*\S+", line):
                         heading_lines += 1
                         if heading_lines >= 2:
                             break
@@ -299,12 +299,17 @@ async def process_document(document_id: int) -> None:
                 preprocess=False,
             )
 
-            # Try markdown-aware chunking first; it will auto-fallback if not markdown-like.
-            parent_chunks, child_chunks = chunker.markdown_hierarchical_chunk(
+            # Chunking is chunk-based (size/overlap), not section-based.
+            # Sections (outline) are derived separately and mapped onto chunks.
+            kb_chunk_size = int(kb.chunk_size) if kb and kb.chunk_size else 500
+            kb_chunk_overlap = int(kb.chunk_overlap) if kb and kb.chunk_overlap else 50
+            parent_chunks, child_chunks = chunker.hierarchical_chunk(
                 content=cleaned,
                 metadata=loaded.metadata,
-                child_max_size=(kb.chunk_size if kb else 500),
-                child_overlap=(kb.chunk_overlap if kb else 50),
+                parent_size=max(kb_chunk_size * 4, kb_chunk_size),
+                parent_overlap=max(kb_chunk_overlap * 4, 0),
+                child_size=kb_chunk_size,
+                child_overlap=kb_chunk_overlap,
             )
 
             # Persist document outline based on extracted Markdown headings.
@@ -333,7 +338,7 @@ async def process_document(document_id: int) -> None:
                         if in_code:
                             continue
 
-                        m = _re.match(r"^\s*(?:>\s*)?(#{1,6})\s+(.+?)\s*$", line)
+                        m = _re.match(r"^\s*(?:>\s*)?(#{1,6})\s*(.+?)\s*$", line)
                         if not m:
                             continue
                         level = len(m.group(1))
@@ -345,14 +350,96 @@ async def process_document(document_id: int) -> None:
 
                 def _build_outline_tree(
                     headings: list[tuple[int, str]],
-                    parent_chunk_indices: list[int],
+                    parent_title_to_index: dict[str, int],
+                    parent_texts: list[str],
+                    default_parent_index: int | None,
                 ) -> list[dict]:
                     nodes: list[dict] = []
-                    for i, (level, title) in enumerate(headings):
-                        if parent_chunk_indices:
-                            mapped = parent_chunk_indices[i] if i < len(parent_chunk_indices) else parent_chunk_indices[-1]
+                    current_parent = default_parent_index
+
+                    def _norm_title(s: str) -> str:
+                        try:
+                            import re as _re
+
+                            x = str(s or "").strip()
+                            x = _re.sub(r"^【[^】]+】", "", x).strip()
+                            x = _re.sub(r"[（(][^）)]*[）)]", "", x).strip()
+                            x = _re.sub(r"\s+", "", x)
+                            return x
+                        except Exception:
+                            return str(s or "").strip()
+
+                    def _norm_parent_text(s: str) -> str:
+                        try:
+                            import re as _re
+
+                            x = str(s or "")
+                            x = _re.sub(r"^\s*(?:>\s*)?#{1,6}\s*", "", x)
+                            x = _re.sub(r"\s+", "", x)
+                            return x
+                        except Exception:
+                            return str(s or "")
+
+                    norm_parents = [_norm_parent_text(t) for t in parent_texts]
+                    parent_bigram_sets: list[set[str]] = []
+                    for t in norm_parents:
+                        grams = set()
+                        if t:
+                            for i in range(max(0, len(t) - 1)):
+                                grams.add(t[i : i + 2])
+                        parent_bigram_sets.append(grams)
+
+                    def _best_parent_for_title(title: str, start_idx: int) -> int | None:
+                        nt = _norm_title(title)
+                        if not nt:
+                            return None
+
+                        tgrams = set()
+                        if len(nt) >= 2:
+                            for i in range(len(nt) - 1):
+                                tgrams.add(nt[i : i + 2])
                         else:
-                            mapped = i
+                            tgrams = {nt}
+
+                        best_i = None
+                        best_score = 0.0
+                        end = min(len(norm_parents), start_idx + 10)
+                        for i in range(start_idx, end):
+                            ptxt = norm_parents[i]
+                            if not ptxt:
+                                continue
+
+                            if nt in ptxt:
+                                return i
+
+                            pgrams = parent_bigram_sets[i]
+                            if not pgrams or not tgrams:
+                                continue
+
+                            inter = len(tgrams & pgrams)
+                            score = inter / max(1, len(tgrams))
+                            if score > best_score:
+                                best_score = score
+                                best_i = i
+
+                        if best_i is not None and best_score >= 0.35:
+                            return best_i
+                        return None
+
+                    for i, (level, title) in enumerate(headings):
+                        # Map outline nodes to the nearest parent section.
+                        # If a heading matches a parent title, advance current_parent.
+                        # Otherwise, keep current_parent (sub-headings belong to the current section).
+                        key = _norm_title(title)
+                        if key and key in parent_title_to_index:
+                            current_parent = int(parent_title_to_index[key])
+                        else:
+                            start = int(current_parent) if current_parent is not None else 0
+                            start = max(0, min(start, max(0, len(parent_texts) - 1)))
+                            found = _best_parent_for_title(title, start)
+                            if found is not None:
+                                current_parent = found
+                        mapped = current_parent if current_parent is not None else i
 
                         nodes.append(
                             {
@@ -377,12 +464,66 @@ async def process_document(document_id: int) -> None:
                     return roots
 
                 extraction = (loaded.metadata or {}).get("extraction")
-                headings = _extract_markdown_headings(cleaned)
-                parent_chunk_indices = [int(p.index) for p in parent_chunks]
-                outline_tree = _build_outline_tree(headings, parent_chunk_indices)
+
+                headings: list[tuple[int, str]] = []
+                raw_headings = (loaded.metadata or {}).get("outline_headings")
+                if isinstance(raw_headings, list) and raw_headings:
+                    try:
+                        for h in raw_headings:
+                            lvl = int(h.get("level"))
+                            title = str(h.get("title") or "").strip()
+                            if title:
+                                headings.append((max(1, min(6, lvl)), title))
+                    except Exception:
+                        headings = []
+                if not headings:
+                    headings = _extract_markdown_headings(cleaned)
+
+                parent_title_to_index: dict[str, int] = {}
+                try:
+                    import re as _re
+
+                    for p in parent_chunks:
+                        first = ""
+                        for ln in str(p.content or "").split("\n"):
+                            if ln.strip():
+                                first = ln
+                                break
+                        if not first:
+                            continue
+                        m = _re.match(r"^\s*(?:>\s*)?#{1,6}\s*(.+?)\s*$", first)
+                        if not m:
+                            continue
+                        title = " ".join(m.group(1).strip().split())
+                        if not title:
+                            continue
+                        key = _re.sub(r"^【[^】]+】", "", title).strip()
+                        key = _re.sub(r"[（(][^）)]*[）)]", "", key).strip()
+                        key = _re.sub(r"\s+", "", key)
+                        if not key:
+                            continue
+                        parent_title_to_index[key] = int(p.index)
+                except Exception:
+                    parent_title_to_index = {}
+
+                default_parent_index = int(parent_chunks[0].index) if parent_chunks else None
+                parent_texts_for_map = [str(p.content or "") for p in parent_chunks]
+                outline_tree = _build_outline_tree(headings, parent_title_to_index, parent_texts_for_map, default_parent_index)
 
                 row = db.query(DocumentOutline).filter(DocumentOutline.document_id == doc.id).first()
-                if row:
+                if row and not outline_tree:
+                    # Don't erase a previously extracted outline on transient extraction failures.
+                    existing = row.to_dict().get("outline") or []
+                    if existing:
+                        logger.warning(
+                            "Outline extraction returned empty for doc %s (extraction=%s); keeping existing outline",
+                            doc.id,
+                            extraction,
+                        )
+                    else:
+                        row.extraction = extraction
+                        row.outline_json = _json.dumps(outline_tree, ensure_ascii=False)
+                elif row:
                     row.extraction = extraction
                     row.outline_json = _json.dumps(outline_tree, ensure_ascii=False)
                 else:

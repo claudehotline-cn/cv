@@ -56,6 +56,7 @@ type ChunkRow = {
 type ChunkView = {
   id: number
   displayId: string
+  globalDisplayId: string
   tag: string
   tokens: number
   content: string
@@ -125,6 +126,26 @@ function truncate(text: string, max = 260) {
   const s = (text || '').trim()
   if (s.length <= max) return s
   return s.slice(0, max).trimEnd() + '…'
+}
+
+function truncateMultiline(text: string, opts?: { maxLines?: number; maxChars?: number }) {
+  const maxLines = Math.max(1, Number(opts?.maxLines ?? 10) || 10)
+  const maxChars = Math.max(16, Number(opts?.maxChars ?? 900) || 900)
+  const raw = String(text || '')
+  const s = raw.trimEnd()
+  if (!s) return ''
+
+  const lines = s.split('\n')
+  let clipped = lines.slice(0, maxLines).join('\n')
+  let truncated = lines.length > maxLines
+
+  if (clipped.length > maxChars) {
+    clipped = clipped.slice(0, maxChars).trimEnd()
+    truncated = true
+  }
+
+  if (truncated && clipped && !clipped.endsWith('…')) clipped += '…'
+  return clipped
 }
 
 function extractFirstHeading(content: string): { level: number; title: string } | null {
@@ -204,11 +225,26 @@ function normalizeCleaningRules(input: any) {
 
 function mapChunkRow(r: ChunkRow): ChunkView {
   const idx = Number.isFinite(r.chunk_index) ? r.chunk_index : 0
-  const displayId = `#${String(idx).padStart(3, '0')}`
+  const globalDisplayId = `#${String(idx).padStart(3, '0')}`
+  const meta = (r.metadata || {}) as any
+
+  const parentIndexRaw = meta?.parent_index
+  const childLocalIndexRaw = meta?.child_local_index
+  const parentIndex = Number.isFinite(Number(parentIndexRaw)) ? Number(parentIndexRaw) : null
+  const childLocalIndex = Number.isFinite(Number(childLocalIndexRaw)) ? Number(childLocalIndexRaw) : null
+
+  let displayId = globalDisplayId
+  if (r.is_parent) {
+    const p = parentIndex ?? idx
+    displayId = `P${String(p + 1).padStart(3, '0')}`
+  } else if (parentIndex !== null && childLocalIndex !== null) {
+    displayId = `P${String(parentIndex + 1).padStart(3, '0')}.${String(childLocalIndex + 1).padStart(2, '0')}`
+  }
   const tokens = Math.max(1, Number(r.tokens_estimate || 0) || Math.floor((r.content || '').length / 4) || 1)
   return {
     id: r.id,
     displayId,
+    globalDisplayId,
     tag: r.is_parent ? 'Parent' : 'Child',
     tokens,
     content: r.content || '',
@@ -634,11 +670,12 @@ watch(
             class="parent-card"
           >
             <div class="parent-head" @click="activeParentId = p.id">
-              <div class="parent-head-left">
-                <span class="chunk-id">{{ p.displayId }}</span>
-                <el-tag size="small" effect="light" class="chunk-tag">Section</el-tag>
-                <span class="parent-title">{{ parentLabelById[String(p.id)] || p.displayId }}</span>
-              </div>
+            <div class="parent-head-left">
+              <span class="chunk-id">{{ p.displayId }}</span>
+              <span class="chunk-id chunk-id-secondary">{{ p.globalDisplayId }}</span>
+              <el-tag size="small" effect="light" class="chunk-tag">Section</el-tag>
+              <span class="parent-title">{{ parentLabelById[String(p.id)] || p.displayId }}</span>
+            </div>
               <div class="parent-head-right">
                 <div class="token-badge">
                   <el-icon><Coin /></el-icon>
@@ -651,7 +688,7 @@ watch(
             </div>
 
             <div class="parent-content">
-              <p class="content-text">{{ isExpanded(p.id) ? p.content : truncate(p.content, 360) }}</p>
+              <p class="content-text">{{ isExpanded(p.id) ? p.content : truncateMultiline(p.content, { maxLines: 10, maxChars: 900 }) }}</p>
             </div>
 
             <div v-if="isExpanded(p.id) || searchActive" class="children-block">
@@ -672,6 +709,7 @@ watch(
                 <div class="chunk-header">
                   <div class="header-info">
                     <span class="chunk-id">{{ chunk.displayId }}</span>
+                    <span class="chunk-id chunk-id-secondary">{{ chunk.globalDisplayId }}</span>
                     <el-tag size="small" effect="light" class="chunk-tag">{{ chunk.tag }}</el-tag>
                   </div>
                   <div class="header-actions">
@@ -682,7 +720,7 @@ watch(
                   </div>
                 </div>
                 <div class="chunk-content">
-                  <p class="content-text">{{ chunk.id === activeChunkId ? chunk.content : truncate(chunk.content) }}</p>
+                  <p class="content-text">{{ chunk.id === activeChunkId ? chunk.content : truncateMultiline(chunk.content, { maxLines: 6, maxChars: 420 }) }}</p>
                 </div>
               </div>
             </div>
@@ -1310,6 +1348,13 @@ watch(
   font-weight: 700;
   color: #9ca3af;
   margin-right: 12px;
+}
+
+.chunk-id-secondary {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(156, 163, 175, 0.8);
+  margin-right: 10px;
 }
 
 .chunk-card.active .chunk-id {

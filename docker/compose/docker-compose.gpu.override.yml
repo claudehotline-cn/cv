@@ -8,6 +8,9 @@ services:
               count: all
               capabilities: [ gpu ]
 
+  rag-worker:
+    gpus: all
+
   # vLLM GPU 配置
   vllm:
     deploy:

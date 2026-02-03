@@ -136,6 +136,8 @@ class DocumentChunker:
         
         parent_chunks = []
         child_chunks = []
+        # Ensure child chunk_index values don't collide with parent chunk_index values.
+        child_index_base = len(parent_texts)
         child_global_index = 0
         
         for parent_idx, parent_text in enumerate(parent_texts):
@@ -160,7 +162,7 @@ class DocumentChunker:
             for local_idx, child_text in enumerate(child_texts):
                 child_chunk = ParentChildChunk(
                     content=child_text.strip(),
-                    index=child_global_index,
+                    index=child_index_base + child_global_index,
                     metadata={
                         **(metadata or {}),
                         "chunk_type": "child",
@@ -333,6 +335,8 @@ class DocumentChunker:
         
         parent_chunks = []
         child_chunks = []
+        # Ensure child chunk_index values don't collide with parent chunk_index values.
+        child_index_base = len(semantic_chunks)
         child_global_index = 0
         
         for parent_idx, semantic_chunk in enumerate(semantic_chunks):
@@ -357,7 +361,7 @@ class DocumentChunker:
             for local_idx, child_text in enumerate(child_texts):
                 child_chunk = ParentChildChunk(
                     content=child_text.strip(),
-                    index=child_global_index,
+                    index=child_index_base + child_global_index,
                     metadata={
                         **(metadata or {}),
                         "chunk_type": "semantic_child",
@@ -409,7 +413,7 @@ class DocumentChunker:
 
             if not in_code:
                 # Only treat real markdown headings at line start (after optional whitespace / blockquote prefix).
-                if re.match(r"^\s*(?:>\s*)?#{1,6}\s+", line):
+                if re.match(r"^\s*(?:>\s*)?#{1,6}\s*\S+", line):
                     starts.append(offset)
 
             offset += len(line)
@@ -437,6 +441,8 @@ class DocumentChunker:
 
         parent_chunks: list[ParentChildChunk] = []
         child_chunks: list[ParentChildChunk] = []
+        # Ensure child chunk_index values don't collide with parent chunk_index values.
+        child_index_base = len(parent_texts)
         child_global_index = 0
 
         for parent_idx, parent_text in enumerate(parent_texts):
@@ -460,7 +466,7 @@ class DocumentChunker:
                 child_chunks.append(
                     ParentChildChunk(
                         content=child_text.strip(),
-                        index=child_global_index,
+                        index=child_index_base + child_global_index,
                         metadata={
                             **(metadata or {}),
                             "chunk_type": "markdown_child",

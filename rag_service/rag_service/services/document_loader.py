@@ -70,35 +70,166 @@ class DocumentLoader:
         """加载PDF文档"""
         logger.info(f"Loading PDF: {filename}")
 
-        # 1) Prefer Marker (PDF -> Markdown) for better structure, then fallback to pdfplumber.
-        # Marker can preserve headings/lists/tables far better than plain text extraction.
-        try:
-            from marker.converters.pdf import PdfConverter
-            from marker.models import create_model_dict
-            from marker.output import text_from_rendered
+        mode = (getattr(settings, "pdf_extractor", "marker") or "marker").strip().lower()
 
-            converter = PdfConverter(artifact_dict=create_model_dict())
-            rendered = converter(file_path)
-            md_text, _, _images = text_from_rendered(rendered)
+        if mode in ("marker", "auto"):
+            # Prefer Marker for better structure.
+            # Important: for中文 PDF，不要用默认的 ocr_alphanum_threshold=0.3；否则容易误判为乱码导致全量 OCR。
+            try:
+                from marker.converters.pdf import PdfConverter
+                from marker.models import create_model_dict
+                from marker.renderers.chunk import ChunkOutput
 
-            if md_text and str(md_text).strip():
-                page_count = 0
-                try:
-                    with pdfplumber.open(file_path) as pdf:
-                        page_count = len(pdf.pages)
-                except Exception:
-                    page_count = 0
+                def _html_to_text(html: str) -> str:
+                    try:
+                        from bs4 import BeautifulSoup
 
-                images = image_encoder.extract_from_pdf(file_path) if settings.vlm_model else []
-                return LoadedDocument(
-                    content=str(md_text),
-                    metadata={"source": filename, "type": "pdf", "pages": page_count, "extraction": "marker"},
-                    images=[{"data": img[0], "page": img[1], "name": f"page_{img[1]}_img"} for img in images],
+                        soup = BeautifulSoup(str(html or ""), "html.parser")
+                        txt = soup.get_text("\n")
+                    except Exception:
+                        txt = str(html or "")
+
+                    lines = [ln.strip() for ln in txt.splitlines()]
+                    lines = [ln for ln in lines if ln]
+                    return "\n".join(lines).strip()
+
+                def _build_section_id_title_map(rendered: ChunkOutput) -> dict[str, str]:
+                    m: dict[str, str] = {}
+                    for b in rendered.blocks or []:
+                        if str(getattr(b, "block_type", "")).lower() != "sectionheader":
+                            continue
+                        sid = str(getattr(b, "id", "") or "").strip()
+                        if not sid:
+                            continue
+                        txt = _html_to_text(getattr(b, "html", ""))
+                        if txt:
+                            # Prefer the first line as heading text.
+                            m[sid] = txt.split("\n", 1)[0].strip()
+                    return m
+
+                def _extract_outline_headings_from_chunk_output(rendered: ChunkOutput, id_to_title: dict[str, str]) -> list[tuple[int, str]]:
+                    headings: list[tuple[int, str]] = []
+                    last_path: list[tuple[int, str]] = []
+                    for b in rendered.blocks or []:
+                        hierarchy = getattr(b, "section_hierarchy", None) or None
+                        if not hierarchy:
+                            continue
+
+                        # hierarchy value is a section header block id, not the title.
+                        path: list[tuple[int, str]] = []
+                        for k, v in hierarchy.items():
+                            sid = str(v).strip()
+                            if not sid:
+                                continue
+                            title = (id_to_title.get(sid) or sid).strip()
+                            if not title:
+                                continue
+                            path.append((int(k), title))
+                        path.sort(key=lambda x: x[0])
+
+                        i = 0
+                        while i < len(last_path) and i < len(path) and last_path[i] == path[i]:
+                            i += 1
+                        for lvl, title in path[i:]:
+                            headings.append((max(1, min(6, int(lvl))), title))
+                        last_path = path
+                    return headings
+
+                def _build_markdown_from_chunk_output(rendered: ChunkOutput, id_to_title: dict[str, str]) -> str:
+                    md_lines: list[str] = []
+                    last_path: list[tuple[int, str]] = []
+                    for b in rendered.blocks or []:
+                        hierarchy = getattr(b, "section_hierarchy", None) or None
+                        if hierarchy:
+                            path: list[tuple[int, str]] = []
+                            for k, v in hierarchy.items():
+                                sid = str(v).strip()
+                                if not sid:
+                                    continue
+                                title = (id_to_title.get(sid) or sid).strip()
+                                if not title:
+                                    continue
+                                path.append((int(k), title))
+                            path.sort(key=lambda x: x[0])
+
+                            i = 0
+                            while i < len(last_path) and i < len(path) and last_path[i] == path[i]:
+                                i += 1
+                            for lvl, title in path[i:]:
+                                md_lines.append("#" * max(1, min(6, int(lvl))) + " " + title)
+                                md_lines.append("")
+                            last_path = path
+
+                        # Skip section header block body (already emitted as a heading).
+                        if str(getattr(b, "block_type", "")).lower() == "sectionheader":
+                            continue
+
+                        txt = _html_to_text(getattr(b, "html", ""))
+                        if txt:
+                            md_lines.append(txt)
+                            md_lines.append("")
+
+                    return "\n".join(md_lines).strip()
+
+                converter = PdfConverter(
+                    artifact_dict=create_model_dict(),
+                    renderer="marker.renderers.chunk.ChunkRenderer",
+                    config={
+                        "force_ocr": bool(getattr(settings, "pdf_marker_force_ocr", False)),
+                        "ocr_alphanum_threshold": float(getattr(settings, "pdf_marker_ocr_alphanum_threshold", 0.0)),
+                    },
                 )
-        except Exception as e:
-            logger.warning(f"Marker PDF->Markdown failed for {filename}, falling back to pdfplumber: {e}")
+                rendered = None
+                for attempt in range(2):
+                    try:
+                        rendered = converter(file_path)
+                        break
+                    except Exception as e:
+                        msg = str(e)
+                        if attempt == 0 and ("IncompleteRead" in msg or "Connection broken" in msg):
+                            continue
+                        raise
 
-        # 2) Fallback: pdfplumber text extraction
+                if not isinstance(rendered, ChunkOutput):
+                    raise ValueError(f"Unexpected marker output type: {type(rendered)}")
+
+                id_to_title = _build_section_id_title_map(rendered)
+                md_text = _build_markdown_from_chunk_output(rendered, id_to_title)
+                outline_headings = _extract_outline_headings_from_chunk_output(rendered, id_to_title)
+
+                if md_text and str(md_text).strip():
+                    page_count = 0
+                    try:
+                        with pdfplumber.open(file_path) as pdf:
+                            page_count = len(pdf.pages)
+                    except Exception:
+                        page_count = 0
+
+                    images = image_encoder.extract_from_pdf(file_path) if settings.vlm_model else []
+                    return LoadedDocument(
+                        content=str(md_text),
+                        metadata={
+                            "source": filename,
+                            "type": "pdf",
+                            "pages": page_count,
+                            "extraction": "marker",
+                            "marker_renderer": "chunk",
+                            "force_ocr": bool(getattr(settings, "pdf_marker_force_ocr", False)),
+                            "outline_headings": [{"level": lvl, "title": title} for (lvl, title) in outline_headings],
+                        },
+                        images=[{"data": img[0], "page": img[1], "name": f"page_{img[1]}_img"} for img in images],
+                    )
+            except Exception as e:
+                logger.warning(f"Marker PDF->chunk failed for {filename}, falling back to pdfplumber: {e}")
+
+            if mode == "marker":
+                # marker 模式下 marker 失败才会继续 fallback
+                pass
+            else:
+                # auto 模式下 marker 失败也会 fallback
+                pass
+
+        # Fallback: pdfplumber text extraction
         text_parts = []
         page_count = 0
         try:
@@ -125,7 +256,7 @@ class DocumentLoader:
           
         return LoadedDocument(
             content=content,
-            metadata={"source": filename, "type": "pdf", "pages": page_count},
+            metadata={"source": filename, "type": "pdf", "pages": page_count, "extraction": "pdfplumber"},
             images=[{"data": img[0], "page": img[1], "name": f"page_{img[1]}_img"} for img in images]
         )
     

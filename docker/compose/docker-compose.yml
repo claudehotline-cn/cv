@@ -421,7 +421,7 @@ services:
       dockerfile: docker/rag-service/Dockerfile
     image: cv/rag-service:latest
     container_name: rag-worker
-    command: ["arq", "rag_service.worker.WorkerSettings"]
+    command: [ "arq", "rag_service.worker.WorkerSettings" ]
     environment:
       - RAG_MYSQL_HOST=mysql
       - RAG_PGVECTOR_HOST=pgvector
@@ -437,6 +437,9 @@ services:
       - RAG_EMBEDDING_MODEL=bge-m3:567m
       - RAG_VECTOR_DIMENSION=1024
       - HF_ENDPOINT=https://hf-mirror.com
+      - RAG_WORKER_MAX_JOBS=2
+      - RAG_PDF_EXTRACTOR=marker
+      - RAG_PDF_MARKER_OCR_ALPHANUM_THRESHOLD=0.0
     depends_on:
       mysql:
         condition: service_healthy
@@ -497,11 +500,11 @@ services:
       - "--port"
       - "8000"
       - "--max-model-len"
-      - "65536"
+      - "32768"
       - "--gpu-memory-utilization"
-      - "0.80"
+      - "0.7"
       - "--max-num-seqs"
-      - "16"
+      - "8"
       - "--kv-cache-dtype"
       - "fp8"
       - "--trust-remote-code"

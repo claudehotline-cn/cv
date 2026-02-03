@@ -29,6 +29,11 @@ class Settings(BaseSettings):
         default=True,
         description="是否使用任务队列执行耗时任务 (推荐生产启用)"
     )
+
+    worker_max_jobs: int = Field(
+        default=1,
+        description="ARQ worker 并发执行的 job 数量 (max_jobs)"
+    )
     
     # MySQL配置（元数据存储）
     mysql_host: str = Field(default="mysql", description="MySQL主机")
@@ -170,6 +175,20 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=500, description="分块大小(字符)")
     chunk_overlap: int = Field(default=50, description="分块重叠(字符)")
     max_file_size: int = Field(default=50 * 1024 * 1024, description="最大文件大小(50MB)")
+
+    pdf_extractor: str = Field(
+        default="marker",
+        description="PDF 解析模式: marker|pdfplumber|auto (默认 marker)"
+    )
+
+    pdf_marker_force_ocr: bool = Field(
+        default=False,
+        description="Marker/PDF 解析是否强制全量 OCR (一般不需要)"
+    )
+    pdf_marker_ocr_alphanum_threshold: float = Field(
+        default=0.0,
+        description="Marker OCR 触发阈值(字母数字比例); 中文 PDF 建议设低，避免误判乱码导致全量 OCR"
+    )
     
     # 网页抓取配置
     web_crawl_timeout: int = Field(default=30, description="网页抓取超时(秒)")

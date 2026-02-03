@@ -244,4 +244,4 @@ class WorkerSettings:
         execute_benchmark_run_job,
     ]
     job_timeout = 60 * 60  # 1 hour
-    max_jobs = 1
+    max_jobs = settings.worker_max_jobs
