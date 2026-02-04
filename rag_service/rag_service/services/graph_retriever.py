@@ -91,14 +91,51 @@ class GraphRetriever:
                 
         return results
 
+    def _extract_entities_fallback(self, query: str) -> List[str]:
+        """Fallback entity extraction without LLM (best-effort)."""
+        import re
+
+        q = (query or "").strip()
+        if not q:
+            return []
+
+        # Remove common question words to avoid noisy entities.
+        q2 = re.sub(r"[\s\t]+", " ", q)
+        q2 = re.sub(r"(是什么|是什么\?|是什么\？|怎么|如何|为什么|多少|哪些|是否|能否|请问)", " ", q2)
+        q2 = q2.strip()
+
+        candidates: List[str] = []
+
+        # Prefer full query if it's short.
+        if 2 <= len(q2) <= 20:
+            candidates.append(q2)
+
+        # Chinese character sequences
+        candidates.extend(re.findall(r"[\u4e00-\u9fff]{2,}", q2))
+        # Alnum tokens
+        candidates.extend(re.findall(r"[A-Za-z][A-Za-z0-9_\-]{1,}", q2))
+        # Dedup while preserving order
+        out: List[str] = []
+        seen = set()
+        for c in candidates:
+            c = c.strip()
+            if not c:
+                continue
+            if c in seen:
+                continue
+            seen.add(c)
+            out.append(c)
+
+        return out[:5]
+
     async def _extract_entities_from_query(self, query: str) -> List[str]:
         """从用户问题中提取实体"""
         prompt = f"""
         请从以下问题中提取关键实体（人名、产品名、公司名、专业术语等）。
         只提取最重要的名词。
-        
+
         问题：{query}
-        
+
         输出格式：用逗号分隔的实体列表，不要解释。
         例如：埃隆·马斯克, 特斯拉, 火箭
         """
@@ -108,9 +145,11 @@ class GraphRetriever:
             if "<think>" in response:
                 response = response.split("</think>")[-1]
             entities = [e.strip() for e in response.split(",") if e.strip()]
-            return entities
+            if entities:
+                return entities
         except Exception as e:
-            logger.error(f"Error extracting entities: {e}")
-            return []
+            logger.warning(f"LLM entity extraction failed, using fallback: {e}")
+
+        return self._extract_entities_fallback(query)
 
 graph_retriever = GraphRetriever()

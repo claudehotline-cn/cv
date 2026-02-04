@@ -12,6 +12,7 @@ import 'katex/dist/katex.min.css'
 
 const props = defineProps<{
   content: string
+  autoMath?: boolean
 }>()
 
 const md = new MarkdownIt({
@@ -33,16 +34,171 @@ const md = new MarkdownIt({
   }
 })
 
-md.use(markdownItKatex)
+md.use(markdownItKatex, {
+  throwOnError: false,
+  strict: 'ignore',
+})
+
+function normalizeMathWhitespaceInDisplayBlocks(input: string) {
+  // PDF extractors often insert lots of newlines/spaces inside a single formula.
+  // This keeps display math readable and helps KaTeX parse more consistently.
+  return String(input || '').replace(/(^|\n)\s*\$\$\s*([\s\S]*?)\s*\$\$\s*(?=\n|$)/g, (_m, p1, inner) => {
+    let x = String(inner || '')
+    // Preserve explicit LaTeX line breaks.
+    x = x.replace(/\\\\/g, '__KATEX_BR__')
+    x = x.replace(/\s+/g, ' ').trim()
+    x = x.replace(/__KATEX_BR__/g, '\\\\')
+
+    // If a display block contains a redundant inline `$...$`, strip it.
+    const trimmed = x.trim()
+    if (trimmed.startsWith('$') && trimmed.endsWith('$') && (trimmed.match(/\$/g) || []).length === 2) {
+      x = trimmed.slice(1, -1).trim()
+    }
+
+    // Handle patterns like: `i = $\frac{...}{...}$` inside a display block.
+    // KaTeX doesn't accept `$` delimiters inside `$$...$$`.
+    const dollarCount = (x.match(/\$/g) || []).length
+    if (dollarCount === 2) {
+      x = x.replace(/\$([^$]+)\$/g, '$1').trim()
+    }
+    return `${p1}$$\n${x}\n$$`
+  })
+}
+
+function normalizeInlineMathSpacing(input: string) {
+  // Some KaTeX markdown plugins don't treat `$ <expr> $` as math.
+  // Trim only when the content looks like TeX/math.
+  return String(input || '').replace(/\$([^\n$]{1,800})\$/g, (m, inner) => {
+    const raw = String(inner || '')
+    const looksMath = /\\[a-zA-Z]+|\^\{|_\{|=|\b\d+\b/.test(raw)
+    if (!looksMath) return m
+    const trimmed = raw.replace(/\s+/g, ' ').trim()
+    return `$${trimmed}$`
+  })
+}
 
 function normalizeMathDelimiters(input: string) {
   // Support common LaTeX bracket delimiters in addition to $/$$.
   // KaTeX plugin handles $...$ and $$...$$.
-  return String(input || '')
+  let s = String(input || '')
+    // Common KaTeX-unsupported environments seen in math content.
+    .replace(/\\begin\{align\*?\}/g, '\\begin{aligned}')
+    .replace(/\\end\{align\*?\}/g, '\\end{aligned}')
+
+  // Wrap LaTeX environments into $$...$$ so markdown-it-katex can render them.
+  // This is a best-effort heuristic; it only targets \begin{...}...\end{...} blocks.
+  s = s.replace(
+    /(^|\n)\s*(\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\3\})\s*(?=\n|$)/g,
+    (_m, p1, block) => `${p1}\n$$\n${block}\n$$\n`
+  )
+
+  // Sometimes delimiters get double-escaped before reaching the renderer.
+  // Handle both \( \) and \\( \\) forms.
+  s = s
+    .replace(/\\\\\[/g, '\\[')
+    .replace(/\\\\\]/g, '\\]')
+    .replace(/\\\\\(/g, '\\(')
+    .replace(/\\\\\)/g, '\\)')
+
+  // Convert \[ \] and \( \) to $$ / $.
+  const out = s
+    // double backslash variants first
+    .replace(/\\\\\[/g, '$$')
+    .replace(/\\\\\]/g, '$$')
+    .replace(/\\\\\(/g, '$')
+    .replace(/\\\\\)/g, '$')
+    // single backslash variants
     .replace(/\\\[/g, '$$')
     .replace(/\\\]/g, '$$')
     .replace(/\\\(/g, '$')
     .replace(/\\\)/g, '$')
+
+  return normalizeInlineMathSpacing(normalizeMathWhitespaceInDisplayBlocks(out))
+}
+
+function autoWrapBareLatex(input: string) {
+  const s = String(input || '')
+  if (!s) return ''
+
+  const lines = s.split('\n')
+  const out: string[] = []
+  let inCode = false
+  let fence: string | null = null
+  let inDisplayMath = false
+
+  const isFence = (t: string) => t.startsWith('```') || t.startsWith('~~~')
+
+  for (const line of lines) {
+    const t = line.trim()
+    if (t === '$$') {
+      inDisplayMath = !inDisplayMath
+      out.push(line)
+      continue
+    }
+    if (isFence(t)) {
+      const f = t.slice(0, 3)
+      if (!inCode) {
+        inCode = true
+        fence = f
+      } else if (fence === f) {
+        inCode = false
+        fence = null
+      }
+      out.push(line)
+      continue
+    }
+    if (inCode) {
+      out.push(line)
+      continue
+    }
+
+    if (inDisplayMath) {
+      out.push(line)
+      continue
+    }
+
+    // Skip lines already containing explicit math delimiters.
+    if (t.includes('$') || t.includes('\\(') || t.includes('\\)') || t.includes('\\[') || t.includes('\\]')) {
+      out.push(line)
+      continue
+    }
+
+    const hasCmd = /\\[a-zA-Z]+/.test(t)
+    const hasScript = /(_\{|\^\{)/.test(t)
+    const hasOps = /[=+\-*/]/.test(t)
+    const looksMath = (hasCmd && (hasOps || hasScript)) || (hasScript && hasOps)
+    if (!looksMath) {
+      out.push(line)
+      continue
+    }
+
+    const starts: number[] = []
+    const i1 = line.indexOf('\\')
+    if (i1 >= 0) starts.push(i1)
+    const m1 = line.match(/[A-Za-z]\s*_[{]/)
+    if (m1?.index !== undefined) starts.push(m1.index)
+    const m2 = line.match(/[A-Za-z]\s*\^[{]/)
+    if (m2?.index !== undefined) starts.push(m2.index)
+    if (!starts.length) {
+      out.push(line)
+      continue
+    }
+
+    const start = Math.min(...starts)
+    const prefix = line.slice(0, start).trimEnd()
+    const expr = line.slice(start).trim()
+    if (!expr) {
+      out.push(line)
+      continue
+    }
+    const eqPrefix = prefix.trim()
+    const shouldMergePrefix = /^[A-Za-z][A-Za-z0-9_]*\s*=\s*$/.test(eqPrefix)
+    const merged = shouldMergePrefix ? `${eqPrefix} ${expr}` : expr
+    const wrapped = merged.length > 140 ? `$$\n${merged}\n$$` : `$${merged}$`
+    out.push(!shouldMergePrefix && prefix ? `${prefix} ${wrapped}` : wrapped)
+  }
+
+  return out.join('\n')
 }
 
 // Configure renderer rules for better styling
@@ -63,7 +219,9 @@ md.renderer.rules.fence = function(tokens, idx, options, env, self) {
 }
 
 const renderedContent = computed(() => {
-  return md.render(normalizeMathDelimiters(props.content || ''))
+  let s = normalizeMathDelimiters(props.content || '')
+  if (props.autoMath) s = autoWrapBareLatex(s)
+  return md.render(s)
 })
 </script>
 

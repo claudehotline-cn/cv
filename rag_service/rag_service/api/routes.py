@@ -968,6 +968,11 @@ async def retrieve(data: RetrieveRequest):
         query=data.query,
         knowledge_base_id=data.knowledge_base_id,
         top_k=data.top_k,
+        # For the pure retrieval API: keep results precise and deterministic.
+        enable_query_expansion=False,
+        expand_to_parent=False,
+        compress_context=False,
+        enable_rerank=True,
     )
     
     return RetrieveResponse(

@@ -32,6 +32,7 @@ type ResultRow = {
   snippet: string
   fullSnippet: string
   documentId?: number
+  chunkIndex?: number
   label: number // 0..3
 }
 
@@ -73,7 +74,10 @@ const results = ref<ResultRow[]>([])
 
 const snippetDialogOpen = ref(false)
 const snippetDialogTitle = ref('')
-const snippetDialogText = ref('')
+const snippetDialogRawText = ref('')
+const snippetDialogRenderText = ref('')
+
+const docChunkCache = new Map<number, any[]>()
 
 const expectedSources = ref<string[]>([])
 
@@ -123,14 +127,244 @@ function formatSnippet(s: string, max = 220) {
   return oneLine.slice(0, max).trimEnd() + '…'
 }
 
-function openSnippet(row: ResultRow) {
+function _countLatexBlocks(s: string) {
+  const text = String(s || '')
+  const begins = (text.match(/\\begin\{/g) || []).length
+  const ends = (text.match(/\\end\{/g) || []).length
+  return { begins, ends }
+}
+
+function _repairBrokenExponents(raw: string) {
+  // PDF extraction sometimes drops exponent markers and splits superscripts into their own lines.
+  // Best-effort repair for common patterns so KaTeX can render them.
+  const lines = String(raw || '').split('\n')
+  const out: string[] = []
+
+  function normExponentToken(t: string) {
+    const s = String(t || '').trim()
+    if (!s) return null
+    if (/^[+-]?[A-Za-z0-9]{1,3}$/.test(s)) return s
+    return null
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const ln = String(lines[i] || '')
+    const t = ln.trim()
+
+    // Attach standalone ';' to previous line.
+    if ((t === ';' || t === '；') && out.length) {
+      let j = out.length - 1
+      while (j >= 0 && !String(out[j] || '').trim()) j -= 1
+      if (j >= 0) out[j] = `${String(out[j] || '').trimEnd()}${t}`
+      continue
+    }
+
+    // Attach a small exponent token on its own line to previous line.
+    const exp = normExponentToken(t)
+    if (exp && out.length) {
+      let j = out.length - 1
+      while (j >= 0 && !String(out[j] || '').trim()) j -= 1
+      if (j >= 0) {
+        const prevTrim = String(out[j] || '').trimEnd()
+        if (prevTrim && !prevTrim.endsWith('$') && !prevTrim.endsWith('^') && /[)\]}'"A-Za-z0-9]$/.test(prevTrim)) {
+          out[j] = `${prevTrim}^{${exp}}`
+          continue
+        }
+      }
+    }
+
+    // Convert patterns like (1+i)-n / (1+i)n into exponent when parentheses contain an operator.
+    let repaired = ln
+    repaired = repaired.replace(/\(([^)]+[+*/][^)]+)\)\s*([+-]?[A-Za-z0-9]{1,3})\b/g, (_m, inner, e) => `(${inner})^{${e}}`)
+    repaired = repaired.replace(/\(([^)]+[+*/][^)]+)\)([+-][A-Za-z0-9]{1,3})\b/g, (_m, inner, e) => `(${inner})^{${e}}`)
+
+    out.push(repaired)
+  }
+
+  return out.join('\n')
+}
+
+function _autoWrapLatexInline(raw: string) {
+  const lines = String(raw || '').split('\n')
+
+  function isMathLine(t: string) {
+    if (!t) return false
+    if (t.includes('$')) return false
+    if (t.startsWith('```') || t.startsWith('#')) return false
+    if (/https?:\/\//.test(t)) return false
+    if (t.startsWith('\\begin{') || t.startsWith('\\end{')) return false
+    const hasCmd = /\\[a-zA-Z]+/.test(t)
+    const hasScript = /(_\{|\^\{)/.test(t)
+    const hasOps = /[=+\-*/]/.test(t)
+
+    const hasAsciiMath =
+      /[A-Za-z]/.test(t) &&
+      /=/.test(t) &&
+      /[()]/.test(t) &&
+      ((t.match(/[=()+\-*/^_]/g) || []).length / Math.max(1, t.length) > 0.06)
+
+    return (hasCmd && (hasScript || hasOps)) || (hasScript && hasOps) || hasAsciiMath
+  }
+
+  function firstMathStartIndex(line: string) {
+    const candidates: number[] = []
+    const i1 = line.indexOf('\\')
+    if (i1 >= 0) candidates.push(i1)
+    const m1 = line.match(/[A-Za-z]\s*_[{]/)
+    if (m1?.index !== undefined) candidates.push(m1.index)
+    const m2 = line.match(/[A-Za-z]\s*\^[{]/)
+    if (m2?.index !== undefined) candidates.push(m2.index)
+    const m3 = line.match(/\b[A-Za-z]\s*=/)
+    if (m3?.index !== undefined) candidates.push(m3.index)
+    if (!candidates.length) return null
+    return Math.min(...candidates)
+  }
+
+  function normalizeInlineMath(s: string) {
+    let x = String(s || '')
+    x = x.replace(/\\\\/g, '__KATEX_BR__')
+    x = x.replace(/\s+/g, ' ').trim()
+    x = x.replace(/__KATEX_BR__/g, '\\\\')
+    return x
+  }
+
+  const out: string[] = []
+  let buf: string[] = []
+  let bufPrefix = ''
+
+  function flush() {
+    if (!buf.length) {
+      bufPrefix = ''
+      return
+    }
+    const joined = normalizeInlineMath(buf.join(' '))
+    const isBlock = joined.length > 140 || buf.length > 1
+    const wrapped = isBlock ? `$$\n${joined}\n$$` : `$${joined}$`
+    if (bufPrefix.trim()) {
+      if (isBlock) {
+        out.push(bufPrefix.trimEnd())
+        out.push(wrapped)
+      } else {
+        out.push(`${bufPrefix.trimEnd()} ${wrapped}`)
+      }
+    } else {
+      out.push(wrapped)
+    }
+    buf = []
+    bufPrefix = ''
+  }
+
+  for (const line of lines) {
+    const ln = String(line || '')
+    const t = ln.trim()
+    if (!t) {
+      flush()
+      out.push(ln)
+      continue
+    }
+
+    if (t.startsWith('\\begin{') || t.startsWith('\\end{')) {
+      flush()
+      out.push(ln)
+      continue
+    }
+
+    if (!isMathLine(t)) {
+      flush()
+      out.push(ln)
+      continue
+    }
+
+    const start = firstMathStartIndex(ln)
+    if (start === null) {
+      flush()
+      out.push(ln)
+      continue
+    }
+
+    const prefix = ln.slice(0, start).trimEnd()
+    const mathPart = ln.slice(start).trim()
+    if (!mathPart) {
+      flush()
+      out.push(ln)
+      continue
+    }
+
+    if (prefix) {
+      flush()
+      bufPrefix = prefix
+      buf = [mathPart]
+    } else {
+      buf.push(mathPart)
+    }
+  }
+
+  flush()
+  return out.join('\n')
+}
+
+async function _getDocumentChunks(kbId: number, docId: number) {
+  const hit = docChunkCache.get(docId)
+  if (hit) return hit
+  const res = await apiClient.listDocumentChunks(kbId, docId, { offset: 0, limit: 2500, include_parents: true })
+  const rows = Array.isArray((res as any)?.items) ? (res as any).items : []
+  const chunks = rows
+    .map((r: any) => ({
+      chunk_index: Number(r.chunk_index),
+      content: String(r.content || ''),
+    }))
+    .filter((r: any) => Number.isFinite(r.chunk_index))
+    .sort((a: any, b: any) => a.chunk_index - b.chunk_index)
+  docChunkCache.set(docId, chunks)
+  return chunks
+}
+
+async function openSnippet(row: ResultRow) {
   snippetDialogTitle.value = row.source
-  snippetDialogText.value = row.fullSnippet || row.snippet || ''
+  const raw = row.fullSnippet || row.snippet || ''
+  snippetDialogRawText.value = raw
+
+  let expanded = raw
+  const kbId = selectedKbId.value
+  const docId = row.documentId
+  const chunkIndex = row.chunkIndex
+  if (kbId && docId && Number.isFinite(Number(chunkIndex))) {
+    try {
+      const chunks = await _getDocumentChunks(kbId, docId)
+      const pos = chunks.findIndex((c: any) => c.chunk_index === Number(chunkIndex))
+      if (pos >= 0) {
+        let start = pos
+        let end = pos
+        let combined = String(chunks[pos].content || '')
+        for (let step = 0; step < 4; step++) {
+          const { begins, ends } = _countLatexBlocks(combined)
+          if (begins === ends) break
+          if (begins > ends && end + 1 < chunks.length) {
+            end += 1
+            combined = `${combined}\n\n${String(chunks[end].content || '')}`
+            continue
+          }
+          if (ends > begins && start - 1 >= 0) {
+            start -= 1
+            combined = `${String(chunks[start].content || '')}\n\n${combined}`
+            continue
+          }
+          break
+        }
+        expanded = combined
+      }
+    } catch {
+      // ignore expansion failures
+    }
+  }
+
+  const repaired = _repairBrokenExponents(expanded)
+  snippetDialogRenderText.value = _autoWrapLatexInline(repaired)
   snippetDialogOpen.value = true
 }
 
 async function copySnippet() {
-  const text = snippetDialogText.value || ''
+  const text = snippetDialogRawText.value || ''
   if (!text) return
   try {
     await navigator.clipboard.writeText(text)
@@ -255,6 +489,7 @@ async function runRetrieve() {
         snippet: formatSnippet(full, 220),
         fullSnippet: full,
         documentId: Number(r.document_id || 0) || undefined,
+        chunkIndex: Number.isFinite(Number(r.chunk_index)) ? Number(r.chunk_index) : undefined,
         label: isExpected ? 3 : 0,
       }
     })
@@ -685,7 +920,7 @@ watch(
                 <el-button size="small" plain @click="copySnippet">Copy</el-button>
               </div>
               <div class="snippet-md">
-                <MarkdownRenderer :content="snippetDialogText" />
+                <MarkdownRenderer :content="snippetDialogRenderText" :auto-math="true" />
               </div>
             </el-dialog>
 

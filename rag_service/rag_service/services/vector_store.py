@@ -227,26 +227,27 @@ class VectorStore:
     ) -> List[SearchResult]:
         """全文关键词搜索 (只搜索子块)"""
         import jieba
+        import re
         
-        # 分词并过滤空白token
-        keywords = [k.strip() for k in jieba.cut_for_search(query) if k.strip()]
+        # 分词并过滤空白/纯标点 token (避免 to_tsquery 语法错误)
+        keywords = [k.strip() for k in jieba.cut_for_search(query) if k and k.strip()]
+        keywords = [k for k in keywords if re.search(r"[0-9A-Za-z\u4e00-\u9fff]", k)]
         if not keywords:
             return []
-        
-        query_ts = " | ".join(keywords)
-        query_ts = query_ts.replace("'", "''")
-        
-        doc_filter_sql = ""
+
+        # Use plainto_tsquery for safety; treat keywords as plain terms.
+        query_text = " ".join(keywords)
+
+        doc_ids = None
         if knowledge_base_id is not None:
             doc_ids = self._get_kb_doc_ids(knowledge_base_id)
             if not doc_ids:
                 return []
-            doc_ids_str = ",".join(str(d) for d in doc_ids)
-            doc_filter_sql = f"AND document_id IN ({doc_ids_str})"
             
         with get_pgvector_session() as session:
-            sql = f"""
-                SELECT 
+            sql = text(
+                """
+                SELECT
                     id,
                     document_id,
                     chunk_index,
@@ -254,16 +255,27 @@ class VectorStore:
                     ts_rank_cd(content_ts, query_ts) as score,
                     metadata,
                     parent_id
-                FROM rag_vectors, to_tsquery('simple', '{query_ts}') query_ts
+                FROM rag_vectors, plainto_tsquery('simple', :q) query_ts
                 WHERE content_ts @@ query_ts
                 AND (is_parent = FALSE OR is_parent IS NULL)
-                {doc_filter_sql}
+                AND (:doc_ids_is_null OR document_id = ANY(:doc_ids))
                 ORDER BY score DESC
-                LIMIT {top_k}
-            """
-            
-            result = session.execute(text(sql))
-            return self._rows_to_results_with_parent(result)
+                LIMIT :limit
+                """
+            )
+
+            params = {
+                "q": query_text,
+                "limit": int(top_k),
+                "doc_ids_is_null": doc_ids is None,
+                "doc_ids": doc_ids if doc_ids is not None else [],
+            }
+            try:
+                result = session.execute(sql, params)
+                return self._rows_to_results_with_parent(result)
+            except Exception as e:
+                logger.warning(f"Keyword search failed, falling back to empty: {e}")
+                return []
 
     def _get_kb_doc_ids(self, kb_id: int) -> List[int]:
         from ..database import MySQLSessionLocal

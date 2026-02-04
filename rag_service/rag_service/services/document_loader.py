@@ -81,17 +81,256 @@ class DocumentLoader:
                 from marker.renderers.chunk import ChunkOutput
 
                 def _html_to_text(html: str) -> str:
+                    """Convert marker block HTML to readable text.
+
+                    Important: keep inline math structure (e.g. <sup>/<sub>) without inserting newlines.
+                    """
                     try:
                         from bs4 import BeautifulSoup
+                        from bs4.element import NavigableString, Tag
+                        import re
 
                         soup = BeautifulSoup(str(html or ""), "html.parser")
-                        txt = soup.get_text("\n")
-                    except Exception:
-                        txt = str(html or "")
 
-                    lines = [ln.strip() for ln in txt.splitlines()]
-                    lines = [ln for ln in lines if ln]
-                    return "\n".join(lines).strip()
+                        def inline(node) -> str:
+                            if node is None:
+                                return ""
+                            if isinstance(node, NavigableString):
+                                return str(node)
+                            if not isinstance(node, Tag):
+                                return str(node)
+
+                            name = (node.name or "").lower()
+                            if name == "sup":
+                                inner = "".join(inline(c) for c in node.children).strip()
+                                return f"^{{{inner}}}" if inner else ""
+                            if name == "sub":
+                                inner = "".join(inline(c) for c in node.children).strip()
+                                return f"_{{{inner}}}" if inner else ""
+                            if name == "br":
+                                return "\n"
+                            if name == "math":
+                                inner = "".join(inline(c) for c in node.children).strip()
+                                if not inner:
+                                    inner = node.get_text("", strip=True)
+                                if not inner:
+                                    return ""
+                                return f"\n$$\n{inner}\n$$\n"
+                            if name in ("del", "s", "strike"):
+                                # Drop deleted content.
+                                return ""
+
+                            return "".join(inline(c) for c in node.children)
+
+                        def _normalize_text(s: str) -> str:
+                            x = str(s or "")
+                            # Normalize common dash variants that appear in OCR/PDF extraction.
+                            x = x.replace("−", "-")  # minus sign
+                            x = x.replace("—", "-")  # em dash
+                            x = re.sub(r"[ \t]+", " ", x)
+                            return x
+
+                        def table_to_markdown(table: Tag) -> str:
+                            rows = []
+                            for tr in table.find_all("tr"):
+                                cells = []
+                                for cell in tr.find_all(["th", "td"]):
+                                    t = inline(cell)
+                                    t = _normalize_text(t)
+                                    # Collapse whitespace/newlines inside table cells.
+                                    t = re.sub(r"\s*\n\s*", "<br/>", t.strip())
+                                    # Convert display math blocks to inline math inside table cells.
+                                    t = re.sub(
+                                        r"\$\$\s*([\s\S]*?)\s*\$\$",
+                                        lambda m: "$" + re.sub(r"\s+", " ", m.group(1)).strip() + "$",
+                                        t,
+                                    )
+                                    t = t.replace("|", "\\|")
+                                    cells.append(t)
+                                if cells:
+                                    rows.append(cells)
+
+                            if not rows:
+                                return ""
+
+                            col_count = max(len(r) for r in rows)
+                            rows = [r + [""] * (col_count - len(r)) for r in rows]
+
+                            header = rows[0]
+                            sep = ["---"] * col_count
+                            body = rows[1:] if len(rows) > 1 else []
+
+                            # If this is a formula table, render the formula column as math.
+                            formula_col = None
+                            for i, h in enumerate(header):
+                                hh = str(h or "")
+                                hh = hh.replace("<br/>", " ")
+                                hh = re.sub(r"\s+", "", hh)
+                                if "计算公式" in hh:
+                                    formula_col = i
+                                    break
+
+                            if formula_col is not None:
+                                def ensure_math(cell_text: str) -> str:
+                                    s = str(cell_text or "").strip()
+                                    if not s:
+                                        return s
+                                    # already has math delimiters
+                                    if "$" in s:
+                                        # Normalize patterns like: i = $\frac{...}{...}$ -> $i = \frac{...}{...}$
+                                        m = re.match(r"^\s*([A-Za-z][A-Za-z0-9_]*\s*=\s*)\$\s*([^$]+?)\s*\$\s*$", s)
+                                        if m:
+                                            return "$" + m.group(1).strip() + m.group(2).strip() + "$"
+
+                                        # fix unbalanced $ in-cell
+                                        if s.count("$") % 2 == 1:
+                                            s += "$"
+                                        return s
+
+                                    # If the cell contains multiple lines, wrap each part.
+                                    parts = [p.strip() for p in s.split("<br/>")]
+                                    wrapped_parts = []
+                                    for p in parts:
+                                        if not p:
+                                            continue
+                                        wrapped_parts.append(f"${p}$")
+                                    return "<br/>".join(wrapped_parts) if wrapped_parts else s
+
+                                for r in body:
+                                    if formula_col < len(r):
+                                        r[formula_col] = ensure_math(r[formula_col])
+                            else:
+                                # Fallback: detect a likely formula column by content.
+                                # This keeps behavior general while ensuring tables with TeX fragments are renderable.
+                                def score_cell(s: str) -> int:
+                                    t = str(s or "")
+                                    sc = 0
+                                    if "$" in t:
+                                        sc += 3
+                                    if "\\frac" in t or "\\sum" in t or "\\left" in t or "\\right" in t:
+                                        sc += 3
+                                    if "^{" in t or "_{" in t:
+                                        sc += 2
+                                    if "=" in t:
+                                        sc += 1
+                                    return sc
+
+                                best_i = None
+                                best_score = 0
+                                for ci in range(col_count):
+                                    ssum = 0
+                                    for r in body:
+                                        if ci < len(r):
+                                            ssum += score_cell(r[ci])
+                                    if ssum > best_score:
+                                        best_score = ssum
+                                        best_i = ci
+
+                                if best_i is not None and best_score >= 6:
+                                    def ensure_math(cell_text: str) -> str:
+                                        s = str(cell_text or "").strip()
+                                        if not s:
+                                            return s
+                                        if "$" in s:
+                                            if s.count("$") % 2 == 1:
+                                                s += "$"
+                                            return s
+                                        parts = [p.strip() for p in s.split("<br/>")]
+                                        wrapped_parts = []
+                                        for p in parts:
+                                            if not p:
+                                                continue
+                                            wrapped_parts.append(f"${p}$")
+                                        return "<br/>".join(wrapped_parts) if wrapped_parts else s
+
+                                    for r in body:
+                                        if best_i < len(r):
+                                            r[best_i] = ensure_math(r[best_i])
+
+                            def fmt(r):
+                                return "| " + " | ".join(r) + " |"
+
+                            out = [fmt(header), fmt(sep)]
+                            out.extend(fmt(r) for r in body)
+                            return "\n".join(out).strip()
+
+                        lines: list[str] = []
+
+                        # Tables: keep structure as markdown table.
+                        tbl = soup.find("table")
+                        if isinstance(tbl, Tag):
+                            md = table_to_markdown(tbl)
+                            if md:
+                                return md
+
+                        for li in soup.find_all("li"):
+                            t = inline(li).strip()
+                            if t:
+                                lines.append(f"- {t}")
+                        if lines:
+                            txt = "\n".join(lines)
+                        else:
+                            ps = soup.find_all("p")
+                            if ps:
+                                parts = []
+                                for p in ps:
+                                    t = inline(p).strip()
+                                    if t:
+                                        parts.append(t)
+                                txt = "\n\n".join(parts)
+                            else:
+                                txt = inline(soup).strip()
+
+                        # Normalize whitespace while preserving intentional newlines.
+                        out_lines = []
+                        for ln in str(txt).splitlines():
+                            out_lines.append(_normalize_text(ln).rstrip())
+                        out = "\n".join(out_lines)
+                        out = "\n".join([ln for ln in out.splitlines() if ln.strip() or ln == ""])
+
+                        # Wrap bare TeX-like formula lines into math mode.
+                        # This avoids leaking raw `\frac/\times/...` into the UI when marker didn't emit <math>.
+                        fixed_lines = []
+                        in_display_math = False
+                        for ln in out.splitlines():
+                            t = ln.strip()
+                            if not t:
+                                fixed_lines.append(ln)
+                                continue
+                            if t == "$$":
+                                in_display_math = not in_display_math
+                                fixed_lines.append(ln)
+                                continue
+                            if in_display_math:
+                                fixed_lines.append(ln)
+                                continue
+                            if "$" in t:
+                                # Normalize patterns like: i = $\frac{...}{...}$ -> $i = \frac{...}{...}$
+                                m = re.match(r"^\s*([A-Za-z][A-Za-z0-9_]*\s*=\s*)\$\s*([^$]+?)\s*\$\s*$", t)
+                                if m:
+                                    fixed_lines.append("$" + m.group(1).strip() + m.group(2).strip() + "$")
+                                else:
+                                    fixed_lines.append(ln)
+                                continue
+                            if t.startswith("#") or t.startswith("-") or t.startswith(">"):
+                                fixed_lines.append(ln)
+                                continue
+
+                            has_tex_cmd = bool(re.search(r"\\[a-zA-Z]+", t))
+                            has_ops = "=" in t
+                            if has_tex_cmd and has_ops:
+                                fixed_lines.append(f"${t}$")
+                                continue
+
+                            fixed_lines.append(ln)
+                        out = "\n".join(fixed_lines)
+
+                        # Collapse excessive blank lines.
+                        while "\n\n\n" in out:
+                            out = out.replace("\n\n\n", "\n\n")
+                        return out.strip()
+                    except Exception:
+                        return str(html or "").strip()
 
                 def _build_section_id_title_map(rendered: ChunkOutput) -> dict[str, str]:
                     m: dict[str, str] = {}
@@ -196,6 +435,28 @@ class DocumentLoader:
                 id_to_title = _build_section_id_title_map(rendered)
                 md_text = _build_markdown_from_chunk_output(rendered, id_to_title)
                 outline_headings = _extract_outline_headings_from_chunk_output(rendered, id_to_title)
+
+                # Merge standalone exponent blocks like:
+                #   <expr>\n$$\n^{5}\n$$
+                # into:
+                #   <expr>^{5}
+                try:
+                    import re as _re
+
+                    # Case 1: plain line followed by $$ exponent $$
+                    md_text = _re.sub(
+                        r"(?m)^(?P<base>[^\n$].*?)\n\$\$\n(?P<exp>[\^_]\{[^}]+\})\n\$\$\s*$",
+                        lambda m: f"{m.group('base')}{m.group('exp')}",
+                        md_text,
+                    )
+                    # Case 2: $$ base $$ then $$ exponent $$
+                    md_text = _re.sub(
+                        r"(?ms)\$\$\n(?P<base>[^\n]+?)\n\$\$\s*\n\$\$\n(?P<exp>[\^_]\{[^}]+\})\n\$\$",
+                        lambda m: f"$$\n{m.group('base')}{m.group('exp')}\n$$",
+                        md_text,
+                    )
+                except Exception:
+                    pass
 
                 if md_text and str(md_text).strip():
                     page_count = 0

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import apiClient, { DEV_USER_ROLE } from '@/api/client'
+import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
 import {
   ArrowRight,
   Refresh,
@@ -128,25 +129,6 @@ function truncate(text: string, max = 260) {
   return s.slice(0, max).trimEnd() + '…'
 }
 
-function truncateMultiline(text: string, opts?: { maxLines?: number; maxChars?: number }) {
-  const maxLines = Math.max(1, Number(opts?.maxLines ?? 10) || 10)
-  const maxChars = Math.max(16, Number(opts?.maxChars ?? 900) || 900)
-  const raw = String(text || '')
-  const s = raw.trimEnd()
-  if (!s) return ''
-
-  const lines = s.split('\n')
-  let clipped = lines.slice(0, maxLines).join('\n')
-  let truncated = lines.length > maxLines
-
-  if (clipped.length > maxChars) {
-    clipped = clipped.slice(0, maxChars).trimEnd()
-    truncated = true
-  }
-
-  if (truncated && clipped && !clipped.endsWith('…')) clipped += '…'
-  return clipped
-}
 
 function extractFirstHeading(content: string): { level: number; title: string } | null {
   const lines = String(content || '').split('\n')
@@ -502,36 +484,6 @@ async function regenerateDocument() {
   }
 }
 
-async function rebuildKbVectors() {
-  if (!kbId.value) return
-  if (!isAdmin) {
-    ElMessage.warning('Admin role required')
-    return
-  }
-  try {
-    const res = await apiClient.rebuildKnowledgeBaseVectors(kbId.value)
-    const jobId = (res as any)?.job_id
-    ElMessage.success(jobId ? `KB rebuild queued (job_id=${jobId})` : 'KB rebuild queued')
-  } catch {
-    ElMessage.error('Failed to queue KB rebuild')
-  }
-}
-
-async function buildKbGraph() {
-  if (!kbId.value) return
-  if (!isAdmin) {
-    ElMessage.warning('Admin role required')
-    return
-  }
-  try {
-    const res = await apiClient.buildKnowledgeBaseGraph(kbId.value)
-    const jobId = (res as any)?.job_id
-    ElMessage.success(jobId ? `KB graph queued (job_id=${jobId})` : 'KB graph queued')
-  } catch {
-    ElMessage.error('Failed to queue KB graph build')
-  }
-}
-
 function exitEditor() {
   router.push('/finance-docs')
 }
@@ -688,7 +640,9 @@ watch(
             </div>
 
             <div class="parent-content">
-              <p class="content-text">{{ isExpanded(p.id) ? p.content : truncateMultiline(p.content, { maxLines: 10, maxChars: 900 }) }}</p>
+              <div class="content-md" :class="{ collapsed: !isExpanded(p.id) }">
+                <MarkdownRenderer :content="p.content" :auto-math="true" />
+              </div>
             </div>
 
             <div v-if="isExpanded(p.id) || searchActive" class="children-block">
@@ -718,9 +672,11 @@ watch(
                       {{ chunk.tokens }} Tokens
                     </div>
                   </div>
-                </div>
-                <div class="chunk-content">
-                  <p class="content-text">{{ chunk.id === activeChunkId ? chunk.content : truncateMultiline(chunk.content, { maxLines: 6, maxChars: 420 }) }}</p>
+              </div>
+              <div class="chunk-content">
+                  <div class="content-md" :class="{ collapsed: chunk.id !== activeChunkId }">
+                    <MarkdownRenderer :content="chunk.content" :auto-math="true" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -817,12 +773,6 @@ watch(
           <el-button plain class="btn-preview" :disabled="!isAdmin" @click="regenerateDocument">
             <el-icon><Refresh /></el-icon> Reindex Document
           </el-button>
-          <el-button plain class="btn-preview" :disabled="!isAdmin" @click="rebuildKbVectors">
-            <el-icon><Refresh /></el-icon> Rebuild KB Vectors
-          </el-button>
-          <el-button plain class="btn-preview" :disabled="!isAdmin" @click="buildKbGraph">
-            <el-icon><Connection /></el-icon> Build KB Graph
-          </el-button>
           <p class="reindex-note">Changes will require re-indexing.</p>
         </div>
       </el-aside>
@@ -854,7 +804,9 @@ watch(
                 {{ it.is_parent ? 'Parent' : 'Chunk' }} • {{ it.tokens_estimate }} tokens
               </div>
             </div>
-            <div style="font-size: 13px; line-height: 1.6; white-space: pre-wrap;">{{ it.content }}</div>
+            <div class="preview-md">
+              <MarkdownRenderer :content="String(it.content || '')" :auto-math="true" />
+            </div>
           </div>
         </div>
       </el-scrollbar>
@@ -1405,6 +1357,38 @@ watch(
   color: #2e3136;
   margin: 0;
   white-space: pre-wrap;
+}
+
+.content-md {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.content-md.collapsed {
+  max-height: 220px;
+  overflow: hidden;
+  position: relative;
+}
+
+.content-md.collapsed::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 56px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 1));
+  pointer-events: none;
+}
+
+.content-md :deep(.markdown-body) {
+  padding: 0;
+  background: transparent;
+}
+
+.preview-md :deep(.markdown-body) {
+  padding: 0;
+  background: transparent;
 }
 
 :deep(.content-editor .el-textarea__inner) {
