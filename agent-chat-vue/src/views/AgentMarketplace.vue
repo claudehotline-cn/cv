@@ -80,7 +80,7 @@ async function loadAgents() {
 function handleSelectAgent(agent: any) {
   chatStore.setCurrentAgent(agent.id)
   chatStore.createSession(`Chat with ${agent.name}`)
-  router.push('/')
+  router.push('/chat')
 }
 
 function getGradient(name: string) {

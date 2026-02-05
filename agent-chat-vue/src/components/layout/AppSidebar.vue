@@ -35,13 +35,13 @@
           </template>
         </el-menu-item>
 
-        <el-menu-item index="/agents" disabled>
+        <el-menu-item index="/agents">
            <template #title>
-             <div class="menu-item-content opacity-60">
-                <span class="material-symbols-outlined">smart_toy</span>
-                <span class="font-medium">Agents</span>
-             </div>
-          </template>
+              <div class="menu-item-content">
+                 <span class="material-symbols-outlined">smart_toy</span>
+                 <span class="font-medium">Agents</span>
+              </div>
+           </template>
         </el-menu-item>
 
          <el-menu-item index="/audit">

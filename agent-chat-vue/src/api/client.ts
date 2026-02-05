@@ -424,6 +424,10 @@ class ApiClient {
         return this.http.get(`/rag/knowledge-bases/${kbId}/eval/datasets`)
     }
 
+    async exportAllEvalDatasets(kbId: number): Promise<any> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/datasets/export`)
+    }
+
     async createEvalDataset(kbId: number, input: { name: string; description?: string }): Promise<any> {
         return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets`, input)
     }
@@ -457,8 +461,12 @@ class ApiClient {
         return this.http.post(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/import`, input)
     }
 
-    async listEvalCases(kbId: number, datasetId: number): Promise<{ items: any[] }> {
-        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/cases`)
+    async listEvalCases(
+        kbId: number,
+        datasetId: number,
+        params?: { q?: string; tag?: string; offset?: number; limit?: number }
+    ): Promise<{ items: any[]; total?: number; offset?: number; limit?: number }> {
+        return this.http.get(`/rag/knowledge-bases/${kbId}/eval/datasets/${datasetId}/cases`, { params })
     }
 
     async createEvalCase(
@@ -508,6 +516,63 @@ class ApiClient {
 
     async exportBenchmarkRun(kbId: number, runId: number): Promise<any> {
         return this.http.get(`/rag/knowledge-bases/${kbId}/eval/benchmarks/runs/${runId}/export`)
+    }
+
+    streamBenchmarkRun(
+        kbId: number,
+        runId: number,
+        onEvent: (data: any) => void,
+        onError?: (error: Error) => void
+    ): () => void {
+        const controller = new AbortController()
+
+        const fetchStream = async () => {
+            try {
+                const response = await fetch(
+                    `${this.baseUrl}/rag/knowledge-bases/${kbId}/eval/benchmarks/runs/${runId}/stream`,
+                    {
+                        headers: devHeaders(),
+                        signal: controller.signal,
+                    }
+                )
+
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+
+                const reader = response.body?.getReader()
+                if (!reader) throw new Error('No response body')
+
+                const decoder = new TextDecoder()
+                let buffer = ''
+
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+
+                    buffer += decoder.decode(value, { stream: true })
+                    const lines = buffer.split('\n')
+                    buffer = lines.pop() || ''
+
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            try {
+                                const jsonStr = line.substring(5).trim()
+                                if (!jsonStr) continue
+                                const data = JSON.parse(jsonStr)
+                                onEvent(data)
+                            } catch (e) {
+                                // ignore malformed messages
+                            }
+                        }
+                    }
+                }
+            } catch (error: any) {
+                if (error?.name === 'AbortError') return
+                onError?.(error)
+            }
+        }
+
+        fetchStream()
+        return () => controller.abort()
     }
 
     streamTask(

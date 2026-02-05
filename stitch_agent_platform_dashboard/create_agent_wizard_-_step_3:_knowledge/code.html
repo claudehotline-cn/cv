@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Create Agent Wizard - Step 3: Knowledge</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#51defb",
+                        "background-light": "#f5f8f8",
+                        "background-dark": "#0f1f23",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#162a30",
+                        "text-main": "#0d1a1c",
+                        "text-secondary": "#47909e",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "2xl": "1rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.fill {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-text-main antialiased selection:bg-primary/30">
+<div class="flex min-h-screen w-full flex-row overflow-hidden">
+<!-- Sidebar Navigation -->
+<aside class="flex w-72 flex-col justify-between border-r border-slate-200 bg-surface-light dark:bg-surface-dark dark:border-slate-800 p-6 shadow-sm z-10">
+<div class="flex flex-col gap-8">
+<!-- Header -->
+<div class="flex flex-col gap-1">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-3xl">smart_toy</span>
+<h1 class="text-xl font-bold tracking-tight text-text-main dark:text-white">Agent Wizard</h1>
+</div>
+<p class="text-sm font-medium text-text-secondary dark:text-slate-400 pl-9">Create new agent</p>
+</div>
+<!-- Stepper -->
+<nav class="flex flex-col gap-2">
+<!-- Step 1: Identity -->
+<div class="group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/50">
+<div class="flex items-center justify-center text-green-500">
+<span class="material-symbols-outlined">check_circle</span>
+</div>
+<div class="flex flex-col">
+<span class="text-sm font-semibold text-text-main dark:text-slate-200">Identity</span>
+<span class="text-xs text-text-secondary dark:text-slate-500">Completed</span>
+</div>
+</div>
+<!-- Step 2: Tools -->
+<div class="group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/50">
+<div class="flex items-center justify-center text-green-500">
+<span class="material-symbols-outlined">check_circle</span>
+</div>
+<div class="flex flex-col">
+<span class="text-sm font-semibold text-text-main dark:text-slate-200">Tools</span>
+<span class="text-xs text-text-secondary dark:text-slate-500">Completed</span>
+</div>
+</div>
+<!-- Step 3: Knowledge (Active) -->
+<div class="flex cursor-default items-center gap-3 rounded-lg bg-primary/10 px-3 py-2.5 ring-1 ring-primary/20 dark:bg-primary/5">
+<div class="flex items-center justify-center text-primary">
+<span class="material-symbols-outlined fill">menu_book</span>
+</div>
+<div class="flex flex-col">
+<span class="text-sm font-bold text-text-main dark:text-white">Knowledge</span>
+<span class="text-xs font-medium text-primary">In Progress</span>
+</div>
+</div>
+<!-- Step 4: Deployment -->
+<div class="group flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2.5 opacity-50">
+<div class="flex items-center justify-center text-text-secondary">
+<span class="material-symbols-outlined">rocket_launch</span>
+</div>
+<div class="flex flex-col">
+<span class="text-sm font-medium text-text-main dark:text-slate-200">Deployment</span>
+<span class="text-xs text-text-secondary dark:text-slate-500">Pending</span>
+</div>
+</div>
+</nav>
+</div>
+<!-- Footer Help -->
+<div class="flex items-center gap-3 rounded-xl bg-slate-50 p-4 dark:bg-slate-800/50">
+<span class="material-symbols-outlined text-text-secondary">help</span>
+<div class="flex flex-col">
+<span class="text-xs font-bold text-text-main dark:text-white">Need help?</span>
+<a class="text-xs text-primary hover:underline" href="#">Read Documentation</a>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex flex-1 flex-col overflow-y-auto bg-background-light dark:bg-background-dark">
+<div class="mx-auto w-full max-w-5xl px-8 py-10">
+<!-- Page Header -->
+<div class="mb-10 flex flex-col gap-2">
+<h2 class="text-4xl font-black tracking-tight text-text-main dark:text-white">Knowledge Base</h2>
+<p class="max-w-2xl text-lg text-text-secondary dark:text-slate-400">Upload documents or add links to train your agent on specific topics. The more context you provide, the smarter your agent becomes.</p>
+</div>
+<!-- Content Grid -->
+<div class="flex flex-col gap-8">
+<!-- Drag & Drop Zone -->
+<div class="group relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-surface-light px-6 py-16 text-center transition-all hover:border-primary hover:bg-primary/5 dark:border-slate-700 dark:bg-surface-dark dark:hover:bg-surface-dark/80">
+<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
+<span class="material-symbols-outlined text-3xl">cloud_upload</span>
+</div>
+<h3 class="mb-2 text-xl font-bold text-text-main dark:text-white">Upload Knowledge Files</h3>
+<p class="mb-6 max-w-sm text-sm text-text-secondary dark:text-slate-400">Drag and drop PDF, TXT, MD, or CSV files here to upload instantly.</p>
+<button class="inline-flex items-center justify-center rounded-lg bg-primary px-6 py-2.5 text-sm font-bold text-text-main transition-transform hover:scale-105 active:scale-95 shadow-sm shadow-primary/20">
+                            Browse Files
+                        </button>
+<input class="absolute inset-0 cursor-pointer opacity-0" type="file"/>
+</div>
+<!-- URL Input Section -->
+<div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+<div class="md:col-span-2">
+<label class="mb-2 block text-sm font-bold text-text-main dark:text-white">Add Website Data Source</label>
+<div class="flex rounded-lg shadow-sm">
+<span class="inline-flex items-center rounded-l-lg border border-r-0 border-slate-200 bg-slate-50 px-3 text-slate-500 dark:border-slate-700 dark:bg-slate-800">
+<span class="material-symbols-outlined text-[20px]">link</span>
+</span>
+<input class="block w-full min-w-0 flex-1 rounded-none rounded-r-lg border-slate-200 p-3 text-sm focus:border-primary focus:ring-primary dark:border-slate-700 dark:bg-surface-dark dark:text-white dark:placeholder-slate-500" placeholder="https://example.com/docs" type="text"/>
+</div>
+</div>
+<div class="flex items-end">
+<button class="flex h-[46px] w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-text-main hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:border-slate-700 dark:bg-surface-dark dark:text-white dark:hover:bg-slate-800">
+<span class="material-symbols-outlined text-[20px]">add</span>
+                                Add Source
+                            </button>
+</div>
+</div>
+<div class="my-4 border-t border-slate-200 dark:border-slate-700"></div>
+<!-- Attached Documents List -->
+<div class="flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<h3 class="text-lg font-bold text-text-main dark:text-white">Attached Documents (3)</h3>
+<button class="text-sm font-semibold text-primary hover:text-primary/80">Manage All</button>
+</div>
+<!-- Item 1: Processed -->
+<div class="flex flex-col gap-3 rounded-xl border border-slate-200 bg-surface-light p-4 shadow-sm transition-all hover:shadow-md dark:border-slate-700 dark:bg-surface-dark">
+<div class="flex items-start justify-between gap-4">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20">
+<span class="material-symbols-outlined">picture_as_pdf</span>
+</div>
+<div>
+<p class="font-bold text-text-main dark:text-white">Product_Manual_v2.pdf</p>
+<p class="text-xs text-text-secondary dark:text-slate-400">2.4 MB • Uploaded just now</p>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                                        Ready
+                                    </span>
+<button class="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-red-500 dark:hover:bg-slate-800">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Item 2: Processing -->
+<div class="flex flex-col gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4 shadow-sm dark:border-primary/20 dark:bg-primary/5">
+<div class="flex items-start justify-between gap-4">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-500 dark:bg-blue-900/20">
+<span class="material-symbols-outlined">description</span>
+</div>
+<div>
+<p class="font-bold text-text-main dark:text-white">company_policy_2024.txt</p>
+<p class="text-xs text-text-secondary dark:text-slate-400">145 KB • Parsing content...</p>
+</div>
+</div>
+<button class="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-red-500 dark:hover:bg-slate-800">
+<span class="material-symbols-outlined text-[20px]">close</span>
+</button>
+</div>
+<!-- Progress Bar -->
+<div class="mt-1 flex items-center gap-3">
+<div class="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+<div class="h-full w-[65%] rounded-full bg-primary transition-all duration-500 ease-out"></div>
+</div>
+<span class="text-xs font-bold text-primary">65%</span>
+</div>
+</div>
+<!-- Item 3: Website Source -->
+<div class="flex flex-col gap-3 rounded-xl border border-slate-200 bg-surface-light p-4 shadow-sm transition-all hover:shadow-md dark:border-slate-700 dark:bg-surface-dark">
+<div class="flex items-start justify-between gap-4">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-purple-50 text-purple-500 dark:bg-purple-900/20">
+<span class="material-symbols-outlined">language</span>
+</div>
+<div>
+<p class="font-bold text-text-main dark:text-white">https://help.acme.inc/api-docs</p>
+<p class="text-xs text-text-secondary dark:text-slate-400">Website • 45 pages indexed</p>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                                        Synced
+                                    </span>
+<button class="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-red-500 dark:hover:bg-slate-800">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Action Buttons -->
+<div class="mt-12 flex items-center justify-between pt-6">
+<button class="flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-bold text-text-secondary hover:bg-slate-100 hover:text-text-main dark:hover:bg-slate-800 dark:hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[18px]">arrow_back</span>
+                        Back
+                    </button>
+<div class="flex items-center gap-4">
+<span class="text-xs font-medium text-text-secondary dark:text-slate-500">Auto-saved</span>
+<button class="flex items-center gap-2 rounded-lg bg-text-main px-8 py-3 text-sm font-bold text-white shadow-lg hover:bg-black/80 hover:shadow-xl dark:bg-white dark:text-text-main dark:hover:bg-slate-200 transition-all transform active:scale-95">
+                            Continue
+                            <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

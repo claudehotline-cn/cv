@@ -35,6 +35,14 @@ const selectedDatasetId = ref<number | null>(null)
 const cases = ref<CaseItem[]>([])
 const selectedCaseIds = ref<number[]>([])
 
+const caseSearch = ref('')
+const caseTag = ref('')
+const caseTotal = ref(0)
+const casePage = ref(1)
+const casePageSize = ref(25)
+const caseLoading = ref(false)
+let caseSearchTimer: number | null = null
+
 const datasetDialogOpen = ref(false)
 const datasetSaving = ref(false)
 const datasetForm = ref({ name: '', description: '' })
@@ -48,7 +56,13 @@ const caseForm = ref({
   expectedSourcesText: '',
   expectedAnswer: '',
   notes: '',
+  tagsText: '',
 })
+
+const importDialogOpen = ref(false)
+const importMode = ref<'replace' | 'append'>('replace')
+const importFile = ref<File | null>(null)
+const importing = ref(false)
 
 const kbId = computed(() => {
   const raw = String(route.query.kbId || '')
@@ -95,12 +109,23 @@ async function refreshDatasets() {
 
 async function refreshCases(datasetId: number) {
   if (!kbId.value) return
+  caseLoading.value = true
   try {
-    const res = await apiClient.listEvalCases(kbId.value, datasetId)
+    const offset = (casePage.value - 1) * casePageSize.value
+    const res = await apiClient.listEvalCases(kbId.value, datasetId, {
+      q: caseSearch.value.trim() || undefined,
+      tag: caseTag.value.trim() || undefined,
+      offset,
+      limit: casePageSize.value,
+    })
     cases.value = (res.items || []) as CaseItem[]
+    caseTotal.value = Number(res.total || 0)
   } catch {
     cases.value = []
+    caseTotal.value = 0
     ElMessage.error('Failed to load cases')
+  } finally {
+    caseLoading.value = false
   }
 }
 
@@ -126,6 +151,10 @@ const selected = computed(() => {
 
 async function pick(id: number) {
   selectedDatasetId.value = id
+  if (casePage.value !== 1) {
+    casePage.value = 1
+    return
+  }
   await refreshCases(id)
 }
 
@@ -199,6 +228,7 @@ async function onDeleteDataset() {
     ElMessage.success('Deleted')
     selectedDatasetId.value = null
     cases.value = []
+    caseTotal.value = 0
     await refreshDatasets()
     if (datasets.value.length) {
       await pick(datasets.value[0].id)
@@ -208,8 +238,8 @@ async function onDeleteDataset() {
   }
 }
 
-async function onExport() {
-  if (!kbId.value || !selectedDatasetId.value) {
+async function onExportSelected() {
+  if (!kbId.value || !selectedDatasetId.value || !selected.value) {
     ElMessage.warning('Select a dataset first')
     return
   }
@@ -219,7 +249,7 @@ async function onExport() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `rag-dataset-${selectedDatasetId.value}.json`
+    a.download = `rag-dataset-${selectedDatasetId.value}-${(selected.value.name || 'dataset').replace(/\s+/g, '_')}.json`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -229,40 +259,88 @@ async function onExport() {
   }
 }
 
-async function onImport() {
+async function onExportAll() {
+  if (!kbId.value) {
+    ElMessage.warning('Missing kbId')
+    return
+  }
+  try {
+    const payload = await apiClient.exportAllEvalDatasets(kbId.value)
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `rag-datasets-kb-${kbId.value}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('Export failed')
+  }
+}
+
+function openImportDialog() {
   if (!kbId.value || !selectedDatasetId.value) {
     ElMessage.warning('Select a dataset first')
     return
   }
 
+  importMode.value = 'replace'
+  importFile.value = null
+  importDialogOpen.value = true
+}
+
+function chooseImportFile() {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'application/json'
-  input.onchange = async () => {
+  input.onchange = () => {
     const file = input.files?.[0]
     if (!file) return
-    try {
-      const text = await file.text()
-      const parsed = JSON.parse(text)
-      const rawCases = Array.isArray(parsed?.cases) ? parsed.cases : []
-      const normalized = rawCases
-        .map((c: any) => ({
-          query: String(c?.query || '').trim(),
-          expected_sources: Array.isArray(c?.expected_sources) ? c.expected_sources.map((x: any) => String(x)) : [],
-          expected_answer: c?.expected_answer ? String(c.expected_answer) : undefined,
-          notes: c?.notes ? String(c.notes) : undefined,
-          tags: Array.isArray(c?.tags) ? c.tags.map((x: any) => String(x)) : [],
-        }))
-        .filter((c: any) => c.query)
-      await apiClient.importEvalDataset(kbId.value!, selectedDatasetId.value!, { replace: true, cases: normalized })
-      ElMessage.success('Imported')
-      await refreshCases(selectedDatasetId.value!)
-      await refreshDatasets()
-    } catch (e) {
-      ElMessage.error('Import failed')
-    }
+    importFile.value = file
   }
   input.click()
+}
+
+async function runImport() {
+  if (!kbId.value || !selectedDatasetId.value) return
+  if (!importFile.value) {
+    ElMessage.warning('Choose a JSON file')
+    return
+  }
+
+  importing.value = true
+  try {
+    const text = await importFile.value.text()
+    const parsed = JSON.parse(text)
+    const rawCases = Array.isArray(parsed?.cases) ? parsed.cases : []
+    const normalized = rawCases
+      .map((c: any) => ({
+        query: String(c?.query || '').trim(),
+        expected_sources: Array.isArray(c?.expected_sources) ? c.expected_sources.map((x: any) => String(x)) : [],
+        expected_answer: c?.expected_answer ? String(c.expected_answer) : undefined,
+        notes: c?.notes ? String(c.notes) : undefined,
+        tags: Array.isArray(c?.tags) ? c.tags.map((x: any) => String(x)) : [],
+      }))
+      .filter((c: any) => c.query)
+    await apiClient.importEvalDataset(kbId.value, selectedDatasetId.value, {
+      replace: importMode.value === 'replace',
+      cases: normalized,
+    })
+    ElMessage.success('Imported')
+    importDialogOpen.value = false
+    await refreshDatasets()
+    if (casePage.value !== 1) {
+      casePage.value = 1
+    } else {
+      await refreshCases(selectedDatasetId.value)
+    }
+  } catch {
+    ElMessage.error('Import failed')
+  } finally {
+    importing.value = false
+  }
 }
 
 function openNewCaseDialog() {
@@ -274,6 +352,7 @@ function openNewCaseDialog() {
     expectedSourcesText: '',
     expectedAnswer: '',
     notes: '',
+    tagsText: '',
   }
   caseDialogOpen.value = true
 }
@@ -286,6 +365,7 @@ function openEditCaseDialog(c: CaseItem) {
     expectedSourcesText: (c.expected_sources || []).join(', '),
     expectedAnswer: (c.expected_answer as any) || '',
     notes: c.notes || '',
+    tagsText: (c.tags || []).join(', '),
   }
   caseDialogOpen.value = true
 }
@@ -301,6 +381,14 @@ async function saveCase() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+  const tags = Array.from(
+    new Set(
+      String(caseForm.value.tagsText || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  )
   const expected_answer = String(caseForm.value.expectedAnswer || '').trim()
   const notes = String(caseForm.value.notes || '').trim()
 
@@ -312,6 +400,7 @@ async function saveCase() {
         expected_sources,
         expected_answer: expected_answer || undefined,
         notes: notes || undefined,
+        tags,
       })
       ElMessage.success('Case created')
     } else {
@@ -321,6 +410,7 @@ async function saveCase() {
         expected_sources,
         expected_answer: expected_answer || '',
         notes: notes || undefined,
+        tags,
       })
       ElMessage.success('Case updated')
     }
@@ -382,11 +472,62 @@ onMounted(async () => {
 })
 
 watch(
+  () => casePage.value,
+  async () => {
+    if (!selectedDatasetId.value) return
+    await refreshCases(selectedDatasetId.value)
+  }
+)
+
+watch(
+  () => casePageSize.value,
+  async () => {
+    if (!selectedDatasetId.value) return
+    if (casePage.value !== 1) {
+      casePage.value = 1
+      return
+    }
+    await refreshCases(selectedDatasetId.value)
+  }
+)
+
+watch(
+  () => caseTag.value,
+  async () => {
+    if (!selectedDatasetId.value) return
+    if (casePage.value !== 1) {
+      casePage.value = 1
+      return
+    }
+    await refreshCases(selectedDatasetId.value)
+  }
+)
+
+watch(
+  () => caseSearch.value,
+  async () => {
+    if (!selectedDatasetId.value) return
+    if (caseSearchTimer) window.clearTimeout(caseSearchTimer)
+    caseSearchTimer = window.setTimeout(async () => {
+      if (casePage.value !== 1) {
+        casePage.value = 1
+        return
+      }
+      await refreshCases(selectedDatasetId.value!)
+    }, 300)
+  }
+)
+
+watch(
   () => kbId.value,
   async (id) => {
     if (!id) return
     selectedDatasetId.value = null
     cases.value = []
+    caseTotal.value = 0
+    caseSearch.value = ''
+    caseTag.value = ''
+    casePage.value = 1
     await refreshDatasets()
     if (selectedDatasetId.value) await refreshCases(selectedDatasetId.value)
   }
@@ -409,7 +550,7 @@ watch(
             <div class="kicker">All Datasets</div>
             <div class="sub">{{ filteredDatasets.length }} total</div>
           </div>
-          <button class="head-action" type="button" :disabled="loading" @click="onExport">Full export</button>
+          <button class="head-action" type="button" :disabled="loading" @click="onExportAll">Export all</button>
         </div>
 
         <div class="rows">
@@ -442,8 +583,8 @@ watch(
             </div>
           </div>
           <div class="detail-actions">
-            <button class="ghost" type="button" @click="onImport">Import</button>
-            <button class="ghost" type="button" @click="onExport">Export</button>
+            <button class="ghost" type="button" @click="openImportDialog">Import</button>
+            <button class="ghost" type="button" @click="onExportSelected">Export</button>
             <button class="ghost" type="button" :disabled="!selected" @click="openEditDatasetDialog">Edit</button>
             <button class="danger" type="button" :disabled="!selected" @click="onDeleteDataset">Delete</button>
           </div>
@@ -461,10 +602,16 @@ watch(
                 <button class="add" type="button" @click="openNewCaseDialog">Add Case</button>
               </div>
 
+              <div class="case-filters">
+                <el-input v-model="caseSearch" placeholder="Search cases (query/notes)..." clearable size="small" />
+                <el-input v-model="caseTag" placeholder="Filter by tag..." clearable size="small" />
+              </div>
+
               <el-table
                 :data="cases"
                 class="case-table"
                 style="width: 100%"
+                v-loading="caseLoading"
                 @selection-change="onSelectionChange"
               >
                 <el-table-column type="selection" width="44" />
@@ -473,6 +620,7 @@ watch(
                     <div class="cell-title">{{ row.query }}</div>
                     <div class="cell-sub">
                       {{ (row.expected_sources || []).slice(0, 3).join(', ') || 'No expected sources' }}
+                      <span v-if="(row.tags || []).length" class="cell-tags"> • tags: {{ (row.tags || []).slice(0, 6).join(', ') }}</span>
                     </div>
                   </template>
                 </el-table-column>
@@ -492,6 +640,17 @@ watch(
                   </template>
                 </el-table-column>
               </el-table>
+
+              <div class="case-pagination">
+                <el-pagination
+                  v-model:current-page="casePage"
+                  v-model:page-size="casePageSize"
+                  :total="caseTotal"
+                  :page-sizes="[10, 25, 50, 100]"
+                  layout="total, sizes, prev, pager, next"
+                  small
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -512,6 +671,9 @@ watch(
         </el-form-item>
         <el-form-item label="Expected answer (for QA scoring)">
           <el-input v-model="caseForm.expectedAnswer" type="textarea" :rows="5" placeholder="What a correct answer should say" />
+        </el-form-item>
+        <el-form-item label="Tags (comma-separated)">
+          <el-input v-model="caseForm.tagsText" placeholder="e.g. finance, policy, v1" />
         </el-form-item>
         <el-form-item label="Notes (optional)">
           <el-input v-model="caseForm.notes" type="textarea" :rows="2" placeholder="Additional notes" />
@@ -541,6 +703,33 @@ watch(
           <button class="ghost" type="button" @click="datasetDialogOpen = false">Cancel</button>
           <button class="add" type="button" :disabled="datasetSaving" @click="saveDataset">
             {{ datasetSaving ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="importDialogOpen" title="Import Dataset" width="640px">
+      <div class="import-wrap">
+        <div class="import-row">
+          <div class="import-label">Mode</div>
+          <el-radio-group v-model="importMode">
+            <el-radio label="replace">Replace existing cases</el-radio>
+            <el-radio label="append">Append (keep existing)</el-radio>
+          </el-radio-group>
+        </div>
+        <div class="import-row">
+          <div class="import-label">File</div>
+          <div class="import-file">
+            <button class="ghost" type="button" @click="chooseImportFile">Choose JSON</button>
+            <div class="import-file-name">{{ importFile?.name || 'No file selected' }}</div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="dialog-footer">
+          <button class="ghost" type="button" :disabled="importing" @click="importDialogOpen = false">Cancel</button>
+          <button class="add" type="button" :disabled="importing" @click="runImport">
+            {{ importing ? 'Importing...' : 'Import' }}
           </button>
         </div>
       </template>
@@ -794,6 +983,58 @@ watch(
   margin-bottom: 12px;
 }
 
+.case-filters {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.cell-tags {
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.case-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.import-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.import-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.import-label {
+  font-size: 12px;
+  font-weight: 900;
+  color: #64748b;
+}
+
+.import-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.import-file-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .case-table :deep(.el-table__header-wrapper th) {
   background: #f8fafc;
 }
@@ -880,6 +1121,10 @@ watch(
 
 @media (max-width: 1120px) {
   .page {
+    grid-template-columns: 1fr;
+  }
+
+  .case-filters {
     grid-template-columns: 1fr;
   }
 }

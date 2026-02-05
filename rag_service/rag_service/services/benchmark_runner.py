@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from ..config import settings
 from ..database import MySQLSessionLocal
 from ..models import (
     BenchmarkCaseResult,
@@ -23,6 +24,43 @@ from .retriever import rag_retriever
 from .graph_retriever import graph_retriever
 
 logger = logging.getLogger(__name__)
+
+
+_stream_redis = None
+
+
+def _benchmark_stream_key(run_id: int) -> str:
+    return f"rag:benchmark_run:{int(run_id)}:stream"
+
+
+async def _get_stream_redis():
+    global _stream_redis
+    if _stream_redis is not None:
+        return _stream_redis
+
+    import redis.asyncio as aioredis
+
+    _stream_redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    return _stream_redis
+
+
+async def _emit_benchmark_event(run_id: int, event: dict[str, Any]) -> None:
+    try:
+        r = await _get_stream_redis()
+        payload: dict[str, Any] = {}
+        for k, v in (event or {}).items():
+            if v is None:
+                continue
+            if isinstance(v, (str, int, float)):
+                payload[str(k)] = v
+            else:
+                payload[str(k)] = json.dumps(v, ensure_ascii=False)
+        if not payload:
+            return
+        await r.xadd(_benchmark_stream_key(run_id), payload, maxlen=2000, approximate=True)
+    except Exception:
+        # Progress streaming is best-effort.
+        logger.exception("[benchmark] failed to publish progress event run_id=%s", run_id)
 
 
 def _normalize_source(s: str) -> str:
@@ -211,12 +249,55 @@ async def execute_benchmark_run(run_id: int) -> None:
         run.top_k,
     )
 
+    total_cases = len(cases)
+    await _emit_benchmark_event(
+        int(run_id),
+        {
+            "type": "benchmark_status",
+            "run_id": int(run_id),
+            "knowledge_base_id": int(run.knowledge_base_id),
+            "dataset_id": int(run.dataset_id),
+            "mode": str(run.mode),
+            "top_k": int(run.top_k or 5),
+            "status": "running",
+            "progress": 0,
+            "total_cases": total_cases,
+        },
+    )
+
     try:
         sums = {"mrr": 0.0, "ndcg": 0.0, "hit": 0.0}
         qa_sums = {"score": 0.0, "scored": 0, "pass": 0}
         total = 0
 
-        for c in cases:
+        if not cases:
+            agg = {
+                "total_cases": 0,
+                "hit_rate": 0.0,
+                "mrr": 0.0,
+                "ndcg": 0.0,
+            }
+            with MySQLSessionLocal() as db:
+                run = db.query(BenchmarkRun).filter(BenchmarkRun.id == run_id).first()
+                if run:
+                    run.status = "succeeded"
+                    run.metrics = json.dumps(agg, ensure_ascii=False)
+                    run.ended_at = datetime.utcnow()
+                    db.commit()
+
+            await _emit_benchmark_event(
+                int(run_id),
+                {
+                    "type": "benchmark_completed",
+                    "run_id": int(run_id),
+                    "status": "succeeded",
+                    "progress": 100,
+                    "metrics": agg,
+                },
+            )
+            return
+
+        for idx, c in enumerate(cases, start=1):
             expected_sources = _load_list(c.expected_sources)
 
             expected_answer = exp_map.get(int(c.id))
@@ -341,6 +422,21 @@ async def execute_benchmark_run(run_id: int) -> None:
                 sums["ndcg"] += float(metrics["ndcg"])
                 sums["hit"] += float(metrics["hit"])
                 total += 1
+
+                await _emit_benchmark_event(
+                    int(run_id),
+                    {
+                        "type": "benchmark_progress",
+                        "run_id": int(run_id),
+                        "status": "running",
+                        "progress": int((idx / total_cases) * 100),
+                        "current": idx,
+                        "total": total_cases,
+                        "case_id": int(c.id),
+                        "hit_rank": metrics.get("hit_rank"),
+                        "qa_score": score,
+                    },
+                )
                 continue
 
             if run.mode == "graph":
@@ -415,6 +511,20 @@ async def execute_benchmark_run(run_id: int) -> None:
             sums["hit"] += float(metrics["hit"])
             total += 1
 
+            await _emit_benchmark_event(
+                int(run_id),
+                {
+                    "type": "benchmark_progress",
+                    "run_id": int(run_id),
+                    "status": "running",
+                    "progress": int((idx / total_cases) * 100),
+                    "current": idx,
+                    "total": total_cases,
+                    "case_id": int(c.id),
+                    "hit_rank": metrics.get("hit_rank"),
+                },
+            )
+
         agg = {
             "total_cases": total,
             "hit_rate": (sums["hit"] / total) if total else 0.0,
@@ -439,6 +549,17 @@ async def execute_benchmark_run(run_id: int) -> None:
             run.ended_at = datetime.utcnow()
             db.commit()
 
+        await _emit_benchmark_event(
+            int(run_id),
+            {
+                "type": "benchmark_completed",
+                "run_id": int(run_id),
+                "status": "succeeded",
+                "progress": 100,
+                "metrics": agg,
+            },
+        )
+
         logger.info("[benchmark] done run_id=%s total=%s", run_id, total)
     except Exception as e:
         logger.exception("[benchmark] failed run_id=%s", run_id)
@@ -449,4 +570,15 @@ async def execute_benchmark_run(run_id: int) -> None:
                 run.error_message = str(e)
                 run.ended_at = datetime.utcnow()
                 db.commit()
+
+        await _emit_benchmark_event(
+            int(run_id),
+            {
+                "type": "benchmark_failed",
+                "run_id": int(run_id),
+                "status": "failed",
+                "progress": 100,
+                "error_message": str(e),
+            },
+        )
         raise

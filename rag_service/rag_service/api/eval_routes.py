@@ -156,6 +156,38 @@ def create_eval_dataset(kb_id: int, data: EvalDatasetCreate, db: Session = Depen
     return out
 
 
+@router.get("/knowledge-bases/{kb_id}/eval/datasets/export")
+def export_all_eval_datasets(kb_id: int, db: Session = Depends(get_mysql_db)):
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id, KnowledgeBase.is_active == True).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    datasets = (
+        db.query(EvalDataset)
+        .filter(EvalDataset.knowledge_base_id == kb_id, EvalDataset.is_active == True)
+        .order_by(EvalDataset.updated_at.desc())
+        .all()
+    )
+
+    out_items = []
+    for ds in datasets:
+        rows = (
+            db.query(EvalCase, EvalCaseExpectation)
+            .outerjoin(EvalCaseExpectation, EvalCaseExpectation.case_id == EvalCase.id)
+            .filter(EvalCase.dataset_id == ds.id)
+            .order_by(EvalCase.id.asc())
+            .all()
+        )
+        out_items.append(
+            {
+                "dataset": ds.to_dict(),
+                "cases": [_case_out(c, (e.expected_answer if e else None)) for (c, e) in rows],
+            }
+        )
+
+    return {"knowledge_base": kb.to_dict(), "datasets": out_items}
+
+
 @router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}")
 def get_eval_dataset(kb_id: int, dataset_id: int, db: Session = Depends(get_mysql_db)):
     ds = (
@@ -184,6 +216,19 @@ def update_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetUpdate, db
         name = data.name.strip()
         if not name:
             raise HTTPException(status_code=400, detail="name cannot be empty")
+
+        exists = (
+            db.query(EvalDataset)
+            .filter(
+                EvalDataset.knowledge_base_id == kb_id,
+                EvalDataset.name == name,
+                EvalDataset.is_active == True,
+                EvalDataset.id != dataset_id,
+            )
+            .first()
+        )
+        if exists:
+            raise HTTPException(status_code=400, detail="Dataset name already exists")
         ds.name = name
     if data.description is not None:
         ds.description = data.description
@@ -213,7 +258,15 @@ def delete_eval_dataset(kb_id: int, dataset_id: int, db: Session = Depends(get_m
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")
-def list_eval_cases(kb_id: int, dataset_id: int, db: Session = Depends(get_mysql_db)):
+def list_eval_cases(
+    kb_id: int,
+    dataset_id: int,
+    q: str | None = None,
+    tag: str | None = None,
+    offset: int = 0,
+    limit: int = 200,
+    db: Session = Depends(get_mysql_db),
+):
     ds = (
         db.query(EvalDataset)
         .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
@@ -222,14 +275,48 @@ def list_eval_cases(kb_id: int, dataset_id: int, db: Session = Depends(get_mysql
     if not ds or not ds.is_active:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    qv = (q or "").strip()
+    tv = (tag or "").strip()
+    off = int(offset or 0)
+    lim = int(limit or 0)
+    if off < 0:
+        off = 0
+    if lim <= 0:
+        lim = 200
+    if lim > 2000:
+        lim = 2000
+
+    base = db.query(EvalCase).filter(EvalCase.dataset_id == dataset_id)
+    if qv:
+        like = f"%{qv}%"
+        base = base.filter(
+            (EvalCase.query.like(like))
+            | (EvalCase.notes.like(like))
+            | (EvalCase.expected_sources.like(like))
+            | (EvalCase.tags.like(like))
+        )
+    if tv:
+        # tags are stored as JSON string; match exact quoted tag
+        base = base.filter(EvalCase.tags.like(f'%"{tv}"%'))
+
+    total = int(base.count())
+    case_ids = [r[0] for r in base.with_entities(EvalCase.id).order_by(EvalCase.id.asc()).offset(off).limit(lim).all()]
+    if not case_ids:
+        return {"items": [], "total": total, "offset": off, "limit": lim}
+
     rows = (
         db.query(EvalCase, EvalCaseExpectation)
         .outerjoin(EvalCaseExpectation, EvalCaseExpectation.case_id == EvalCase.id)
-        .filter(EvalCase.dataset_id == dataset_id)
+        .filter(EvalCase.id.in_(case_ids))
         .order_by(EvalCase.id.asc())
         .all()
     )
-    return {"items": [_case_out(c, (e.expected_answer if e else None)) for (c, e) in rows]}
+    return {
+        "items": [_case_out(c, (e.expected_answer if e else None)) for (c, e) in rows],
+        "total": total,
+        "offset": off,
+        "limit": lim,
+    }
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")

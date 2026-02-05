@@ -9,6 +9,7 @@ import router from './router'
 
 import './tailwind.css'
 import './style.css'
+import './agent-builder.css'
 
 const app = createApp(App)
 

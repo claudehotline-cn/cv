@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import RagModuleShell from '@/components/rag/RagModuleShell.vue'
@@ -57,6 +57,13 @@ const runForm = ref<{ datasetId: number | null; mode: 'vector' | 'graph' | 'qa';
 })
 
 const selectedRunId = ref<number | null>(null)
+
+const streamProgress = ref<number | null>(null)
+const streamCurrent = ref<number | null>(null)
+const streamTotal = ref<number | null>(null)
+const streamStatus = ref<string | null>(null)
+let stopRunStream: (() => void) | null = null
+let streamingRunId: number | null = null
 
 const kbId = computed(() => {
   const raw = String(route.query.kbId || '')
@@ -125,7 +132,86 @@ async function refreshRuns() {
     runs.value = []
   } finally {
     loading.value = false
+    ensureBenchmarkStream()
   }
+}
+
+function stopBenchmarkStream() {
+  if (stopRunStream) {
+    stopRunStream()
+    stopRunStream = null
+  }
+  streamingRunId = null
+  streamProgress.value = null
+  streamCurrent.value = null
+  streamTotal.value = null
+  streamStatus.value = null
+}
+
+function ensureBenchmarkStream() {
+  if (!kbId.value || !selectedRunId.value) {
+    stopBenchmarkStream()
+    return
+  }
+
+  const run = runs.value.find((r) => r.id === selectedRunId.value) || null
+  const status = String(run?.status || '').toLowerCase()
+  const shouldStream = status === 'queued' || status === 'running'
+
+  if (!shouldStream) {
+    stopBenchmarkStream()
+    return
+  }
+  if (streamingRunId === run?.id) return
+
+  stopBenchmarkStream()
+  streamingRunId = run?.id || null
+
+  stopRunStream = apiClient.streamBenchmarkRun(
+    kbId.value,
+    selectedRunId.value,
+    async (evt: any) => {
+      const evtRunId = Number(evt?.run_id ?? evt?.runId ?? evt?.run)
+      if (!Number.isFinite(evtRunId) || evtRunId !== selectedRunId.value) return
+
+      const t = String(evt?.type || '')
+      const st = String(evt?.status || '')
+      const prog = evt?.progress !== undefined ? Number(evt.progress) : undefined
+      const cur = evt?.current !== undefined ? Number(evt.current) : undefined
+      const tot = evt?.total !== undefined ? Number(evt.total) : undefined
+
+      if (Number.isFinite(prog)) streamProgress.value = prog
+      if (Number.isFinite(cur)) streamCurrent.value = cur
+      if (Number.isFinite(tot)) streamTotal.value = tot
+      if (st) streamStatus.value = st
+
+      const idx = runs.value.findIndex((r) => r.id === evtRunId)
+      if (idx >= 0 && st) {
+        runs.value[idx] = { ...runs.value[idx], status: st }
+      }
+
+      if (evt?.metrics) {
+        try {
+          const metricsObj = typeof evt.metrics === 'string' ? JSON.parse(evt.metrics) : evt.metrics
+          if (idx >= 0) runs.value[idx] = { ...runs.value[idx], metrics: metricsObj }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (t === 'benchmark_completed' || t === 'benchmark_failed') {
+        if (t === 'benchmark_completed') ElMessage.success('Benchmark completed')
+        if (t === 'benchmark_failed') ElMessage.error('Benchmark failed')
+
+        stopBenchmarkStream()
+        await refreshRuns()
+        if (selectedRunId.value) await refreshResults(selectedRunId.value)
+      }
+    },
+    (err) => {
+      console.error('Benchmark stream error', err)
+    }
+  )
 }
 
 async function refreshResults(runId: number) {
@@ -251,10 +337,15 @@ onMounted(async () => {
   if (selectedRunId.value) await refreshResults(selectedRunId.value)
 })
 
+onBeforeUnmount(() => {
+  stopBenchmarkStream()
+})
+
 watch(
   () => kbId.value,
   async (id) => {
     if (!id) return
+    stopBenchmarkStream()
     selectedRunId.value = null
     results.value = []
     await refreshDatasets()
@@ -267,6 +358,7 @@ watch(
   () => selectedRunId.value,
   async (id) => {
     if (!kbId.value || !id) return
+    ensureBenchmarkStream()
     await refreshResults(id)
   }
 )
@@ -318,6 +410,11 @@ watch(
             <div class="detail-title">{{ selected ? runTitle(selected) : 'Select a run' }}</div>
             <div class="detail-sub">
               Benchmarks run datasets in batch and track metrics over time.
+              <span v-if="streamStatus && (streamProgress !== null || (streamCurrent !== null && streamTotal !== null))">
+                • Live: {{ streamStatus }}
+                <span v-if="streamProgress !== null"> {{ streamProgress }}%</span>
+                <span v-if="streamCurrent !== null && streamTotal !== null"> ({{ streamCurrent }}/{{ streamTotal }})</span>
+              </span>
             </div>
           </div>
           <div class="detail-actions">

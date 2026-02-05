@@ -1,16 +1,21 @@
 import logging
 import os
 import uuid
+import asyncio
+import json
 from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Body
+from fastapi.responses import StreamingResponse
 
 from agent_core.events import AuditEmitter
+from agent_core.settings import get_settings
 
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 _LOGGER = logging.getLogger(__name__)
+settings = get_settings()
 
 
 def _rag_base_url() -> str:
@@ -903,6 +908,11 @@ async def list_eval_datasets(req: Request, kb_id: int):
     return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/datasets", req=req)
 
 
+@router.get("/knowledge-bases/{kb_id}/eval/datasets/export")
+async def export_all_eval_datasets(req: Request, kb_id: int):
+    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/datasets/export", req=req)
+
+
 @router.post("/knowledge-bases/{kb_id}/eval/datasets")
 async def create_eval_dataset(req: Request, kb_id: int, body: Dict[str, Any] = Body(...)):
     ctx = _dev_user_ctx(req)
@@ -1124,7 +1134,14 @@ async def delete_eval_dataset(req: Request, kb_id: int, dataset_id: int):
 
 @router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")
 async def list_eval_cases(req: Request, kb_id: int, dataset_id: int):
-    return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases", req=req)
+    allowed = {"q", "tag", "offset", "limit"}
+    params = {k: v for (k, v) in req.query_params.items() if k in allowed}
+    return await _proxy_json(
+        method="GET",
+        path=f"/api/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases",
+        req=req,
+        params=params,
+    )
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")
@@ -1568,6 +1585,36 @@ async def get_benchmark_run(req: Request, kb_id: int, run_id: int):
 @router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/results")
 async def list_benchmark_results(req: Request, kb_id: int, run_id: int):
     return await _proxy_json(method="GET", path=f"/api/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/results", req=req)
+
+
+@router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/stream")
+async def stream_benchmark_run(req: Request, kb_id: int, run_id: int):
+    """SSE: stream benchmark run progress without polling."""
+
+    async def event_generator():
+        from agent_core.events import RedisEventBus
+
+        event_bus = RedisEventBus(settings.redis_url)
+        stream_key = f"rag:benchmark_run:{int(run_id)}:stream"
+        try:
+            async for event in event_bus.subscribe(stream_key):
+                yield f"data: {json.dumps(event)}\n\n"
+                if await req.is_disconnected():
+                    break
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await event_bus.close()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/export")

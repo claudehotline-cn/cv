@@ -5,14 +5,15 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        primary: '#3267a4',
-        'background-light': '#f9fafb',
-        'background-dark': '#1b212d',
-        'surface-light': '#ffffff',
-        'surface-dark': '#252b36',
-        'text-main': '#101419',
-        'text-secondary': '#5b718b',
-        'border-color': '#e9edf1',
+        // Use CSS variables so sections can override palette locally.
+        primary: 'rgb(var(--twc-primary) / <alpha-value>)',
+        'background-light': 'rgb(var(--twc-background-light) / <alpha-value>)',
+        'background-dark': 'rgb(var(--twc-background-dark) / <alpha-value>)',
+        'surface-light': 'rgb(var(--twc-surface-light) / <alpha-value>)',
+        'surface-dark': 'rgb(var(--twc-surface-dark) / <alpha-value>)',
+        'text-main': 'rgb(var(--twc-text-main) / <alpha-value>)',
+        'text-secondary': 'rgb(var(--twc-text-secondary) / <alpha-value>)',
+        'border-color': 'rgb(var(--twc-border-color) / <alpha-value>)',
       },
       fontFamily: {
         display: ['Manrope', 'sans-serif'],

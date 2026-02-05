@@ -1,0 +1,214 @@
+/* Agent Builder Wizard (scoped by .ab-root)
+ * - Deep overrides for Element Plus to match Stitch design
+ * - Overrides Tailwind palette variables locally
+ */
+
+.ab-root {
+  --twc-primary: 37 209 244;
+  --twc-background-light: 245 248 248;
+  --twc-background-dark: 15 31 35;
+  --twc-surface-light: 255 255 255;
+  --twc-surface-dark: 22 42 48;
+  --twc-text-main: 13 25 28;
+  --twc-text-secondary: 73 142 156;
+  --twc-border-color: 230 242 244;
+
+  --ab-primary: rgb(var(--twc-primary));
+  --ab-primary-dark: #1ba8c4;
+  --ab-surface: rgb(var(--twc-surface-light));
+  --ab-surface-dark: rgb(var(--twc-surface-dark));
+  --ab-border: rgb(var(--twc-border-color));
+  --ab-text: rgb(var(--twc-text-main));
+  --ab-muted: rgb(var(--twc-text-secondary));
+
+  font-family: 'Space Grotesk', var(--font-sans);
+  background: rgb(var(--twc-background-light));
+  color: var(--ab-text);
+}
+
+.dark .ab-root {
+  background: rgb(var(--twc-background-dark));
+  color: #ffffff;
+}
+
+/* Make Tailwind font-display match wizard typography */
+.ab-root .font-display {
+  font-family: 'Space Grotesk', var(--font-sans) !important;
+}
+
+/* Element Plus palette overrides (scoped) */
+.ab-root {
+  --el-color-primary: rgb(var(--twc-primary));
+  --el-color-primary-dark-2: #0bb8d9;
+  --el-border-radius-base: 10px;
+  --el-border-radius-round: 9999px;
+  --el-border-color: rgba(230, 242, 244, 1);
+  --el-text-color-primary: rgba(13, 25, 28, 1);
+  --el-text-color-regular: rgba(73, 142, 156, 1);
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: rgb(var(--twc-background-light));
+  --el-fill-color-light: rgba(13, 25, 28, 0.04);
+  --el-fill-color-lighter: rgba(13, 25, 28, 0.02);
+}
+
+.dark .ab-root {
+  --el-text-color-primary: rgba(255, 255, 255, 0.95);
+  --el-text-color-regular: rgba(192, 225, 232, 0.75);
+  --el-bg-color: rgb(var(--twc-surface-dark));
+  --el-border-color: rgba(42, 63, 69, 1);
+  --el-fill-color-light: rgba(255, 255, 255, 0.06);
+  --el-fill-color-lighter: rgba(255, 255, 255, 0.03);
+}
+
+/* Inputs */
+.ab-root .el-input__wrapper,
+.ab-root .el-textarea__inner {
+  background: #ffffff !important;
+  border: 1px solid rgba(203, 213, 225, 1) !important;
+  box-shadow: none !important;
+  padding: 10px 14px !important;
+  border-radius: 12px !important;
+  color: rgba(13, 25, 28, 1) !important;
+}
+
+.dark .ab-root .el-input__wrapper,
+.dark .ab-root .el-textarea__inner {
+  background: rgba(26, 44, 50, 1) !important;
+  border-color: rgba(42, 63, 69, 1) !important;
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.ab-root .el-input__wrapper.is-focus,
+.ab-root .el-textarea__inner:focus {
+  border-color: rgba(37, 209, 244, 1) !important;
+  box-shadow: 0 0 0 3px rgba(37, 209, 244, 0.18) !important;
+}
+
+.ab-root .el-textarea__inner {
+  resize: none;
+  line-height: 1.6;
+}
+
+/* Buttons */
+.ab-root .el-button {
+  border-radius: 12px;
+  font-weight: 700;
+}
+
+.ab-root .el-button--primary {
+  background: rgb(var(--twc-primary)) !important;
+  border: 1px solid rgba(10, 184, 217, 0.25) !important;
+  color: rgba(13, 25, 28, 1) !important;
+  box-shadow: 0 10px 24px rgba(37, 209, 244, 0.18);
+}
+
+.ab-root .el-button--primary:hover {
+  background: #0bb8d9 !important;
+  transform: translateY(-1px);
+}
+
+.ab-root .el-button.is-disabled {
+  opacity: 0.55;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Switch */
+.ab-root .el-switch__core {
+  border: none !important;
+  background: rgba(203, 213, 225, 1) !important;
+}
+
+.ab-root .el-switch.is-checked .el-switch__core {
+  background: rgb(var(--twc-primary)) !important;
+}
+
+/* Upload */
+.ab-root .el-upload-dragger {
+  border-radius: 16px;
+  border: 2px dashed rgba(203, 213, 225, 1);
+  background: rgba(255, 255, 255, 1);
+}
+
+.dark .ab-root .el-upload-dragger {
+  border-color: rgba(42, 63, 69, 1);
+  background: rgba(22, 42, 48, 1);
+}
+
+.ab-root .el-upload-dragger:hover {
+  border-color: rgb(var(--twc-primary));
+}
+
+/* Progress */
+.ab-root .el-progress-bar__outer {
+  background: rgba(226, 232, 240, 1) !important;
+  border-radius: 9999px;
+}
+
+.ab-root .el-progress-bar__inner {
+  border-radius: 9999px;
+}
+
+/* Utility wrappers used by wizard pages */
+.ab-root .ab-upload-zone {
+  width: 100%;
+}
+
+.ab-root .ab-upload-zone .el-upload {
+  width: 100%;
+}
+
+.ab-root .ab-upload-zone .el-upload-dragger {
+  width: 100%;
+  padding: 64px 24px;
+  border-radius: 16px;
+  text-align: center;
+}
+
+.ab-root .ab-icon-btn.el-button {
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.ab-root .ab-icon-btn.el-button:hover {
+  background: rgba(15, 31, 35, 0.04);
+}
+
+.dark .ab-root .ab-icon-btn.el-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ab-root .el-link {
+  font-weight: 800;
+}
+
+/* Cards */
+.ab-root .el-card {
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 1);
+  background: rgba(255, 255, 255, 1);
+}
+
+.dark .ab-root .el-card {
+  border-color: rgba(42, 63, 69, 1);
+  background: rgba(22, 42, 48, 1);
+}
+
+.ab-root .el-card__header {
+  border-bottom: 1px solid rgba(226, 232, 240, 1);
+}
+
+.dark .ab-root .el-card__header {
+  border-bottom-color: rgba(42, 63, 69, 1);
+}
+
+/* Tags */
+.ab-root .el-tag {
+  border-radius: 9999px;
+  font-weight: 800;
+}
+
+/* Scrollbar container polish */
+.ab-root .el-scrollbar__wrap {
+  overscroll-behavior: contain;
+}

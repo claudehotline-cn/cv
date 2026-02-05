@@ -1,5 +1,15 @@
 /* Modern Reset & Premium Theme */
 :root {
+  /* Tailwind palette variables (defaults match tailwind.config.cjs) */
+  --twc-primary: 50 103 164;
+  --twc-background-light: 249 250 251;
+  --twc-background-dark: 27 33 45;
+  --twc-surface-light: 255 255 255;
+  --twc-surface-dark: 37 43 54;
+  --twc-text-main: 16 20 25;
+  --twc-text-secondary: 91 113 139;
+  --twc-border-color: 233 237 241;
+
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;

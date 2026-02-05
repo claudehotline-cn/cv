@@ -3,7 +3,7 @@
     <el-header class="glass-panel header">
       <div class="header-content">
         <h2>自定义 Agent</h2>
-        <el-button type="primary" :icon="Plus" round @click="$router.push('/custom-agents/new')">
+        <el-button type="primary" :icon="Plus" round @click="$router.push('/agents/create')">
           新建 Agent
         </el-button>
       </div>
