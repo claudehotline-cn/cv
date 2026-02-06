@@ -23,18 +23,17 @@
       <aside class="trace-left">
         <div class="pane-title">Execution Trace</div>
         <el-tree
+          :key="treeRenderKey"
           :data="traceTree"
           node-key="span_id"
           :indent="8"
-          default-expand-all
+          :default-expanded-keys="expandedSpanIds"
+          :render-after-expand="false"
           :expand-on-click-node="false"
-          highlight-current
-          :current-node-key="selectedSpanId || undefined"
           class="trace-tree"
-          @node-click="handleNodeClick"
         >
           <template #default="{ data }">
-            <div class="trace-node-row" :class="{ active: selectedSpanId === data.span_id }">
+            <div class="trace-node-row" :class="{ active: selectedSpanId === data.span_id }" @click.stop="handleNodeClick(data)">
               <div class="trace-node-main">
                 <span class="trace-node-icon material-symbols-outlined">{{ spanIcon(data.type) }}</span>
                 <div class="trace-node-text">
@@ -372,6 +371,12 @@ const outputPrettyJson = ref(true)
 const outputWrapText = ref(false)
 const outputKeyInput = ref('')
 const outputKeyFilters = ref<string[]>(['message', 'usage'])
+const treeRenderKey = computed(() => {
+  const runId = runDetail.value?.run?.request_id || 'empty'
+  const spanCount = runDetail.value?.spans?.length || 0
+  return `${runId}:${spanCount}`
+})
+const expandedSpanIds = computed(() => (runDetail.value?.spans || []).map((s) => s.span_id))
 
 const insights = computed(() => runDetail.value?.insights)
 const runStatus = computed(() => normalizeStatus(runDetail.value?.run?.status))
@@ -858,6 +863,7 @@ onMounted(loadDetail)
 
 .trace-body {
   height: calc(100% - 56px);
+  min-height: 0;
   display: grid;
   grid-template-columns: 420px minmax(560px, 1fr) 320px;
   background: #ffffff;
@@ -869,6 +875,7 @@ onMounted(loadDetail)
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .pane-title {
@@ -885,7 +892,9 @@ onMounted(loadDetail)
   padding: 8px 10px;
   overflow-x: auto;
   overflow-y: auto;
+  overflow-anchor: none;
   flex: 1;
+  min-height: 0;
   --el-tree-node-hover-bg-color: #ffffff;
 }
 
@@ -1021,6 +1030,7 @@ onMounted(loadDetail)
 
 .trace-center {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e0ebf1;
@@ -1028,6 +1038,9 @@ onMounted(loadDetail)
 
 .trace-tabs {
   height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .trace-tabs :deep(.el-tabs__header) {
@@ -1060,16 +1073,21 @@ onMounted(loadDetail)
 }
 
 .trace-tabs :deep(.el-tabs__content) {
-  height: calc(100% - 59px);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .trace-tabs :deep(.el-tab-pane) {
   height: 100%;
+  min-height: 0;
 }
 
 .tab-scroll {
   height: 100%;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 18px;
   background: #ffffff;
 }
@@ -1377,6 +1395,7 @@ onMounted(loadDetail)
   background: #ffffff;
   padding: 16px;
   overflow-y: auto;
+  min-height: 0;
   border-left: 1px solid #e0ebf1;
 }
 
