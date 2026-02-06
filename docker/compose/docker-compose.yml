@@ -481,7 +481,7 @@ services:
     build:
       context: ../vllm
       dockerfile: Dockerfile.vllm-omni
-    image: vllm-omni:v0.13.0-sm120
+    image: vllm-omni:v0.15.1-omni0.15.0rc1-sm120
     container_name: vllm
     ports:
       - "18000:8000"
@@ -490,7 +490,6 @@ services:
       - ../vllm/entrypoint.py:/app/entrypoint.py
     environment:
       - VLLM_USE_MODELSCOPE=false
-      - VLLM_ATTENTION_BACKEND=FLASHINFER
     ipc: host
     command:
       - "--model"
@@ -499,6 +498,8 @@ services:
       - "0.0.0.0"
       - "--port"
       - "8000"
+      - "--attention-backend"
+      - "FLASHINFER"
       - "--max-model-len"
       - "16384"
       - "--gpu-memory-utilization"

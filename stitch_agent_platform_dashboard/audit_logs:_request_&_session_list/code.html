@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Audit Logs | AI Agent Platform</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&amp;family=Noto+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#25d1f4",
+                        "background-light": "#f5f8f8",
+                        "background-dark": "#101f22",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"],
+                        "sans": ["Noto Sans", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .table-row-hover:hover {
+            background-color: rgba(37, 209, 244, 0.05);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-sans text-slate-900 dark:text-slate-100 antialiased">
+<div class="relative flex h-auto min-h-screen w-full flex-col overflow-x-hidden">
+<div class="layout-container flex h-full grow flex-col">
+<!-- Top Navigation Bar -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-slate-200 dark:border-slate-800 bg-white dark:bg-background-dark px-6 py-3 sticky top-0 z-50">
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-3">
+<div class="size-8 bg-primary rounded flex items-center justify-center text-white">
+<span class="material-symbols-outlined">analytics</span>
+</div>
+<h2 class="text-slate-900 dark:text-white text-lg font-display font-bold leading-tight tracking-tight">AI Agent Platform</h2>
+</div>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-slate-600 dark:text-slate-300 text-sm font-medium hover:text-primary transition-colors" href="#">Projects</a>
+<a class="text-slate-600 dark:text-slate-300 text-sm font-medium hover:text-primary transition-colors" href="#">Traces</a>
+<a class="text-primary text-sm font-semibold border-b-2 border-primary py-4 -mb-4" href="#">Evaluations</a>
+<a class="text-slate-600 dark:text-slate-300 text-sm font-medium hover:text-primary transition-colors" href="#">Datasets</a>
+<a class="text-slate-600 dark:text-slate-300 text-sm font-medium hover:text-primary transition-colors" href="#">Settings</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex gap-2">
+<button class="flex items-center justify-center rounded-lg h-9 w-9 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+</button>
+<button class="flex items-center justify-center rounded-lg h-9 w-9 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+<span class="material-symbols-outlined text-[20px]">help_outline</span>
+</button>
+</div>
+<div class="h-8 w-[1px] bg-slate-200 dark:bg-slate-800 mx-2"></div>
+<div class="flex items-center gap-3">
+<div class="flex flex-col items-end hidden sm:flex">
+<span class="text-xs font-semibold text-slate-900 dark:text-white leading-none">Alex Rivers</span>
+<span class="text-[10px] text-slate-500 dark:text-slate-400 leading-none mt-1">Org Admin</span>
+</div>
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-9 border-2 border-slate-100 dark:border-slate-800" data-alt="User avatar placeholder" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBwBPc6DXIstRFKkNJN94BrYqTjF9ASyCmIjD2qd1a9lm6Pwl5JPtU7quHL5mepd1Q6X7SmdBywRdX6mT1txtxO3_riruzMDb_DBKuuQH6eU81_xXcadZXd0qoPzEwCBCclNYZcOAc2hMu6p9jA8Tjg5z1yvnBddvszKfll1aLioXrjClGHiaaEs4ErHgvxnKYobr5gyx8gMvNeKnsVu-lz7eWdI0VfZXBbXxPuutB5CAbLHnIyk1_xbwPSHk9pFzkQiR3OkWQ9P5x-");'></div>
+</div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- Left Sidebar -->
+<aside class="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-background-dark hidden lg:flex flex-col p-4 gap-6 shrink-0">
+<div class="flex flex-col gap-1">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">Scope</label>
+<div class="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+<div class="flex flex-col">
+<h3 class="text-slate-900 dark:text-white text-xs font-bold leading-none">Project Alpha</h3>
+<p class="text-slate-500 dark:text-slate-400 text-[10px] mt-1 leading-none">Observability Engine</p>
+</div>
+<span class="material-symbols-outlined text-slate-400 text-sm">unfold_more</span>
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">Observability</label>
+<nav class="flex flex-col gap-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">dashboard</span>
+                            Overview
+                        </a>
+<a class="flex items-center gap-3 px-3 py-2 text-primary bg-primary/10 text-sm font-semibold rounded-lg" href="#">
+<span class="material-symbols-outlined text-[20px]">receipt_long</span>
+                            Audit Logs
+                        </a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">forum</span>
+                            Sessions
+                        </a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">timeline</span>
+                            Traces
+                        </a>
+</nav>
+</div>
+<div class="mt-auto flex flex-col gap-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+                        Configuration
+                    </a>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col bg-slate-50 dark:bg-background-dark overflow-y-auto">
+<!-- Page Title & Primary Actions -->
+<div class="px-8 py-6 flex flex-wrap justify-between items-center gap-4">
+<div class="flex flex-col">
+<div class="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+<span>Projects</span>
+<span class="material-symbols-outlined text-[14px]">chevron_right</span>
+<span>Project Alpha</span>
+</div>
+<h1 class="text-slate-900 dark:text-white text-3xl font-display font-black leading-tight tracking-tight">Audit Logs</h1>
+<p class="text-slate-500 dark:text-slate-400 text-sm mt-1">Monitor agent executions, latency, and token consumption across all environments.</p>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 mr-2">
+<button class="px-3 py-1.5 text-xs font-bold bg-primary text-white rounded-md shadow-sm">Real-time</button>
+<button class="px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">Historical</button>
+</div>
+<button class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm font-bold rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+<span class="material-symbols-outlined text-[20px]">file_download</span>
+                            Export
+                        </button>
+</div>
+</div>
+<!-- Stats Overview -->
+<div class="px-8 grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+<div class="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+<div class="size-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+<span class="material-symbols-outlined">bolt</span>
+</div>
+<div>
+<p class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Total Requests (24h)</p>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="text-2xl font-display font-bold text-slate-900 dark:text-white">1,248,302</span>
+<span class="text-xs font-bold text-emerald-500 flex items-center leading-none">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span> 12.5%
+                                </span>
+</div>
+</div>
+</div>
+<div class="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+<div class="size-12 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center">
+<span class="material-symbols-outlined">timer</span>
+</div>
+<div>
+<p class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Avg Latency</p>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="text-2xl font-display font-bold text-slate-900 dark:text-white">450ms</span>
+<span class="text-xs font-bold text-rose-500 flex items-center leading-none">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span> 5.2%
+                                </span>
+</div>
+</div>
+</div>
+<div class="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+<div class="size-12 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center">
+<span class="material-symbols-outlined">toll</span>
+</div>
+<div>
+<p class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Total Tokens Used</p>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="text-2xl font-display font-bold text-slate-900 dark:text-white">15.8M</span>
+<span class="text-xs font-bold text-emerald-500 flex items-center leading-none">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span> 8.1%
+                                </span>
+</div>
+</div>
+</div>
+</div>
+<!-- Advanced Filter Bar -->
+<div class="px-8 mb-4">
+<div class="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-wrap items-center gap-3">
+<div class="flex-1 min-w-[300px]">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[20px]">search</span>
+<input class="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border-none rounded-lg text-sm focus:ring-2 focus:ring-primary/50 text-slate-900 dark:text-white placeholder:text-slate-400" placeholder="Filter by Request ID, Session ID or Keyword..." type="text"/>
+</div>
+</div>
+<div class="h-6 w-[1px] bg-slate-200 dark:bg-slate-700 hidden sm:block"></div>
+<div class="flex items-center gap-2">
+<div class="relative group">
+<button class="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+<span>Status: All</span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+<div class="relative group">
+<button class="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+<span>Action: LLM</span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+<div class="relative group">
+<button class="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+<span>Agent: SupportBot</span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+<div class="relative group">
+<button class="flex items-center gap-2 px-3 py-2 bg-primary/10 text-primary text-xs font-bold rounded-lg border border-primary/20">
+<span class="material-symbols-outlined text-[16px]">calendar_today</span>
+<span>Last 24 Hours</span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+<button class="p-2 text-slate-400 hover:text-rose-500 transition-colors" title="Reset Filters">
+<span class="material-symbols-outlined text-[20px]">filter_alt_off</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Data Table -->
+<div class="px-8 flex-1 pb-8 overflow-hidden">
+<div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-full">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse min-w-[1000px]">
+<thead>
+<tr class="border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50">
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Timestamp</th>
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Request ID</th>
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Session ID</th>
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Agent Name</th>
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Action Type</th>
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Latency</th>
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Tokens</th>
+<th class="px-6 py-4 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 dark:divide-slate-700">
+<!-- Row 1 -->
+<tr class="table-row-hover transition-colors">
+<td class="px-6 py-4">
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Oct 24, 14:22:05</span>
+<span class="text-[10px] text-slate-400 mt-0.5">2 mins ago</span>
+</div>
+</td>
+<td class="px-6 py-4 font-mono text-xs">
+<a class="text-primary font-bold hover:underline" href="#">req_a8f23...</a>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="w-1 h-4 bg-primary/30 rounded-full"></div>
+<span class="text-xs font-medium text-slate-600 dark:text-slate-400">sess_59210</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 bg-primary/20 rounded flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[16px]">smart_toy</span>
+</div>
+<span class="text-sm font-semibold text-slate-700 dark:text-slate-300">SupportBot v2</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold rounded uppercase">LLM Call</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex flex-col gap-1.5 w-full max-w-[80px]">
+<span class="text-xs font-medium text-slate-700 dark:text-slate-300">1,240ms</span>
+<div class="w-full bg-slate-100 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+<div class="bg-amber-400 h-full w-[60%]"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<span class="text-xs font-bold text-slate-900 dark:text-white">842</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-1.5 text-emerald-500 font-bold text-[11px] uppercase tracking-wide">
+<span class="material-symbols-outlined text-[14px]">check_circle</span>
+                                                Success
+                                            </div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="table-row-hover transition-colors">
+<td class="px-6 py-4">
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Oct 24, 14:21:58</span>
+<span class="text-[10px] text-slate-400 mt-0.5">3 mins ago</span>
+</div>
+</td>
+<td class="px-6 py-4 font-mono text-xs">
+<a class="text-primary font-bold hover:underline" href="#">req_0c114...</a>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="w-1 h-4 bg-primary/30 rounded-full"></div>
+<span class="text-xs font-medium text-slate-600 dark:text-slate-400">sess_59210</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 bg-slate-100 dark:bg-slate-700 rounded flex items-center justify-center text-slate-400">
+<span class="material-symbols-outlined text-[16px]">build</span>
+</div>
+<span class="text-sm font-semibold text-slate-700 dark:text-slate-300">SalesAgent</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-[10px] font-bold rounded uppercase">Tool Use</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex flex-col gap-1.5 w-full max-w-[80px]">
+<span class="text-xs font-medium text-slate-700 dark:text-slate-300">320ms</span>
+<div class="w-full bg-slate-100 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+<div class="bg-emerald-400 h-full w-[20%]"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<span class="text-xs font-bold text-slate-900 dark:text-white">--</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-1.5 text-emerald-500 font-bold text-[11px] uppercase tracking-wide">
+<span class="material-symbols-outlined text-[14px]">check_circle</span>
+                                                Success
+                                            </div>
+</td>
+</tr>
+<!-- Row 3 (Error) -->
+<tr class="table-row-hover transition-colors bg-rose-50/20 dark:bg-rose-900/5">
+<td class="px-6 py-4 border-l-4 border-rose-500">
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Oct 24, 14:21:30</span>
+<span class="text-[10px] text-slate-400 mt-0.5">4 mins ago</span>
+</div>
+</td>
+<td class="px-6 py-4 font-mono text-xs">
+<a class="text-primary font-bold hover:underline" href="#">req_df92a...</a>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="w-1 h-4 bg-primary rounded-full"></div>
+<span class="text-xs font-medium text-slate-600 dark:text-slate-400">sess_59208</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 bg-primary/20 rounded flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[16px]">smart_toy</span>
+</div>
+<span class="text-sm font-semibold text-slate-700 dark:text-slate-300">SupportBot v2</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 text-[10px] font-bold rounded uppercase">Chain</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex flex-col gap-1.5 w-full max-w-[80px]">
+<span class="text-xs font-medium text-slate-700 dark:text-slate-300">4,821ms</span>
+<div class="w-full bg-slate-100 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+<div class="bg-rose-500 h-full w-[95%]"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<span class="text-xs font-bold text-slate-900 dark:text-white">4,203</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-1.5 text-rose-500 font-bold text-[11px] uppercase tracking-wide">
+<span class="material-symbols-outlined text-[14px]">error_outline</span>
+                                                Failed
+                                            </div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="table-row-hover transition-colors">
+<td class="px-6 py-4">
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Oct 24, 14:20:12</span>
+<span class="text-[10px] text-slate-400 mt-0.5">5 mins ago</span>
+</div>
+</td>
+<td class="px-6 py-4 font-mono text-xs">
+<a class="text-primary font-bold hover:underline" href="#">req_ee13b...</a>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="w-1 h-4 bg-primary/10 rounded-full"></div>
+<span class="text-xs font-medium text-slate-600 dark:text-slate-400">sess_59205</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 bg-slate-100 dark:bg-slate-700 rounded flex items-center justify-center text-slate-400">
+<span class="material-symbols-outlined text-[16px]">build</span>
+</div>
+<span class="text-sm font-semibold text-slate-700 dark:text-slate-300">EmailAgent</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold rounded uppercase">LLM Call</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex flex-col gap-1.5 w-full max-w-[80px]">
+<span class="text-xs font-medium text-slate-700 dark:text-slate-300">850ms</span>
+<div class="w-full bg-slate-100 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+<div class="bg-emerald-400 h-full w-[40%]"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<span class="text-xs font-bold text-slate-900 dark:text-white">1,532</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-1.5 text-emerald-500 font-bold text-[11px] uppercase tracking-wide">
+<span class="material-symbols-outlined text-[14px]">check_circle</span>
+                                                Success
+                                            </div>
+</td>
+</tr>
+<!-- Row 5 -->
+<tr class="table-row-hover transition-colors">
+<td class="px-6 py-4">
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Oct 24, 14:19:44</span>
+<span class="text-[10px] text-slate-400 mt-0.5">6 mins ago</span>
+</div>
+</td>
+<td class="px-6 py-4 font-mono text-xs">
+<a class="text-primary font-bold hover:underline" href="#">req_77d2c...</a>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="w-1 h-4 bg-primary rounded-full"></div>
+<span class="text-xs font-medium text-slate-600 dark:text-slate-400">sess_59205</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 bg-primary/20 rounded flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[16px]">smart_toy</span>
+</div>
+<span class="text-sm font-semibold text-slate-700 dark:text-slate-300">SupportBot v2</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-[10px] font-bold rounded uppercase">Tool Use</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex flex-col gap-1.5 w-full max-w-[80px]">
+<span class="text-xs font-medium text-slate-700 dark:text-slate-300">120ms</span>
+<div class="w-full bg-slate-100 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+<div class="bg-emerald-400 h-full w-[10%]"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<span class="text-xs font-bold text-slate-900 dark:text-white">--</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-1.5 text-emerald-500 font-bold text-[11px] uppercase tracking-wide">
+<span class="material-symbols-outlined text-[14px]">check_circle</span>
+                                                Success
+                                            </div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination Footer -->
+<div class="mt-auto border-t border-slate-100 dark:border-slate-700 px-6 py-4 flex items-center justify-between bg-slate-50/30 dark:bg-slate-900/30">
+<div class="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+<span>Showing <span class="font-bold text-slate-900 dark:text-white">1 - 50</span> of 1,248,302 results</span>
+<div class="h-4 w-[1px] bg-slate-200 dark:bg-slate-700"></div>
+<div class="flex items-center gap-2">
+<span>Rows per page:</span>
+<select class="bg-transparent border-none text-xs font-bold focus:ring-0 p-0 pr-6 text-slate-900 dark:text-white cursor-pointer">
+<option>50</option>
+<option>100</option>
+<option>200</option>
+</select>
+</div>
+</div>
+<div class="flex items-center gap-1">
+<button class="size-8 rounded flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30" disabled="">
+<span class="material-symbols-outlined text-[18px]">first_page</span>
+</button>
+<button class="size-8 rounded flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30" disabled="">
+<span class="material-symbols-outlined text-[18px]">chevron_left</span>
+</button>
+<div class="flex items-center px-1">
+<button class="size-8 rounded flex items-center justify-center text-white bg-primary font-bold text-xs">1</button>
+<button class="size-8 rounded flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-xs">2</button>
+<button class="size-8 rounded flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-xs">3</button>
+<span class="px-2 text-slate-400 text-xs">...</span>
+<button class="size-8 rounded flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-xs">24,967</button>
+</div>
+<button class="size-8 rounded flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">
+<span class="material-symbols-outlined text-[18px]">chevron_right</span>
+</button>
+<button class="size-8 rounded flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">
+<span class="material-symbols-outlined text-[18px]">last_page</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</div>
+</div>
+</body></html>

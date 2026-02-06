@@ -1,11 +1,19 @@
 <template>
-  <aside class="sidebar-container">
+  <aside class="sidebar-container" :class="{ collapsed: ui.sidebarCollapsed }">
     <!-- Header -->
     <div class="sidebar-header">
-      <div class="logo-wrapper">
-        <span class="material-symbols-outlined text-primary icon-xl-24">all_inclusive</span>
+      <div class="brand-row">
+        <div class="logo-wrapper">
+          <span class="material-symbols-outlined text-primary icon-xl-24">all_inclusive</span>
+        </div>
+        <h1 class="brand-title">AI Nexus</h1>
       </div>
-      <h1 class="brand-title">AI Nexus</h1>
+
+      <el-tooltip content="Toggle sidebar" placement="right">
+        <el-button text class="collapse-btn" @click="ui.toggleSidebarCollapsed">
+          <span class="material-symbols-outlined icon-lg-20">{{ ui.sidebarCollapsed ? 'chevron_right' : 'chevron_left' }}</span>
+        </el-button>
+      </el-tooltip>
     </div>
 
     <!-- Scrollable Menu -->
@@ -112,8 +120,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useUiStore } from '@/stores/ui'
 
 const route = useRoute()
+const ui = useUiStore()
 const activeRoute = computed(() => {
   const p = route.path
   if (p.startsWith('/agents')) return '/agents'
@@ -195,6 +205,10 @@ const activeRoute = computed(() => {
     flex-shrink: 0;
     transition: background-color 0.3s, border-color 0.3s;
 }
+
+.sidebar-container.collapsed {
+    width: 76px;
+}
 :deep(.dark .sidebar-container) {
     background-color: var(--bg-secondary); /* bg-surface-dark */
     border-right-color: #1f2937; /* border-gray-800 */
@@ -204,7 +218,33 @@ const activeRoute = computed(() => {
     padding: 24px; /* p-6 */
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 12px; /* gap-3 */
+}
+
+.brand-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.collapse-btn {
+    border-radius: 10px;
+    padding: 6px 8px;
+    color: var(--text-secondary);
+}
+
+:deep(.collapse-btn:hover) {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+:deep(.dark .collapse-btn:hover) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-container.collapsed .brand-title {
+    display: none;
 }
 
 .logo-wrapper {
@@ -234,6 +274,28 @@ const activeRoute = computed(() => {
     display: flex;
     flex-direction: column;
     gap: 8px; /* gap-2 */
+}
+
+.sidebar-container.collapsed .menu-scroll-area {
+    padding: 0 10px;
+}
+
+.sidebar-container.collapsed .menu-divider,
+.sidebar-container.collapsed .menu-section-title {
+    display: none;
+}
+
+.sidebar-container.collapsed .menu-item-content {
+    justify-content: center;
+    gap: 0;
+}
+
+.sidebar-container.collapsed .menu-item-content .font-medium {
+    display: none;
+}
+
+.sidebar-container.collapsed :deep(.el-menu-item) {
+    padding: 12px 10px !important;
 }
 
 .custom-menu {
@@ -280,6 +342,20 @@ const activeRoute = computed(() => {
 .sidebar-footer {
     padding: 16px; /* p-4 */
     border-top: 1px solid var(--border-color);
+}
+
+.sidebar-container.collapsed .sidebar-footer {
+    padding: 12px;
+}
+
+.sidebar-container.collapsed .user-info,
+.sidebar-container.collapsed .icon-lg-20 {
+    display: none;
+}
+
+.sidebar-container.collapsed .user-card {
+    justify-content: center;
+    padding: 10px;
 }
 :deep(.dark .sidebar-footer) {
     border-top-color: #1f2937; /* gray-800 */
