@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAgentBuilderStore } from '@/stores/agentBuilder'
+import AgentBuilderSteps from '@/components/agent-builder/AgentBuilderSteps.vue'
+import AgentBuilderHeader from '@/components/agent-builder/AgentBuilderHeader.vue'
 
 const router = useRouter()
 const store = useAgentBuilderStore()
@@ -34,101 +36,30 @@ function goNext() {
 function importSchema() {
   ElMessage.info('Import schema: coming soon')
 }
+
+function saveDraft() {
+  ElMessage.success('Draft saved (mock)')
+}
 </script>
 
 <template>
-  <el-container class="ab-root bg-background-light dark:bg-background-dark text-text-main dark:text-white h-screen overflow-hidden">
-    <el-header height="65px" class="!p-0">
-      <header
-        class="flex items-center justify-between whitespace-nowrap border-b border-solid border-border-color bg-surface-light dark:bg-surface-dark px-10 py-3 h-full"
+  <el-container class="ab-root bg-background-light dark:bg-background-dark text-text-main dark:text-white h-full overflow-hidden">
+    <el-header height="88px" class="!p-0">
+      <AgentBuilderHeader
+        title="Capabilities"
+        subtitle="Configure what tools and skills your agent can use to perform tasks."
       >
-        <div class="flex items-center gap-4 text-text-main dark:text-white">
-          <div class="size-8 flex items-center justify-center text-primary">
-            <span class="material-symbols-outlined !text-3xl">smart_toy</span>
-          </div>
-          <h2 class="text-xl font-bold leading-tight tracking-tight">Agent Builder</h2>
-        </div>
-        <div class="flex flex-1 justify-end gap-8 items-center">
-          <div class="hidden md:flex items-center gap-9">
-            <el-button text class="!p-0 text-text-secondary hover:text-primary text-sm font-bold" @click="router.push('/')">
-              Dashboard
-            </el-button>
-            <el-button
-              text
-              class="!p-0 text-text-secondary hover:text-primary text-sm font-bold"
-              @click="router.push('/chat/agents')"
-            >
-              Marketplace
-            </el-button>
-            <el-button
-              text
-              class="!p-0 text-text-secondary hover:text-primary text-sm font-bold"
-              @click="ElMessage.info('Settings: coming soon')"
-            >
-              Settings
-            </el-button>
-          </div>
-          <el-button type="primary" class="!h-9 !px-4 !rounded-lg !text-sm !font-black">Deploy</el-button>
-          <div
-            class="bg-center bg-no-repeat bg-cover rounded-full size-10 ring-2 ring-white dark:ring-slate-700 shadow-sm"
-            style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDmjzwd5718sV1s51plRMyuBs-FobvREA7KdgAg623EcgQsoiEdshsgNYfm9dYv8Flw9Bzmvqa-MVsgsaeqlZNeKyFzBLVyW7OKXUIEkUWguoVWZLUcWMOqFo8te87qDpU2YUDKz0Cqp33-Jv_ui0yakX3F75k8ciQrOrC52-Aen46kXPsuPNBG8ecvmPP_5C3KfR-0VmF3bRpGsL5Iuan0vbZJP8bINhmGi9cfIlxLnItPywB2GkecSMLzJ2-Nrai6QJShTq6CNIpp')"
-          ></div>
-        </div>
-      </header>
+        <template #actions>
+          <el-button text class="!font-black" @click="saveDraft">Save Draft</el-button>
+        </template>
+      </AgentBuilderHeader>
     </el-header>
 
-    <el-container class="flex-1 w-full min-h-0">
-      <el-aside
-        width="288px"
-        class="w-72 hidden lg:flex flex-col border-r border-border-color bg-surface-light dark:bg-surface-dark pt-8 pb-4 px-6 h-full"
-      >
-        <div class="flex flex-col gap-1 mb-8">
-          <h1 class="text-lg font-black">New Agent</h1>
-          <p class="text-text-secondary text-sm">Step 2 of 4</p>
-        </div>
-
-        <nav class="flex flex-col gap-2">
-          <el-button text class="!h-auto !p-0 !w-full" @click="goBack">
-            <div class="group flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-background-light dark:hover:bg-slate-800 transition-colors text-left w-full">
-              <span class="material-symbols-outlined text-green-500">check_circle</span>
-              <div class="flex flex-col">
-                <span class="text-sm font-bold">General Info</span>
-                <span class="text-xs text-text-secondary">Completed</span>
-              </div>
-            </div>
-          </el-button>
-
-          <div class="flex items-center gap-3 px-3 py-3 rounded-lg bg-primary/10 border border-primary/20">
-            <span class="material-symbols-outlined text-primary">bolt</span>
-            <div class="flex flex-col">
-              <span class="text-sm font-black">Capabilities</span>
-              <span class="text-xs text-primary">In Progress</span>
-            </div>
-          </div>
-
-          <el-button text class="!h-auto !p-0 !w-full" @click="goNext">
-            <div class="group flex items-center gap-3 px-3 py-3 rounded-lg opacity-60 hover:opacity-100 hover:bg-background-light dark:hover:bg-slate-800 transition-all text-left w-full">
-              <span class="material-symbols-outlined text-slate-400">menu_book</span>
-              <span class="text-sm font-bold text-text-secondary dark:text-slate-200">Knowledge Base</span>
-            </div>
-          </el-button>
-
-          <el-button text class="!h-auto !p-0 !w-full" @click="router.push('/agents/create/review')">
-            <div class="group flex items-center gap-3 px-3 py-3 rounded-lg opacity-60 hover:opacity-100 hover:bg-background-light dark:hover:bg-slate-800 transition-all text-left w-full">
-              <span class="material-symbols-outlined text-slate-400">fact_check</span>
-              <span class="text-sm font-bold text-text-secondary dark:text-slate-200">Review</span>
-            </div>
-          </el-button>
-        </nav>
-      </el-aside>
-
-      <!-- Main Content -->
-      <el-main class="!p-0 flex-1 min-w-0 min-h-0 overflow-y-auto bg-background-light dark:bg-background-dark">
-        <div class="p-6 lg:p-10 lg:pr-20 pb-16">
-          <div class="max-w-4xl mx-auto w-full flex flex-col gap-8">
-          <div class="flex flex-col gap-2">
-            <h1 class="text-3xl lg:text-4xl font-black tracking-tight">Agent Capabilities</h1>
-            <p class="text-text-secondary text-lg">Configure what tools and skills your agent can use to perform tasks.</p>
+    <el-main class="!p-0 flex-1 min-w-0 min-h-0 overflow-y-auto bg-background-light dark:bg-background-dark">
+      <div class="p-6 lg:p-8 pb-12">
+        <div class="w-full flex flex-col gap-7">
+          <div class="ab-steps-panel w-full">
+            <AgentBuilderSteps />
           </div>
 
           <!-- Built-in Tools -->
@@ -196,7 +127,6 @@ function importSchema() {
                   <span class="material-symbols-outlined text-primary">api</span>
                   Custom API Tools
                 </h2>
-                <p class="text-text-secondary text-sm mt-1">Connect your agent to external services via OpenAPI.</p>
               </div>
               <el-button
                 type="default"
@@ -243,13 +173,15 @@ function importSchema() {
             </div>
           </section>
 
-          <div class="flex items-center justify-between pt-4 pb-12">
+          <div class="flex items-center justify-end gap-3 pt-4 pb-12">
             <el-button type="default" class="!px-6 !py-2.5 !rounded-lg !font-black" @click="goBack">Back</el-button>
-            <el-button type="primary" class="!px-8 !py-2.5 !rounded-lg !font-black" @click="goNext">Continue</el-button>
-          </div>
+            <el-button type="primary" size="large" class="!px-8" @click="goNext">
+              Next: Knowledge
+              <span class="material-symbols-outlined ml-2">arrow_forward</span>
+            </el-button>
           </div>
         </div>
-      </el-main>
-    </el-container>
+      </div>
+    </el-main>
   </el-container>
 </template>

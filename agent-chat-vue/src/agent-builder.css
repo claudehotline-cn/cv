@@ -208,6 +208,101 @@
   font-weight: 800;
 }
 
+/* Steps */
+.ab-root .ab-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ab-root .ab-steps-panel {
+  border: 1px solid rgba(226, 232, 240, 1);
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 16px;
+  padding: 14px 16px;
+  backdrop-filter: blur(10px);
+}
+
+.dark .ab-root .ab-steps-panel {
+  border-color: rgba(42, 63, 69, 1);
+  background: rgba(22, 42, 48, 0.72);
+}
+
+/* (Removed) steps header text; keep only the bar */
+
+.ab-root .el-steps {
+  --ab-step-dot: rgba(37, 209, 244, 1);
+}
+
+.ab-root .el-step__title {
+  font-weight: 900 !important;
+  font-size: 13px !important;
+}
+
+.ab-root .el-step__description {
+  display: none !important;
+}
+
+.ab-root .el-step__icon {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 9999px !important;
+  border: 1px solid rgba(203, 213, 225, 1) !important;
+  background: rgba(255, 255, 255, 1) !important;
+}
+
+.dark .ab-root .el-step__icon {
+  border-color: rgba(42, 63, 69, 1) !important;
+  background: rgba(22, 42, 48, 1) !important;
+}
+
+.ab-root .el-step__icon-inner {
+  font-weight: 900 !important;
+  color: rgba(73, 142, 156, 1) !important;
+}
+
+.ab-root .el-step__head.is-process .el-step__icon,
+.ab-root .el-step__head.is-finish .el-step__icon {
+  border-color: rgba(37, 209, 244, 1) !important;
+}
+
+.ab-root .el-step__head.is-process .el-step__icon {
+  background: rgba(37, 209, 244, 0.12) !important;
+}
+
+.ab-root .el-step__head.is-finish .el-step__icon {
+  background: rgba(37, 209, 244, 1) !important;
+}
+
+.ab-root .el-step__head.is-finish .el-step__icon-inner {
+  color: rgba(13, 25, 28, 1) !important;
+}
+
+.ab-root .el-step__line {
+  background-color: rgba(203, 213, 225, 1) !important;
+}
+
+.dark .ab-root .el-step__line {
+  background-color: rgba(42, 63, 69, 1) !important;
+}
+
+/* Horizontal steps spacing */
+.ab-root .el-steps--horizontal {
+  width: 100%;
+}
+
+.ab-root .el-steps--horizontal .el-step__main {
+  margin-top: 6px;
+}
+
+.ab-root .el-steps--horizontal .el-step__title {
+  line-height: 1.1;
+}
+
+.ab-root .el-steps--horizontal .el-step__description {
+  margin-top: 2px;
+}
+
 /* Scrollbar container polish */
 .ab-root .el-scrollbar__wrap {
   overscroll-behavior: contain;

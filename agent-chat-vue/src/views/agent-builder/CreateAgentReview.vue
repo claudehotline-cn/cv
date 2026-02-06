@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import apiClient from '@/api/client'
 import { useAgentBuilderStore } from '@/stores/agentBuilder'
+import AgentBuilderSteps from '@/components/agent-builder/AgentBuilderSteps.vue'
+import AgentBuilderHeader from '@/components/agent-builder/AgentBuilderHeader.vue'
 
 const router = useRouter()
 const store = useAgentBuilderStore()
@@ -50,7 +52,7 @@ async function publishAgent() {
     }
     await apiClient.createAgent(config)
     ElMessage.success('Agent published')
-    router.push('/chat/custom-agents')
+    router.push('/agents')
   } catch (e) {
     ElMessage.error('Publish failed')
   } finally {
@@ -85,82 +87,25 @@ const knowledgeCards = computed(() => {
 </script>
 
 <template>
-  <div class="ab-root h-screen flex overflow-hidden selection:bg-primary/30">
-    <!-- Sidebar Navigation -->
-    <el-container class="w-full h-full">
-      <el-aside width="256px" class="ab-aside bg-surface-light dark:bg-surface-dark border-r border-slate-200 dark:border-slate-800">
-        <div class="p-6">
-          <div class="flex flex-col">
-            <h1 class="text-xl font-black leading-normal text-text-main dark:text-white">Agent Wizard</h1>
-            <p class="text-text-secondary dark:text-slate-400 text-sm font-bold">Create New Agent</p>
-          </div>
-        </div>
-
-        <nav class="flex-1 px-4 flex flex-col gap-2">
-          <el-button text class="!h-auto !p-0 !w-full" @click="editIdentity">
-            <div class="flex items-center gap-3 px-3 py-3 rounded-lg text-text-secondary dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors w-full">
-              <span class="material-symbols-outlined text-[24px]">person</span>
-              <p class="text-sm font-bold">Identity</p>
-              <span class="ml-auto material-symbols-outlined text-[20px] text-primary">check</span>
-            </div>
-          </el-button>
-
-          <el-button text class="!h-auto !p-0 !w-full" @click="editCapabilities">
-            <div class="flex items-center gap-3 px-3 py-3 rounded-lg text-text-secondary dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors w-full">
-              <span class="material-symbols-outlined text-[24px]">build</span>
-              <p class="text-sm font-bold">Tools</p>
-              <span class="ml-auto material-symbols-outlined text-[20px] text-primary">check</span>
-            </div>
-          </el-button>
-
-          <el-button text class="!h-auto !p-0 !w-full" @click="editKnowledge">
-            <div class="flex items-center gap-3 px-3 py-3 rounded-lg text-text-secondary dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors w-full">
-              <span class="material-symbols-outlined text-[24px]">menu_book</span>
-              <p class="text-sm font-bold">Knowledge</p>
-              <span class="ml-auto material-symbols-outlined text-[20px] text-primary">check</span>
-            </div>
-          </el-button>
-
-          <div class="relative flex items-center gap-3 px-3 py-3 rounded-lg bg-primary/10 dark:bg-primary/5 text-text-main dark:text-white border border-primary/20">
-            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary rounded-r-full"></div>
-            <span class="material-symbols-outlined text-[24px] text-primary">check_circle</span>
-            <p class="text-sm font-black">Review</p>
-          </div>
-        </nav>
-
-        <div class="p-4 mt-auto">
-          <div class="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
-            <div class="flex items-center gap-2 mb-2">
-              <span class="material-symbols-outlined text-amber-500">lightbulb</span>
-              <span class="text-xs font-black text-slate-700 dark:text-slate-300">Pro Tip</span>
-            </div>
-            <p class="text-xs text-text-secondary dark:text-slate-400 leading-relaxed">
-              Use the playground to test edge cases before publishing to your users.
-            </p>
-          </div>
-        </div>
-      </el-aside>
-
-      <!-- Main Content Area -->
-      <el-container class="flex-1 min-h-0 bg-background-light dark:bg-background-dark">
-        <el-header height="88px" class="!p-0">
-          <header
-            class="px-8 py-6 border-b border-slate-200 dark:border-slate-800 bg-surface-light dark:bg-surface-dark flex justify-between items-center h-full"
-          >
-            <div>
-              <h2 class="text-3xl font-black tracking-tight text-text-main dark:text-white">Review &amp; Publish</h2>
-              <p class="text-text-secondary dark:text-slate-400 mt-1">
-                Review your agent's configuration and test it before publishing.
-              </p>
-            </div>
-            <div class="flex items-center gap-3">
-              <el-button text class="!font-black" @click="saveDraft">Save Draft</el-button>
-            </div>
-          </header>
-        </el-header>
+  <div class="ab-root h-full flex overflow-hidden selection:bg-primary/30">
+    <el-container class="w-full h-full min-h-0 bg-background-light dark:bg-background-dark">
+      <el-header height="88px" class="!p-0">
+        <AgentBuilderHeader
+          title="Review & Publish"
+          subtitle="Review your agent's configuration and test it before publishing."
+        >
+          <template #actions>
+            <el-button text class="!font-black" @click="saveDraft">Save Draft</el-button>
+          </template>
+        </AgentBuilderHeader>
+      </el-header>
 
         <el-main class="!p-0 flex-1 min-h-0 flex flex-col overflow-hidden">
           <div class="ab-review-body">
+            <div class="ab-steps-panel mb-6">
+              <AgentBuilderSteps />
+            </div>
+
             <div class="ab-review-grid grid grid-cols-1 lg:grid-cols-12 gap-6">
               <!-- Left Column: Summary -->
               <el-scrollbar class="lg:col-span-7 pr-2 min-h-0 h-full">
@@ -370,16 +315,10 @@ const knowledgeCards = computed(() => {
           </div>
         </el-main>
       </el-container>
-    </el-container>
   </div>
 </template>
 
 <style scoped>
-.ab-aside {
-  display: flex;
-  flex-direction: column;
-}
-
 .ab-card :deep(.el-card__body) {
   padding: 24px;
 }
@@ -394,17 +333,20 @@ const knowledgeCards = computed(() => {
 .ab-review-body {
   flex: 1;
   min-height: 0;
-  padding: 24px;
+  padding: 20px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .ab-review-grid {
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 
 .ab-playground {
-  height: 100%;
+  min-height: 0;
 }
 
 .ab-chat {
@@ -413,7 +355,7 @@ const knowledgeCards = computed(() => {
 }
 
 .ab-footer {
-  padding: 16px 32px;
+  padding: 14px 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;

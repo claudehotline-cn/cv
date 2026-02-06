@@ -1,9 +1,16 @@
 <template>
   <el-container class="marketplace-layout">
     <el-header class="glass-panel header">
-      <div class="header-content">
-        <h2>Agent 市场</h2>
-        <p class="subtitle">选择一个智能体开始对话</p>
+      <div class="header-content header-row">
+        <div class="header-left">
+          <h2>Agent 市场</h2>
+          <p class="subtitle">选择一个智能体开始对话</p>
+        </div>
+        <div class="header-right">
+          <el-button type="primary" class="create-agent-btn" :icon="Plus" @click="router.push('/agents/create')">
+            创建 Agent
+          </el-button>
+        </div>
       </div>
     </el-header>
 
@@ -30,6 +37,20 @@
                 {{ agent.type === 'builtin' ? '官方' : '社区' }}
               </el-tag>
             </div>
+
+            <div class="card-tools" @click.stop>
+              <el-popconfirm
+                v-if="agent.type === 'custom'"
+                title="确定要删除这个 Agent 吗?"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="handleDelete(agent.id)"
+              >
+                <template #reference>
+                  <el-button class="delete-btn" size="small" type="danger" :icon="Delete" circle @click.stop />
+                </template>
+              </el-popconfirm>
+            </div>
             
             <p class="description">{{ agent.config?.description || '暂无描述' }}</p>
             
@@ -52,7 +73,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Cpu, Connection, ArrowRight } from '@element-plus/icons-vue'
+import { Cpu, Connection, ArrowRight, Plus, Delete } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useChatStore } from '@/stores/chat'
 import apiClient from '@/api/client'
 
@@ -77,6 +99,18 @@ async function loadAgents() {
   }
 }
 
+async function handleDelete(agentId: string) {
+  try {
+    await apiClient.deleteAgent(agentId)
+    ElMessage.success('Agent 已删除')
+    await loadAgents()
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail
+    ElMessage.error(detail ? `删除失败: ${detail}` : '删除失败')
+    console.error(e)
+  }
+}
+
 function handleSelectAgent(agent: any) {
   chatStore.setCurrentAgent(agent.id)
   chatStore.createSession(`Chat with ${agent.name}`)
@@ -97,9 +131,39 @@ function getGradient(name: string) {
 
 <style scoped>
 .marketplace-layout {
-  height: 100vh;
+  height: 100%;
+  min-height: 100%;
   background: var(--bg-primary);
   overflow-y: auto;
+}
+
+.header-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.create-agent-btn {
+  height: 44px;
+  border-radius: 14px;
+  font-weight: 800;
+  padding: 0 16px;
+  border: none;
+  background: var(--accent-gradient);
+  box-shadow: 0 8px 18px rgba(31, 150, 173, 0.22);
+}
+
+.create-agent-btn:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 22px rgba(31, 150, 173, 0.28);
 }
 
 .header {
@@ -177,6 +241,28 @@ function getGradient(name: string) {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.card-tools {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: all 0.2s ease;
+}
+
+.agent-card {
+  position: relative;
+}
+
+.agent-card:hover .card-tools {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.delete-btn {
+  box-shadow: 0 10px 22px rgba(239, 68, 68, 0.18);
 }
 
 .card-header h3 {

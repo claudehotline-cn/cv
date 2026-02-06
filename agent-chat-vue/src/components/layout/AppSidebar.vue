@@ -114,7 +114,11 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
-const activeRoute = computed(() => route.path)
+const activeRoute = computed(() => {
+  const p = route.path
+  if (p.startsWith('/agents')) return '/agents'
+  return p
+})
 </script>
 
 <style scoped>
