@@ -25,6 +25,7 @@
         <el-tree
           :data="traceTree"
           node-key="span_id"
+          :indent="8"
           default-expand-all
           :expand-on-click-node="false"
           highlight-current
@@ -37,13 +38,16 @@
               <div class="trace-node-main">
                 <span class="trace-node-icon material-symbols-outlined">{{ spanIcon(data.type) }}</span>
                 <div class="trace-node-text">
-                  <div class="trace-node-name">{{ data.name }}</div>
-                  <div class="trace-node-sub">{{ spanSubtitle(data) }}</div>
+                  <div class="trace-node-name" :title="data.name">{{ wrapNodeName(data.name) }}</div>
+                  <div class="trace-node-sub">
+                    {{ spanSubtitle(data) }}
+                    <span v-if="data.status" class="trace-node-sub-status">{{ statusLabel(data.status) }}</span>
+                  </div>
                 </div>
               </div>
               <div class="trace-node-tail">
                 <span class="trace-node-duration">{{ formatDurationSeconds(data.duration) }}</span>
-                <span class="trace-node-status material-symbols-outlined" :class="`status-${(data.status || '').toLowerCase()}`">
+                <span class="trace-node-status material-symbols-outlined" :class="`status-${normalizeStatus(data.status)}`">
                   {{ statusIcon(data.status) }}
                 </span>
               </div>
@@ -370,7 +374,7 @@ const outputKeyInput = ref('')
 const outputKeyFilters = ref<string[]>(['message', 'usage'])
 
 const insights = computed(() => runDetail.value?.insights)
-const runStatus = computed(() => (runDetail.value?.run?.status || 'unknown').toLowerCase())
+const runStatus = computed(() => normalizeStatus(runDetail.value?.run?.status))
 const shortTraceId = computed(() => runDetail.value?.run?.request_id.slice(0, 8) || '-')
 const totalTokens = computed(() => runDetail.value?.run?.total_tokens || 0)
 const outputTokenCount = computed(() => runDetail.value?.run?.completion_tokens || 0)
@@ -537,21 +541,33 @@ function spanIcon(type: string) {
   return 'hub'
 }
 
+function normalizeStatus(status?: string) {
+  const s = String(status || '')
+    .trim()
+    .toLowerCase()
+    .replace('-', '_')
+
+  if (['succeeded', 'success', 'completed', 'done'].includes(s)) return 'succeeded'
+  if (['failed', 'error', 'errored'].includes(s)) return 'failed'
+  if (['interrupted', 'cancelled', 'canceled', 'paused'].includes(s)) return 'interrupted'
+  if (['running', 'in_progress', 'processing', 'started', 'pending', 'queued'].includes(s)) return 'running'
+  return s || 'unknown'
+}
+
 function statusIcon(status: string) {
-  const s = (status || '').toLowerCase()
+  const s = normalizeStatus(status)
   if (s === 'succeeded') return 'check_circle'
   if (s === 'failed') return 'error'
-  if (s === 'interrupted' || s === 'cancelled') return 'pause_circle'
+  if (s === 'interrupted') return 'pause_circle'
   if (s === 'running') return 'progress_activity'
   return 'help'
 }
 
 function statusLabel(status?: string) {
-  const s = (status || '').toLowerCase()
+  const s = normalizeStatus(status)
   if (s === 'succeeded') return 'SUCCESS'
   if (s === 'failed') return 'FAILED'
   if (s === 'interrupted') return 'INTERRUPTED'
-  if (s === 'cancelled') return 'CANCELLED'
   if (s === 'running') return 'RUNNING'
   return (status || 'UNKNOWN').toUpperCase()
 }
@@ -576,11 +592,23 @@ function spanSubtitle(span: { type?: string; meta?: Record<string, any> }) {
   return humanType
 }
 
+function wrapNodeName(name?: string, maxLen: number = 26) {
+  const text = String(name || '')
+  const chars = Array.from(text)
+  if (chars.length <= maxLen) return text
+
+  const lines: string[] = []
+  for (let i = 0; i < chars.length; i += maxLen) {
+    lines.push(chars.slice(i, i + maxLen).join(''))
+  }
+  return lines.join('\n')
+}
+
 function statusTagType(status?: string) {
-  const s = (status || '').toLowerCase()
+  const s = normalizeStatus(status)
   if (s === 'succeeded') return 'success'
   if (s === 'failed') return 'danger'
-  if (s === 'interrupted' || s === 'cancelled') return 'warning'
+  if (s === 'interrupted') return 'warning'
   if (s === 'running') return 'info'
   return 'info'
 }
@@ -831,7 +859,7 @@ onMounted(loadDetail)
 .trace-body {
   height: calc(100% - 56px);
   display: grid;
-  grid-template-columns: 340px minmax(620px, 1fr) 320px;
+  grid-template-columns: 420px minmax(560px, 1fr) 320px;
   background: #ffffff;
 }
 
@@ -855,9 +883,15 @@ onMounted(loadDetail)
 
 .trace-tree {
   padding: 8px 10px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   flex: 1;
   --el-tree-node-hover-bg-color: #ffffff;
+}
+
+.trace-tree :deep(.el-tree) {
+  width: max-content;
+  min-width: 100%;
 }
 
 .trace-tree :deep(.el-tree-node) {
@@ -868,11 +902,13 @@ onMounted(loadDetail)
   height: auto;
   padding: 2px 0;
   position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .trace-tree :deep(.el-tree-node__children) {
-  margin-left: 16px;
-  padding-left: 12px;
+  margin-left: 0;
+  padding-left: 2px;
   position: relative;
 }
 
@@ -888,14 +924,15 @@ onMounted(loadDetail)
 .trace-tree :deep(.el-tree-node__content::before) {
   content: '';
   position: absolute;
-  left: -11px;
+  left: -2px;
   top: 50%;
-  width: 10px;
+  width: 2px;
   border-top: 1px solid #d8e5ef;
 }
 
 .trace-node-row {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border: 1px solid transparent;
   border-radius: 12px;
   padding: 8px 10px;
@@ -915,6 +952,10 @@ onMounted(loadDetail)
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: max-content;
+}
+
+.trace-node-text {
   min-width: 0;
 }
 
@@ -927,10 +968,11 @@ onMounted(loadDetail)
   font-size: 14px;
   font-weight: 700;
   color: #15273a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 200px;
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: none;
+  line-height: 1.25;
 }
 
 .trace-node-sub {
@@ -939,10 +981,25 @@ onMounted(loadDetail)
   text-transform: lowercase;
 }
 
+.trace-node-sub-status {
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  color: #5b748f;
+}
+
 .trace-node-tail {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  margin-left: 8px;
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  padding-left: 14px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, #ffffff 14px);
 }
 
 .trace-node-duration {
@@ -1193,15 +1250,21 @@ onMounted(loadDetail)
 }
 
 .output-head :deep(.el-segmented) {
+  --el-segmented-item-selected-bg-color: #6478ff;
+  --el-segmented-item-selected-color: #ffffff;
   border: 1px solid #d8e6ef;
   border-radius: 10px;
   padding: 2px;
+  background: #f9fcff;
+}
+
+.output-head :deep(.el-segmented__item) {
+  color: #5f84a0;
+  font-weight: 700;
 }
 
 .output-head :deep(.el-segmented__item.is-selected) {
-  background: #ffffff;
-  color: #0f1f31;
-  box-shadow: inset 0 0 0 1px #d8e6ef;
+  box-shadow: none;
 }
 
 .output-card {
@@ -1523,7 +1586,7 @@ onMounted(loadDetail)
 
 @media (max-width: 1600px) {
   .trace-body {
-    grid-template-columns: 300px minmax(520px, 1fr) 300px;
+    grid-template-columns: 360px minmax(480px, 1fr) 300px;
   }
 
   .trace-tabs :deep(.el-tabs__item) {
@@ -1553,7 +1616,7 @@ onMounted(loadDetail)
 
 @media (max-width: 1280px) {
   .trace-body {
-    grid-template-columns: 270px 1fr;
+    grid-template-columns: 320px 1fr;
   }
 
   .trace-right {

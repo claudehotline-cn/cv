@@ -64,7 +64,7 @@
 
       <section class="filter-wrap">
         <el-card shadow="never" class="filter-card">
-          <div class="filter-row">
+          <div class="filter-row" :class="mode">
             <el-input
               v-model="searchQuery"
               class="search-input"
@@ -730,6 +730,10 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+.filter-row.historical {
+  grid-template-columns: minmax(240px, 1fr) 148px 148px 176px minmax(360px, 1.45fr) 42px 92px;
+}
+
 .search-input :deep(.el-input__wrapper),
 .filter-select :deep(.el-input__wrapper),
 .filter-date :deep(.el-input__wrapper) {
@@ -758,6 +762,23 @@ onBeforeUnmount(() => {
 
 .filter-date {
   width: 100%;
+  min-width: 0;
+}
+
+.filter-date :deep(.el-date-editor--datetimerange) {
+  width: 100%;
+  min-width: 0;
+}
+
+.filter-date :deep(.el-range-input) {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 118px;
+}
+
+.filter-date :deep(.el-range-separator) {
+  color: #7b90a5;
+  padding: 0 6px;
 }
 
 .reset-btn {
@@ -1059,6 +1080,10 @@ onBeforeUnmount(() => {
 @media (max-width: 1600px) {
   .filter-row {
     grid-template-columns: minmax(220px, 1fr) 140px 140px 160px 240px 42px 92px;
+  }
+
+  .filter-row.historical {
+    grid-template-columns: minmax(200px, 1fr) 140px 140px 160px minmax(320px, 1.35fr) 42px 92px;
   }
 
   .kpi-value {
