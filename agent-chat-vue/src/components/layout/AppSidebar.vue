@@ -127,6 +127,7 @@ const ui = useUiStore()
 const activeRoute = computed(() => {
   const p = route.path
   if (p.startsWith('/agents')) return '/agents'
+  if (p.startsWith('/audit')) return '/audit'
   return p
 })
 </script>

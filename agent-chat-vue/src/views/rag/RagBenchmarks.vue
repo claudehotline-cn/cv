@@ -180,9 +180,9 @@ function ensureBenchmarkStream() {
       const cur = evt?.current !== undefined ? Number(evt.current) : undefined
       const tot = evt?.total !== undefined ? Number(evt.total) : undefined
 
-      if (Number.isFinite(prog)) streamProgress.value = prog
-      if (Number.isFinite(cur)) streamCurrent.value = cur
-      if (Number.isFinite(tot)) streamTotal.value = tot
+      if (typeof prog === 'number' && Number.isFinite(prog)) streamProgress.value = prog
+      if (typeof cur === 'number' && Number.isFinite(cur)) streamCurrent.value = cur
+      if (typeof tot === 'number' && Number.isFinite(tot)) streamTotal.value = tot
       if (st) streamStatus.value = st
 
       const idx = runs.value.findIndex((r) => r.id === evtRunId)

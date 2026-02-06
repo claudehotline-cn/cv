@@ -79,8 +79,19 @@ const router = createRouter({
         },
         {
             path: '/audit',
-            name: 'audit',
-            component: () => import('./views/AuditView.vue'),
+            component: () => import('./views/audit/AuditLayout.vue'),
+            children: [
+                {
+                    path: '',
+                    name: 'audit',
+                    component: () => import('./views/audit/AuditRunsView.vue'),
+                },
+                {
+                    path: ':requestId',
+                    name: 'AuditRunDetail',
+                    component: () => import('./views/audit/AuditRunDetailView.vue'),
+                },
+            ],
         },
         {
             path: '/finance-docs',

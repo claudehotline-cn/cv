@@ -47,8 +47,6 @@ const activeIndex = computed(() => {
   const idx = steps.findIndex((s) => p === s.path)
   return idx >= 0 ? idx : 0
 })
-
-const activeLabel = computed(() => `Step ${activeIndex.value + 1} of ${steps.length}`)
 </script>
 
 <template>

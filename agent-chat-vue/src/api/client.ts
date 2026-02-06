@@ -30,6 +30,117 @@ export interface FeedbackRequest {
     message?: string
 }
 
+export interface AuditRunItem {
+    request_id: string
+    time: string
+    root_agent_name?: string | null
+    status: string
+    duration_seconds?: number | null
+    initiator?: string | null
+    conversation_id?: string | null
+    session_id?: string | null
+    llm_calls_count: number
+    tool_calls_count: number
+    failures_count: number
+    interrupts_count: number
+    action_type: 'llm' | 'tool' | 'chain' | 'interrupt' | 'job'
+    prompt_tokens: number
+    completion_tokens: number
+    total_tokens: number
+    token_source: 'exact' | 'estimated' | 'none'
+}
+
+export interface AuditRunsResponse {
+    items: AuditRunItem[]
+    total: number
+    limit: number
+    offset: number
+}
+
+export interface AuditOverview {
+    window_hours: number
+    total_requests: number
+    avg_latency_ms: number
+    total_tokens: number
+    succeeded_requests: number
+    failed_requests: number
+    interrupted_requests: number
+    running_requests: number
+}
+
+export interface AuditRunDetail {
+    run: AuditRunItem
+    failures: Array<{
+        event_id: string
+        time: string
+        type: string
+        component?: string | null
+        message: string
+        severity: string
+        payload?: Record<string, any>
+        span_id?: string | null
+    }>
+    spans: Array<{
+        span_id: string
+        parent_span_id?: string | null
+        type: string
+        name: string
+        status: string
+        duration?: number | null
+        started_at?: string | null
+        ended_at?: string | null
+        agent_name?: string | null
+        subagent_kind?: string | null
+        node_name?: string | null
+        meta?: Record<string, any>
+    }>
+    recent_events: Array<{
+        event_id: string
+        time: string
+        type: string
+        component?: string | null
+        message: string
+        severity: string
+        payload?: Record<string, any>
+        span_id?: string | null
+    }>
+    insights?: {
+        primary_action?: string
+        model_name?: string | null
+        prompt_tokens?: number
+        completion_tokens?: number
+        total_tokens?: number
+        token_source?: string
+        estimated_cost_usd?: number | null
+        input_preview?: string | null
+        output_preview?: string | null
+        latency_breakdown_ms?: {
+            network?: number
+            inference?: number
+            thinking?: number
+            total?: number
+        }
+        stats?: {
+            ttft_ms?: number | null
+            throughput_tps?: number | null
+            context_window_utilization_pct?: number
+        }
+        resource_details?: Array<{
+            resource: string
+            type?: string
+            status?: string
+            duration_ms?: number
+        }>
+        metadata?: {
+            environment?: string | null
+            initiator?: string | null
+            conversation_id?: string | null
+            thread_id?: string | null
+            tags?: string[]
+        }
+    }
+}
+
 class ApiClient {
     private baseUrl: string
     public http: AxiosInstance
@@ -307,14 +418,19 @@ class ApiClient {
         offset?: number;
         status?: string;
         agent?: string;
+        action?: string;
         q?: string;
         start_date?: string;
         end_date?: string;
-    } = {}): Promise<{ items: any[], total: number }> {
+    } = {}): Promise<AuditRunsResponse> {
         return this.http.get('/audit/runs', { params: { limit: 50, ...params } })
     }
 
-    async getAuditRunSummary(runId: string): Promise<any> {
+    async getAuditOverview(params: { window_hours?: number; agent?: string } = {}): Promise<AuditOverview> {
+        return this.http.get('/audit/overview', { params })
+    }
+
+    async getAuditRunSummary(runId: string): Promise<AuditRunDetail> {
         return this.http.get(`/audit/runs/${runId}/summary`)
     }
 
