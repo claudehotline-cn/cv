@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import apiClient, { DEV_USER_ROLE } from '@/api/client'
+import apiClient from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import MarkdownRenderer from '@/components/chat/MarkdownRenderer.vue'
 import {
   ArrowRight,
@@ -20,7 +21,8 @@ import {
 
 const route = useRoute()
 const router = useRouter()
-const isAdmin = DEV_USER_ROLE === 'admin'
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.isAdmin)
 
 type KB = {
   id: number
@@ -429,7 +431,7 @@ async function loadMore() {
 
 async function saveKbSettings() {
   if (!kbId.value) return
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -452,7 +454,7 @@ async function saveKbSettings() {
 
 async function previewChunks() {
   if (!kbId.value || !docId.value) return
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -472,7 +474,7 @@ async function previewChunks() {
 
 async function regenerateDocument() {
   if (!kbId.value || !docId.value) return
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }

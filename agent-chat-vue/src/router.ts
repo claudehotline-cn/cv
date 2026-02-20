@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
     history: createWebHistory(),
@@ -8,6 +9,12 @@ const router = createRouter({
         { path: '/custom-agents/new', redirect: '/chat/custom-agents/new' },
         { path: '/custom-agents/:id', redirect: (to) => `/chat/custom-agents/${String(to.params.id)}` },
 
+        {
+            path: '/login',
+            name: 'login',
+            component: () => import('./views/LoginView.vue'),
+            meta: { public: true },
+        },
         {
             path: '/agents',
             component: () => import('./views/AgentsView.vue'),
@@ -119,6 +126,27 @@ const router = createRouter({
             component: () => import('./views/rag/RagBenchmarks.vue'),
         },
     ],
+})
+
+router.beforeEach(async (to) => {
+    const auth = useAuthStore()
+    if (!auth.initialized) {
+        await auth.bootstrap()
+    }
+
+    const isPublic = Boolean(to.meta?.public)
+    if (isPublic) {
+        if (to.path === '/login' && auth.isAuthenticated) {
+            return '/'
+        }
+        return true
+    }
+
+    if (!auth.isAuthenticated) {
+        return { path: '/login', query: { redirect: to.fullPath } }
+    }
+
+    return true
 })
 
 export default router

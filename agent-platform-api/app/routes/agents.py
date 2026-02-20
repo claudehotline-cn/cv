@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from ..db import get_db
 from ..models.db_models import AgentModel
+from ..core.auth import AuthPrincipal, get_current_user, require_admin
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -24,7 +25,10 @@ class AgentUpdate(BaseModel):
     temperature: Optional[float] = None
 
 @router.get("/", response_model=List[dict])
-async def list_agents(db: AsyncSession = Depends(get_db)):
+async def list_agents(
+    _: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """List all available agents."""
     result = await db.execute(select(AgentModel).order_by(AgentModel.created_at.desc()))
     agents = result.scalars().all()
@@ -40,7 +44,11 @@ async def list_agents(db: AsyncSession = Depends(get_db)):
     ]
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def get_agent(
+    agent_id: str,
+    _: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(AgentModel).where(AgentModel.id == agent_id))
     agent = result.scalar_one_or_none()
     if not agent:
@@ -54,7 +62,11 @@ async def get_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 @router.post("/")
-async def create_agent(agent: AgentCreate, db: AsyncSession = Depends(get_db)):
+async def create_agent(
+    agent: AgentCreate,
+    _: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
     """Create a new custom agent."""
     config = {
         "description": agent.description,
@@ -80,7 +92,12 @@ async def create_agent(agent: AgentCreate, db: AsyncSession = Depends(get_db)):
     }
 
 @router.put("/{agent_id}")
-async def update_agent(agent_id: str, update: AgentUpdate, db: AsyncSession = Depends(get_db)):
+async def update_agent(
+    agent_id: str,
+    update: AgentUpdate,
+    _: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
     """Update a custom agent."""
     result = await db.execute(select(AgentModel).where(AgentModel.id == agent_id))
     agent = result.scalar_one_or_none()
@@ -118,7 +135,11 @@ async def update_agent(agent_id: str, update: AgentUpdate, db: AsyncSession = De
     }
 
 @router.delete("/{agent_id}")
-async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_agent(
+    agent_id: str,
+    _: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
     """Delete a custom agent."""
     result = await db.execute(select(AgentModel).where(AgentModel.id == agent_id))
     agent = result.scalar_one_or_none()

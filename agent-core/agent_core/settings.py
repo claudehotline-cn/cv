@@ -194,6 +194,23 @@ class Settings(BaseSettings):
         alias="AGENT_REQUEST_TIMEOUT",
     )
 
+    # Auth settings
+    auth_mode: str = Field(
+        default="mixed",
+        description="Auth mode: strict | mixed | dev",
+        alias="AUTH_MODE",
+    )
+    auth_introspection_url: str = Field(
+        default="http://agent-auth:8000/internal/introspect",
+        description="Bearer token introspection endpoint",
+        alias="AUTH_INTROSPECTION_URL",
+    )
+    auth_allow_dev_headers: bool = Field(
+        default=True,
+        description="Allow legacy X-User-Id/X-User-Role headers in mixed/dev mode",
+        alias="AUTH_ALLOW_DEV_HEADERS",
+    )
+
     @property
     def postgres_uri(self) -> str:
         """PostgreSQL Connection URI"""

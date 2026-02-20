@@ -5,14 +5,52 @@ import axios, { type AxiosInstance } from 'axios'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
-// Dev-only identity headers (temporary until real auth is added)
-export const DEV_USER_ID = 'dev_user_001'
-export const DEV_USER_ROLE: 'admin' | 'user' = 'admin'
+const ACCESS_TOKEN_KEY = 'auth.accessToken'
+const REFRESH_TOKEN_KEY = 'auth.refreshToken'
+const USER_KEY = 'auth.user'
 
-function devHeaders() {
-    return {
-        'X-User-Id': DEV_USER_ID,
-        'X-User-Role': DEV_USER_ROLE,
+export interface AuthUser {
+    id: string
+    email: string
+    username?: string | null
+    role: 'admin' | 'user'
+    status: string
+}
+
+function readAccessToken(): string {
+    return window.localStorage.getItem(ACCESS_TOKEN_KEY) || ''
+}
+
+function readRefreshToken(): string {
+    return window.localStorage.getItem(REFRESH_TOKEN_KEY) || ''
+}
+
+function writeTokens(accessToken: string, refreshToken: string) {
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
+    window.localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+}
+
+function clearTokens() {
+    window.localStorage.removeItem(ACCESS_TOKEN_KEY)
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY)
+    window.localStorage.removeItem(USER_KEY)
+}
+
+function writeUser(user: AuthUser | null) {
+    if (!user) {
+        window.localStorage.removeItem(USER_KEY)
+        return
+    }
+    window.localStorage.setItem(USER_KEY, JSON.stringify(user))
+}
+
+function readUser(): AuthUser | null {
+    const raw = window.localStorage.getItem(USER_KEY)
+    if (!raw) return null
+    try {
+        return JSON.parse(raw) as AuthUser
+    } catch {
+        return null
     }
 }
 
@@ -144,6 +182,7 @@ export interface AuditRunDetail {
 class ApiClient {
     private baseUrl: string
     public http: AxiosInstance
+    private refreshPromise: Promise<void> | null = null
 
     constructor(baseUrl: string = API_BASE) {
         this.baseUrl = baseUrl
@@ -151,18 +190,142 @@ class ApiClient {
             baseURL: baseUrl,
             headers: {
                 'Content-Type': 'application/json',
-                ...devHeaders(),
             }
         })
 
-        // interceptors can be added here
+        this.http.interceptors.request.use((config) => {
+            const token = readAccessToken()
+            if (token) {
+                config.headers = config.headers || {}
+                config.headers.Authorization = `Bearer ${token}`
+            }
+            return config
+        })
+
         this.http.interceptors.response.use(
             response => response.data,
-            error => {
-                // handle global errors
+            async (error) => {
+                const status = error?.response?.status
+                const originalRequest = error?.config || {}
+                const isRefreshPath = String(originalRequest.url || '').includes('/auth/refresh')
+                const canRetry = status === 401 && !originalRequest.__retry && !isRefreshPath && !!readRefreshToken()
+
+                if (canRetry) {
+                    originalRequest.__retry = true
+                    try {
+                        await this.refreshAccessToken()
+                        originalRequest.headers = originalRequest.headers || {}
+                        originalRequest.headers.Authorization = `Bearer ${readAccessToken()}`
+                        return this.http.request(originalRequest)
+                    } catch {
+                        this.clearAuth()
+                    }
+                }
+
                 return Promise.reject(error)
             }
         )
+    }
+
+    isAuthenticated(): boolean {
+        return !!readAccessToken()
+    }
+
+    getStoredUser(): AuthUser | null {
+        return readUser()
+    }
+
+    clearAuth() {
+        clearTokens()
+    }
+
+    async refreshAccessToken(): Promise<void> {
+        if (this.refreshPromise) return this.refreshPromise
+
+        const refreshToken = readRefreshToken()
+        if (!refreshToken) throw new Error('No refresh token')
+
+        this.refreshPromise = (async () => {
+            const result = await axios.post<{ access_token: string; refresh_token: string }>(
+                `${this.baseUrl}/auth/refresh`,
+                { refresh_token: refreshToken },
+                { headers: { 'Content-Type': 'application/json' } }
+            )
+            writeTokens(result.data.access_token, result.data.refresh_token)
+        })().finally(() => {
+            this.refreshPromise = null
+        })
+
+        return this.refreshPromise
+    }
+
+    async bootstrapAuth(): Promise<AuthUser | null> {
+        if (!this.isAuthenticated()) return null
+        try {
+            const user = await this.getMe()
+            return user
+        } catch {
+            try {
+                await this.refreshAccessToken()
+                return await this.getMe()
+            } catch {
+                this.clearAuth()
+                return null
+            }
+        }
+    }
+
+    async login(email: string, password: string): Promise<AuthUser> {
+        const res = await this.http.post<any, { access_token: string; refresh_token: string }>('/auth/login', { email, password })
+        writeTokens(res.access_token, res.refresh_token)
+        const me = await this.getMe()
+        writeUser(me)
+        return me
+    }
+
+    async logout(): Promise<void> {
+        const refreshToken = readRefreshToken()
+        if (refreshToken) {
+            try {
+                await this.http.post('/auth/logout', { refresh_token: refreshToken })
+            } catch {
+                // ignore logout backend errors
+            }
+        }
+        this.clearAuth()
+    }
+
+    async getMe(): Promise<AuthUser> {
+        const user = await this.http.get<any, AuthUser>('/auth/me')
+        writeUser(user)
+        return user
+    }
+
+    async register(input: { email: string; password: string; username?: string | null }): Promise<AuthUser> {
+        const user = await this.http.post<any, AuthUser>('/auth/register', input)
+        return user
+    }
+
+    private async fetchWithAuth(url: string, init: RequestInit = {}, retry = true): Promise<Response> {
+        const headers = new Headers(init.headers || {})
+        headers.set('Content-Type', headers.get('Content-Type') || 'application/json')
+        const token = readAccessToken()
+        if (token) headers.set('Authorization', `Bearer ${token}`)
+
+        let response = await fetch(url, { ...init, headers })
+        if (response.status === 401 && retry && !!readRefreshToken()) {
+            try {
+                await this.refreshAccessToken()
+                const retriedHeaders = new Headers(init.headers || {})
+                retriedHeaders.set('Content-Type', retriedHeaders.get('Content-Type') || 'application/json')
+                const refreshedToken = readAccessToken()
+                if (refreshedToken) retriedHeaders.set('Authorization', `Bearer ${refreshedToken}`)
+                response = await fetch(url, { ...init, headers: retriedHeaders })
+            } catch {
+                this.clearAuth()
+            }
+        }
+        return response
     }
 
     // Agent 操作
@@ -221,12 +384,16 @@ class ApiClient {
 
         const fetchStream = async () => {
             try {
-                const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/chat`, {
+                const response = await this.fetchWithAuth(`${this.baseUrl}/sessions/${sessionId}/chat`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', ...devHeaders() },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message }),
                     signal: controller.signal,
                 })
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`)
+                }
 
                 const reader = response.body?.getReader()
                 if (!reader) throw new Error('No response body')
@@ -280,9 +447,9 @@ class ApiClient {
 
         const fetchStream = async () => {
             try {
-                const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/resume`, {
+                const response = await this.fetchWithAuth(`${this.baseUrl}/sessions/${sessionId}/resume`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', ...devHeaders() },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(request),
                     signal: controller.signal,
                 })
@@ -367,8 +534,7 @@ class ApiClient {
 
         const fetchStream = async () => {
             try {
-                const response = await fetch(`${this.baseUrl}/tasks/sessions/${sessionId}/stream`, {
-                    headers: devHeaders(),
+                const response = await this.fetchWithAuth(`${this.baseUrl}/tasks/sessions/${sessionId}/stream`, {
                     signal: controller.signal,
                 })
 
@@ -477,10 +643,7 @@ class ApiClient {
         const form = new FormData()
         form.append('file', file)
         return this.http.post(`/rag/knowledge-bases/${kbId}/documents/upload`, form, {
-            headers: {
-                ...devHeaders(),
-                'Content-Type': 'multipart/form-data',
-            },
+            headers: { 'Content-Type': 'multipart/form-data' },
         })
     }
 
@@ -644,10 +807,9 @@ class ApiClient {
 
         const fetchStream = async () => {
             try {
-                const response = await fetch(
+                const response = await this.fetchWithAuth(
                     `${this.baseUrl}/rag/knowledge-bases/${kbId}/eval/benchmarks/runs/${runId}/stream`,
                     {
-                        headers: devHeaders(),
                         signal: controller.signal,
                     }
                 )
@@ -700,8 +862,7 @@ class ApiClient {
 
         const fetchStream = async () => {
             try {
-                const response = await fetch(`${this.baseUrl}/tasks/${taskId}/stream`, {
-                    headers: devHeaders(),
+                const response = await this.fetchWithAuth(`${this.baseUrl}/tasks/${taskId}/stream`, {
                     signal: controller.signal,
                 })
 

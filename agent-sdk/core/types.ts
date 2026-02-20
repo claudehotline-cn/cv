@@ -44,7 +44,7 @@ export interface ClientConfig {
     /** API 基础 URL */
     baseUrl: string
     /** 默认 headers */
-    headers?: Record<string, string>
+    headers?: Record<string, string> | (() => Record<string, string>)
     /** 调试模式 */
     debug?: boolean
 }

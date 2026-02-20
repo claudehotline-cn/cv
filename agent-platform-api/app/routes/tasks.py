@@ -15,6 +15,7 @@ from ..db import get_db
 from ..services.task_service import TaskService
 from ..models.db_models import SessionModel
 from agent_core.settings import get_settings
+from ..core.auth import AuthPrincipal, get_current_user
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
@@ -57,6 +58,7 @@ async def create_execute_task(
     session_id: UUID,
     request: ExecuteRequest,
     req: Request,
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """创建异步执行任务"""
@@ -110,7 +112,7 @@ async def create_execute_task(
         agent_key,
         request.message,
         request.config,
-        "default", # user_id
+        user.user_id,
         task_thread_id,  # thread_id
     )
     await redis_pool.close()
@@ -154,6 +156,7 @@ async def list_session_tasks(
         description="Filter by task status. Use 'active' for pending/running tasks.",
     ),
     limit: int = Query(default=50, ge=1, le=200),
+    _: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取会话的任务列表（用于页面返回后恢复任务状态）。"""
@@ -195,6 +198,7 @@ async def list_session_tasks(
 @router.get("/{task_id}")
 async def get_task_status(
     task_id: UUID,
+    _: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """获取任务状态"""
@@ -218,6 +222,7 @@ async def get_task_status(
 @router.post("/{task_id}/cancel")
 async def cancel_task(
     task_id: UUID,
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """请求取消任务"""
@@ -262,7 +267,7 @@ async def cancel_task(
             thread_id=thread_id,
             component="job",
             actor_type="user",
-            actor_id="api",
+            actor_id=user.user_id,
             payload={"reason": "user_requested"},
         )
     finally:
@@ -276,6 +281,7 @@ async def resume_task(
     task_id: UUID,
     request: ResumeTaskRequest,
     req: Request,
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Resume an async task that is waiting for approval."""
@@ -300,7 +306,7 @@ async def resume_task(
         request.decision,
         request.feedback,
         None,  # config
-        "default",  # user_id
+        user.user_id,
         thread_id,
     )
     await redis_pool.close()
@@ -318,7 +324,7 @@ async def resume_task(
             thread_id=thread_id,
             component="job",
             actor_type="user",
-            actor_id="api",
+            actor_id=user.user_id,
             payload={"decision": request.decision},
         )
     except Exception:
@@ -328,7 +334,11 @@ async def resume_task(
 
 
 @router.get("/sessions/{session_id}/stream")
-async def stream_session_task_events(session_id: UUID, request: Request):
+async def stream_session_task_events(
+    session_id: UUID,
+    request: Request,
+    _: AuthPrincipal = Depends(get_current_user),
+):
     """SSE：订阅某个会话下所有任务的事件流（进度/状态/结果）。"""
 
     async def event_generator():
@@ -362,7 +372,11 @@ async def stream_session_task_events(session_id: UUID, request: Request):
 
 
 @router.get("/{task_id}/stream")
-async def stream_task_progress(task_id: UUID, request: Request):
+async def stream_task_progress(
+    task_id: UUID,
+    request: Request,
+    _: AuthPrincipal = Depends(get_current_user),
+):
     """SSE 流式获取任务进度"""
     
     async def event_generator():
@@ -400,7 +414,12 @@ async def stream_task_progress(task_id: UUID, request: Request):
 
 
 @router.get("/threads/{thread_id}/history")
-async def get_thread_history(thread_id: str, limit: int = 10, before: Optional[str] = None):
+async def get_thread_history(
+    thread_id: str,
+    limit: int = 10,
+    before: Optional[str] = None,
+    _: AuthPrincipal = Depends(get_current_user),
+):
     """
     Get state history (checkpoints) for a thread.
     Useful for visualizing the timeline to pick a rollback point.
@@ -428,7 +447,11 @@ class RollbackRequest(BaseModel):
 
 
 @router.post("/threads/{thread_id}/rollback")
-async def rollback_thread_state(thread_id: str, request: RollbackRequest):
+async def rollback_thread_state(
+    thread_id: str,
+    request: RollbackRequest,
+    _: AuthPrincipal = Depends(get_current_user),
+):
     """
     Rollback thread state to a specific checkpoint.
     """

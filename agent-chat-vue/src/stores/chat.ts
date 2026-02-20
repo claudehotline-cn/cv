@@ -9,6 +9,13 @@ import type { Message, Session } from '@/types'
 import apiClient from '@/api/client'
 import { useStream } from '@agent-sdk/vue'
 
+function authHeaders() {
+    const token = window.localStorage.getItem('auth.accessToken') || ''
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    return headers
+}
+
 export const useChatStore = defineStore('chat', () => {
     // 状态
     const sessions = ref<Session[]>([])
@@ -20,6 +27,7 @@ export const useChatStore = defineStore('chat', () => {
     // 使用 SDK 的 useStream
     const stream = useStream({
         baseUrl: import.meta.env.VITE_API_URL || '/api',
+        headers: authHeaders,
         onDone: (blocks) => {
             // 流结束时，将 blocks 转换为消息
             const aiMessage: Message = {

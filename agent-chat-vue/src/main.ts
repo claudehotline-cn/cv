@@ -10,6 +10,7 @@ import router from './router'
 import './tailwind.css'
 import './style.css'
 import './agent-builder.css'
+import { useAuthStore } from './stores/auth'
 
 const app = createApp(App)
 
@@ -23,6 +24,9 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 
 // Pinia
 app.use(createPinia())
+
+const authStore = useAuthStore()
+authStore.bootstrap()
 
 // Router
 app.use(router)

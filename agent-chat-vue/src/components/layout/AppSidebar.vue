@@ -100,6 +100,15 @@
              </div>
            </template>
         </el-menu-item>
+
+        <el-menu-item index="__logout" @click="onLogout">
+            <template #title>
+             <div class="menu-item-content">
+                <span class="material-symbols-outlined">logout</span>
+                <span class="font-medium">Logout</span>
+             </div>
+           </template>
+        </el-menu-item>
       </el-menu>
     </div>
 
@@ -119,17 +128,25 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
 const ui = useUiStore()
+const authStore = useAuthStore()
 const activeRoute = computed(() => {
   const p = route.path
   if (p.startsWith('/agents')) return '/agents'
   if (p.startsWith('/audit')) return '/audit'
   return p
 })
+
+async function onLogout() {
+  await authStore.logout()
+  router.replace('/login')
+}
 </script>
 
 <style scoped>

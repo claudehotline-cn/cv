@@ -2,7 +2,8 @@
 import { computed, onMounted, onUnmounted, ref, watch, markRaw } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import apiClient, { DEV_USER_ROLE } from '@/api/client'
+import apiClient from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import {
   Setting,
   Folder,
@@ -25,8 +26,9 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 
-const isAdmin = DEV_USER_ROLE === 'admin'
+const isAdmin = computed(() => authStore.isAdmin)
 
 type KB = {
   id: number
@@ -278,7 +280,7 @@ const createKbForm = ref({
 })
 
 function openCreateKbDialog() {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -287,7 +289,7 @@ function openCreateKbDialog() {
 }
 
 async function submitCreateKb() {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -316,7 +318,7 @@ async function submitCreateKb() {
 
 const deletingKb = ref(false)
 async function confirmDeleteKb(kbId: number) {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -346,7 +348,7 @@ async function confirmDeleteKb(kbId: number) {
 
 const deletingDoc = ref(false)
 async function confirmDeleteDoc(row: any) {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -379,7 +381,7 @@ async function confirmDeleteDoc(row: any) {
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 function openFilePicker() {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -411,7 +413,7 @@ const importUrlValue = ref('')
 const importingUrl = ref(false)
 
 function openImportUrlDialog() {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -448,7 +450,7 @@ const queueingKbJob = ref(false)
 
 async function rebuildVectors() {
   if (!selectedKbId.value) return
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }
@@ -466,7 +468,7 @@ async function rebuildVectors() {
 
 async function buildGraph() {
   if (!selectedKbId.value) return
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('Admin role required')
     return
   }

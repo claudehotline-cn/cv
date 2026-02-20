@@ -19,6 +19,7 @@ from agent_core.settings import get_settings
 from agent_core.audit import AuditCallbackHandler
 from ..utils.interrupts import extract_interrupt_data
 from ..utils.session_memory import extract_recent_messages
+from ..core.auth import AuthPrincipal, get_current_user
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
 _LOGGER = logging.getLogger(__name__)
@@ -200,6 +201,7 @@ async def chat_stream(
     session_id: str,
     request: Request,
     message: str = Body(..., embed=True),
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(SessionModel).options(selectinload(SessionModel.agent)).where(SessionModel.id == session_id)
@@ -231,7 +233,7 @@ async def chat_stream(
     configurable = {
         "thread_id": thread_id,
         "session_id": str(session.id),
-        "user_id": "mock_user",
+        "user_id": user.user_id,
     }
     # 仅 data_agent 使用 analysis_id 作为工作区隔离标识
     if agent_key == "data_agent":
@@ -245,6 +247,8 @@ async def chat_stream(
             "request_id": request_id,
             "session_id": str(session.id),
             "thread_id": thread_id,
+            "user_id": user.user_id,
+            "user_role": user.role,
             "agent_key": agent_key,
             "agent_id": str(session.agent.id),
             "agent_name": session.agent.name,
@@ -268,6 +272,7 @@ async def resume_chat(
     session_id: str,
     request: ResumeRequest,
     http_request: Request,
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     from langgraph.types import Command
@@ -300,7 +305,7 @@ async def resume_chat(
     configurable = {
         "thread_id": thread_id,
         "session_id": str(session.id),
-        "user_id": "mock_user",
+        "user_id": user.user_id,
     }
     if agent_key == "data_agent":
         configurable["analysis_id"] = str(session.id)
@@ -313,6 +318,8 @@ async def resume_chat(
             "request_id": request_id,
             "session_id": str(session.id),
             "thread_id": thread_id,
+            "user_id": user.user_id,
+            "user_role": user.role,
             "agent_key": agent_key,
             "agent_id": str(session.agent.id),
             "agent_name": session.agent.name,

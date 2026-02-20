@@ -1,12 +1,15 @@
 <template>
-  <router-view />
+  <router-view v-if="authReady" />
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useTheme } from '@/composables/useTheme'
+import { useAuthStore } from '@/stores/auth'
 
 const { initTheme } = useTheme()
+const authStore = useAuthStore()
+const authReady = computed(() => authStore.initialized)
 
 onMounted(() => {
   initTheme()

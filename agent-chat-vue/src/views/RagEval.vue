@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import apiClient, { DEV_USER_ROLE } from '@/api/client'
+import apiClient from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
 import {
   ArrowDown,
@@ -48,10 +49,11 @@ type EvalCase = {
 
 const router = useRouter()
 const route = useRoute()
+const authStore = useAuthStore()
 
 const { toggleTheme } = useTheme()
 
-const isAdmin = DEV_USER_ROLE === 'admin'
+const isAdmin = computed(() => authStore.isAdmin)
 
 const kbList = ref<KB[]>([])
 const selectedKbId = ref<number | null>(null)
@@ -501,7 +503,7 @@ async function runRetrieve() {
 }
 
 async function evaluate() {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('需要 admin 才能调用 Evaluate')
     return
   }
@@ -608,7 +610,7 @@ async function saveLabelsToCase() {
 }
 
 async function deleteCase(c: EvalCase) {
-  if (!isAdmin) {
+  if (!isAdmin.value) {
     ElMessage.warning('需要 admin')
     return
   }

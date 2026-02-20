@@ -5,6 +5,7 @@ from typing import List, Optional
 from uuid import uuid4
 from ..db import get_db
 from ..models.db_models import SessionModel, AgentModel
+from ..core.auth import AuthPrincipal, get_current_user
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -12,6 +13,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 async def create_session(
     agent_id: Optional[str] = Body(None, embed=True),
     title: Optional[str] = Body(None, embed=True),
+    _: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new session for a specific agent."""
@@ -49,7 +51,11 @@ async def create_session(
     }
 
 @router.get("/{session_id}")
-async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
+async def get_session(
+    session_id: str,
+    _: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
     session = res.scalar_one_or_none()
     if not session:
@@ -67,6 +73,7 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/")
 async def list_sessions(
     limit: int = 50,
+    _: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List all sessions, ordered by updated_at desc."""
@@ -91,7 +98,11 @@ async def list_sessions(
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_session(
+    session_id: str,
+    _: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Delete a session."""
     res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
     session = res.scalar_one_or_none()

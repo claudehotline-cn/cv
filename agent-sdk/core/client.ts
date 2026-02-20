@@ -14,17 +14,14 @@ export interface AgentClientOptions extends ClientConfig, StreamCallbacks { }
  */
 export class AgentClient {
     private baseUrl: string
-    private headers: Record<string, string>
+    private headers: Record<string, string> | (() => Record<string, string>)
     private debug: boolean
     private parser: StreamParser
     private abortController: AbortController | null = null
 
     constructor(options: AgentClientOptions) {
         this.baseUrl = options.baseUrl.replace(/\/$/, '')  // 移除尾部斜杠
-        this.headers = {
-            'Content-Type': 'application/json',
-            ...options.headers
-        }
+        this.headers = options.headers || {}
         this.debug = options.debug ?? false
 
         this.parser = new StreamParser({
@@ -39,6 +36,14 @@ export class AgentClient {
 
     private log(...args: any[]) {
         if (this.debug) console.log('[AgentClient]', ...args)
+    }
+
+    private resolveHeaders(): Record<string, string> {
+        const extra = typeof this.headers === 'function' ? this.headers() : this.headers
+        return {
+            'Content-Type': 'application/json',
+            ...extra,
+        }
     }
 
     /**
@@ -97,7 +102,7 @@ export class AgentClient {
         try {
             const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/chat`, {
                 method: 'POST',
-                headers: this.headers,
+                headers: this.resolveHeaders(),
                 body: JSON.stringify({ message }),
                 signal: this.abortController.signal
             })
@@ -141,7 +146,7 @@ export class AgentClient {
         try {
             const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/resume`, {
                 method: 'POST',
-                headers: this.headers,
+                headers: this.resolveHeaders(),
                 body: JSON.stringify({
                     decision: options.decision,
                     feedback: options.feedback || ''

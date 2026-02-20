@@ -150,8 +150,6 @@ services:
       - ../../docs/examples:/data/excel:ro
       - ../../agent-langchain:/app/agent-langchain
       - ../../agent-platform-api/policy.yaml:/app/policy.yaml:ro
-      # 工作区目录：用于持久化分析结果（DataFrame、图表、报告）
-      - ../../agent-langchain/workspace:/data/workspace:rw
 
   # ============================================================================
   # Agent Platform API (Unified)
@@ -198,8 +196,6 @@ services:
       - ../../agent-core:/app/agent-core:rw
       - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for API code
-      # Workspaces
-      - ../../agent-langchain/workspace:/data/workspace:rw
       - ../../agent-platform-api/policy.yaml:/app/policy.yaml:ro
     healthcheck:
       test: [ "CMD-SHELL", "curl -fsS http://localhost:8000/health > /dev/null || exit 1" ]
@@ -236,8 +232,39 @@ services:
       - ../../agent-core:/app/agent-core:rw
       - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for worker code
-      - ../../agent-langchain/workspace:/data/workspace:rw
       - ../../agent-platform-api/policy.yaml:/app/policy.yaml:ro
+
+  # ============================================================================
+  # Agent Auth Service (Standalone)
+  # ============================================================================
+  agent-auth:
+    build:
+      context: ../../agent-auth
+      dockerfile: Dockerfile
+    image: cv/agent-auth:latest
+    container_name: agent-auth
+    environment:
+      - PYTHONUNBUFFERED=1
+      - AGENT_AUTH_DB_URL=mysql+aiomysql://root:123456@mysql:3306/agent_auth?charset=utf8mb4
+      - AGENT_AUTH_JWT_SECRET=${AGENT_AUTH_JWT_SECRET:-change-me-in-prod}
+      - AGENT_AUTH_JWT_ALG=HS256
+      - AGENT_AUTH_ISSUER=agent-auth
+      - AGENT_AUTH_AUDIENCE=agent-platform
+      - AGENT_AUTH_ACCESS_TTL_MIN=15
+      - AGENT_AUTH_REFRESH_TTL_DAYS=14
+      - AGENT_AUTH_ALLOW_REGISTER=false
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "18112:8000"
+    volumes:
+      - ../../agent-auth/app:/app/app:rw
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" >/dev/null 2>&1 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ============================================================================
   # Agent Chat Vue (新 Vue 前端，连接 agent-chat-api)
