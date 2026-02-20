@@ -267,6 +267,7 @@ class ResumeRequest(BaseModel):
 async def resume_chat(
     session_id: str,
     request: ResumeRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     from langgraph.types import Command
@@ -284,7 +285,17 @@ async def resume_chat(
         
     plugin = registry.get_plugin(agent_key)
     graph = plugin.get_graph()
-    
+
+    # Use global event bus for audit
+    event_bus = http_request.app.state.event_bus
+
+    # Audit Emitter
+    emitter = AuditEmitter(redis=event_bus.redis)
+    audit_callback = AuditCallbackHandler(emitter=emitter)
+
+    import uuid
+    request_id = str(uuid.uuid4())
+
     thread_id = str(session.thread_id) if session.thread_id else str(session.id)
     configurable = {
         "thread_id": thread_id,
@@ -294,7 +305,20 @@ async def resume_chat(
     if agent_key == "data_agent":
         configurable["analysis_id"] = str(session.id)
 
-    config = {"configurable": configurable}
+    config = {
+        "configurable": configurable,
+        "callbacks": [audit_callback],
+        "tags": [agent_key, "agent_platform"],
+        "metadata": {
+            "request_id": request_id,
+            "session_id": str(session.id),
+            "thread_id": thread_id,
+            "agent_key": agent_key,
+            "agent_id": str(session.agent.id),
+            "agent_name": session.agent.name,
+        },
+    }
+    config["audit_emitter"] = emitter
 
     decisions = [{"type": request.decision, "message": request.feedback}]
     resume_input = Command(resume=decisions)

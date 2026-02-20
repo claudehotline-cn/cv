@@ -108,7 +108,7 @@ def build_chat_llm(task_name: str = "generic") -> Any:
             temperature=0.6,
             output_version="v1",
             streaming=True,
-            max_tokens=28000,
+            max_tokens=settings.llm_max_tokens,
             extra_body={
                 "chat_template_kwargs": {
                     "enable_thinking": True,
@@ -122,5 +122,4 @@ def build_chat_llm(task_name: str = "generic") -> Any:
 
     _LOGGER.info(f"llm.init provider=openai task={task_name} model={settings.llm_model}")
     return ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
-
 

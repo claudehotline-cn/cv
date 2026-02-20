@@ -30,6 +30,11 @@ class Settings(BaseSettings):
         description="Model name for the chat LLM",
         alias="AGENT_OPENAI_MODEL",
     )
+    llm_max_tokens: int = Field(
+        default=4096,
+        description="Max completion tokens for chat models",
+        alias="AGENT_LLM_MAX_TOKENS",
+    )
     ollama_base_url: str = Field(
         default="http://host.docker.internal:11434",
         description="Ollama Base URL",
