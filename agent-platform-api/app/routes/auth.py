@@ -63,6 +63,11 @@ async def me(authorization: str | None = Header(default=None)):
     return await _proxy("GET", "/auth/me", auth=authorization)
 
 
+@router.post("/change-password")
+async def change_password(body: Dict[str, Any] = Body(...), authorization: str | None = Header(default=None)):
+    return await _proxy("POST", "/auth/change-password", body=body, auth=authorization)
+
+
 @router.post("/api-keys")
 async def create_api_key(body: Dict[str, Any] = Body(...), authorization: str | None = Header(default=None)):
     return await _proxy("POST", "/auth/api-keys", body=body, auth=authorization)

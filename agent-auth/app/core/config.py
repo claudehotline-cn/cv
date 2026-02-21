@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     auth_access_ttl_min: int = Field(default=15, alias="AGENT_AUTH_ACCESS_TTL_MIN")
     auth_refresh_ttl_days: int = Field(default=14, alias="AGENT_AUTH_REFRESH_TTL_DAYS")
     auth_allow_register: bool = Field(default=False, alias="AGENT_AUTH_ALLOW_REGISTER")
+    auth_rate_limit_login: str = Field(default="5/min", alias="AGENT_AUTH_RATE_LIMIT_LOGIN")
 
 
 @lru_cache(maxsize=1)

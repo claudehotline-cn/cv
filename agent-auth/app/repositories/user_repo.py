@@ -29,3 +29,10 @@ class SqlAlchemyUserRepository(UserRepository):
         user = await self.get_by_id(user_id)
         if user:
             user.last_login_at = datetime.utcnow()
+
+    async def update_password_hash(self, user_id: str, password_hash: str) -> bool:
+        user = await self.get_by_id(user_id)
+        if not user:
+            return False
+        user.password_hash = password_hash
+        return True

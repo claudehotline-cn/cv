@@ -261,6 +261,7 @@ services:
       - AGENT_AUTH_ACCESS_TTL_MIN=15
       - AGENT_AUTH_REFRESH_TTL_DAYS=14
       - AGENT_AUTH_ALLOW_REGISTER=false
+      - AGENT_AUTH_RATE_LIMIT_LOGIN=5/min
     depends_on:
       mysql:
         condition: service_healthy
