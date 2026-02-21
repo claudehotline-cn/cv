@@ -295,10 +295,12 @@ async def list_auth_audit_events(
     result: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    _: AuthPrincipal = Depends(require_admin),
+    user: AuthPrincipal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(AuthAuditEventModel)
+    tenant_id = _tenant_id_or_401(user)
+    stmt = stmt.where(AuthAuditEventModel.tenant_id.cast(String) == tenant_id)
 
     if event_type:
         stmt = stmt.where(AuthAuditEventModel.event_type == event_type)
@@ -348,13 +350,17 @@ async def list_auth_audit_events(
 async def get_auth_audit_overview(
     window_hours: int = 24,
     user_id: Optional[str] = None,
-    _: AuthPrincipal = Depends(require_admin),
+    user: AuthPrincipal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(hours=max(1, min(window_hours, 24 * 30)))
+    tenant_id = _tenant_id_or_401(user)
 
-    base_filter = AuthAuditEventModel.event_time >= window_start
+    base_filter = and_(
+        AuthAuditEventModel.event_time >= window_start,
+        AuthAuditEventModel.tenant_id.cast(String) == tenant_id,
+    )
     if user_id:
         base_filter = and_(base_filter, AuthAuditEventModel.user_id == user_id)
 

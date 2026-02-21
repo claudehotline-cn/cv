@@ -46,7 +46,12 @@ def _dev_header_principal(request: Request) -> AuthPrincipal:
     role = raw_role or "user"
     if role not in ("admin", "user"):
         role = "user"
-    return AuthPrincipal(user_id=user_id, role=role)
+    settings = get_settings()
+    tenant_id = (request.headers.get("X-Tenant-Id") or settings.auth_default_tenant_id or "").strip() or settings.auth_default_tenant_id
+    tenant_role = (request.headers.get("X-Tenant-Role") or ("owner" if role == "admin" else "member")).strip().lower()
+    if tenant_role not in ("owner", "admin", "member"):
+        tenant_role = "member"
+    return AuthPrincipal(user_id=user_id, role=role, tenant_id=tenant_id, tenant_role=tenant_role)
 
 
 async def get_current_user(request: Request) -> AuthPrincipal:

@@ -7,6 +7,7 @@ from typing import Dict, Any, List
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, or_
+from agent_core.settings import get_settings
 from app.models.db_models import (
     AgentRunModel,
     AgentSpanModel,
@@ -77,9 +78,11 @@ class AuditPersistenceService:
             payload = json.loads(payload_json)
         except:
             payload = {}
+
+        tenant_id = self._resolve_tenant_id(event, payload)
             
         # 3. Ensure Run Exists (Idempotent)
-        await self._ensure_run_exists(request_id, event.get("session_id"), event.get("thread_id"))
+        await self._ensure_run_exists(request_id, event.get("session_id"), event.get("thread_id"), tenant_id)
 
         is_job_event = isinstance(event_type, str) and event_type.startswith("job_")
 
@@ -109,6 +112,7 @@ class AuditPersistenceService:
              async with self.db.begin_nested():
                 audit_event_kwargs: Dict[str, Any] = {
                     "event_id": UUID(event["event_id"]) if event.get("event_id") else None,
+                    "tenant_id": tenant_id,
                     "request_id": request_id,
                     "span_id": span_id,
                     "session_id": event.get("session_id"),
@@ -134,7 +138,7 @@ class AuditPersistenceService:
         
         # 5. Handle State Transitions
         if event_type == "run_started":
-            await self._handle_run_start(request_id, event.get("session_id"), event.get("thread_id"), payload)
+            await self._handle_run_start(request_id, event.get("session_id"), event.get("thread_id"), payload, tenant_id)
             
         elif event_type in ("run_finished", "run_failed", "run_interrupted"):
             await self._handle_run_end(request_id, event_type, payload)
@@ -186,6 +190,7 @@ class AuditPersistenceService:
             async with self.db.begin_nested():
                 row = AuthAuditEventModel(
                     event_id=event_id,
+                    tenant_id=self._resolve_tenant_id(event, payload),
                     event_time=event_time,
                     event_type=event.get("event_type") or "auth_unknown",
                     component=(event.get("component") or "auth"),
@@ -205,6 +210,15 @@ class AuditPersistenceService:
             _LOGGER.info("Auth event %s already exists. Skip.", event.get("event_id"))
         except Exception as e:
             _LOGGER.error("Failed to persist auth event %s: %s", event.get("event_id"), e)
+
+    @staticmethod
+    def _resolve_tenant_id(event: Dict[str, Any], payload: Dict[str, Any]) -> UUID:
+        settings = get_settings()
+        raw = event.get("tenant_id") or payload.get("tenant_id") or settings.auth_default_tenant_id
+        try:
+            return UUID(str(raw))
+        except Exception:
+            return UUID(settings.auth_default_tenant_id)
 
     async def _handle_job_pause(
         self,
@@ -374,7 +388,7 @@ class AuditPersistenceService:
                 await close_phase(wait_span_id, status=terminal_map[event_type])
             return
             
-    async def _ensure_run_exists(self, request_id: UUID, session_id: str | None, thread_id: str | None):
+    async def _ensure_run_exists(self, request_id: UUID, session_id: str | None, thread_id: str | None, tenant_id: UUID):
         """Ensure AgentRunModel exists. Idempotent."""
         existing = await self.db.get(AgentRunModel, request_id)
         if existing:
@@ -384,6 +398,8 @@ class AuditPersistenceService:
                 existing.conversation_id = session_id
             if thread_id and (existing.thread_id is None or existing.thread_id == ""):
                 existing.thread_id = thread_id
+            if getattr(existing, "tenant_id", None) is None:
+                existing.tenant_id = tenant_id
             await self.db.flush()
             return
             
@@ -395,6 +411,7 @@ class AuditPersistenceService:
                 # Just insert.
                 run = AgentRunModel(
                     request_id=request_id,
+                    tenant_id=tenant_id,
                     # Best effort linkage for list/filtering in UI
                     conversation_id=session_id or None,
                     thread_id=thread_id or None,
@@ -435,7 +452,7 @@ class AuditPersistenceService:
             pass
 
 
-    async def _handle_run_start(self, request_id: UUID, session_id: str | None, thread_id: str | None, payload: Dict[str, Any]):
+    async def _handle_run_start(self, request_id: UUID, session_id: str | None, thread_id: str | None, payload: Dict[str, Any], tenant_id: UUID):
         """Create or Update AgentRunModel."""
         _LOGGER.info(f"Handling RUN START for {request_id}")
         agent_name = payload.get("root_agent_name", "unknown")
@@ -453,9 +470,12 @@ class AuditPersistenceService:
             # Support HITL resume: a new run may start again for the same request_id.
             existing.status = "running"
             existing.ended_at = None
+            if getattr(existing, "tenant_id", None) is None:
+                existing.tenant_id = tenant_id
         else:
             run = AgentRunModel(
                 request_id=request_id,
+                tenant_id=tenant_id,
                 status="running",
                 conversation_id=session_id,
                 thread_id=thread_id,

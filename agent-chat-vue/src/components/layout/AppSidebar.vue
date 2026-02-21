@@ -114,11 +114,26 @@
 
     <!-- Footer -->
     <div class="sidebar-footer">
+      <div v-if="authStore.tenantOptions.length > 0" class="tenant-switcher">
+        <el-select
+          :model-value="authStore.activeTenantId"
+          size="small"
+          placeholder="Select tenant"
+          @change="onTenantChange"
+        >
+          <el-option
+            v-for="tenant in authStore.tenantOptions"
+            :key="tenant.id"
+            :label="tenant.name"
+            :value="tenant.id"
+          />
+        </el-select>
+      </div>
       <div class="user-card">
         <div class="user-avatar"></div>
         <div class="user-info">
-          <p class="user-name">Alex Morgan</p>
-          <p class="user-email">alex@nexus.ai</p>
+          <p class="user-name">{{ authStore.user?.username || authStore.user?.email || 'User' }}</p>
+          <p class="user-email">{{ authStore.user?.email || '' }}</p>
         </div>
         <span class="material-symbols-outlined text-text-secondary icon-lg-20">unfold_more</span>
       </div>
@@ -131,11 +146,13 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { useChatStore } from '@/stores/chat'
 
 const route = useRoute()
 const router = useRouter()
 const ui = useUiStore()
 const authStore = useAuthStore()
+const chatStore = useChatStore()
 const activeRoute = computed(() => {
   const p = route.path
   if (p.startsWith('/agents')) return '/agents'
@@ -146,6 +163,13 @@ const activeRoute = computed(() => {
 async function onLogout() {
   await authStore.logout()
   router.replace('/login')
+}
+
+async function onTenantChange(tenantId: string) {
+  authStore.switchTenant(tenantId)
+  chatStore.resetSession()
+  await chatStore.loadSessions()
+  router.replace('/')
 }
 </script>
 
@@ -226,6 +250,10 @@ async function onLogout() {
 
 .sidebar-container.collapsed {
     width: 76px;
+}
+
+.tenant-switcher {
+    padding: 0 8px 8px;
 }
 :deep(.dark .sidebar-container) {
     background-color: var(--bg-secondary); /* bg-surface-dark */

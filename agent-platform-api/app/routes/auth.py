@@ -3,6 +3,8 @@ from typing import Any, Dict
 
 import httpx
 from fastapi import APIRouter, Body, Header, HTTPException
+from agent_auth_client import AuthClient
+from agent_core.settings import get_settings
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -60,7 +62,20 @@ async def logout_all(authorization: str | None = Header(default=None)):
 
 @router.get("/me")
 async def me(authorization: str | None = Header(default=None)):
-    return await _proxy("GET", "/auth/me", auth=authorization)
+    data = await _proxy("GET", "/auth/me", auth=authorization)
+    if not authorization:
+        return data
+
+    try:
+        principal = await AuthClient(get_settings().auth_introspection_url).introspect(authorization=authorization)
+        if isinstance(data, dict):
+            data["tenant_id"] = principal.tenant_id
+            data["tenant_role"] = principal.tenant_role
+    except Exception:
+        # Keep /auth/me available even if introspection is temporarily unavailable.
+        pass
+
+    return data
 
 
 @router.post("/change-password")

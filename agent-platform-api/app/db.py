@@ -70,11 +70,17 @@ async def init_db():
         await conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id VARCHAR(100)"))
         await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id UUID"))
         await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id VARCHAR(100)"))
+        await conn.execute(text("ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tenant_id UUID"))
+        await conn.execute(text("ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS tenant_id UUID"))
+        await conn.execute(text("ALTER TABLE auth_audit_events ADD COLUMN IF NOT EXISTS tenant_id UUID"))
 
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id ON sessions(tenant_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tasks_tenant_id ON tasks(tenant_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_runs_tenant_id ON agent_runs(tenant_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_id ON audit_events(tenant_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_auth_audit_events_tenant_id ON auth_audit_events(tenant_id)"))
 
         await conn.execute(text("""
             DO $$
@@ -114,6 +120,30 @@ async def init_db():
                     ALTER TABLE tasks
                     ADD CONSTRAINT fk_tasks_user
                     FOREIGN KEY (user_id) REFERENCES platform_users(user_id);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_runs_tenant'
+                ) THEN
+                    ALTER TABLE agent_runs
+                    ADD CONSTRAINT fk_agent_runs_tenant
+                    FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'fk_audit_events_tenant'
+                ) THEN
+                    ALTER TABLE audit_events
+                    ADD CONSTRAINT fk_audit_events_tenant
+                    FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'fk_auth_audit_events_tenant'
+                ) THEN
+                    ALTER TABLE auth_audit_events
+                    ADD CONSTRAINT fk_auth_audit_events_tenant
+                    FOREIGN KEY (tenant_id) REFERENCES tenants(id);
                 END IF;
             END $$;
         """))
@@ -168,6 +198,27 @@ async def init_db():
         """), {"tenant_id": default_tenant_id})
 
         await conn.execute(text("""
+            UPDATE agent_runs
+            SET tenant_id = CAST(:tenant_id AS UUID)
+            WHERE tenant_id IS NULL
+        """), {"tenant_id": default_tenant_id})
+
+        await conn.execute(text("""
+            UPDATE audit_events
+            SET tenant_id = COALESCE(
+                (SELECT ar.tenant_id FROM agent_runs ar WHERE ar.request_id = audit_events.request_id),
+                CAST(:tenant_id AS UUID)
+            )
+            WHERE tenant_id IS NULL
+        """), {"tenant_id": default_tenant_id})
+
+        await conn.execute(text("""
+            UPDATE auth_audit_events
+            SET tenant_id = CAST(COALESCE(payload->>'tenant_id', :tenant_id) AS UUID)
+            WHERE tenant_id IS NULL
+        """), {"tenant_id": default_tenant_id})
+
+        await conn.execute(text("""
             INSERT INTO tenant_memberships (id, tenant_id, user_id, role, status)
             SELECT gen_random_uuid(), CAST(:tenant_id AS UUID), user_id,
                    CASE WHEN role = 'admin' THEN 'owner' ELSE 'member' END,
@@ -176,3 +227,9 @@ async def init_db():
             WHERE user_id IS NOT NULL
             ON CONFLICT (tenant_id, user_id) DO NOTHING
         """), {"tenant_id": default_tenant_id})
+
+        await conn.execute(text("ALTER TABLE sessions ALTER COLUMN tenant_id SET NOT NULL"))
+        await conn.execute(text("ALTER TABLE tasks ALTER COLUMN tenant_id SET NOT NULL"))
+        await conn.execute(text("ALTER TABLE agent_runs ALTER COLUMN tenant_id SET NOT NULL"))
+        await conn.execute(text("ALTER TABLE audit_events ALTER COLUMN tenant_id SET NOT NULL"))
+        await conn.execute(text("ALTER TABLE auth_audit_events ALTER COLUMN tenant_id SET NOT NULL"))

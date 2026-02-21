@@ -14,8 +14,18 @@ export interface AuthUser {
     email: string
     username?: string | null
     role: 'admin' | 'user'
+    tenant_id?: string | null
+    tenant_role?: 'owner' | 'admin' | 'member' | null
     status: string
 }
+
+export interface TenantOption {
+    id: string
+    name: string
+    role: 'owner' | 'admin' | 'member'
+}
+
+const ACTIVE_TENANT_KEY = 'auth.activeTenantId'
 
 function readAccessToken(): string {
     return window.localStorage.getItem(ACCESS_TOKEN_KEY) || ''
@@ -34,6 +44,7 @@ function clearTokens() {
     window.localStorage.removeItem(ACCESS_TOKEN_KEY)
     window.localStorage.removeItem(REFRESH_TOKEN_KEY)
     window.localStorage.removeItem(USER_KEY)
+    window.localStorage.removeItem(ACTIVE_TENANT_KEY)
 }
 
 function writeUser(user: AuthUser | null) {
@@ -52,6 +63,18 @@ function readUser(): AuthUser | null {
     } catch {
         return null
     }
+}
+
+function readActiveTenantId(): string {
+    return window.localStorage.getItem(ACTIVE_TENANT_KEY) || ''
+}
+
+function writeActiveTenantId(tenantId: string) {
+    if (!tenantId) {
+        window.localStorage.removeItem(ACTIVE_TENANT_KEY)
+        return
+    }
+    window.localStorage.setItem(ACTIVE_TENANT_KEY, tenantId)
 }
 
 export interface CreateSessionRequest {
@@ -199,6 +222,11 @@ class ApiClient {
                 config.headers = config.headers || {}
                 config.headers.Authorization = `Bearer ${token}`
             }
+            const tenantId = readActiveTenantId()
+            if (tenantId) {
+                config.headers = config.headers || {}
+                config.headers['X-Tenant-Id'] = tenantId
+            }
             return config
         })
 
@@ -233,6 +261,14 @@ class ApiClient {
 
     getStoredUser(): AuthUser | null {
         return readUser()
+    }
+
+    getActiveTenantId(): string {
+        return readActiveTenantId()
+    }
+
+    setActiveTenantId(tenantId: string) {
+        writeActiveTenantId(tenantId)
     }
 
     clearAuth() {
@@ -298,6 +334,9 @@ class ApiClient {
     async getMe(): Promise<AuthUser> {
         const user = await this.http.get<any, AuthUser>('/auth/me')
         writeUser(user)
+        if (user?.tenant_id && !readActiveTenantId()) {
+            writeActiveTenantId(user.tenant_id)
+        }
         return user
     }
 
