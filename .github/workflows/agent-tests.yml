@@ -44,14 +44,50 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e agent-core
         pip install -e agent-test
+        pip install -e agent-auth-client
         if [ -f agent-auth/requirements.txt ]; then pip install -r agent-auth/requirements.txt; fi
+        if [ -f rag_service/requirements.txt ]; then pip install -r rag_service/requirements.txt; fi
         # Install other requirements as needed
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install pytest pytest-recording pytest-asyncio
 
+    - name: Start auth stack services
+      env:
+        AGENT_AUTH_ALLOW_REGISTER: "true"
+      run: |
+        docker compose -f docker/compose/docker-compose.yml up -d mysql langgraph-redis pgvector agent-auth agent-api rag-service agent-worker rag-worker
+
+    - name: Wait for auth stack readiness
+      env:
+        E2E_API_BASE: http://localhost:18111
+        E2E_AUTH_BASE: http://localhost:18112
+        E2E_RAG_BASE: http://localhost:18200
+      run: |
+        bash scripts/ci-wait-for-auth-stack.sh
+
+    - name: Initialize e2e auth users
+      env:
+        E2E_API_BASE: http://localhost:18111
+        E2E_ADMIN_EMAIL: admin@cv.example.com
+        E2E_ADMIN_PASSWORD: 12345678
+        E2E_USER_A_EMAIL: e2e_user_a@cv.example.com
+        E2E_USER_B_EMAIL: e2e_user_b@cv.example.com
+        E2E_USER_PASSWORD: UserPass123!
+      run: |
+        bash scripts/ci-init-auth-users.sh
+
     - name: Run Agent Tests
       env:
         PYTHONPATH: ${{ github.workspace }}/agent-core:${{ github.workspace }}/agent-test:${{ github.workspace }}/agent-plugins:${{ github.workspace }}/agent-auth:${{ github.workspace }}/agent-auth-client:${{ github.workspace }}
+        E2E_API_BASE: http://localhost:18111
+        E2E_AUTH_BASE: http://localhost:18112
+        E2E_RAG_BASE: http://localhost:18200
+        E2E_REQUIRE_RAG: "true"
+        E2E_ADMIN_EMAIL: admin@cv.example.com
+        E2E_ADMIN_PASSWORD: 12345678
+        E2E_USER_A_EMAIL: e2e_user_a@cv.example.com
+        E2E_USER_B_EMAIL: e2e_user_b@cv.example.com
+        E2E_USER_PASSWORD: UserPass123!
       run: |
         # Run auth provider contract tests
         pytest -q -c agent-test/pytest.ini agent-auth/app/tests/contract
@@ -63,6 +99,15 @@ jobs:
         for dir in agent-plugins/*/; do
             if [ -d "$dir/tests" ]; then
                 echo "Testing $dir..."
-                pytest "$dir/tests"
+                pytest -q "$dir/tests"
             fi
         done
+
+    - name: Dump service logs on failure
+      if: failure()
+      run: |
+        docker compose -f docker/compose/docker-compose.yml ps
+        docker logs --tail 300 agent-auth || true
+        docker logs --tail 300 agent-api || true
+        docker logs --tail 300 rag-service || true
+        docker logs --tail 300 agent-worker || true

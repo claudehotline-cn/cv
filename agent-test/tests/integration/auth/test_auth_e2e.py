@@ -9,6 +9,7 @@ import requests
 API_BASE = os.getenv("E2E_API_BASE", "http://localhost:18111")
 AUTH_BASE = os.getenv("E2E_AUTH_BASE", "http://localhost:18112")
 RAG_BASE = os.getenv("E2E_RAG_BASE", "http://localhost:18200")
+REQUIRE_RAG = os.getenv("E2E_REQUIRE_RAG", "true").lower() in ("1", "true", "yes", "on")
 
 # Container-network defaults for running inside `agent-test` container.
 if os.path.exists("/.dockerenv"):
@@ -82,7 +83,10 @@ def test_admin_login_and_protected_endpoints():
     assert _json(me).get("role") == "admin"
 
     rag = requests.get(f"{RAG_BASE}/api/knowledge-bases", headers=_auth_headers(token), timeout=20)
-    assert rag.status_code == 200, _json(rag)
+    if REQUIRE_RAG:
+        assert rag.status_code == 200, _json(rag)
+    else:
+        assert rag.status_code in (200, 401, 403, 404, 503), _json(rag)
 
 
 @pytest.mark.integration
