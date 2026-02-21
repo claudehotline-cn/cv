@@ -210,6 +210,11 @@ class Settings(BaseSettings):
         description="Allow legacy X-User-Id/X-User-Role headers in mixed/dev mode",
         alias="AUTH_ALLOW_DEV_HEADERS",
     )
+    auth_default_tenant_id: str = Field(
+        default="00000000-0000-0000-0000-000000000001",
+        description="Default tenant id when no tenant header is provided",
+        alias="AUTH_DEFAULT_TENANT_ID",
+    )
 
     @property
     def postgres_uri(self) -> str:

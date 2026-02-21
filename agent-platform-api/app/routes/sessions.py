@@ -2,13 +2,23 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 from ..db import get_db
 from ..models.db_models import SessionModel, AgentModel
 from ..core.auth import AuthPrincipal, get_current_user
 from ..services.user_shadow_service import UserShadowService
+from ..services.tenant_shadow_service import TenantShadowService
+from agent_core.settings import get_settings
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _tenant_uuid(user: AuthPrincipal) -> UUID:
+    tenant_id = user.tenant_id or get_settings().auth_default_tenant_id
+    try:
+        return UUID(str(tenant_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
 
 @router.post("/", response_model=dict)
 async def create_session(
@@ -18,7 +28,11 @@ async def create_session(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new session for a specific agent."""
+    tenant_id = _tenant_uuid(user)
     await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
+    tenant_service = TenantShadowService(db)
+    await tenant_service.ensure_tenant(str(tenant_id))
+    await tenant_service.ensure_membership(tenant_id, user.user_id, user.role)
     # If no agent_id provided, use data_agent as default
     if not agent_id:
         result = await db.execute(select(AgentModel).where(AgentModel.builtin_key == "data_agent"))
@@ -37,6 +51,7 @@ async def create_session(
             raise HTTPException(status_code=404, detail="Agent not found")
 
     new_session = SessionModel(
+        tenant_id=tenant_id,
         user_id=user.user_id,
         agent_id=agent.id,
         title=title or "New Chat",
@@ -60,7 +75,13 @@ async def get_session(
     user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+    tenant_id = _tenant_uuid(user)
+    res = await db.execute(
+        select(SessionModel).where(
+            SessionModel.id == session_id,
+            SessionModel.tenant_id == tenant_id,
+        )
+    )
     session = res.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -86,8 +107,14 @@ async def list_sessions(
 ):
     """List all sessions, ordered by updated_at desc."""
     from sqlalchemy import desc
-    
-    stmt = select(SessionModel).order_by(desc(SessionModel.updated_at)).limit(limit)
+
+    tenant_id = _tenant_uuid(user)
+    stmt = (
+        select(SessionModel)
+        .where(SessionModel.tenant_id == tenant_id)
+        .order_by(desc(SessionModel.updated_at))
+        .limit(limit)
+    )
     result = await db.execute(stmt)
     sessions = result.scalars().all()
 
@@ -119,7 +146,13 @@ async def delete_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a session."""
-    res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+    tenant_id = _tenant_uuid(user)
+    res = await db.execute(
+        select(SessionModel).where(
+            SessionModel.id == session_id,
+            SessionModel.tenant_id == tenant_id,
+        )
+    )
     session = res.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")

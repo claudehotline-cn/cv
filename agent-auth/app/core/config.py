@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     auth_rate_limit_fail_mode: str = Field(default="open", alias="AGENT_AUTH_RATE_LIMIT_FAIL_MODE")
     auth_redis_url: str = Field(default="redis://langgraph-redis:6379/0", alias="AGENT_AUTH_REDIS_URL")
     auth_audit_stream_key: str = Field(default="audit.events", alias="AGENT_AUTH_AUDIT_STREAM_KEY")
+    auth_default_tenant_id: str = Field(
+        default="00000000-0000-0000-0000-000000000001",
+        alias="AUTH_DEFAULT_TENANT_ID",
+    )
 
 
 @lru_cache(maxsize=1)

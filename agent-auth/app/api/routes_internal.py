@@ -16,7 +16,9 @@ async def introspect(
     container: Container = Depends(get_container),
 ):
     try:
-        principal = await container.introspect_service().execute(authorization, x_api_key=x_api_key)
+        svc = container.introspect_service()
+        principal = await svc.execute(authorization, x_api_key=x_api_key)
+        tenant = svc.tenant_context_for(principal)
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return {
@@ -24,6 +26,8 @@ async def introspect(
         "sub": principal.user_id,
         "email": principal.email,
         "role": principal.role,
+        "tenant_id": tenant["tenant_id"],
+        "tenant_role": tenant["tenant_role"],
     }
 
 

@@ -8,6 +8,8 @@ class AuthPrincipalDTO:
     user_id: str
     role: str
     email: str | None = None
+    tenant_id: str | None = None
+    tenant_role: str | None = None
 
 
 class AuthClient:
@@ -41,4 +43,12 @@ class AuthClient:
 
         role = str(data.get("role") or "user").strip().lower() or "user"
         email = data.get("email")
-        return AuthPrincipalDTO(user_id=user_id, role=role, email=email)
+        tenant_id = data.get("tenant_id")
+        tenant_role = data.get("tenant_role")
+        return AuthPrincipalDTO(
+            user_id=user_id,
+            role=role,
+            email=email,
+            tenant_id=tenant_id,
+            tenant_role=tenant_role,
+        )

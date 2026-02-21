@@ -16,11 +16,20 @@ from ..services.task_service import TaskService
 from ..models.db_models import SessionModel
 from agent_core.settings import get_settings
 from ..core.auth import AuthPrincipal, get_current_user
+from ..services.tenant_shadow_service import TenantShadowService
 from ..services.user_shadow_service import UserShadowService
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
 _LOGGER = logging.getLogger(__name__)
+
+
+def _tenant_uuid(user: AuthPrincipal) -> UUID:
+    tenant_id = user.tenant_id or settings.auth_default_tenant_id
+    try:
+        return UUID(str(tenant_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
 
 
 def _session_owner_user_id(session: SessionModel) -> str | None:
@@ -31,10 +40,20 @@ def _session_owner_user_id(session: SessionModel) -> str | None:
     return str(owner) if owner else None
 
 
-async def _get_owned_session_or_404(db: AsyncSession, session_id: UUID, user: AuthPrincipal) -> SessionModel:
+async def _get_owned_session_or_404(
+    db: AsyncSession,
+    session_id: UUID,
+    user: AuthPrincipal,
+    tenant_id: UUID,
+) -> SessionModel:
     from sqlalchemy import select
 
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+    result = await db.execute(
+        select(SessionModel).where(
+            SessionModel.id == session_id,
+            SessionModel.tenant_id == tenant_id,
+        )
+    )
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -46,15 +65,24 @@ async def _get_owned_session_or_404(db: AsyncSession, session_id: UUID, user: Au
     return session
 
 
-async def _get_owned_task_or_404(task_service: TaskService, db: AsyncSession, task_id: UUID, user: AuthPrincipal):
+async def _get_owned_task_or_404(
+    task_service: TaskService,
+    db: AsyncSession,
+    task_id: UUID,
+    user: AuthPrincipal,
+    tenant_id: UUID,
+):
     task = await task_service.get_task(task_id)
     if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Task not found")
 
     if user.role != "admin" and task.user_id and task.user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    session = await _get_owned_session_or_404(db, task.session_id, user)
+    session = await _get_owned_session_or_404(db, task.session_id, user, tenant_id)
     return task, session
 
 
@@ -102,8 +130,10 @@ async def create_execute_task(
     from arq import create_pool
     from arq.connections import RedisSettings
     
+    tenant_id = _tenant_uuid(user)
+
     # 验证 session 存在且归属当前用户
-    session = await _get_owned_session_or_404(db, session_id, user)
+    session = await _get_owned_session_or_404(db, session_id, user, tenant_id)
     
     # 获取 agent_key
     from ..models.db_models import AgentModel
@@ -115,9 +145,13 @@ async def create_execute_task(
     
     # 创建任务记录
     await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
+    tenant_service = TenantShadowService(db)
+    await tenant_service.ensure_tenant(str(tenant_id))
+    await tenant_service.ensure_membership(tenant_id, user.user_id, user.role)
     task_service = TaskService(db)
     task = await task_service.create_task(
         session_id,
+        tenant_id=tenant_id,
         user_id=user.user_id,
         meta={
             "input_message": request.message,
@@ -194,11 +228,14 @@ async def list_session_tasks(
     db: AsyncSession = Depends(get_db),
 ):
     """获取会话的任务列表（用于页面返回后恢复任务状态）。"""
+    tenant_id = _tenant_uuid(user)
+
     # 验证 session 存在且归属当前用户
-    await _get_owned_session_or_404(db, session_id, user)
+    await _get_owned_session_or_404(db, session_id, user, tenant_id)
 
     task_service = TaskService(db)
     tasks = await task_service.get_tasks_by_session(session_id)
+    tasks = [t for t in tasks if t.tenant_id == tenant_id]
 
     if status == "active":
         tasks = [t for t in tasks if t.status in ("pending", "running", "waiting_approval")]
@@ -231,8 +268,9 @@ async def get_task_status(
     db: AsyncSession = Depends(get_db)
 ):
     """获取任务状态"""
+    tenant_id = _tenant_uuid(user)
     task_service = TaskService(db)
-    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user)
+    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
     
     return TaskResponse(
         id=str(task.id),
@@ -252,8 +290,9 @@ async def cancel_task(
     db: AsyncSession = Depends(get_db)
 ):
     """请求取消任务"""
+    tenant_id = _tenant_uuid(user)
     task_service = TaskService(db)
-    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user)
+    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
 
     success = await task_service.request_cancel(task_id)
     
@@ -312,8 +351,9 @@ async def resume_task(
     from arq import create_pool
     from arq.connections import RedisSettings
 
+    tenant_id = _tenant_uuid(user)
     task_service = TaskService(db)
-    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user)
+    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
 
     meta = task.result if isinstance(task.result, dict) else {}
     agent_key = meta.get("agent_key") or "data_agent"
@@ -364,7 +404,8 @@ async def stream_session_task_events(
 ):
     """SSE：订阅某个会话下所有任务的事件流（进度/状态/结果）。"""
 
-    await _get_owned_session_or_404(db, session_id, user)
+    tenant_id = _tenant_uuid(user)
+    await _get_owned_session_or_404(db, session_id, user, tenant_id)
 
     async def event_generator():
         from agent_core.events import RedisEventBus
@@ -404,9 +445,10 @@ async def stream_task_progress(
     db: AsyncSession = Depends(get_db),
 ):
     """SSE 流式获取任务进度"""
-    
+
+    tenant_id = _tenant_uuid(user)
     task_service = TaskService(db)
-    await _get_owned_task_or_404(task_service, db, task_id, user)
+    await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
 
     async def event_generator():
 

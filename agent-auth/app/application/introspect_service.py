@@ -1,4 +1,5 @@
 from app.core.errors import AuthError
+from app.core.config import get_settings
 from app.domain.ports.api_key_verifier import ApiKeyVerifier
 from app.domain.ports.token_verifier import TokenVerifier
 from app.domain.value_objects.principal import Principal
@@ -29,3 +30,12 @@ class IntrospectService:
             raise AuthError("Invalid API key", status_code=401)
 
         raise AuthError("Missing authentication credentials", status_code=401)
+
+    @staticmethod
+    def tenant_context_for(principal: Principal) -> dict:
+        settings = get_settings()
+        # Phase 1: one default tenant; future phase maps memberships.
+        return {
+            "tenant_id": settings.auth_default_tenant_id,
+            "tenant_role": "owner" if principal.role == "admin" else "member",
+        }

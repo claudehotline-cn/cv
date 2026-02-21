@@ -11,6 +11,8 @@ class AuthPrincipal:
     user_id: str
     role: str
     email: str | None = None
+    tenant_id: str | None = None
+    tenant_role: str | None = None
 
 
 async def _introspect_bearer(token: str) -> AuthPrincipal:
@@ -25,7 +27,13 @@ async def _introspect_bearer(token: str) -> AuthPrincipal:
         raise HTTPException(status_code=503, detail="Auth service unavailable") from exc
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid token")
-    return AuthPrincipal(user_id=principal.user_id, role=principal.role, email=principal.email)
+    return AuthPrincipal(
+        user_id=principal.user_id,
+        role=principal.role,
+        email=principal.email,
+        tenant_id=principal.tenant_id,
+        tenant_role=principal.tenant_role,
+    )
 
 
 def _dev_header_principal(request: Request) -> AuthPrincipal:

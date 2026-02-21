@@ -42,15 +42,51 @@ async def init_db():
             )
         """))
 
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenants (
+                id UUID PRIMARY KEY,
+                name VARCHAR(200) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenant_memberships (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                user_id VARCHAR(100) NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'member',
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_tenant_memberships_tenant_user UNIQUE (tenant_id, user_id),
+                CONSTRAINT fk_tenant_memberships_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+                CONSTRAINT fk_tenant_memberships_user FOREIGN KEY (user_id) REFERENCES platform_users(user_id)
+            )
+        """))
+
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS tenant_id UUID"))
         await conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id VARCHAR(100)"))
+        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id UUID"))
         await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id VARCHAR(100)"))
 
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id ON sessions(tenant_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tasks_tenant_id ON tasks(tenant_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)"))
 
         await conn.execute(text("""
             DO $$
             BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'fk_sessions_tenant'
+                ) THEN
+                    ALTER TABLE sessions
+                    ADD CONSTRAINT fk_sessions_tenant
+                    FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+                END IF;
+
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_constraint WHERE conname = 'fk_sessions_user'
                 ) THEN
@@ -64,6 +100,14 @@ async def init_db():
         await conn.execute(text("""
             DO $$
             BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'fk_tasks_tenant'
+                ) THEN
+                    ALTER TABLE tasks
+                    ADD CONSTRAINT fk_tasks_tenant
+                    FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+                END IF;
+
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_constraint WHERE conname = 'fk_tasks_user'
                 ) THEN
@@ -102,3 +146,33 @@ async def init_db():
             FROM sessions s
             WHERE t.user_id IS NULL AND t.session_id = s.id
         """))
+
+        # Ensure one default tenant and backfill tenant columns.
+        default_tenant_id = settings.auth_default_tenant_id
+        await conn.execute(text("""
+            INSERT INTO tenants (id, name, status)
+            VALUES (CAST(:tenant_id AS UUID), 'default-tenant', 'active')
+            ON CONFLICT (id) DO NOTHING
+        """), {"tenant_id": default_tenant_id})
+
+        await conn.execute(text("""
+            UPDATE sessions
+            SET tenant_id = CAST(:tenant_id AS UUID)
+            WHERE tenant_id IS NULL
+        """), {"tenant_id": default_tenant_id})
+
+        await conn.execute(text("""
+            UPDATE tasks
+            SET tenant_id = CAST(:tenant_id AS UUID)
+            WHERE tenant_id IS NULL
+        """), {"tenant_id": default_tenant_id})
+
+        await conn.execute(text("""
+            INSERT INTO tenant_memberships (id, tenant_id, user_id, role, status)
+            SELECT gen_random_uuid(), CAST(:tenant_id AS UUID), user_id,
+                   CASE WHEN role = 'admin' THEN 'owner' ELSE 'member' END,
+                   'active'
+            FROM platform_users
+            WHERE user_id IS NOT NULL
+            ON CONFLICT (tenant_id, user_id) DO NOTHING
+        """), {"tenant_id": default_tenant_id})

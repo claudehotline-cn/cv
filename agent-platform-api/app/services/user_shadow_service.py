@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db_models import PlatformUserModel
+from ..models.db_models import PlatformUserModel
 
 
 class UserShadowService:
@@ -26,3 +26,15 @@ class UserShadowService:
 
         self.db.add(PlatformUserModel(user_id=user_id, email=email, role=role))
         await self.db.commit()
+
+    async def update_role(self, user_id: str, role: str) -> None:
+        if not user_id:
+            return
+        row = await self.db.scalar(select(PlatformUserModel).where(PlatformUserModel.user_id == user_id))
+        if not row:
+            self.db.add(PlatformUserModel(user_id=user_id, role=role))
+            await self.db.commit()
+            return
+        if row.role != role:
+            row.role = role
+            await self.db.commit()
