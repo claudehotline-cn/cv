@@ -22,6 +22,36 @@ settings = get_settings()
 _LOGGER = logging.getLogger(__name__)
 
 
+def _session_owner_user_id(session: SessionModel) -> str | None:
+    state = session.state if isinstance(session.state, dict) else {}
+    owner = state.get("owner_user_id")
+    return str(owner) if owner else None
+
+
+async def _get_owned_session_or_404(db: AsyncSession, session_id: UUID, user: AuthPrincipal) -> SessionModel:
+    from sqlalchemy import select
+
+    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    owner = _session_owner_user_id(session)
+    if user.role != "admin":
+        if not owner or owner != user.user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+async def _get_owned_task_or_404(task_service: TaskService, db: AsyncSession, task_id: UUID, user: AuthPrincipal):
+    task = await task_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    session = await _get_owned_session_or_404(db, task.session_id, user)
+    return task, session
+
+
 class ExecuteRequest(BaseModel):
     """执行任务请求"""
     message: str
@@ -66,13 +96,8 @@ async def create_execute_task(
     from arq import create_pool
     from arq.connections import RedisSettings
     
-    # 验证 session 存在
-    result = await db.execute(
-        select(SessionModel).where(SessionModel.id == session_id)
-    )
-    session = result.scalar_one_or_none()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    # 验证 session 存在且归属当前用户
+    session = await _get_owned_session_or_404(db, session_id, user)
     
     # 获取 agent_key
     from ..models.db_models import AgentModel
@@ -89,6 +114,7 @@ async def create_execute_task(
         meta={
             "input_message": request.message,
             "agent_key": agent_key,
+            "owner_user_id": user.user_id,
         },
     )
     # Async task runs on its own thread_id for HITL + parallelism.
@@ -156,17 +182,12 @@ async def list_session_tasks(
         description="Filter by task status. Use 'active' for pending/running tasks.",
     ),
     limit: int = Query(default=50, ge=1, le=200),
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取会话的任务列表（用于页面返回后恢复任务状态）。"""
-    from sqlalchemy import select
-
-    # 验证 session 存在
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-    session = result.scalar_one_or_none()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    # 验证 session 存在且归属当前用户
+    await _get_owned_session_or_404(db, session_id, user)
 
     task_service = TaskService(db)
     tasks = await task_service.get_tasks_by_session(session_id)
@@ -198,15 +219,12 @@ async def list_session_tasks(
 @router.get("/{task_id}")
 async def get_task_status(
     task_id: UUID,
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """获取任务状态"""
     task_service = TaskService(db)
-    task = await task_service.get_task(task_id)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user)
     
     return TaskResponse(
         id=str(task.id),
@@ -227,9 +245,7 @@ async def cancel_task(
 ):
     """请求取消任务"""
     task_service = TaskService(db)
-    task = await task_service.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user)
 
     success = await task_service.request_cancel(task_id)
     
@@ -289,9 +305,7 @@ async def resume_task(
     from arq.connections import RedisSettings
 
     task_service = TaskService(db)
-    task = await task_service.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task, _ = await _get_owned_task_or_404(task_service, db, task_id, user)
 
     meta = task.result if isinstance(task.result, dict) else {}
     agent_key = meta.get("agent_key") or "data_agent"
@@ -337,9 +351,12 @@ async def resume_task(
 async def stream_session_task_events(
     session_id: UUID,
     request: Request,
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """SSE：订阅某个会话下所有任务的事件流（进度/状态/结果）。"""
+
+    await _get_owned_session_or_404(db, session_id, user)
 
     async def event_generator():
         from agent_core.events import RedisEventBus
@@ -375,10 +392,14 @@ async def stream_session_task_events(
 async def stream_task_progress(
     task_id: UUID,
     request: Request,
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """SSE 流式获取任务进度"""
     
+    task_service = TaskService(db)
+    await _get_owned_task_or_404(task_service, db, task_id, user)
+
     async def event_generator():
 
         from agent_core.events import RedisEventBus

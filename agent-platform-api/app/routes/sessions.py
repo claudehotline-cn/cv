@@ -13,7 +13,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 async def create_session(
     agent_id: Optional[str] = Body(None, embed=True),
     title: Optional[str] = Body(None, embed=True),
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new session for a specific agent."""
@@ -37,7 +37,8 @@ async def create_session(
     new_session = SessionModel(
         agent_id=agent.id,
         title=title or "New Chat",
-        thread_id=uuid4()
+        thread_id=uuid4(),
+        state={"owner_user_id": user.user_id}
     )
     db.add(new_session)
     await db.commit()
@@ -53,12 +54,16 @@ async def create_session(
 @router.get("/{session_id}")
 async def get_session(
     session_id: str,
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
     session = res.scalar_one_or_none()
     if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    owner_user_id = (session.state or {}).get("owner_user_id") if isinstance(session.state, dict) else None
+    if user.role != "admin" and owner_user_id and owner_user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     
     return {
@@ -73,7 +78,7 @@ async def get_session(
 @router.get("/")
 async def list_sessions(
     limit: int = 50,
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List all sessions, ordered by updated_at desc."""
@@ -82,6 +87,12 @@ async def list_sessions(
     stmt = select(SessionModel).order_by(desc(SessionModel.updated_at)).limit(limit)
     result = await db.execute(stmt)
     sessions = result.scalars().all()
+
+    if user.role != "admin":
+        sessions = [
+            s for s in sessions
+            if isinstance(s.state, dict) and (s.state.get("owner_user_id") == user.user_id)
+        ]
     
     return {
         "sessions": [
@@ -100,13 +111,17 @@ async def list_sessions(
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
-    _: AuthPrincipal = Depends(get_current_user),
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a session."""
     res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
     session = res.scalar_one_or_none()
     if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    owner_user_id = (session.state or {}).get("owner_user_id") if isinstance(session.state, dict) else None
+    if user.role != "admin" and owner_user_id and owner_user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     
     await db.delete(session)

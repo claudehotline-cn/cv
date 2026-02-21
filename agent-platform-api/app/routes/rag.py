@@ -13,6 +13,14 @@ from agent_core.events import AuditEmitter
 from agent_core.settings import get_settings
 
 
+def _is_strict_auth_mode() -> bool:
+    return (os.getenv("AUTH_MODE") or "mixed").strip().lower() == "strict"
+
+
+def _allow_dev_headers() -> bool:
+    return (os.getenv("AUTH_ALLOW_DEV_HEADERS") or "true").strip().lower() in ("1", "true", "yes", "on")
+
+
 router = APIRouter(prefix="/rag", tags=["rag"])
 _LOGGER = logging.getLogger(__name__)
 settings = get_settings()
@@ -24,6 +32,28 @@ def _rag_base_url() -> str:
 
 
 def _dev_user_ctx(req: Request) -> Dict[str, str]:
+    auth_header = (req.headers.get("Authorization") or "").strip()
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        if token:
+            introspect_url = (os.getenv("AUTH_INTROSPECTION_URL") or "http://agent-auth:8000/internal/introspect").strip()
+            try:
+                with httpx.Client(timeout=10) as client:
+                    resp = client.post(introspect_url, headers={"Authorization": f"Bearer {token}"})
+                if resp.status_code < 400:
+                    data = resp.json()
+                    if data.get("active"):
+                        user_id = str(data.get("sub") or "anonymous").strip() or "anonymous"
+                        role = str(data.get("role") or "user").strip().lower() or "user"
+                        if role not in ("admin", "user"):
+                            role = "user"
+                        return {"user_id": user_id, "role": role}
+            except Exception:
+                _LOGGER.exception("Failed to introspect bearer token for rag auth")
+
+    if _is_strict_auth_mode() or not _allow_dev_headers():
+        return {"user_id": "anonymous", "role": "user"}
+
     user_id = (req.headers.get("X-User-Id") or "anonymous").strip() or "anonymous"
     role = (req.headers.get("X-User-Role") or "user").strip().lower()
     if role not in ("admin", "user"):
@@ -31,7 +61,13 @@ def _dev_user_ctx(req: Request) -> Dict[str, str]:
     return {"user_id": user_id, "role": role}
 
 
+def _require_authenticated(ctx: Dict[str, str]) -> None:
+    if not (ctx.get("user_id") or "").strip() or ctx.get("user_id") == "anonymous":
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+
 def _require_admin(ctx: Dict[str, str]) -> None:
+    _require_authenticated(ctx)
     if ctx.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
 
