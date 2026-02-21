@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     auth_refresh_ttl_days: int = Field(default=14, alias="AGENT_AUTH_REFRESH_TTL_DAYS")
     auth_allow_register: bool = Field(default=False, alias="AGENT_AUTH_ALLOW_REGISTER")
     auth_rate_limit_login: str = Field(default="5/min", alias="AGENT_AUTH_RATE_LIMIT_LOGIN")
+    auth_redis_url: str = Field(default="redis://langgraph-redis:6379/0", alias="AGENT_AUTH_REDIS_URL")
+    auth_audit_stream_key: str = Field(default="audit.events", alias="AGENT_AUTH_AUDIT_STREAM_KEY")
 
 
 @lru_cache(maxsize=1)

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, String, func, or_
 
 from app.db import get_db
-from app.models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel
+from app.models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel, AuthAuditEventModel
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -66,6 +66,28 @@ class AuditOverviewView(BaseModel):
     failed_requests: int
     interrupted_requests: int
     running_requests: int
+
+
+class AuthAuditEventView(BaseModel):
+    event_id: str
+    event_time: datetime
+    event_type: str
+    user_id: Optional[str]
+    email: Optional[str]
+    actor_type: Optional[str]
+    actor_id: Optional[str]
+    ip_addr: Optional[str]
+    user_agent: Optional[str]
+    result: Optional[str]
+    reason_code: Optional[str]
+    payload: Dict[str, Any]
+
+
+class PaginatedAuthAuditResponse(BaseModel):
+    items: List[AuthAuditEventView]
+    total: int
+    limit: int
+    offset: int
 
 
 LLM_EVENT_TYPES = {"llm_called", "llm_output_received", "llm_failed"}
@@ -213,6 +235,65 @@ def _parse_float(v: Any) -> float:
         return float(v)
     except Exception:
         return 0.0
+
+
+@router.get("/auth/events", response_model=PaginatedAuthAuditResponse)
+async def list_auth_audit_events(
+    limit: int = 50,
+    offset: int = 0,
+    event_type: Optional[str] = None,
+    user_id: Optional[str] = None,
+    email: Optional[str] = None,
+    ip_addr: Optional[str] = None,
+    result: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(AuthAuditEventModel)
+
+    if event_type:
+        stmt = stmt.where(AuthAuditEventModel.event_type == event_type)
+    if user_id:
+        stmt = stmt.where(AuthAuditEventModel.user_id == user_id)
+    if email:
+        stmt = stmt.where(AuthAuditEventModel.email.ilike(f"%{email}%"))
+    if ip_addr:
+        stmt = stmt.where(AuthAuditEventModel.ip_addr == ip_addr)
+    if result:
+        stmt = stmt.where(AuthAuditEventModel.result == result)
+    if start_date:
+        stmt = stmt.where(AuthAuditEventModel.event_time >= start_date)
+    if end_date:
+        stmt = stmt.where(AuthAuditEventModel.event_time <= end_date)
+
+    total_stmt = select(func.count()).select_from(stmt.subquery())
+    total_res = await db.execute(total_stmt)
+    total = int(total_res.scalar_one() or 0)
+
+    rows_stmt = stmt.order_by(desc(AuthAuditEventModel.event_time)).limit(limit).offset(offset)
+    rows_res = await db.execute(rows_stmt)
+    rows = rows_res.scalars().all()
+
+    items = [
+        AuthAuditEventView(
+            event_id=str(r.event_id),
+            event_time=r.event_time,
+            event_type=r.event_type,
+            user_id=r.user_id,
+            email=r.email,
+            actor_type=r.actor_type,
+            actor_id=r.actor_id,
+            ip_addr=r.ip_addr,
+            user_agent=r.user_agent,
+            result=r.result,
+            reason_code=r.reason_code,
+            payload=r.payload or {},
+        )
+        for r in rows
+    ]
+
+    return PaginatedAuthAuditResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 def _collect_event_stats(events: List[AuditEventModel]) -> Dict[str, int]:

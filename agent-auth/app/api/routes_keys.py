@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import get_container, get_current_principal
+from app.core.audit import get_auth_audit_emitter
 from app.domain.value_objects.principal import Principal
 from app.infrastructure.wiring.container import Container
 from app.schemas.key import ApiKeyItem, CreateApiKeyRequest, CreateApiKeyResponse
@@ -20,6 +21,13 @@ async def create_api_key(
         name=payload.name,
         scopes=payload.scopes,
         expires_at=payload.expires_at,
+    )
+    audit = get_auth_audit_emitter()
+    await audit.emit(
+        event_type="auth_api_key_created",
+        actor_id=principal.user_id,
+        actor_type="user",
+        payload={"email": principal.email, "key_id": row.id, "key_prefix": row.key_prefix, "result": "success"},
     )
     return CreateApiKeyResponse(id=row.id, name=row.name, key=raw_key, key_prefix=row.key_prefix)
 
@@ -50,4 +58,11 @@ async def revoke_api_key(
     container: Container = Depends(get_container),
 ):
     await container.revoke_api_key_service().execute(key_id=key_id, user_id=principal.user_id)
+    audit = get_auth_audit_emitter()
+    await audit.emit(
+        event_type="auth_api_key_revoked",
+        actor_id=principal.user_id,
+        actor_type="user",
+        payload={"email": principal.email, "key_id": key_id, "result": "success"},
+    )
     return {"ok": True}

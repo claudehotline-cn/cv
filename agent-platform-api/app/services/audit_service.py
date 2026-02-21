@@ -1,6 +1,6 @@
 import logging
 import json
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 
@@ -8,8 +8,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, or_
 from app.models.db_models import (
-    AgentRunModel, AgentSpanModel, AuditEventModel, ToolAuditModel, AuditBlobModel,
-    ApprovalRequestModel, ApprovalDecisionModel
+    AgentRunModel,
+    AgentSpanModel,
+    AuditEventModel,
+    ToolAuditModel,
+    AuditBlobModel,
+    ApprovalRequestModel,
+    ApprovalDecisionModel,
+    AuthAuditEventModel,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +49,11 @@ class AuditPersistenceService:
 
     async def _process_event_inner(self, event: Dict[str, Any]):
         """Internal logic without transaction boundaries."""
+        # Auth events are persisted into a dedicated table and do not depend on request/span IDs.
+        if self._is_auth_event(event):
+            await self._persist_auth_event(event)
+            return
+
         # 1. Parse standard fields
         event_type = event.get("event_type")
         request_id_str = event.get("request_id")
@@ -74,7 +85,7 @@ class AuditPersistenceService:
 
         # Handle Span Start
         if is_job_event or event_type in ("chain_start", "subagent_started", "run_started", "tool_call_requested", "llm_called", "langgraph_node_started"):
-            await self._handle_span_start(request_id, span_id, event_type, payload, event)
+            await self._handle_span_start(request_id, span_id, event_type or "unknown", payload, event)
 
         # Ensure Span Exists
         if span_id:
@@ -150,6 +161,50 @@ class AuditPersistenceService:
             await self._handle_hitl_request(request_id, span_id, payload)
         elif event_type in ("hitl_approved", "hitl_rejected"):
             await self._handle_hitl_decision(request_id, span_id, event_type, payload)
+
+    @staticmethod
+    def _is_auth_event(event: Dict[str, Any]) -> bool:
+        event_type = (event.get("event_type") or "").strip().lower()
+        component = (event.get("component") or "").strip().lower()
+        return component == "auth" or event_type.startswith("auth_")
+
+    async def _persist_auth_event(self, event: Dict[str, Any]) -> None:
+        payload_json = event.get("payload_json", "{}")
+        try:
+            payload = json.loads(payload_json)
+        except Exception:
+            payload = {}
+
+        try:
+            event_id = UUID(event["event_id"]) if event.get("event_id") else uuid4()
+        except Exception:
+            event_id = uuid4()
+
+        event_time = self._parse_event_time(event) or datetime.now(timezone.utc)
+
+        try:
+            async with self.db.begin_nested():
+                row = AuthAuditEventModel(
+                    event_id=event_id,
+                    event_time=event_time,
+                    event_type=event.get("event_type") or "auth_unknown",
+                    component=(event.get("component") or "auth"),
+                    user_id=(event.get("actor_id") or payload.get("user_id")),
+                    email=payload.get("email"),
+                    actor_type=event.get("actor_type") or payload.get("actor_type"),
+                    actor_id=event.get("actor_id") or payload.get("actor_id"),
+                    ip_addr=payload.get("ip_addr") or payload.get("ip"),
+                    user_agent=payload.get("user_agent"),
+                    result=payload.get("result"),
+                    reason_code=payload.get("reason_code") or payload.get("reason"),
+                    payload=payload if isinstance(payload, dict) else {},
+                )
+                self.db.add(row)
+                await self.db.flush()
+        except IntegrityError:
+            _LOGGER.info("Auth event %s already exists. Skip.", event.get("event_id"))
+        except Exception as e:
+            _LOGGER.error("Failed to persist auth event %s: %s", event.get("event_id"), e)
 
     async def _handle_job_pause(
         self,
