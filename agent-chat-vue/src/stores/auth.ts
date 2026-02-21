@@ -12,14 +12,35 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!user.value && apiClient.isAuthenticated())
   const isAdmin = computed(() => user.value?.role === 'admin')
   const activeTenantId = ref(apiClient.getActiveTenantId())
-  const tenantOptions = computed<TenantOption[]>(() => {
-    if (!user.value?.tenant_id) return []
-    return [{
-      id: user.value.tenant_id,
-      name: 'Default Tenant',
-      role: (user.value.tenant_role || 'member') as 'owner' | 'admin' | 'member',
-    }]
-  })
+  const tenantList = ref<TenantOption[]>([])
+  const tenantOptions = computed<TenantOption[]>(() => tenantList.value)
+
+  function ensureActiveTenant() {
+    if (tenantList.value.length === 0) {
+      activeTenantId.value = ''
+      return
+    }
+    if (!activeTenantId.value || !tenantList.value.some((t) => t.id === activeTenantId.value)) {
+      const fallback = tenantList.value[0].id
+      activeTenantId.value = fallback
+      apiClient.setActiveTenantId(fallback)
+    }
+  }
+
+  async function loadTenants() {
+    if (!isAuthenticated.value) {
+      tenantList.value = []
+      activeTenantId.value = ''
+      return
+    }
+    const res = await apiClient.listMyTenants()
+    tenantList.value = (res?.items || []).map((t) => ({ id: t.id, name: t.name, role: t.role }))
+    if (res?.active_tenant_id) {
+      activeTenantId.value = res.active_tenant_id
+      apiClient.setActiveTenantId(res.active_tenant_id)
+    }
+    ensureActiveTenant()
+  }
 
   async function bootstrap() {
     if (initialized.value) return
@@ -30,6 +51,7 @@ export const useAuthStore = defineStore('auth', () => {
         activeTenantId.value = user.value.tenant_id
         apiClient.setActiveTenantId(user.value.tenant_id)
       }
+      await loadTenants()
     } finally {
       initialized.value = true
       loading.value = false
@@ -44,6 +66,7 @@ export const useAuthStore = defineStore('auth', () => {
         activeTenantId.value = user.value.tenant_id
         apiClient.setActiveTenantId(user.value.tenant_id)
       }
+      await loadTenants()
       return user.value
     } finally {
       loading.value = false
@@ -55,6 +78,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       await apiClient.logout()
       user.value = null
+      tenantList.value = []
       activeTenantId.value = ''
     } finally {
       loading.value = false
@@ -62,6 +86,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function switchTenant(tenantId: string) {
+    if (!tenantList.value.some((t) => t.id === tenantId)) return
     activeTenantId.value = tenantId
     apiClient.setActiveTenantId(tenantId)
   }
@@ -74,6 +99,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     activeTenantId,
     tenantOptions,
+    loadTenants,
     bootstrap,
     login,
     logout,

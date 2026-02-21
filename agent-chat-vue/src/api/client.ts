@@ -25,6 +25,11 @@ export interface TenantOption {
     role: 'owner' | 'admin' | 'member'
 }
 
+export interface TenantListResponse {
+    items: Array<TenantOption & { status?: string }>
+    active_tenant_id?: string
+}
+
 const ACTIVE_TENANT_KEY = 'auth.activeTenantId'
 
 function readAccessToken(): string {
@@ -338,6 +343,15 @@ class ApiClient {
             writeActiveTenantId(user.tenant_id)
         }
         return user
+    }
+
+    async listMyTenants(): Promise<TenantListResponse> {
+        const res = await this.http.get<any, TenantListResponse>('/auth/tenants')
+        if (res?.active_tenant_id) {
+            const active = readActiveTenantId()
+            if (!active) writeActiveTenantId(res.active_tenant_id)
+        }
+        return res
     }
 
     async register(input: { email: string; password: string; username?: string | null }): Promise<AuthUser> {

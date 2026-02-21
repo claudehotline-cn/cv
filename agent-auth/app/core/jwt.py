@@ -19,6 +19,8 @@ def _issue_token(principal: Principal, token_type: str, ttl_seconds: int) -> str
         "sub": principal.user_id,
         "email": principal.email,
         "role": principal.role,
+        "tenant_id": principal.tenant_id,
+        "tenant_role": principal.tenant_role,
         "type": token_type,
         "jti": str(uuid4()),
         "iss": settings.auth_issuer,
@@ -63,4 +65,10 @@ def decode_and_validate(token: str, expected_type: str) -> dict:
 
 
 def principal_from_payload(payload: dict) -> Principal:
-    return Principal(user_id=payload["sub"], email=payload["email"], role=payload["role"])
+    return Principal(
+        user_id=payload["sub"],
+        email=payload["email"],
+        role=payload["role"],
+        tenant_id=payload.get("tenant_id"),
+        tenant_role=payload.get("tenant_role"),
+    )

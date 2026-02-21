@@ -1,10 +1,19 @@
 import os
 from typing import Any, Dict
+from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Body, Header, HTTPException
+from sqlalchemy import select
+from fastapi import APIRouter, Body, Header, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 from agent_auth_client import AuthClient
 from agent_core.settings import get_settings
+
+from ..core.auth import AuthPrincipal, get_current_user
+from ..db import get_db
+from ..models.db_models import TenantMembershipModel, TenantModel
+from ..services.tenant_shadow_service import TenantShadowService
+from ..services.user_shadow_service import UserShadowService
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -96,3 +105,45 @@ async def list_api_keys(authorization: str | None = Header(default=None)):
 @router.delete("/api-keys/{key_id}")
 async def revoke_api_key(key_id: str, authorization: str | None = Header(default=None)):
     return await _proxy("DELETE", f"/auth/api-keys/{key_id}", auth=authorization)
+
+
+@router.get("/tenants")
+async def list_my_tenants(
+    user: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    settings = get_settings()
+    tenant_id = user.tenant_id or settings.auth_default_tenant_id
+    try:
+        tenant_uuid = UUID(str(tenant_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
+    tenant_service = TenantShadowService(db)
+    await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
+    await tenant_service.ensure_tenant(str(tenant_id))
+    await tenant_service.ensure_membership(tenant_id=tenant_uuid, user_id=user.user_id, role=user.role)
+
+    stmt = (
+        select(TenantMembershipModel, TenantModel)
+        .join(TenantModel, TenantMembershipModel.tenant_id == TenantModel.id)
+        .where(
+            TenantMembershipModel.user_id == user.user_id,
+            TenantMembershipModel.status == "active",
+            TenantModel.status == "active",
+        )
+        .order_by(TenantModel.created_at.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    items = [
+        {
+            "id": str(member.tenant_id),
+            "name": tenant.name,
+            "role": member.role,
+            "status": member.status,
+        }
+        for member, tenant in rows
+    ]
+    return {
+        "items": items,
+        "active_tenant_id": str(tenant_id),
+    }

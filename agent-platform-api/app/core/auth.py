@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request
 
@@ -63,7 +64,28 @@ async def get_current_user(request: Request) -> AuthPrincipal:
         token = auth_header.split(" ", 1)[1].strip()
         if not token:
             raise HTTPException(status_code=401, detail="Empty bearer token")
-        return await _introspect_bearer(token)
+        principal = await _introspect_bearer(token)
+
+        requested_tenant_id = (request.headers.get("X-Tenant-Id") or "").strip()
+        if requested_tenant_id:
+            try:
+                UUID(requested_tenant_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
+
+            requested_tenant_role = (request.headers.get("X-Tenant-Role") or principal.tenant_role or "member").strip().lower()
+            if requested_tenant_role not in ("owner", "admin", "member"):
+                requested_tenant_role = "member"
+
+            principal = AuthPrincipal(
+                user_id=principal.user_id,
+                role=principal.role,
+                email=principal.email,
+                tenant_id=requested_tenant_id,
+                tenant_role=requested_tenant_role,
+            )
+
+        return principal
 
     if mode in ("dev", "mixed") and settings.auth_allow_dev_headers:
         return _dev_header_principal(request)
