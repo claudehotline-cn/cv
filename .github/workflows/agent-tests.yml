@@ -8,6 +8,7 @@ on:
       - 'agent-plugins/**'
       - 'agent-test/**'
       - 'agent-cli/**'
+      - 'agent-auth/**'
   pull_request:
     branches: [ "IOBinding", "main" ]
     paths:
@@ -15,6 +16,7 @@ on:
       - 'agent-plugins/**'
       - 'agent-test/**'
       - 'agent-cli/**'
+      - 'agent-auth/**'
 
 jobs:
   test:
@@ -36,14 +38,18 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e agent-core
         pip install -e agent-test
+        if [ -f agent-auth/requirements.txt ]; then pip install -r agent-auth/requirements.txt; fi
         # Install other requirements as needed
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install pytest pytest-recording
 
     - name: Run Agent Tests
       env:
-        PYTHONPATH: ${{ github.workspace }}/agent-core:${{ github.workspace }}/agent-test:${{ github.workspace }}/agent-plugins:${{ github.workspace }}
+        PYTHONPATH: ${{ github.workspace }}/agent-core:${{ github.workspace }}/agent-test:${{ github.workspace }}/agent-plugins:${{ github.workspace }}/agent-auth:${{ github.workspace }}
       run: |
+        # Run auth provider contract tests
+        pytest -q -c agent-test/pytest.ini agent-auth/app/tests/contract
+
         # Find all agent plugins and run their tests
         for dir in agent-plugins/*/; do
             if [ -d "$dir/tests" ]; then
