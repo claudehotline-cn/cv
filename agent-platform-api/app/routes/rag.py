@@ -8,9 +8,14 @@ from typing import Any, Dict, Optional
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Body
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_core.events import AuditEmitter
 from agent_core.settings import get_settings
+
+from ..db import get_db
+from ..models.db_models import TenantMembershipModel
 
 
 def _is_strict_auth_mode() -> bool:
@@ -54,6 +59,18 @@ def _dev_user_ctx(req: Request) -> Dict[str, str]:
                         tenant_role = str(data.get("tenant_role") or ("owner" if role == "admin" else "member")).strip().lower()
                         if tenant_role not in ("owner", "admin", "member"):
                             tenant_role = "member"
+
+                        requested_tenant_id = (req.headers.get("X-Tenant-Id") or "").strip()
+                        if requested_tenant_id:
+                            try:
+                                uuid.UUID(requested_tenant_id)
+                                tenant_id = requested_tenant_id
+                                requested_tenant_role = (req.headers.get("X-Tenant-Role") or tenant_role).strip().lower()
+                                if requested_tenant_role in ("owner", "admin", "member"):
+                                    tenant_role = requested_tenant_role
+                            except ValueError:
+                                pass
+
                         ctx = {
                             "user_id": user_id,
                             "role": role,
@@ -114,13 +131,38 @@ def _require_tenant_context(ctx: Dict[str, str]) -> None:
         raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
 
 
+async def _require_tenant_membership(req: Request, db: AsyncSession = Depends(get_db)) -> None:
+    ctx = _dev_user_ctx(req)
+    _require_authenticated(ctx)
+    _require_tenant_context(ctx)
+
+    user_id = (ctx.get("user_id") or "").strip()
+    tenant_id = (ctx.get("tenant_id") or "").strip()
+    if not user_id or not tenant_id:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+
+    membership = await db.scalar(
+        select(TenantMembershipModel).where(
+            TenantMembershipModel.user_id == user_id,
+            TenantMembershipModel.tenant_id == uuid.UUID(tenant_id),
+            TenantMembershipModel.status == "active",
+        )
+    )
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Tenant membership required")
+
+
 async def _require_rag_authenticated(req: Request) -> None:
     ctx = _dev_user_ctx(req)
     _require_authenticated(ctx)
     _require_tenant_context(ctx)
 
 
-router = APIRouter(prefix="/rag", tags=["rag"], dependencies=[Depends(_require_rag_authenticated)])
+router = APIRouter(
+    prefix="/rag",
+    tags=["rag"],
+    dependencies=[Depends(_require_rag_authenticated), Depends(_require_tenant_membership)],
+)
 
 
 def _request_id(req: Request) -> str:
