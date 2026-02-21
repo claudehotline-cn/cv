@@ -264,6 +264,8 @@ services:
       - AGENT_AUTH_REFRESH_TTL_DAYS=14
       - AGENT_AUTH_ALLOW_REGISTER=${AGENT_AUTH_ALLOW_REGISTER:-false}
       - AGENT_AUTH_RATE_LIMIT_LOGIN=5/min
+      - AGENT_AUTH_RATE_LIMIT_BACKEND=redis
+      - AGENT_AUTH_RATE_LIMIT_FAIL_MODE=open
       - AGENT_AUTH_REDIS_URL=redis://langgraph-redis:6379/0
       - AGENT_AUTH_AUDIT_STREAM_KEY=audit.events
     depends_on:
