@@ -1,0 +1,97 @@
+# Global VCS/IDE
+.git
+.git/**
+.gitmodules
+.gitattributes
+.vscode/**
+.vs/**
+Thumbs.db
+.DS_Store
+
+# CMake and build outputs (anywhere)
+**/CMakeFiles/**
+**/CMakeCache.txt
+**/cmake-build*/**
+**/build/**
+**/build-*/**
+**/bin/**
+**/obj/**
+**/out/**
+**/Debug*/**
+**/Release*/**
+**/x64/**
+**/x86/**
+
+# Toolchain artifacts
+**/*.o
+**/*.a
+**/*.so*
+**/*.dylib
+**/*.lib
+**/*.dll
+**/*.exe
+**/*.pdb
+**/*.ilk
+**/*.iobj
+**/*.ipdb
+**/*.exp
+
+# Node.js artifacts
+web-front/node_modules/**
+web-front/dist/**
+web-front/.vite/**
+
+# Logs
+logs/**
+**/*.log
+
+# Large media/model assets
+**/models/**
+**/model/**
+**/*.onnx
+**/*.engine
+**/*.plan
+**/*.pt
+**/*.weights
+**/*.tflite
+**/*.pb
+**/*.rknn
+**/*.mp4
+**/*.mkv
+**/*.avi
+**/*.mov
+**/*.y4m
+**/*.yuv
+**/*.jpg
+**/*.jpeg
+**/*.png
+**/*.bmp
+
+# Windows local build trees
+video-analyzer/build-ninja/**
+controlplane/build/**
+controlplane/build-ninja/**
+video-source-manager/build/**
+
+# Third-party heavy prebuilts (Windows-only; Linux builds use system libs)
+third_party/ffmpeg-prebuilt/**
+third_party/mysql-connector-c++-*/**
+third_party/opencv*/**
+
+# Docker runtime data (if present)
+docker/monitoring/prometheus/data/**
+docker/monitoring/grafana/data/**
+
+# Archives
+**/*.zip
+**/*.7z
+**/*.tar
+**/*.tar.gz
+**/*.tgz
+**/*.xz
+
+# Keep runtime configs in context
+!video-analyzer/config/**
+!controlplane/config/**
+!video-source-manager/config/**
+

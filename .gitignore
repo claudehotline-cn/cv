@@ -1,259 +1,68 @@
-# Build directories
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production
+dist/
 build/
-*/build/
-**/build/
 
-# Executable files
-*.exe
-*.dll
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 *.so
-*.dylib
-*.app
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
 
-# Object files
-*.o
-*.obj
-*.lo
-*.slo
-*.ko
-*.elf
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
 
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.so
-*.so.*
-*.dylib
-
-# Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-CMakeScripts/
-Makefile
-cmake_install.cmake
-install_manifest.txt
-compile_commands.json
-CTestTestfile.cmake
-_deps/
-
-# Visual Studio
-.vs/
-*.vcxproj
-*.vcxproj.filters
-*.vcxproj.user
-*.sln
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-
-# IDE files
-.vscode/
+# IDEs
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
-# Node.js (for web-frontend)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# OS
+.DS_Store
+Thumbs.db
 
-# Frontend build outputs
-web-frontend/dist/
-web-frontend/.temp/
-web-frontend/.cache/
+# Large Files / Caches
+.ort_trt_cache/
+video-analyzer/build-ninja/
+**/*.engine
 
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+article_agent/outputs/
+article_agent/workspace/
+legacy/article_agent/outputs/
+legacy/article_agent/workspace/
+models/
+.hf_cache/
+agent-langchain/workspace/
+legacy/agent-langchain/workspace/
+legacy/agent-langchain/.venv-langgraph/
 
 # Logs
 logs/
-*.log
-*.log.*
-
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# nyc test coverage
-.nyc_output/
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Microbundle cache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
-
-# Next.js build output
-.next
-
-# Nuxt.js build / generate output
-.nuxt
-dist
-
-# Storybook build outputs
-.out
-.storybook-out
-
-# Temporary folders
-tmp/
-temp/
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# AI model files (large binary files)
-*.onnx
-*.pb
-*.tflite
-*.h5
-*.pkl
-*.pth
-*.pt
-
-# Video files (test data)
-*.mp4
-*.avi
-*.mov
-*.wmv
-*.flv
-*.mkv
-*.webm
-
-# Image files (temporary/test)
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-*.tiff
-*.svg
-
-# Data files
-data/
-datasets/
-*.csv
-*.json.bak
-
-# Configuration files with sensitive data
-config/**/secrets.json
-config/**/*.key
-config/**/*.pem
-
-# Third party / 外部依赖缓存
-third_party/*/
-!third_party/README.md
-ffmpeg-master-shared/
-ffmpeg-master-latest-win64-gpl-shared.zip
-Dependencies_x64_Release.zip
-tmp_avcodec_modules.txt
-deps_avcodec.txt
-
-# 临时工具与扫描结果
-tools/
-
-# Python / scripts
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.venv/
-.venv*/
-.venv-*/
-.virtualenv/
-.python-version
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-pip-wheel-metadata/
-
-# Backup files
-*.bak
-*.backup
-*.old
-
-# null files
-nul
-
-# Package files
-*.zip
-*.tar.gz
-*.rar
-*.7z
-
-# Test results
-test-results/
-coverage.xml
-junit.xml
-
-# Profiling
-*.prof
-*.pprof
-
-# Local configuration
-local.properties
-*.local.json

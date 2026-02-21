@@ -1,0 +1,384 @@
+"""SQL Sub-Agent Module"""
+from __future__ import annotations
+
+import logging
+import operator
+import re
+import json
+from typing import TypedDict, Annotated, Sequence, Any, Literal
+
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.store.base import BaseStore
+from deepagents.backends import StoreBackend
+from langgraph.runtime import Runtime
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command
+from deepagents import CompiledSubAgent
+from ..utils.message_utils import extract_text_from_message, stream_reasoning
+
+from agent_core.runtime import build_chat_llm
+from ..tools import (
+    db_list_tables_tool, db_table_schema_tool, db_run_sql_tool
+)
+from ..prompts import (
+    SQL_AGENT_DESCRIPTION, SQL_AGENT_PROMPT
+)
+
+from agent_core.decorators import node_wrapper
+
+_LOGGER = logging.getLogger(__name__)
+
+# -------------------------------------------------------------------------
+# SQL Agent Definition
+# -------------------------------------------------------------------------
+
+class SQLAgentState(TypedDict):
+    """SQL Agent 的状态"""
+    messages: Annotated[Sequence[BaseMessage], operator.add]  # 消息历史，自动追加合并
+    task_description: str  # 当前 SQL 任务的具体描述 (从上游传入)
+    analysis_id: str  # 全局唯一分析ID，用于关联文件/工作区上下文
+    tables_info: str       # Step 1: 表列表
+    schema_info: str       # Step 2: 表结构
+    generated_sql: str     # Step 3: LLM 生成的 SQL
+    sql_result: str        # Step 4: 执行结果
+    retry_count: int        # 重试次数
+    error_feedback: str     # 错误反馈
+
+@node_wrapper("list_tables", graph_id="sql_agent")
+async def sql_step1_list_tables(state: SQLAgentState, config: RunnableConfig, store: BaseStore, runtime: Runtime) -> dict:
+    """Step 1: 列出所有表"""
+    print(f"[SQL DIRECT DEBUG] Inside sql_step1_list_tables. Config keys: {list(config.keys()) if config else 'None'}", flush=True)
+    _LOGGER.info("[SQL Agent Fixed Flow] Step 1: list_tables")
+    # Check if runtime has 'state' attribute
+    if hasattr(runtime, "state"):
+        _LOGGER.info(f"Runtime.state found: {runtime.state}")
+    else:
+        _LOGGER.info("Runtime has no 'state' attribute.")
+    
+    # Check for user_id and analysis_id from config
+    user_id = config.get("configurable", {}).get("user_id", "NOT_FOUND")
+    analysis_id = config.get("configurable", {}).get("analysis_id", "")
+    
+
+
+    task_description = ""
+    messages = state.get("messages", [])
+    if messages:
+        last_msg = messages[-1]
+        task_description = extract_text_from_message(last_msg)
+
+        
+    if not analysis_id:
+        _LOGGER.warning("[SQL Agent] No analysis_id found in config!")
+    
+    try:
+        child_config = config.copy() if config else {}
+        child_config.setdefault("tags", []).append("agent:sql_agent")
+        child_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
+        
+        result = await db_list_tables_tool.ainvoke({"analysis_id": analysis_id}, config=child_config)
+        _LOGGER.info("[SQL Agent] list_tables result: %s", result[:300] if len(result) > 300 else result)
+        return {"tables_info": result, "analysis_id": analysis_id, "task_description": task_description}
+
+    except Exception as e:
+        _LOGGER.error("[SQL Agent] list_tables failed: %s", e)
+        return {"tables_info": f"Error: {e}", "analysis_id": analysis_id, "task_description": task_description}
+
+
+
+@node_wrapper("table_schema", graph_id="sql_agent")
+async def sql_step2_get_schema(state: SQLAgentState, config: RunnableConfig) -> dict:
+    """Step 2: 获取相关表的 Schema"""
+    _LOGGER.info("[SQL Agent Fixed Flow] Step 2: get_schema")
+    
+    tables_info = state.get("tables_info", "")
+    
+    # 从 tables_info JSON 中提取所有表名
+    table_names = []
+    try:
+        tables_json = json.loads(tables_info) if isinstance(tables_info, str) else tables_info
+        if isinstance(tables_json, dict) and "tables" in tables_json:
+            for t in tables_json.get("tables", []):
+                if isinstance(t, dict) and "name" in t:
+                    table_names.append(t["name"])
+    except:
+        # Fallback: 正则提取
+        table_names = re.findall(r'"name":\s*"([^"]+)"', tables_info)
+    
+    # 过滤只保留以 m_ 开头的业务表（排除系统表）
+    business_tables = [t for t in table_names if t.startswith("m_")]
+    _LOGGER.info("[SQL Agent] Found %d business tables: %s", len(business_tables), business_tables)
+    
+    # 获取所有业务表的 Schema
+    schema_results = []
+    for table in business_tables:
+        try:
+            # Config passed to step2
+            child_config = config.copy() if config else {}
+            child_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
+            result = await db_table_schema_tool.ainvoke({"table": table}, config=child_config)
+            schema_results.append(f"表 {table}:\n{result}")
+            _LOGGER.info("[SQL Agent] Got schema for table %s: %s", table, result[:200] if len(result) > 200 else result)
+        except Exception as e:
+            _LOGGER.error("[SQL Agent] Failed to get schema for %s: %s", table, e)
+    
+    schema_info = "\n\n".join(schema_results)
+    _LOGGER.info("[SQL Agent] Total schema_info length: %d, tables: %d", len(schema_info), len(schema_results))
+    return {"schema_info": schema_info}
+
+@node_wrapper("llm_generate_sql", graph_id="sql_agent")
+async def sql_step3_generate_sql(state: SQLAgentState, config: RunnableConfig) -> dict:
+    """Step 3: LLM 根据表结构生成 SQL"""
+    _LOGGER.info("[SQL Agent Fixed Flow] Step 3: LLM generate SQL")
+    
+    task = state.get("task_description", "")
+    schema_info = state.get("schema_info", "")
+    
+    # Debug config
+    _LOGGER.info(f"[SQL DEBUG] Config keys in llm_generate: {list(config.keys()) if config else 'None'}")
+    if config and 'callbacks' in config:
+         _LOGGER.info(f"[SQL DEBUG] Config has callbacks: {config['callbacks']}")
+    
+    # 构建 Prompt
+    prompt = SQL_AGENT_PROMPT.format(
+        db_schema=schema_info,
+        user_requirement=task
+    )
+    
+    # --- 重试逻辑：如果有错误反馈，添加到 Prompt ---
+    error_feedback = state.get("error_feedback", "")
+    if error_feedback:
+        _LOGGER.warning("[SQL Agent] Retrying with error feedback: %s", error_feedback[:200])
+        prompt += f"""
+sql
+【上一次生成的 SQL 执行错误】
+错误信息: {error_feedback}
+
+请修正上述 SQL，确保逻辑正确且符合语法。
+Strictly result ONLY the SQL code.
+"""
+    # ---------------------------------------------
+    
+    # 重新获取 LLM (因为不在闭包中)
+    llm = build_chat_llm(task_name="sql_agent")
+    
+    # 使用 System + Human 结构，明确角色防止 "Assistant" 幻觉
+    messages = [
+        SystemMessage(content="You are a strict SQL Code Generator. You must output ONLY valid SQL code. Do not start with 'Assistant:'."),
+        HumanMessage(content=[
+            {"type": "text", "text": prompt + "\n\nCRITICAL: Output ONLY the SQL query. Start immediately with ```sql"}
+        ])
+    ]
+    
+    # DEBUG: Log message structure before LLM call (using content_blocks)
+    for i, m in enumerate(messages):
+        blocks = getattr(m, 'content_blocks', [])
+        _LOGGER.info(f"[SQL DEBUG] Message[{i}] role={type(m).__name__}, content_blocks_count={len(blocks)}")
+        if blocks:
+            first_block_type = blocks[0].get('type') if isinstance(blocks[0], dict) else type(blocks[0]).__name__
+            _LOGGER.info(f"[SQL DEBUG] Message[{i}] first_block_type={first_block_type}")
+    
+    # Use Streaming to support real-time CoT display
+    full_response = None
+    
+    # 获取 stream writer
+    from langgraph.config import get_stream_writer
+    writer = get_stream_writer()
+    
+    # 🚀 使用 with_config 设置 tags，让 metadata 包含 agent 名称标签
+    _LOGGER.info("[SQL Agent] Starting LLM stream with tags=['agent:sql_agent']")
+    # Merge with parent config to preserve tracing context (run_id, callbacks)
+    llm_config = config.copy() if config else {}
+    llm_config.setdefault("tags", []).append("agent:sql_agent")
+    llm_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
+    async for chunk in llm.with_config(llm_config).astream(messages):
+        # 1. Accumulate response
+        if full_response is None:
+            full_response = chunk
+            _LOGGER.info("[SQL Agent] First chunk received, run_name should be in metadata")
+        else:
+            full_response += chunk
+            
+        # 2. 已禁用 custom 模式的 stream_reasoning，改用 messages 模式统一处理
+        # stream_reasoning(chunk, "reasoning")
+             
+    response = full_response
+    
+    # Log final counts
+    if response:
+        resp_blocks = getattr(response, 'content_blocks', [])
+        _LOGGER.info(f"[SQL DEBUG] Response content_blocks_count={len(resp_blocks)}")
+    
+    from ..utils.message_utils import extract_text_from_message
+    sql_content = extract_text_from_message(response)
+    
+    _LOGGER.info("[SQL Agent] Raw LLM response: %s", sql_content[:500] if sql_content else "(empty)")
+    _LOGGER.debug("[SQL Agent] Full prompt sent to LLM: %s", prompt[:1000])
+    
+    # 改进 SQL 提取逻辑
+    extracted_sql = sql_content.strip()
+    
+    # 1. 尝试提取 ```sql ... ```
+    if "```sql" in sql_content:
+        extracted_sql = sql_content.split("```sql")[1].split("```")[0].strip()
+    # 2. 尝试提取 ``` ... ``` (通用代码块)
+    elif "```" in sql_content:
+        extracted_sql = sql_content.split("```")[1].split("```")[0].strip()
+    # 3. 如果没有代码块，尝试查找 SELECT ... ; 或 SELECT ...
+    elif "SELECT" in sql_content.upper():
+        match = re.search(r'(SELECT[\s\S]+)', sql_content, re.IGNORECASE)
+        if match:
+             extracted_sql = match.group(1).strip()
+    
+    # 特殊处理：如果结果是 "Assistant" 或过短，视为生成失败
+    if len(extracted_sql) < 10 or "Assistant" in extracted_sql:
+        _LOGGER.warning("[SQL Agent] Generated SQL is invalid/empty: %s", extracted_sql)
+        extracted_sql = "" # 清空，触发 run_sql 报错重试
+    
+    _LOGGER.info("[SQL Agent] Extracted SQL: %s", extracted_sql[:100])
+    
+    # 🚀 提取思维链内容，确保在流式传输结束后仍可显示
+    import re as _re
+    thinking_content = ""
+    think_match = _re.search(r'<think>([\s\S]*?)</think>', sql_content, _re.IGNORECASE)
+    if think_match:
+        thinking_content = think_match.group(1).strip()
+        _LOGGER.info("[SQL Agent] Extracted thinking content: %d chars", len(thinking_content))
+    
+    # 将生成的 SQL 添加到 messages，以便通过 subgraph streaming 流式传输给前端
+    from langchain_core.messages import AIMessage
+    
+    # 构建消息内容：如果有思维链，包含 <think> 标签以便前端提取
+    if thinking_content:
+        msg_content = f"<think>{thinking_content}</think>\n\n生成的 SQL 查询:\n```sql\n{extracted_sql}\n```"
+    else:
+        msg_content = f"生成的 SQL 查询:\n```sql\n{extracted_sql}\n```"
+    
+    # 同时将 reasoning_content 放入 additional_kwargs (标准 LangChain 格式)
+    sql_preview_msg = AIMessage(
+        content=msg_content,
+        additional_kwargs={"reasoning_content": thinking_content} if thinking_content else {}
+    )
+    
+    return {"generated_sql": extracted_sql, "messages": [sql_preview_msg]}
+
+@node_wrapper("run_sql", graph_id="sql_agent")
+async def sql_step4_run_sql(state: SQLAgentState, config: RunnableConfig) -> Command[Literal["llm_generate_sql", "format_output"]]:
+    """步骤 4: 执行 SQL，使用 Command 决定下一步走向"""
+    _LOGGER.info("[SQL Agent Fixed Flow] Step 4: run_sql")
+    
+    sql = state.get("generated_sql", "")
+    analysis_id = state.get("analysis_id", "")
+    task_description = state.get("task_description", "")
+    
+    retry_count = state.get("retry_count", 0)
+    
+    if not sql:
+        if retry_count < 3:
+            _LOGGER.info("[SQL Agent] No SQL generated, retrying... Attempt %d", retry_count + 1)
+            return Command(
+                update={"sql_result": "Error: No SQL generated or SQL is invalid.", 
+                        "retry_count": retry_count + 1,
+                        "error_feedback": "Previous attempt failed to generate valid SQL. Please generate a valid SELECT statement."},
+                goto="llm_generate_sql"
+            )
+        else:
+            return Command(
+                update={"sql_result": "Error: No SQL generated after 3 attempts.", "error_feedback": "Max retries exceeded"},
+                goto="format_output"
+            )
+    
+    try:
+        # Prepare Config
+        child_config = config.copy() if config else {}
+        child_config.setdefault("tags", []).append("agent:sql_agent")
+        child_config.setdefault("metadata", {})["sub_agent"] = "SQL Agent"
+
+        # 传入 user_requirement 以启用 SQL 审查
+        result = await db_run_sql_tool.ainvoke({
+            "sql": sql, 
+            "analysis_id": analysis_id,
+            "user_requirement": task_description
+        }, config=child_config)
+        _LOGGER.info("[SQL Agent] SQL execution result: %s", result[:500] if len(result) > 500 else result)
+        
+        # 检查是否包含 Error 或 Success=False
+        is_success = True
+        error_msg = ""
+        try:
+             res_json = json.loads(result) if isinstance(result, str) else result
+             # 检查 SQL Review 失败 或 运行时错误
+             if isinstance(res_json, dict):
+                 if not res_json.get("success", True): # 有些 tool 返回 {success: False}
+                     is_success = False
+                     error_msg = res_json.get("error", "Unknown error")
+                     if "issues" in res_json:
+                         error_msg += f" Issues: {res_json['issues']}"
+        except:
+            pass
+            
+        if not is_success:
+            _LOGGER.warning("[SQL Agent] Execution/Review failed: %s", error_msg)
+            if retry_count < 3:
+                _LOGGER.info("[SQL Agent] Retrying... Attempt %d", retry_count + 1)
+                return Command(
+                    update={"sql_result": result, "retry_count": retry_count + 1, "error_feedback": error_msg},
+                    goto="llm_generate_sql"
+                )
+            else:
+                return Command(
+                    update={"sql_result": result, "error_feedback": error_msg},
+                    goto="format_output"
+                )
+            
+        return Command(
+            update={"sql_result": result, "error_feedback": ""},
+            goto="format_output"
+        )
+        
+    except Exception as e:
+        _LOGGER.error("[SQL Agent] SQL execution failed: %s", e)
+        if retry_count < 3:
+            return Command(
+                update={"sql_result": f"Error: {e}", "retry_count": retry_count + 1, "error_feedback": str(e)},
+                goto="llm_generate_sql"
+            )
+        else:
+            return Command(
+                update={"sql_result": f"Error: {e}", "error_feedback": str(e)},
+                goto="format_output"
+            )
+
+@node_wrapper("format_output", graph_id="sql_agent")
+def sql_format_output(state: SQLAgentState, config: RunnableConfig) -> dict:
+    """格式化输出"""
+    sql_result = state.get("sql_result", "")
+    output = f"SQL_AGENT_COMPLETE: {sql_result}"
+    return {"messages": [AIMessage(content=output)]}
+
+# check_sql_retry 函数已移除，改用 Command 模式在 run_sql 中直接决定走向
+
+# 构建 SQL 固化流程图
+sql_agent_graph = StateGraph(SQLAgentState)
+sql_agent_graph.add_node("list_tables", sql_step1_list_tables)
+sql_agent_graph.add_node("table_schema", sql_step2_get_schema)
+sql_agent_graph.add_node("llm_generate_sql", sql_step3_generate_sql)
+sql_agent_graph.add_node("run_sql", sql_step4_run_sql)
+sql_agent_graph.add_node("format_output", sql_format_output)
+
+sql_agent_graph.add_edge(START, "list_tables")
+sql_agent_graph.add_edge("list_tables", "table_schema")
+sql_agent_graph.add_edge("table_schema", "llm_generate_sql")
+sql_agent_graph.add_edge("llm_generate_sql", "run_sql")
+
+# Command 模式：run_sql 内部直接决定下一步，无需 conditional_edges
+sql_agent_graph.add_edge("format_output", END)
+
+sql_agent_runnable = sql_agent_graph.compile()
+
+sql_agent = CompiledSubAgent(
+    name="sql_agent",
+    description=SQL_AGENT_DESCRIPTION,
+    runnable=sql_agent_runnable,
+)

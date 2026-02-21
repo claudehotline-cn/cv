@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-audit"
+version = "0.1.0"
+description = "Reusable audit instrumentation & transport for Agent Platform"
+requires-python = ">=3.10"
+dependencies = [
+  "redis>=5.0.0",
+]
+
+[project.optional-dependencies]
+langchain = [
+  "langchain-core>=0.2.0",
+]
+kafka = [
+  # Placeholder for future Kafka transport.
+  # "aiokafka>=0.10.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["agent_audit*"]
+

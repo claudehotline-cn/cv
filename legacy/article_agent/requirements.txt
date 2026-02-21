@@ -1,0 +1,24 @@
+langgraph==1.0.5
+langgraph-cli[inmem]==0.4.11
+langgraph-prebuilt==1.0.5
+langchain==1.2.0
+langchain-core>=1.1.1
+langchain-community>=0.4.1
+langchain-openai>=1.1.6
+langchain-ollama>=1.0.1
+langchain-google-genai>=4.1.2
+langsmith>=0.5.1
+deepagents==0.3.1
+requests>=2.31.0
+pydantic>=2.7.0
+pydantic-settings>=2.7.0
+beautifulsoup4>=4.12.0
+PyPDF2>=3.0.0
+trafilatura>=1.6.0
+playwright>=1.40.0
+structlog>=24.1.0
+Pillow>=10.0.0
+cairosvg>=2.7.0
+pymupdf4llm>=0.0.17
+minio>=7.2.0
+# docling is installed separately in Dockerfile with CPU-only PyTorch

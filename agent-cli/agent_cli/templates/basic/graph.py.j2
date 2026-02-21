@@ -1,0 +1,22 @@
+from typing import Annotated, Dict, Any
+from typing_extensions import TypedDict
+from langchain_core.messages import BaseMessage
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+
+class AgentState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+
+def node_process(state: AgentState):
+    # TODO: Implement your logic here
+    last_message = state["messages"][-1]
+    return {"messages": [("assistant", f"Echo: {last_message.content}")]}
+
+def get_graph(checkpointer=None):
+    workflow = StateGraph(AgentState)
+    
+    workflow.add_node("process", node_process)
+    workflow.set_entry_point("process")
+    workflow.add_edge("process", END)
+    
+    return workflow.compile(checkpointer=checkpointer)

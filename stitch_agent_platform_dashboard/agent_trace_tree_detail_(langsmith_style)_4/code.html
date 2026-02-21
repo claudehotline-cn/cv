@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TraceTree AI - Trace Detail</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#25d1f4",
+                        "background-light": "#f5f8f8",
+                        "background-dark": "#101f22",
+                        "viz-network": "#0ea5e9",
+                        "viz-inference": "#25d1f4",
+                        "viz-thinking": "#94a3b8",
+                        "viz-prompt": "#0ea5e9",
+                        "viz-completion": "#22d3ee"
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style type="text/tailwindcss">
+        .trace-thread {
+            position: absolute;
+            left: 19px;
+            top: 24px;
+            bottom: -8px;
+            width: 1px;
+            @apply bg-slate-300;
+        }
+        .trace-node:last-child .trace-thread {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-[#0d191c] antialiased">
+<div class="relative flex h-screen w-full flex-col overflow-hidden">
+<header class="flex items-center justify-between border-b border-solid border-[#e2e8f0] bg-white px-6 py-3 shrink-0">
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-3">
+<div class="bg-primary p-1 rounded">
+<span class="material-symbols-outlined text-white text-xl">account_tree</span>
+</div>
+<h2 class="text-lg font-bold tracking-tight">TraceTree AI</h2>
+</div>
+<nav class="flex items-center gap-6">
+<a class="text-sm font-medium text-slate-600 hover:text-primary transition-colors" href="#">Projects</a>
+<a class="text-sm font-bold text-primary border-b-2 border-primary py-4 -mb-4" href="#">Traces</a>
+<a class="text-sm font-medium text-slate-600 hover:text-primary transition-colors" href="#">Deployments</a>
+<a class="text-sm font-medium text-slate-600 hover:text-primary transition-colors" href="#">Settings</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative w-64">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
+<input class="w-full h-9 rounded-lg border-none bg-slate-100 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/50" placeholder="Search traces..."/>
+</div>
+<button class="flex items-center justify-center rounded-lg h-9 px-4 bg-primary text-white text-sm font-bold hover:bg-primary/90 transition-all">
+<span class="material-symbols-outlined text-lg mr-2">play_arrow</span>
+                    Run again
+                </button>
+<div class="h-8 w-8 rounded-full bg-slate-200 border border-slate-300" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBi0o89HFUbyFDHuoueHLdBx7rbdkKaQ2s0qzFuROFTxUmR7yKcf35-FK1udufSDPsUULKJ8py8wQGXJzAOesP6_pCWqD5GN5w_5khTfbbBJiuoT6I6ARX8hG6nKeDtY1rLQDtPorBZ8RZ6tRFnN309QARzb_r7sza3tAvf1eM4cJeeR7kIiV1aaUhMYVd4bil3GVcVREBNnLmqqL_7FC4uRvei__kOtFk2W5S6QSttgCvQRLt1TUYQcZ6RPJmqN1uaNFvvrgcV3yKI"); background-size: cover;'></div>
+</div>
+</header>
+<div class="flex items-center justify-between bg-white px-6 py-2 border-b border-[#e2e8f0] shrink-0">
+<div class="flex items-center gap-2 text-sm">
+<a class="text-slate-500 hover:text-primary" href="#">Projects</a>
+<span class="text-slate-300">/</span>
+<a class="text-slate-500 hover:text-primary" href="#">Agent-Alpha</a>
+<span class="text-slate-300">/</span>
+<span class="font-bold text-slate-800">Trace #TR-9921</span>
+<span class="ml-2 px-2 py-0.5 rounded bg-green-100 text-green-700 text-[10px] font-bold uppercase tracking-wider border border-green-200">Success</span>
+</div>
+<div class="flex items-center gap-4 text-xs font-medium text-slate-500">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">schedule</span>
+                    2.57s Latency
+                </div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">token</span>
+                    1,420 Tokens
+                </div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">payments</span>
+                    $0.024
+                </div>
+</div>
+</div>
+<main class="flex flex-1 overflow-hidden">
+<aside class="w-[420px] flex flex-col border-r border-[#e2e8f0] bg-slate-50 overflow-y-auto">
+<div class="p-4 border-b border-[#e2e8f0] bg-white sticky top-0 z-10">
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Execution Trace</h3>
+</div>
+<div class="flex flex-col p-2 space-y-1">
+<div class="trace-node relative">
+<div class="trace-thread"></div>
+<div class="flex items-center gap-3 p-3 rounded-lg bg-white border border-primary shadow-sm ring-1 ring-primary/20">
+<span class="material-symbols-outlined text-primary text-xl">account_tree</span>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-center">
+<span class="text-sm font-bold truncate">Main Agent Chain</span>
+<span class="text-[10px] text-slate-400">2.57s</span>
+</div>
+<div class="text-[10px] text-slate-500">chain • 1.4k tokens</div>
+</div>
+<span class="material-symbols-outlined text-green-500 text-sm">check_circle</span>
+</div>
+</div>
+<div class="pl-8 space-y-1">
+<div class="trace-node relative">
+<div class="trace-thread"></div>
+<div class="flex items-center gap-3 p-3 rounded-lg hover:bg-white transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-primary text-xl">smart_toy</span>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-center">
+<span class="text-sm font-medium truncate">LLM - Intent Classifier</span>
+<span class="text-[10px] text-slate-400">320ms</span>
+</div>
+<div class="text-[10px] text-slate-500">gpt-4o-mini • 142 tokens</div>
+</div>
+<span class="material-symbols-outlined text-green-500 text-sm">check_circle</span>
+</div>
+</div>
+<div class="trace-node relative">
+<div class="trace-thread"></div>
+<div class="flex items-center gap-3 p-3 rounded-lg hover:bg-white transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-primary text-xl">handyman</span>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-center">
+<span class="text-sm font-medium truncate">Tool - Google Search</span>
+<span class="text-[10px] text-slate-400">1.2s</span>
+</div>
+<div class="text-[10px] text-slate-500">tool • "latest ai news..."</div>
+</div>
+<span class="material-symbols-outlined text-green-500 text-sm">check_circle</span>
+</div>
+</div>
+<div class="pl-8 space-y-1">
+<div class="trace-node relative">
+<div class="trace-thread"></div>
+<div class="flex items-center gap-3 p-3 rounded-lg hover:bg-white transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-primary text-xl">output</span>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-center">
+<span class="text-sm font-medium truncate">Tool Output</span>
+<span class="text-[10px] text-slate-400">5ms</span>
+</div>
+<div class="text-[10px] text-slate-500">data • 1.2kb</div>
+</div>
+<span class="material-symbols-outlined text-green-500 text-sm">check_circle</span>
+</div>
+</div>
+</div>
+<div class="trace-node relative">
+<div class="trace-thread"></div>
+<div class="flex items-center gap-3 p-3 rounded-lg hover:bg-white transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-primary text-xl">auto_awesome</span>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-center">
+<span class="text-sm font-medium truncate">Final LLM Response</span>
+<span class="text-[10px] text-slate-400">600ms</span>
+</div>
+<div class="text-[10px] text-slate-500">gpt-4o • 850 tokens</div>
+</div>
+<span class="material-symbols-outlined text-green-500 text-sm">check_circle</span>
+</div>
+</div>
+</div>
+</div>
+</aside>
+<section class="flex-1 flex flex-col bg-white overflow-y-auto">
+<div class="border-b border-[#e2e8f0] px-6 shrink-0 bg-white sticky top-0 z-10">
+<div class="flex gap-8">
+<button class="border-b-2 border-transparent py-4 text-sm font-medium text-slate-500 hover:text-primary hover:border-primary/50 transition-colors">Inputs</button>
+<button class="border-b-2 border-transparent py-4 text-sm font-medium text-slate-500 hover:text-primary hover:border-primary/50 transition-colors">Outputs</button>
+<button class="border-b-2 border-transparent py-4 text-sm font-medium text-slate-500 hover:text-primary hover:border-primary/50 transition-colors">Metadata</button>
+<button class="border-b-2 border-primary py-4 text-sm font-bold text-slate-800">Stats</button>
+</div>
+</div>
+<div class="p-6 space-y-8 max-w-5xl">
+<div>
+<h1 class="text-2xl font-bold text-slate-900">Trace Statistics</h1>
+<p class="text-slate-500 mt-1">Performance breakdown and resource utilization for the selected chain.</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+<div class="p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-slate-400 text-lg">timer</span>
+<span class="text-xs font-bold text-slate-500 uppercase tracking-wider">TTFT</span>
+</div>
+<div class="text-2xl font-bold text-slate-900">124ms</div>
+<div class="text-[10px] text-slate-400 mt-1">Time to First Token</div>
+</div>
+<div class="p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-slate-400 text-lg">payments</span>
+<span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Cost per Request</span>
+</div>
+<div class="text-2xl font-bold text-slate-900">$0.024</div>
+<div class="text-[10px] text-slate-400 mt-1">Estimated total expenditure</div>
+</div>
+<div class="p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-slate-400 text-lg">speed</span>
+<span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Throughput</span>
+</div>
+<div class="text-2xl font-bold text-slate-900">42.5 t/s</div>
+<div class="text-[10px] text-slate-400 mt-1">Tokens per second</div>
+</div>
+<div class="p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-slate-400 text-lg">data_usage</span>
+<span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Context Window</span>
+</div>
+<div class="text-2xl font-bold text-slate-900">1.1%</div>
+<div class="text-[10px] text-slate-400 mt-1">Utilization of 128k limit</div>
+</div>
+</div>
+<div class="grid grid-cols-1 gap-8">
+<div class="space-y-4">
+<div class="flex justify-between items-end">
+<div>
+<h3 class="text-sm font-bold text-slate-800">Latency Breakdown</h3>
+<p class="text-xs text-slate-500">Distribution of execution time by category</p>
+</div>
+<span class="text-xs font-mono font-medium text-slate-700">Total: 2,570ms</span>
+</div>
+<div class="relative w-full h-10 bg-slate-100 rounded-lg overflow-hidden flex shadow-inner">
+<div class="h-full bg-viz-network hover:opacity-90 transition-opacity flex items-center justify-center text-[10px] font-bold text-white overflow-hidden whitespace-nowrap" style="width: 15%">
+                                    Network (385ms)
+                                </div>
+<div class="h-full bg-viz-inference hover:opacity-90 transition-opacity flex items-center justify-center text-[10px] font-bold text-white overflow-hidden whitespace-nowrap" style="width: 65%">
+                                    Inference (1670ms)
+                                </div>
+<div class="h-full bg-viz-thinking hover:opacity-90 transition-opacity flex items-center justify-center text-[10px] font-bold text-white overflow-hidden whitespace-nowrap" style="width: 20%">
+                                    Thinking (515ms)
+                                </div>
+</div>
+<div class="flex gap-6">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-viz-network"></div>
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Network</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-viz-inference"></div>
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Inference</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-viz-thinking"></div>
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Thinking</span>
+</div>
+</div>
+</div>
+<div class="space-y-6 pt-4 border-t border-slate-100">
+<div>
+<h3 class="text-sm font-bold text-slate-800">Token Usage</h3>
+<p class="text-xs text-slate-500">Input vs. Output token comparison</p>
+</div>
+<div class="grid grid-cols-2 gap-12 items-end">
+<div class="space-y-6">
+<div class="space-y-2">
+<div class="flex justify-between items-center text-xs">
+<span class="font-medium text-slate-600">Prompt Tokens</span>
+<span class="font-mono font-bold text-slate-900">820</span>
+</div>
+<div class="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
+<div class="bg-viz-prompt h-full rounded-full" style="width: 57.7%"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between items-center text-xs">
+<span class="font-medium text-slate-600">Completion Tokens</span>
+<span class="font-mono font-bold text-slate-900">600</span>
+</div>
+<div class="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
+<div class="bg-viz-completion h-full rounded-full" style="width: 42.3%"></div>
+</div>
+</div>
+</div>
+<div class="h-40 flex items-end justify-around border-l border-b border-slate-200 px-4">
+<div class="flex flex-col items-center gap-2 w-full max-w-[80px]">
+<div class="w-full bg-viz-prompt rounded-t shadow-sm" style="height: 100px;"></div>
+<span class="text-[10px] font-bold text-slate-400 uppercase">Prompt</span>
+</div>
+<div class="flex flex-col items-center gap-2 w-full max-w-[80px]">
+<div class="w-full bg-viz-completion rounded-t shadow-sm" style="height: 73px;"></div>
+<span class="text-[10px] font-bold text-slate-400 uppercase">Comp.</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="space-y-4 pt-4 border-t border-slate-100">
+<h3 class="text-sm font-bold text-slate-800">Resource Details</h3>
+<div class="overflow-hidden rounded-xl border border-slate-200">
+<table class="min-w-full divide-y divide-slate-200">
+<thead class="bg-slate-50">
+<tr>
+<th class="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-widest">Resource</th>
+<th class="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-widest">Status</th>
+<th class="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-widest">Duration</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-200 bg-white">
+<tr>
+<td class="px-4 py-3 text-xs font-medium text-slate-900">OpenAI API Endpoint</td>
+<td class="px-4 py-3 text-[10px]"><span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold border border-green-200">200 OK</span></td>
+<td class="px-4 py-3 text-xs text-right font-mono text-slate-500">1.67s</td>
+</tr>
+<tr>
+<td class="px-4 py-3 text-xs font-medium text-slate-900">Google Search Tool</td>
+<td class="px-4 py-3 text-[10px]"><span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold border border-green-200">SUCCESS</span></td>
+<td class="px-4 py-3 text-xs text-right font-mono text-slate-500">1.2s</td>
+</tr>
+<tr>
+<td class="px-4 py-3 text-xs font-medium text-slate-900">Local Vector DB Cache</td>
+<td class="px-4 py-3 text-[10px]"><span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold border border-slate-200">MISS</span></td>
+<td class="px-4 py-3 text-xs text-right font-mono text-slate-500">42ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</section>
+<aside class="w-80 border-l border-[#e2e8f0] bg-white flex flex-col p-6 shrink-0 hidden xl:flex overflow-y-auto">
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Quick Actions</h3>
+<div class="space-y-6">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-400">flag</span>
+<span class="text-sm text-slate-600">Trace ID</span>
+</div>
+<span class="text-xs font-mono font-medium text-slate-900 bg-slate-100 px-2 py-1 rounded">TR-9921</span>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-400">event</span>
+<span class="text-sm text-slate-600">Timestamp</span>
+</div>
+<span class="text-xs text-slate-900">Nov 15, 14:32:01</span>
+</div>
+<hr class="border-slate-100"/>
+<div class="flex flex-col gap-3">
+<button class="w-full py-2 bg-slate-900 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-lg">download</span>
+                            Export Data
+                        </button>
+<button class="w-full py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors">
+<span class="material-symbols-outlined text-lg">share</span>
+                            Share Trace
+                        </button>
+<button class="w-full py-2 border border-red-200 text-red-600 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-red-50 transition-colors">
+<span class="material-symbols-outlined text-lg">bug_report</span>
+                            Add to Dataset
+                        </button>
+</div>
+</div>
+</aside>
+</main>
+</div>
+
+</body></html>

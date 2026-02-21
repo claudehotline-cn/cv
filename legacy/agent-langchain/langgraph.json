@@ -1,0 +1,8 @@
+{
+  "graphs": {
+    "data_deep_agent": "agent_langchain.deep_agent.graph:get_data_deep_agent_graph"
+  },
+  "dependencies": [
+    "."
+  ]
+}

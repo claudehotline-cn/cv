@@ -1,0 +1,73 @@
+# Dockerfile.pytorch-base
+# Purpose: Base image with PyTorch source build for CUDA 13.1 (Blackwell support)
+# This image should be built once and reused.
+
+FROM nvidia/cuda:13.1.0-devel-ubuntu22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TORCH_CUDA_ARCH_LIST="12.0"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    python3.10-dev \
+    python3.10-venv \
+    git \
+    curl \
+    ffmpeg \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y python3.12 python3.12-dev python3.12-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up Python 3.12 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+# Install pip for Python 3.12
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# Install setuptools first to provide distutils compatibility for Python 3.12
+RUN pip install --no-cache-dir setuptools
+
+# Install build dependencies
+RUN pip install --no-cache-dir \
+    packaging \
+    ninja \
+    setuptools \
+    wheel \
+    uv \
+    cmake \
+    typing_extensions \
+    pyyaml \
+    numpy
+
+# Force reinstall setuptools to override system package
+RUN pip install --force-reinstall --no-cache-dir setuptools
+
+# Build PyTorch from source for CUDA 13.1 compatibility
+ENV MAX_JOBS=2
+ENV USE_CUDA=1
+ENV TORCH_CUDA_ARCH_LIST="12.0"
+
+# Clone and build PyTorch
+RUN git clone --recursive --depth 1 https://github.com/pytorch/pytorch.git /tmp/pytorch
+WORKDIR /tmp/pytorch
+RUN python setup.py install
+
+# Build torchvision
+RUN git clone --depth 1 https://github.com/pytorch/vision.git /tmp/vision
+WORKDIR /tmp/vision
+RUN python setup.py install
+
+# Build torchaudio
+RUN git clone --depth 1 https://github.com/pytorch/audio.git /tmp/audio
+WORKDIR /tmp/audio
+RUN python setup.py install
+
+# Clean up build artifacts to reduce image size (Optional, but recommended for base image)
+RUN rm -rf /tmp/pytorch /tmp/vision /tmp/audio
+
+WORKDIR /app

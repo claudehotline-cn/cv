@@ -1,0 +1,32 @@
+# RBAC Policy Configuration
+# Defines allowed and denied tools for each role.
+# '*' means all tools.
+
+roles:
+  # Full access
+  admin:
+    allow: ["*"]
+    deny: []
+
+  # Developer access
+  dev:
+    allow: ["*"]
+    deny: ["execute_production_mutation"]
+
+  # Analyst (Read-only mostly)
+  analyst:
+    allow: 
+      - "read_sql"
+      - "python_repl"
+      - "visualize" 
+      - "search_web"
+    deny: 
+      - "execute_mutation"
+      - "delete_file"
+      - "publish_article"
+
+  # Guest
+  guest:
+    allow:
+      - "search_web"
+    deny: ["*"]
