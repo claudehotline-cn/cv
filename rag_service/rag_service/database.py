@@ -97,6 +97,17 @@ def init_mysql_db():
                     conn.commit()
                     logger.info("MySQL migration: added index %s", idx_name)
 
+            for table_name in tenant_tables:
+                conn.execute(
+                    text(f"UPDATE {table_name} SET tenant_id = :tenant_id WHERE tenant_id IS NULL"),
+                    {"tenant_id": settings.auth_default_tenant_id},
+                )
+            conn.commit()
+
+            for table_name in tenant_tables:
+                conn.execute(text(f"ALTER TABLE {table_name} MODIFY COLUMN tenant_id VARCHAR(36) NOT NULL"))
+            conn.commit()
+
             res = conn.execute(
                 text(
                     """
@@ -115,13 +126,35 @@ def init_mysql_db():
                 conn.commit()
                 logger.info("MySQL migration: added rag_knowledge_bases.cleaning_rules")
 
-            default_tenant_id = settings.auth_default_tenant_id
-            for table_name in tenant_tables:
+            idx_res = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM information_schema.statistics
+                    WHERE table_schema = :db
+                      AND table_name = 'rag_knowledge_bases'
+                      AND index_name = 'uq_rag_knowledge_bases_tenant_name'
+                    """
+                ),
+                {"db": settings.mysql_database},
+            )
+            has_unique_idx = int(idx_res.scalar() or 0) > 0
+            if not has_unique_idx:
                 conn.execute(
-                    text(f"UPDATE {table_name} SET tenant_id = :tenant_id WHERE tenant_id IS NULL"),
-                    {"tenant_id": default_tenant_id},
+                    text(
+                        "CREATE UNIQUE INDEX uq_rag_knowledge_bases_tenant_name "
+                        "ON rag_knowledge_bases(tenant_id, name)"
+                    )
                 )
-            conn.commit()
+                conn.commit()
+
+            # Optional cleanup for legacy single-column unique index on name.
+            # Do not fail migration if index doesn't exist or cannot be dropped.
+            try:
+                conn.execute(text("ALTER TABLE rag_knowledge_bases DROP INDEX name"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
     except Exception as e:
         logger.warning(f"MySQL migration (cleaning_rules) skipped due to error: {e}")
 

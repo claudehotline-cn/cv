@@ -32,6 +32,12 @@ def _tenant_uuid(user: AuthPrincipal) -> UUID:
         raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
 
 
+async def _ensure_tenant_membership_or_403(db: AsyncSession, user: AuthPrincipal, tenant_id: UUID) -> None:
+    tenant_service = TenantShadowService(db)
+    if not await tenant_service.has_active_membership(tenant_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Tenant membership required")
+
+
 def _session_owner_user_id(session: SessionModel) -> str | None:
     if session.user_id:
         return session.user_id
@@ -131,6 +137,7 @@ async def create_execute_task(
     from arq.connections import RedisSettings
     
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
 
     # 验证 session 存在且归属当前用户
     session = await _get_owned_session_or_404(db, session_id, user, tenant_id)
@@ -145,9 +152,6 @@ async def create_execute_task(
     
     # 创建任务记录
     await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
-    tenant_service = TenantShadowService(db)
-    await tenant_service.ensure_tenant(str(tenant_id))
-    await tenant_service.ensure_membership(tenant_id, user.user_id, user.role)
     task_service = TaskService(db)
     task = await task_service.create_task(
         session_id,
@@ -229,6 +233,7 @@ async def list_session_tasks(
 ):
     """获取会话的任务列表（用于页面返回后恢复任务状态）。"""
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
 
     # 验证 session 存在且归属当前用户
     await _get_owned_session_or_404(db, session_id, user, tenant_id)
@@ -269,6 +274,7 @@ async def get_task_status(
 ):
     """获取任务状态"""
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     task_service = TaskService(db)
     task, _ = await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
     
@@ -291,6 +297,7 @@ async def cancel_task(
 ):
     """请求取消任务"""
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     task_service = TaskService(db)
     task, _ = await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
 
@@ -352,6 +359,7 @@ async def resume_task(
     from arq.connections import RedisSettings
 
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     task_service = TaskService(db)
     task, _ = await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
 
@@ -405,6 +413,7 @@ async def stream_session_task_events(
     """SSE：订阅某个会话下所有任务的事件流（进度/状态/结果）。"""
 
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     await _get_owned_session_or_404(db, session_id, user, tenant_id)
 
     async def event_generator():
@@ -447,6 +456,7 @@ async def stream_task_progress(
     """SSE 流式获取任务进度"""
 
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     task_service = TaskService(db)
     await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
 

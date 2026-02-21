@@ -20,6 +20,12 @@ def _tenant_uuid(user: AuthPrincipal) -> UUID:
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
 
+
+async def _ensure_tenant_membership_or_403(db: AsyncSession, user: AuthPrincipal, tenant_id: UUID) -> None:
+    tenant_service = TenantShadowService(db)
+    if not await tenant_service.has_active_membership(tenant_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Tenant membership required")
+
 @router.post("/", response_model=dict)
 async def create_session(
     agent_id: Optional[str] = Body(None, embed=True),
@@ -30,9 +36,7 @@ async def create_session(
     """Create a new session for a specific agent."""
     tenant_id = _tenant_uuid(user)
     await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
-    tenant_service = TenantShadowService(db)
-    await tenant_service.ensure_tenant(str(tenant_id))
-    await tenant_service.ensure_membership(tenant_id, user.user_id, user.role)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     # If no agent_id provided, use data_agent as default
     if not agent_id:
         result = await db.execute(select(AgentModel).where(AgentModel.builtin_key == "data_agent"))
@@ -76,6 +80,7 @@ async def get_session(
     db: AsyncSession = Depends(get_db),
 ):
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     res = await db.execute(
         select(SessionModel).where(
             SessionModel.id == session_id,
@@ -109,6 +114,7 @@ async def list_sessions(
     from sqlalchemy import desc
 
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     stmt = (
         select(SessionModel)
         .where(SessionModel.tenant_id == tenant_id)
@@ -147,6 +153,7 @@ async def delete_session(
 ):
     """Delete a session."""
     tenant_id = _tenant_uuid(user)
+    await _ensure_tenant_membership_or_403(db, user, tenant_id)
     res = await db.execute(
         select(SessionModel).where(
             SessionModel.id == session_id,

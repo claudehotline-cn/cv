@@ -12,8 +12,6 @@ from agent_core.settings import get_settings
 from ..core.auth import AuthPrincipal, get_current_user
 from ..db import get_db
 from ..models.db_models import TenantMembershipModel, TenantModel
-from ..services.tenant_shadow_service import TenantShadowService
-from ..services.user_shadow_service import UserShadowService
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -113,15 +111,11 @@ async def list_my_tenants(
     db: AsyncSession = Depends(get_db),
 ):
     settings = get_settings()
-    tenant_id = user.tenant_id or settings.auth_default_tenant_id
+    requested_tenant_id = user.tenant_id or settings.auth_default_tenant_id
     try:
-        tenant_uuid = UUID(str(tenant_id))
+        requested_tenant_uuid = UUID(str(requested_tenant_id))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
-    tenant_service = TenantShadowService(db)
-    await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
-    await tenant_service.ensure_tenant(str(tenant_id))
-    await tenant_service.ensure_membership(tenant_id=tenant_uuid, user_id=user.user_id, role=user.role)
 
     stmt = (
         select(TenantMembershipModel, TenantModel)
@@ -143,7 +137,13 @@ async def list_my_tenants(
         }
         for member, tenant in rows
     ]
+
+    active_tenant_id = str(requested_tenant_uuid)
+    membership_ids = {item["id"] for item in items}
+    if active_tenant_id not in membership_ids and items:
+        active_tenant_id = items[0]["id"]
+
     return {
         "items": items,
-        "active_tenant_id": str(tenant_id),
+        "active_tenant_id": active_tenant_id,
     }

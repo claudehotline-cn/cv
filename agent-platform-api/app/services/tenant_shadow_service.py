@@ -53,3 +53,15 @@ class TenantShadowService:
             )
         )
         await self.db.commit()
+
+    async def has_active_membership(self, tenant_id: UUID, user_id: str) -> bool:
+        if not user_id:
+            return False
+        row = await self.db.scalar(
+            select(TenantMembershipModel).where(
+                TenantMembershipModel.tenant_id == tenant_id,
+                TenantMembershipModel.user_id == user_id,
+                TenantMembershipModel.status == "active",
+            )
+        )
+        return row is not None

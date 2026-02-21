@@ -1,6 +1,8 @@
 import os
+import asyncio
 import uuid
 
+import asyncpg
 import requests
 
 
@@ -15,6 +17,54 @@ def _headers(token: str, tenant_id: str) -> dict[str, str]:
         "Authorization": f"Bearer {token}",
         "X-Tenant-Id": tenant_id,
     }
+
+
+def _provision_membership(user_id: str, tenant_id: str, role: str = "member") -> None:
+    async def _run() -> None:
+        conn = await asyncpg.connect(
+            host=os.getenv("E2E_PG_HOST", "pgvector"),
+            port=int(os.getenv("E2E_PG_PORT", "5432")),
+            user=os.getenv("E2E_PG_USER", "cv_kb"),
+            password=os.getenv("E2E_PG_PASSWORD", "cv_kb_pass"),
+            database=os.getenv("E2E_PG_DB", "cv_kb"),
+        )
+        try:
+            await conn.execute(
+                """
+                INSERT INTO tenants(id, name, status)
+                VALUES($1::uuid, $2, 'active')
+                ON CONFLICT (id) DO NOTHING
+                """,
+                tenant_id,
+                f"tenant-{tenant_id[:8]}",
+            )
+            await conn.execute(
+                """
+                INSERT INTO tenant_memberships(id, tenant_id, user_id, role, status)
+                VALUES(gen_random_uuid(), $1::uuid, $2, $3, 'active')
+                ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
+                """,
+                tenant_id,
+                user_id,
+                role,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_run())
+
+
+def _current_user_id(token: str) -> str:
+    resp = requests.get(
+        f"{API_BASE_URL}/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    user_id = data.get("id")
+    assert user_id, data
+    return user_id
 
 
 def _login(email: str, password: str) -> str:
@@ -34,6 +84,10 @@ def test_cross_tenant_isolation_for_sessions_and_tasks() -> None:
     tenant_a = str(uuid.uuid4())
     tenant_b = str(uuid.uuid4())
     token = _login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    user_id = _current_user_id(token)
+
+    _provision_membership(user_id, tenant_a, role="owner")
+    _provision_membership(user_id, tenant_b, role="owner")
 
     headers_a = _headers(token, tenant_a)
     headers_b = _headers(token, tenant_b)
