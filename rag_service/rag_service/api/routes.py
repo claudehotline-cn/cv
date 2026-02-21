@@ -27,7 +27,7 @@ from ..auth import require_authenticated, require_admin
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_authenticated)])
 
 # Eval / Benchmarks APIs
 from .eval_routes import router as eval_router

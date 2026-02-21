@@ -163,7 +163,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://cv_kb:cv_kb_pass@pgvector:5432/cv_kb
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/agent-audit:/app/agent-core:/app/agent-plugins:/app/app:/app
+      - PYTHONPATH=/app/agent-audit:/app/agent-auth-client:/app/agent-core:/app/agent-plugins:/app/app:/app
       - REDIS_URL=redis://langgraph-redis:6379
       - AUTH_MODE=strict
       - AUTH_ALLOW_DEV_HEADERS=false
@@ -197,6 +197,7 @@ services:
     volumes:
       - ../../logs:/logs:rw
       - ../../agent-audit:/app/agent-audit:rw
+      - ../../agent-auth-client:/app/agent-auth-client:rw
       - ../../agent-core:/app/agent-core:rw
       - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for API code
@@ -217,7 +218,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://cv_kb:cv_kb_pass@pgvector:5432/cv_kb
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/agent-audit:/app/agent-core:/app/agent-plugins:/app/app:/app
+      - PYTHONPATH=/app/agent-audit:/app/agent-auth-client:/app/agent-core:/app/agent-plugins:/app/app:/app
       - REDIS_URL=redis://langgraph-redis:6379
       - AUTH_MODE=strict
       - AUTH_ALLOW_DEV_HEADERS=false
@@ -237,6 +238,7 @@ services:
     volumes:
       - ../../logs:/logs:rw
       - ../../agent-audit:/app/agent-audit:rw
+      - ../../agent-auth-client:/app/agent-auth-client:rw
       - ../../agent-core:/app/agent-core:rw
       - ../../agent-plugins:/app/agent-plugins:rw
       - ../../agent-platform-api/app:/app/app:rw # Hot reload for worker code
@@ -433,6 +435,7 @@ services:
       - RAG_EMBEDDING_MODEL=bge-m3:567m
       - RAG_VECTOR_DIMENSION=1024
       - RAG_AUTH_INTROSPECTION_URL=http://agent-auth:8000/internal/introspect
+      - PYTHONPATH=/app/agent-auth-client:/app
       - HF_ENDPOINT=https://hf-mirror.com
     depends_on:
       mysql:
@@ -449,6 +452,7 @@ services:
       - "18200:8200"
     volumes:
       - ../../rag_service/rag_service:/app/rag_service
+      - ../../agent-auth-client:/app/agent-auth-client:rw
       - ../../logs:/logs:rw
       - rag-model-cache:/root/.cache/huggingface
       - rag-datalab-cache:/root/.cache/datalab
@@ -476,6 +480,7 @@ services:
       - RAG_EMBEDDING_MODEL=bge-m3:567m
       - RAG_VECTOR_DIMENSION=1024
       - RAG_AUTH_INTROSPECTION_URL=http://agent-auth:8000/internal/introspect
+      - PYTHONPATH=/app/agent-auth-client:/app
       - HF_ENDPOINT=https://hf-mirror.com
       - RAG_WORKER_MAX_JOBS=2
       - RAG_PDF_EXTRACTOR=marker
@@ -493,6 +498,7 @@ services:
         condition: service_healthy
     volumes:
       - ../../rag_service/rag_service:/app/rag_service
+      - ../../agent-auth-client:/app/agent-auth-client:rw
       - ../../logs:/logs:rw
       - rag-model-cache:/root/.cache/huggingface
       - rag-datalab-cache:/root/.cache/datalab

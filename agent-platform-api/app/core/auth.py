@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-import httpx
 from fastapi import Depends, HTTPException, Request
 
+from agent_auth_client import AuthClient
 from agent_core.settings import get_settings
 
 
@@ -20,23 +20,12 @@ async def _introspect_bearer(token: str) -> AuthPrincipal:
         raise HTTPException(status_code=500, detail="Auth introspection URL not configured")
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(url, headers={"Authorization": f"Bearer {token}"})
-    except Exception as exc:
+        principal = await AuthClient(url).introspect(authorization=f"Bearer {token}")
+    except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="Auth service unavailable") from exc
-
-    if resp.status_code >= 400:
+    except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid token")
-
-    data = resp.json()
-    if not data.get("active"):
-        raise HTTPException(status_code=401, detail="Inactive token")
-
-    user_id = str(data.get("sub") or "").strip()
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token principal")
-    role = str(data.get("role") or "user").strip().lower() or "user"
-    return AuthPrincipal(user_id=user_id, role=role, email=data.get("email"))
+    return AuthPrincipal(user_id=principal.user_id, role=principal.role, email=principal.email)
 
 
 def _dev_header_principal(request: Request) -> AuthPrincipal:

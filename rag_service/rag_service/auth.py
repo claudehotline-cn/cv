@@ -1,5 +1,5 @@
-import httpx
 from fastapi import HTTPException, Request
+from agent_auth_client import AuthClient
 
 from .config import settings
 
@@ -11,23 +11,12 @@ async def resolve_auth_context(request: Request) -> dict:
 
     introspect_url = settings.auth_introspection_url
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(introspect_url, headers={"Authorization": auth_header})
-    except Exception as exc:
+        principal = await AuthClient(introspection_url=introspect_url).introspect(authorization=auth_header)
+    except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="Auth service unavailable") from exc
-
-    if resp.status_code >= 400:
+    except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid token")
-
-    data = resp.json()
-    if not data.get("active"):
-        raise HTTPException(status_code=401, detail="Inactive token")
-
-    user_id = str(data.get("sub") or "").strip()
-    role = str(data.get("role") or "user").strip().lower() or "user"
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid principal")
-    return {"user_id": user_id, "role": role, "email": data.get("email")}
+    return {"user_id": principal.user_id, "role": principal.role, "email": principal.email}
 
 
 async def require_authenticated(request: Request) -> dict:

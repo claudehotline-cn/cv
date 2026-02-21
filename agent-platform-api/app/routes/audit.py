@@ -6,10 +6,11 @@ from uuid import UUID
 from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, String, func, or_
+from sqlalchemy import select, desc, String, func, or_, and_
 
 from app.db import get_db
 from app.models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel, AuthAuditEventModel
+from app.core.auth import AuthPrincipal, require_admin
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -88,6 +89,17 @@ class PaginatedAuthAuditResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AuthAuditOverviewResponse(BaseModel):
+    window_hours: int
+    total_events: int
+    login_success: int
+    login_failed: int
+    login_success_rate: float
+    unique_user_count: int
+    unique_ip_count: int
+    top_failure_reasons: Dict[str, int]
 
 
 LLM_EVENT_TYPES = {"llm_called", "llm_output_received", "llm_failed"}
@@ -248,6 +260,7 @@ async def list_auth_audit_events(
     result: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    _: AuthPrincipal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(AuthAuditEventModel)
@@ -294,6 +307,76 @@ async def list_auth_audit_events(
     ]
 
     return PaginatedAuthAuditResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/auth/overview", response_model=AuthAuditOverviewResponse)
+async def get_auth_audit_overview(
+    window_hours: int = 24,
+    user_id: Optional[str] = None,
+    _: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=max(1, min(window_hours, 24 * 30)))
+
+    base_filter = AuthAuditEventModel.event_time >= window_start
+    if user_id:
+        base_filter = and_(base_filter, AuthAuditEventModel.user_id == user_id)
+
+    total_q = await db.execute(
+        select(func.count()).where(base_filter).select_from(AuthAuditEventModel)
+    )
+    total_events = int(total_q.scalar_one() or 0)
+
+    success_q = await db.execute(
+        select(func.count())
+        .where(and_(base_filter, AuthAuditEventModel.event_type == "auth_login_succeeded"))
+        .select_from(AuthAuditEventModel)
+    )
+    login_success = int(success_q.scalar_one() or 0)
+
+    failed_q = await db.execute(
+        select(func.count())
+        .where(and_(base_filter, AuthAuditEventModel.event_type == "auth_login_failed"))
+        .select_from(AuthAuditEventModel)
+    )
+    login_failed = int(failed_q.scalar_one() or 0)
+
+    unique_user_q = await db.execute(
+        select(func.count(func.distinct(AuthAuditEventModel.user_id))).where(base_filter)
+    )
+    unique_user_count = int(unique_user_q.scalar_one() or 0)
+
+    unique_ip_q = await db.execute(
+        select(func.count(func.distinct(AuthAuditEventModel.ip_addr))).where(base_filter)
+    )
+    unique_ip_count = int(unique_ip_q.scalar_one() or 0)
+
+    reason_q = await db.execute(
+        select(AuthAuditEventModel.reason_code, func.count())
+        .where(and_(base_filter, AuthAuditEventModel.result == "failed"))
+        .group_by(AuthAuditEventModel.reason_code)
+        .order_by(desc(func.count()))
+        .limit(10)
+    )
+    top_failure_reasons = {
+        (reason or "unknown"): int(cnt)
+        for reason, cnt in reason_q.all()
+    }
+
+    login_total = login_success + login_failed
+    success_rate = (login_success / login_total) if login_total > 0 else 0.0
+
+    return AuthAuditOverviewResponse(
+        window_hours=window_hours,
+        total_events=total_events,
+        login_success=login_success,
+        login_failed=login_failed,
+        login_success_rate=round(success_rate, 4),
+        unique_user_count=unique_user_count,
+        unique_ip_count=unique_ip_count,
+        top_failure_reasons=top_failure_reasons,
+    )
 
 
 def _collect_event_stats(events: List[AuditEventModel]) -> Dict[str, int]:
