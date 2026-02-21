@@ -46,3 +46,13 @@ class SqlAlchemyApiKeyRepository(ApiKeyRepository):
             return False
         row.revoked_at = datetime.utcnow()
         return True
+
+    async def get_active_by_prefix_and_hash(self, key_prefix: str, key_hash: str) -> ApiKeyModel | None:
+        stmt = select(ApiKeyModel).where(
+            and_(
+                ApiKeyModel.key_prefix == key_prefix,
+                ApiKeyModel.key_hash == key_hash,
+                ApiKeyModel.revoked_at.is_(None),
+            )
+        )
+        return await self.session.scalar(stmt)

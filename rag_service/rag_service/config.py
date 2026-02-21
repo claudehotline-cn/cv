@@ -118,6 +118,12 @@ class Settings(BaseSettings):
         default=45,
         description="Multi-query 扩展超时(秒)"
     )
+
+    # Auth integration
+    auth_introspection_url: str = Field(
+        default="http://agent-auth:8000/internal/introspect",
+        description="Auth service introspection URL for bearer/api-key validation",
+    )
     enable_context_compression: bool = Field(
         default=False,
         description="是否启用上下文压缩 (消耗额外LLM调用)"

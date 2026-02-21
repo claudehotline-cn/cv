@@ -23,6 +23,7 @@ from ..services.ingestion import rebuild_vectors as ingest_rebuild_vectors
 from ..services.ingestion import build_graph as ingest_build_graph
 from ..queue import enqueue_job
 from ..config import settings
+from ..auth import require_authenticated, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,10 @@ class ChatResponse(BaseModel):
 # ==================== Knowledge Base APIs ====================
 
 @router.get("/knowledge-bases")
-def list_knowledge_bases(db: Session = Depends(get_mysql_db)):
+def list_knowledge_bases(
+    _: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取知识库列表"""
     kbs = db.query(KnowledgeBase).filter(KnowledgeBase.is_active == True).all()
     return {"items": [kb.to_dict() for kb in kbs]}
@@ -88,6 +92,7 @@ def list_knowledge_bases(db: Session = Depends(get_mysql_db)):
 @router.post("/knowledge-bases")
 def create_knowledge_base(
     data: KnowledgeBaseCreate,
+    _: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """创建知识库"""
@@ -112,7 +117,11 @@ def create_knowledge_base(
 
 
 @router.get("/knowledge-bases/{kb_id}")
-def get_knowledge_base(kb_id: int, db: Session = Depends(get_mysql_db)):
+def get_knowledge_base(
+    kb_id: int,
+    _: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取知识库详情"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
@@ -124,6 +133,7 @@ def get_knowledge_base(kb_id: int, db: Session = Depends(get_mysql_db)):
 def update_knowledge_base(
     kb_id: int,
     data: KnowledgeBaseUpdate,
+    _: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """更新知识库"""
@@ -150,7 +160,11 @@ def update_knowledge_base(
 
 
 @router.delete("/knowledge-bases/{kb_id}")
-def delete_knowledge_base(kb_id: int, db: Session = Depends(get_mysql_db)):
+def delete_knowledge_base(
+    kb_id: int,
+    _: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
     """删除知识库（软删除）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
@@ -162,7 +176,11 @@ def delete_knowledge_base(kb_id: int, db: Session = Depends(get_mysql_db)):
 
 
 @router.get("/knowledge-bases/{kb_id}/stats")
-def get_knowledge_base_stats(kb_id: int, db: Session = Depends(get_mysql_db)):
+def get_knowledge_base_stats(
+    kb_id: int,
+    _: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取知识库统计信息"""
     from sqlalchemy import text
     from ..database import get_pgvector_session

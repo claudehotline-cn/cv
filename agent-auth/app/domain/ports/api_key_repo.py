@@ -25,3 +25,7 @@ class ApiKeyRepository(ABC):
     @abstractmethod
     async def revoke(self, key_id: str, user_id: str) -> bool:
         raise NotImplementedError
+
+    @abstractmethod
+    async def get_active_by_prefix_and_hash(self, key_prefix: str, key_hash: str) -> ApiKeyModel | None:
+        raise NotImplementedError

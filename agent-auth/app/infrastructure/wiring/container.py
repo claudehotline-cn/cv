@@ -9,6 +9,7 @@ from app.application.register_service import RegisterService
 from app.application.revoke_api_key_service import RevokeApiKeyService
 from app.domain.ports.unit_of_work import UnitOfWork
 from app.infrastructure.security.bcrypt_hasher import BcryptPasswordHasher
+from app.infrastructure.security.hmac_api_key_verifier import HmacApiKeyVerifier
 from app.infrastructure.security.jwt_token_issuer import JwtTokenIssuer
 from app.infrastructure.security.jwt_token_verifier import JwtTokenVerifier
 from app.repositories.api_key_repo import SqlAlchemyApiKeyRepository
@@ -36,6 +37,7 @@ class Container:
         self.hasher = BcryptPasswordHasher()
         self.token_issuer = JwtTokenIssuer()
         self.token_verifier = JwtTokenVerifier()
+        self.api_key_verifier = HmacApiKeyVerifier(self.api_key_repo, self.user_repo)
         self.uow = SqlAlchemyUnitOfWork(session)
 
     def register_service(self) -> RegisterService:
@@ -57,4 +59,4 @@ class Container:
         return RevokeApiKeyService(self.api_key_repo, self.uow)
 
     def introspect_service(self) -> IntrospectService:
-        return IntrospectService(self.token_verifier)
+        return IntrospectService(self.token_verifier, self.api_key_verifier)

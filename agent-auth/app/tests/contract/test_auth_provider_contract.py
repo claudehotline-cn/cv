@@ -89,3 +89,14 @@ def test_jwt_provider_contract_rejects_malformed_claims() -> None:
         verifier.verify_access(token)
     assert exc.value.status_code == 401
     assert "malformed" in exc.value.message.lower()
+
+
+@pytest.mark.contract
+def test_jwt_provider_contract_rejects_invalid_signature() -> None:
+    verifier = JwtTokenVerifier()
+    payload = _base_payload("access")
+    token = jwt.encode(payload, "wrong-secret", algorithm=get_settings().auth_jwt_alg)
+
+    with pytest.raises(AuthError) as exc:
+        verifier.verify_access(token)
+    assert exc.value.status_code == 401

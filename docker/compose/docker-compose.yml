@@ -430,6 +430,7 @@ services:
       - RAG_USE_JOB_QUEUE=true
       - RAG_EMBEDDING_MODEL=bge-m3:567m
       - RAG_VECTOR_DIMENSION=1024
+      - RAG_AUTH_INTROSPECTION_URL=http://agent-auth:8000/internal/introspect
       - HF_ENDPOINT=https://hf-mirror.com
     depends_on:
       mysql:
@@ -472,6 +473,7 @@ services:
       - RAG_USE_JOB_QUEUE=true
       - RAG_EMBEDDING_MODEL=bge-m3:567m
       - RAG_VECTOR_DIMENSION=1024
+      - RAG_AUTH_INTROSPECTION_URL=http://agent-auth:8000/internal/introspect
       - HF_ENDPOINT=https://hf-mirror.com
       - RAG_WORKER_MAX_JOBS=2
       - RAG_PDF_EXTRACTOR=marker
