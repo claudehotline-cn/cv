@@ -124,6 +124,11 @@ class Settings(BaseSettings):
         default="http://agent-auth:8000/internal/introspect",
         description="Auth service introspection URL for bearer/api-key validation",
     )
+    auth_default_tenant_id: str = Field(
+        default="00000000-0000-0000-0000-000000000001",
+        description="Default tenant id when auth payload has no tenant context",
+        validation_alias="AUTH_DEFAULT_TENANT_ID",
+    )
     enable_context_compression: bool = Field(
         default=False,
         description="是否启用上下文压缩 (消耗额外LLM调用)"

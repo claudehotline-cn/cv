@@ -22,10 +22,52 @@ from ..models import (
     KnowledgeBase,
 )
 from ..queue import enqueue_job
+from ..auth import require_authenticated, require_admin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _tenant_id_from_ctx(ctx: dict) -> str:
+    tenant_id = str(ctx.get("tenant_id") or settings.auth_default_tenant_id).strip()
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+    return tenant_id
+
+
+def _get_kb_or_404(db: Session, kb_id: int, tenant_id: str) -> KnowledgeBase:
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == kb_id,
+        KnowledgeBase.tenant_id == tenant_id,
+        KnowledgeBase.is_active == True,
+    ).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return kb
+
+
+def _get_dataset_or_404(db: Session, kb_id: int, dataset_id: int, tenant_id: str) -> EvalDataset:
+    ds = db.query(EvalDataset).filter(
+        EvalDataset.id == dataset_id,
+        EvalDataset.knowledge_base_id == kb_id,
+        EvalDataset.tenant_id == tenant_id,
+        EvalDataset.is_active == True,
+    ).first()
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return ds
+
+
+def _get_run_or_404(db: Session, kb_id: int, run_id: int, tenant_id: str) -> BenchmarkRun:
+    run = db.query(BenchmarkRun).filter(
+        BenchmarkRun.id == run_id,
+        BenchmarkRun.knowledge_base_id == kb_id,
+        BenchmarkRun.tenant_id == tenant_id,
+    ).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
 
 
 def _get_request_id_from_headers(req: Request) -> str | None:
@@ -104,14 +146,13 @@ class BenchmarkRunCreate(BaseModel):
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/datasets")
-def list_eval_datasets(kb_id: int, db: Session = Depends(get_mysql_db)):
-    kbs = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id, KnowledgeBase.is_active == True).first()
-    if not kbs:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+def list_eval_datasets(kb_id: int, ctx: dict = Depends(require_authenticated), db: Session = Depends(get_mysql_db)):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
 
     items = (
         db.query(EvalDataset)
-        .filter(EvalDataset.knowledge_base_id == kb_id, EvalDataset.is_active == True)
+        .filter(EvalDataset.knowledge_base_id == kb_id, EvalDataset.tenant_id == tenant_id, EvalDataset.is_active == True)
         .order_by(EvalDataset.updated_at.desc())
         .all()
     )
@@ -124,10 +165,9 @@ def list_eval_datasets(kb_id: int, db: Session = Depends(get_mysql_db)):
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets")
-def create_eval_dataset(kb_id: int, data: EvalDatasetCreate, db: Session = Depends(get_mysql_db)):
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id, KnowledgeBase.is_active == True).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+def create_eval_dataset(kb_id: int, data: EvalDatasetCreate, ctx: dict = Depends(require_admin), db: Session = Depends(get_mysql_db)):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
 
     name = (data.name or "").strip()
     if not name:
@@ -135,13 +175,19 @@ def create_eval_dataset(kb_id: int, data: EvalDatasetCreate, db: Session = Depen
 
     exists = (
         db.query(EvalDataset)
-        .filter(EvalDataset.knowledge_base_id == kb_id, EvalDataset.name == name, EvalDataset.is_active == True)
+        .filter(
+            EvalDataset.knowledge_base_id == kb_id,
+            EvalDataset.tenant_id == tenant_id,
+            EvalDataset.name == name,
+            EvalDataset.is_active == True,
+        )
         .first()
     )
     if exists:
         raise HTTPException(status_code=400, detail="Dataset name already exists")
 
     ds = EvalDataset(
+        tenant_id=tenant_id,
         knowledge_base_id=kb_id,
         name=name,
         description=data.description,
@@ -157,14 +203,13 @@ def create_eval_dataset(kb_id: int, data: EvalDatasetCreate, db: Session = Depen
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/datasets/export")
-def export_all_eval_datasets(kb_id: int, db: Session = Depends(get_mysql_db)):
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id, KnowledgeBase.is_active == True).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+def export_all_eval_datasets(kb_id: int, ctx: dict = Depends(require_authenticated), db: Session = Depends(get_mysql_db)):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
 
     datasets = (
         db.query(EvalDataset)
-        .filter(EvalDataset.knowledge_base_id == kb_id, EvalDataset.is_active == True)
+        .filter(EvalDataset.knowledge_base_id == kb_id, EvalDataset.tenant_id == tenant_id, EvalDataset.is_active == True)
         .order_by(EvalDataset.updated_at.desc())
         .all()
     )
@@ -189,28 +234,18 @@ def export_all_eval_datasets(kb_id: int, db: Session = Depends(get_mysql_db)):
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}")
-def get_eval_dataset(kb_id: int, dataset_id: int, db: Session = Depends(get_mysql_db)):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def get_eval_dataset(kb_id: int, dataset_id: int, ctx: dict = Depends(require_authenticated), db: Session = Depends(get_mysql_db)):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    ds = _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
     out = ds.to_dict()
     out["cases_count"] = db.query(EvalCase).filter(EvalCase.dataset_id == ds.id).count()
     return out
 
 
 @router.put("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}")
-def update_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetUpdate, db: Session = Depends(get_mysql_db)):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def update_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetUpdate, ctx: dict = Depends(require_admin), db: Session = Depends(get_mysql_db)):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    ds = _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
 
     if data.name is not None:
         name = data.name.strip()
@@ -221,6 +256,7 @@ def update_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetUpdate, db
             db.query(EvalDataset)
             .filter(
                 EvalDataset.knowledge_base_id == kb_id,
+                EvalDataset.tenant_id == tenant_id,
                 EvalDataset.name == name,
                 EvalDataset.is_active == True,
                 EvalDataset.id != dataset_id,
@@ -243,14 +279,9 @@ def update_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetUpdate, db
 
 
 @router.delete("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}")
-def delete_eval_dataset(kb_id: int, dataset_id: int, db: Session = Depends(get_mysql_db)):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def delete_eval_dataset(kb_id: int, dataset_id: int, ctx: dict = Depends(require_admin), db: Session = Depends(get_mysql_db)):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    ds = _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
 
     ds.is_active = False
     db.commit()
@@ -265,15 +296,11 @@ def list_eval_cases(
     tag: str | None = None,
     offset: int = 0,
     limit: int = 200,
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db),
 ):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
 
     qv = (q or "").strip()
     tv = (tag or "").strip()
@@ -320,14 +347,15 @@ def list_eval_cases(
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases")
-def create_eval_case(kb_id: int, dataset_id: int, data: EvalCaseCreate, db: Session = Depends(get_mysql_db)):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def create_eval_case(
+    kb_id: int,
+    dataset_id: int,
+    data: EvalCaseCreate,
+    ctx: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
 
     q = (data.query or "").strip()
     if not q:
@@ -353,9 +381,19 @@ def create_eval_case(kb_id: int, dataset_id: int, data: EvalCaseCreate, db: Sess
 
 
 @router.put("/eval/cases/{case_id}")
-def update_eval_case(case_id: int, data: EvalCaseUpdate, db: Session = Depends(get_mysql_db)):
+def update_eval_case(
+    case_id: int,
+    data: EvalCaseUpdate,
+    ctx: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
     row = db.query(EvalCase).filter(EvalCase.id == case_id).first()
     if not row:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    dataset = db.query(EvalDataset).filter(EvalDataset.id == row.dataset_id, EvalDataset.tenant_id == tenant_id).first()
+    if not dataset:
         raise HTTPException(status_code=404, detail="Case not found")
 
     if data.query is not None:
@@ -391,9 +429,18 @@ def update_eval_case(case_id: int, data: EvalCaseUpdate, db: Session = Depends(g
 
 
 @router.delete("/eval/cases/{case_id}")
-def delete_eval_case(case_id: int, db: Session = Depends(get_mysql_db)):
+def delete_eval_case(
+    case_id: int,
+    ctx: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
     row = db.query(EvalCase).filter(EvalCase.id == case_id).first()
     if not row:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    dataset = db.query(EvalDataset).filter(EvalDataset.id == row.dataset_id, EvalDataset.tenant_id == tenant_id).first()
+    if not dataset:
         raise HTTPException(status_code=404, detail="Case not found")
 
     exp = db.query(EvalCaseExpectation).filter(EvalCaseExpectation.case_id == row.id).first()
@@ -410,14 +457,15 @@ class BulkDeleteCases(BaseModel):
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/cases/bulk-delete")
-def bulk_delete_eval_cases(kb_id: int, dataset_id: int, data: BulkDeleteCases, db: Session = Depends(get_mysql_db)):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def bulk_delete_eval_cases(
+    kb_id: int,
+    dataset_id: int,
+    data: BulkDeleteCases,
+    ctx: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
 
     ids = [int(x) for x in (data.case_ids or []) if int(x) > 0]
     if not ids:
@@ -435,14 +483,15 @@ def bulk_delete_eval_cases(kb_id: int, dataset_id: int, data: BulkDeleteCases, d
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/import")
-def import_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetImport, db: Session = Depends(get_mysql_db)):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def import_eval_dataset(
+    kb_id: int,
+    dataset_id: int,
+    data: EvalDatasetImport,
+    ctx: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
 
     if data.replace:
         old_ids = [r[0] for r in db.query(EvalCase.id).filter(EvalCase.dataset_id == dataset_id).all()]
@@ -475,14 +524,14 @@ def import_eval_dataset(kb_id: int, dataset_id: int, data: EvalDatasetImport, db
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/datasets/{dataset_id}/export")
-def export_eval_dataset(kb_id: int, dataset_id: int, db: Session = Depends(get_mysql_db)):
-    ds = (
-        db.query(EvalDataset)
-        .filter(EvalDataset.id == dataset_id, EvalDataset.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not ds or not ds.is_active:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def export_eval_dataset(
+    kb_id: int,
+    dataset_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    ds = _get_dataset_or_404(db, kb_id, dataset_id, tenant_id)
 
     rows = (
         db.query(EvalCase, EvalCaseExpectation)
@@ -495,10 +544,14 @@ def export_eval_dataset(kb_id: int, dataset_id: int, db: Session = Depends(get_m
 
 
 @router.post("/knowledge-bases/{kb_id}/eval/benchmarks/runs")
-def create_benchmark_run(kb_id: int, data: BenchmarkRunCreate, db: Session = Depends(get_mysql_db)):
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id, KnowledgeBase.is_active == True).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+def create_benchmark_run(
+    kb_id: int,
+    data: BenchmarkRunCreate,
+    ctx: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
 
     if data.mode not in ("vector", "graph", "qa"):
         raise HTTPException(status_code=400, detail="mode must be 'vector', 'graph' or 'qa'")
@@ -507,13 +560,18 @@ def create_benchmark_run(kb_id: int, data: BenchmarkRunCreate, db: Session = Dep
 
     ds = (
         db.query(EvalDataset)
-        .filter(EvalDataset.id == data.dataset_id, EvalDataset.knowledge_base_id == kb_id)
+        .filter(
+            EvalDataset.id == data.dataset_id,
+            EvalDataset.knowledge_base_id == kb_id,
+            EvalDataset.tenant_id == tenant_id,
+        )
         .first()
     )
     if not ds or not ds.is_active:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     run = BenchmarkRun(
+        tenant_id=tenant_id,
         knowledge_base_id=kb_id,
         dataset_id=int(data.dataset_id),
         mode=data.mode,
@@ -528,10 +586,16 @@ def create_benchmark_run(kb_id: int, data: BenchmarkRunCreate, db: Session = Dep
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs")
-def list_benchmark_runs(kb_id: int, db: Session = Depends(get_mysql_db)):
+def list_benchmark_runs(
+    kb_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
     runs = (
         db.query(BenchmarkRun)
-        .filter(BenchmarkRun.knowledge_base_id == kb_id)
+        .filter(BenchmarkRun.knowledge_base_id == kb_id, BenchmarkRun.tenant_id == tenant_id)
         .order_by(BenchmarkRun.id.desc())
         .all()
     )
@@ -539,26 +603,26 @@ def list_benchmark_runs(kb_id: int, db: Session = Depends(get_mysql_db)):
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}")
-def get_benchmark_run(kb_id: int, run_id: int, db: Session = Depends(get_mysql_db)):
-    run = (
-        db.query(BenchmarkRun)
-        .filter(BenchmarkRun.id == run_id, BenchmarkRun.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+def get_benchmark_run(
+    kb_id: int,
+    run_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    run = _get_run_or_404(db, kb_id, run_id, tenant_id)
     return run.to_dict()
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/results")
-def list_benchmark_results(kb_id: int, run_id: int, db: Session = Depends(get_mysql_db)):
-    run = (
-        db.query(BenchmarkRun)
-        .filter(BenchmarkRun.id == run_id, BenchmarkRun.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+def list_benchmark_results(
+    kb_id: int,
+    run_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    run = _get_run_or_404(db, kb_id, run_id, tenant_id)
 
     base_rows = (
         db.query(BenchmarkCaseResult)
@@ -588,14 +652,14 @@ def list_benchmark_results(kb_id: int, run_id: int, db: Session = Depends(get_my
 
 
 @router.get("/knowledge-bases/{kb_id}/eval/benchmarks/runs/{run_id}/export")
-def export_benchmark_run(kb_id: int, run_id: int, db: Session = Depends(get_mysql_db)):
-    run = (
-        db.query(BenchmarkRun)
-        .filter(BenchmarkRun.id == run_id, BenchmarkRun.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+def export_benchmark_run(
+    kb_id: int,
+    run_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
+    tenant_id = _tenant_id_from_ctx(ctx)
+    run = _get_run_or_404(db, kb_id, run_id, tenant_id)
 
     base_rows = (
         db.query(BenchmarkCaseResult)
@@ -629,15 +693,11 @@ async def execute_benchmark_run(
     run_id: int,
     req: Request,
     background_tasks: BackgroundTasks,
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
-    run = (
-        db.query(BenchmarkRun)
-        .filter(BenchmarkRun.id == run_id, BenchmarkRun.knowledge_base_id == kb_id)
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    run = _get_run_or_404(db, kb_id, run_id, tenant_id)
 
     request_id = _get_request_id_from_headers(req)
     if request_id:

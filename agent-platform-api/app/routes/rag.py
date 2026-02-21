@@ -50,14 +50,28 @@ def _dev_user_ctx(req: Request) -> Dict[str, str]:
                         role = str(data.get("role") or "user").strip().lower() or "user"
                         if role not in ("admin", "user"):
                             role = "user"
-                        ctx = {"user_id": user_id, "role": role}
+                        tenant_id = str(data.get("tenant_id") or settings.auth_default_tenant_id).strip() or settings.auth_default_tenant_id
+                        tenant_role = str(data.get("tenant_role") or ("owner" if role == "admin" else "member")).strip().lower()
+                        if tenant_role not in ("owner", "admin", "member"):
+                            tenant_role = "member"
+                        ctx = {
+                            "user_id": user_id,
+                            "role": role,
+                            "tenant_id": tenant_id,
+                            "tenant_role": tenant_role,
+                        }
                         req.state.rag_user_ctx = ctx
                         return ctx
             except Exception:
                 _LOGGER.exception("Failed to introspect bearer token for rag auth")
 
     if _is_strict_auth_mode() or not _allow_dev_headers():
-        ctx = {"user_id": "anonymous", "role": "user"}
+        ctx = {
+            "user_id": "anonymous",
+            "role": "user",
+            "tenant_id": settings.auth_default_tenant_id,
+            "tenant_role": "member",
+        }
         req.state.rag_user_ctx = ctx
         return ctx
 
@@ -65,7 +79,16 @@ def _dev_user_ctx(req: Request) -> Dict[str, str]:
     role = (req.headers.get("X-User-Role") or "user").strip().lower()
     if role not in ("admin", "user"):
         role = "user"
-    ctx = {"user_id": user_id, "role": role}
+    tenant_id = (req.headers.get("X-Tenant-Id") or settings.auth_default_tenant_id).strip() or settings.auth_default_tenant_id
+    tenant_role = (req.headers.get("X-Tenant-Role") or ("owner" if role == "admin" else "member")).strip().lower()
+    if tenant_role not in ("owner", "admin", "member"):
+        tenant_role = "member"
+    ctx = {
+        "user_id": user_id,
+        "role": role,
+        "tenant_id": tenant_id,
+        "tenant_role": tenant_role,
+    }
     req.state.rag_user_ctx = ctx
     return ctx
 
@@ -81,9 +104,20 @@ def _require_admin(ctx: Dict[str, str]) -> None:
         raise HTTPException(status_code=403, detail="Admin role required")
 
 
+def _require_tenant_context(ctx: Dict[str, str]) -> None:
+    tenant_id = (ctx.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+    try:
+        uuid.UUID(tenant_id)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
+
+
 async def _require_rag_authenticated(req: Request) -> None:
     ctx = _dev_user_ctx(req)
     _require_authenticated(ctx)
+    _require_tenant_context(ctx)
 
 
 router = APIRouter(prefix="/rag", tags=["rag"], dependencies=[Depends(_require_rag_authenticated)])
@@ -111,6 +145,10 @@ async def _emit_audit(
     try:
         event_bus = req.app.state.event_bus
         emitter = AuditEmitter(redis=event_bus.redis)
+        payload_with_tenant = {
+            **payload,
+            "tenant_id": ctx.get("tenant_id") or settings.auth_default_tenant_id,
+        }
         await emitter.emit(
             event_type=event_type,
             request_id=request_id,
@@ -118,7 +156,7 @@ async def _emit_audit(
             component="rag",
             actor_type="user",
             actor_id=ctx.get("user_id", "anonymous"),
-            payload=payload,
+            payload=payload_with_tenant,
         )
     except Exception:
         _LOGGER.exception("Failed to emit rag audit event")
@@ -134,9 +172,18 @@ async def _proxy_json(
     params: Optional[Dict[str, Any]] = None,
 ):
     url = _rag_base_url() + path
+    ctx = _dev_user_ctx(req)
     headers: Dict[str, str] = {}
+    auth_header = (req.headers.get("Authorization") or "").strip()
+    if auth_header:
+        headers["Authorization"] = auth_header
     if request_id:
         headers["X-Request-Id"] = request_id
+    headers["X-User-Id"] = ctx.get("user_id", "anonymous")
+    headers["X-User-Role"] = ctx.get("role", "user")
+    headers["X-Tenant-Id"] = ctx.get("tenant_id") or settings.auth_default_tenant_id
+    if ctx.get("tenant_role"):
+        headers["X-Tenant-Role"] = ctx["tenant_role"]
 
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.request(method, url, json=json_body, params=params, headers=headers)
@@ -153,7 +200,18 @@ async def _proxy_multipart(
     file: UploadFile,
 ):
     url = _rag_base_url() + path
-    headers = {"X-Request-Id": request_id}
+    ctx = _dev_user_ctx(req)
+    headers = {
+        "X-Request-Id": request_id,
+        "X-User-Id": ctx.get("user_id", "anonymous"),
+        "X-User-Role": ctx.get("role", "user"),
+        "X-Tenant-Id": ctx.get("tenant_id") or settings.auth_default_tenant_id,
+    }
+    auth_header = (req.headers.get("Authorization") or "").strip()
+    if auth_header:
+        headers["Authorization"] = auth_header
+    if ctx.get("tenant_role"):
+        headers["X-Tenant-Role"] = ctx["tenant_role"]
 
     data = await file.read()
     files = {"file": (file.filename, data, file.content_type or "application/octet-stream")}

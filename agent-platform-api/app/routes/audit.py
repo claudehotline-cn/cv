@@ -8,9 +8,9 @@ from collections import defaultdict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, String, func, or_, and_
 
-from app.db import get_db
-from app.models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel, AuthAuditEventModel
-from app.core.auth import AuthPrincipal, require_admin
+from ..db import get_db
+from ..models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel, AuthAuditEventModel, SessionModel
+from ..core.auth import AuthPrincipal, get_current_user, require_admin
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -104,6 +104,41 @@ class AuthAuditOverviewResponse(BaseModel):
 
 LLM_EVENT_TYPES = {"llm_called", "llm_output_received", "llm_failed"}
 TOOL_EVENT_TYPES = {"tool_call_requested", "tool_call_executed", "tool_failed", "tool_val_failed"}
+
+
+def _tenant_id_or_401(user: AuthPrincipal) -> str:
+    tenant_id = (user.tenant_id or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+    try:
+        UUID(tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
+    return tenant_id
+
+
+def _tenant_scoped_runs(stmt, user: AuthPrincipal):
+    tenant_id = _tenant_id_or_401(user)
+    tenant_sessions = (
+        select(SessionModel.id.cast(String))
+        .where(SessionModel.tenant_id.cast(String) == tenant_id)
+        .subquery()
+    )
+    tenant_request_ids = (
+        select(AuditEventModel.request_id)
+        .where(
+            or_(
+                AuditEventModel.payload["tenant_id"].astext == tenant_id,
+                AuditEventModel.session_id.in_(select(tenant_sessions.c.id)),
+            )
+        )
+        .group_by(AuditEventModel.request_id)
+    )
+
+    scoped = stmt.where(AgentRunModel.request_id.in_(tenant_request_ids))
+    if user.role != "admin":
+        scoped = scoped.where(AgentRunModel.initiator_id == user.user_id)
+    return scoped
 
 
 def _as_int(value: Any) -> int:
@@ -451,6 +486,7 @@ def _aggregate_token_counts(events: List[AuditEventModel]) -> Tuple[int, int, in
 async def get_audit_overview(
     window_hours: int = 24,
     agent: Optional[str] = None,
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Overview KPI for audit dashboard."""
@@ -460,6 +496,7 @@ async def get_audit_overview(
     stmt = select(AgentRunModel).where(AgentRunModel.started_at >= since)
     if agent:
         stmt = stmt.where(AgentRunModel.root_agent_name == agent)
+    stmt = _tenant_scoped_runs(stmt, user)
 
     runs_res = await db.execute(stmt)
     runs = runs_res.scalars().all()
@@ -528,6 +565,7 @@ async def list_runs(
     action: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List agent runs with summary statistics and semantic fields for UI."""
@@ -570,6 +608,8 @@ async def list_runs(
                 .group_by(AuditEventModel.request_id)
             )
             stmt = stmt.where(AgentRunModel.request_id.in_(action_subquery))
+
+    stmt = _tenant_scoped_runs(stmt, user)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total_res = await db.execute(count_stmt)
@@ -677,7 +717,8 @@ async def list_runs(
 
 @router.get("/runs/{request_id}/summary", response_model=RunDetailView)
 async def get_run_summary(
-    request_id: str, 
+    request_id: str,
+    user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get detailed summary for a specific run (Failures, Spans, Events)."""
@@ -695,6 +736,14 @@ async def get_run_summary(
             raise HTTPException(status_code=400, detail="Invalid UUID format")
             
     if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    visibility_stmt = _tenant_scoped_runs(
+        select(AgentRunModel.request_id).where(AgentRunModel.request_id == run.request_id),
+        user,
+    )
+    visible_res = await db.execute(visibility_stmt)
+    if not visible_res.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Run not found")
         
     # Resolve actual ID for subsequent queries if we fetched 'latest'

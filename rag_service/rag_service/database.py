@@ -51,6 +51,52 @@ def init_mysql_db():
     # MySQL does not reliably support `ADD COLUMN IF NOT EXISTS` across versions, so we check information_schema.
     try:
         with mysql_engine.connect() as conn:
+            tenant_tables = [
+                "rag_knowledge_bases",
+                "rag_documents",
+                "rag_document_outlines",
+                "rag_chat_sessions",
+                "rag_eval_datasets",
+                "rag_benchmark_runs",
+            ]
+            for table_name in tenant_tables:
+                exists_res = conn.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM information_schema.columns
+                        WHERE table_schema = :db
+                          AND table_name = :table
+                          AND column_name = 'tenant_id'
+                        """
+                    ),
+                    {"db": settings.mysql_database, "table": table_name},
+                )
+                has_tenant_col = int(exists_res.scalar() or 0) > 0
+                if not has_tenant_col:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN tenant_id VARCHAR(36) NULL"))
+                    conn.commit()
+                    logger.info("MySQL migration: added %s.tenant_id", table_name)
+
+                idx_name = f"idx_{table_name}_tenant_id"
+                idx_res = conn.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM information_schema.statistics
+                        WHERE table_schema = :db
+                          AND table_name = :table
+                          AND index_name = :idx
+                        """
+                    ),
+                    {"db": settings.mysql_database, "table": table_name, "idx": idx_name},
+                )
+                has_idx = int(idx_res.scalar() or 0) > 0
+                if not has_idx:
+                    conn.execute(text(f"CREATE INDEX {idx_name} ON {table_name}(tenant_id)"))
+                    conn.commit()
+                    logger.info("MySQL migration: added index %s", idx_name)
+
             res = conn.execute(
                 text(
                     """
@@ -68,6 +114,14 @@ def init_mysql_db():
                 conn.execute(text("ALTER TABLE rag_knowledge_bases ADD COLUMN cleaning_rules TEXT NULL"))
                 conn.commit()
                 logger.info("MySQL migration: added rag_knowledge_bases.cleaning_rules")
+
+            default_tenant_id = settings.auth_default_tenant_id
+            for table_name in tenant_tables:
+                conn.execute(
+                    text(f"UPDATE {table_name} SET tenant_id = :tenant_id WHERE tenant_id IS NULL"),
+                    {"tenant_id": default_tenant_id},
+                )
+            conn.commit()
     except Exception as e:
         logger.warning(f"MySQL migration (cleaning_rules) skipped due to error: {e}")
 

@@ -13,6 +13,7 @@ class KnowledgeBase(Base):
     __tablename__ = "rag_knowledge_bases"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=True, index=True, comment="租户ID")
     name = Column(String(255), nullable=False, unique=True, comment="知识库名称")
     description = Column(Text, nullable=True, comment="知识库描述")
     embedding_model = Column(String(100), default="bge-m3:567m", comment="Embedding模型")
@@ -37,6 +38,7 @@ class KnowledgeBase(Base):
                 rules = None
         return {
             "id": self.id,
+            "tenant_id": self.tenant_id,
             "name": self.name,
             "description": self.description,
             "embedding_model": self.embedding_model,
@@ -55,6 +57,7 @@ class Document(Base):
     __tablename__ = "rag_documents"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=True, index=True, comment="租户ID")
     knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=False)
     filename = Column(String(500), nullable=False, comment="文件名")
     file_type = Column(String(50), nullable=False, comment="文件类型")
@@ -74,6 +77,7 @@ class Document(Base):
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "tenant_id": self.tenant_id,
             "knowledge_base_id": self.knowledge_base_id,
             "filename": self.filename,
             "file_type": self.file_type,
@@ -95,6 +99,7 @@ class DocumentOutline(Base):
     __tablename__ = "rag_document_outlines"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=True, index=True, comment="租户ID")
     knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=False, index=True)
     document_id = Column(Integer, ForeignKey("rag_documents.id"), nullable=False, unique=True, index=True)
     extraction = Column(String(50), nullable=True)  # marker|pdfplumber|...
@@ -114,6 +119,7 @@ class DocumentOutline(Base):
 
         return {
             "id": self.id,
+            "tenant_id": self.tenant_id,
             "knowledge_base_id": self.knowledge_base_id,
             "document_id": self.document_id,
             "extraction": self.extraction,
@@ -214,6 +220,7 @@ class ChatSession(Base):
     __tablename__ = "rag_chat_sessions"
     
     id = Column(String(36), primary_key=True, comment="UUID")
+    tenant_id = Column(String(36), nullable=True, index=True, comment="租户ID")
     knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=True, index=True)
     title = Column(String(255), nullable=True, comment="会话标题")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
@@ -224,6 +231,7 @@ class ChatSession(Base):
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "tenant_id": self.tenant_id,
             "knowledge_base_id": self.knowledge_base_id,
             "title": self.title,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -265,6 +273,7 @@ class EvalDataset(Base):
     __tablename__ = "rag_eval_datasets"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=True, index=True, comment="租户ID")
     knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -278,6 +287,7 @@ class EvalDataset(Base):
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "tenant_id": self.tenant_id,
             "knowledge_base_id": self.knowledge_base_id,
             "name": self.name,
             "description": self.description,
@@ -334,6 +344,7 @@ class BenchmarkRun(Base):
     __tablename__ = "rag_benchmark_runs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=True, index=True, comment="租户ID")
     knowledge_base_id = Column(Integer, ForeignKey("rag_knowledge_bases.id"), nullable=False, index=True)
     dataset_id = Column(Integer, ForeignKey("rag_eval_datasets.id"), nullable=False, index=True)
     mode = Column(String(20), nullable=False)  # vector|graph
@@ -361,6 +372,7 @@ class BenchmarkRun(Base):
 
         return {
             "id": self.id,
+            "tenant_id": self.tenant_id,
             "knowledge_base_id": self.knowledge_base_id,
             "dataset_id": self.dataset_id,
             "mode": self.mode,

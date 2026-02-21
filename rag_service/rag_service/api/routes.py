@@ -77,31 +77,58 @@ class ChatResponse(BaseModel):
     sources: List[dict]
 
 
+def _tenant_id_from_ctx(ctx: dict) -> str:
+    tenant_id = str(ctx.get("tenant_id") or settings.auth_default_tenant_id).strip()
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+    return tenant_id
+
+
+def _get_kb_or_404(db: Session, kb_id: int, tenant_id: str) -> KnowledgeBase:
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return kb
+
+
+def _get_doc_or_404(db: Session, doc_id: int, tenant_id: str, kb_id: Optional[int] = None) -> Document:
+    query = db.query(Document).filter(Document.id == doc_id, Document.tenant_id == tenant_id)
+    if kb_id is not None:
+        query = query.filter(Document.knowledge_base_id == kb_id)
+    doc = query.first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
 # ==================== Knowledge Base APIs ====================
 
 @router.get("/knowledge-bases")
 def list_knowledge_bases(
-    _: dict = Depends(require_authenticated),
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db),
 ):
     """获取知识库列表"""
-    kbs = db.query(KnowledgeBase).filter(KnowledgeBase.is_active == True).all()
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kbs = db.query(KnowledgeBase).filter(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.is_active == True).all()
     return {"items": [kb.to_dict() for kb in kbs]}
 
 
 @router.post("/knowledge-bases")
 def create_knowledge_base(
     data: KnowledgeBaseCreate,
-    _: dict = Depends(require_admin),
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """创建知识库"""
+    tenant_id = _tenant_id_from_ctx(ctx)
     # 检查名称是否重复
-    existing = db.query(KnowledgeBase).filter(KnowledgeBase.name == data.name).first()
+    existing = db.query(KnowledgeBase).filter(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.name == data.name).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"Knowledge base '{data.name}' already exists")
     
     kb = KnowledgeBase(
+        tenant_id=tenant_id,
         name=data.name,
         description=data.description,
         chunk_size=data.chunk_size,
@@ -119,13 +146,12 @@ def create_knowledge_base(
 @router.get("/knowledge-bases/{kb_id}")
 def get_knowledge_base(
     kb_id: int,
-    _: dict = Depends(require_authenticated),
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db),
 ):
     """获取知识库详情"""
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
     return kb.to_dict()
 
 
@@ -133,13 +159,12 @@ def get_knowledge_base(
 def update_knowledge_base(
     kb_id: int,
     data: KnowledgeBaseUpdate,
-    _: dict = Depends(require_admin),
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """更新知识库"""
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
     
     if data.name is not None:
         kb.name = data.name
@@ -162,13 +187,12 @@ def update_knowledge_base(
 @router.delete("/knowledge-bases/{kb_id}")
 def delete_knowledge_base(
     kb_id: int,
-    _: dict = Depends(require_admin),
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """删除知识库（软删除）"""
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
     
     kb.is_active = False
     db.commit()
@@ -178,19 +202,19 @@ def delete_knowledge_base(
 @router.get("/knowledge-bases/{kb_id}/stats")
 def get_knowledge_base_stats(
     kb_id: int,
-    _: dict = Depends(require_authenticated),
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db),
 ):
     """获取知识库统计信息"""
     from sqlalchemy import text
     from ..database import get_pgvector_session
     
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
     
     # 获取文档列表
     docs = db.query(Document).filter(
+        Document.tenant_id == tenant_id,
         Document.knowledge_base_id == kb_id
     ).all()
     
@@ -269,13 +293,17 @@ def get_knowledge_base_stats(
 
 # ==================== Helpers ====================
 
-def update_kb_document_count(db: Session, kb_id: int):
+def update_kb_document_count(db: Session, kb_id: int, tenant_id: Optional[str] = None):
     """更新知识库文档计数 (计算所有非软删除的文档)"""
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    query = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id)
+    if tenant_id:
+        query = query.filter(KnowledgeBase.tenant_id == tenant_id)
+    kb = query.first()
     if kb:
-        kb.document_count = db.query(Document).filter(
-            Document.knowledge_base_id == kb.id
-        ).count()
+        count_query = db.query(Document).filter(Document.knowledge_base_id == kb.id)
+        if tenant_id:
+            count_query = count_query.filter(Document.tenant_id == tenant_id)
+        kb.document_count = count_query.count()
         db.commit()
 
 
@@ -313,9 +341,15 @@ def _get_request_id_from_headers(req: Request) -> str | None:
 # ==================== Document APIs ====================
 
 @router.get("/knowledge-bases/{kb_id}/documents")
-def list_documents(kb_id: int, db: Session = Depends(get_mysql_db)):
+def list_documents(
+    kb_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取知识库的文档列表"""
-    docs = db.query(Document).filter(Document.knowledge_base_id == kb_id).all()
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
+    docs = db.query(Document).filter(Document.tenant_id == tenant_id, Document.knowledge_base_id == kb_id).all()
     return {"items": [doc.to_dict() for doc in docs]}
 
 
@@ -325,12 +359,13 @@ async def reindex_document(
     doc_id: int,
     req: Request,
     background_tasks: BackgroundTasks,
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """重建单个文档的向量（仅该文档）。"""
-    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
+    doc = _get_doc_or_404(db, doc_id, tenant_id, kb_id=kb_id)
 
     doc.status = "queued"
     doc.error_message = None
@@ -352,12 +387,13 @@ def list_document_chunks(
     offset: int = 0,
     limit: int = 50,
     include_parents: bool = True,
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db),
 ):
     """列出某文档的分块（来自 pgvector rag_vectors）。"""
-    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
+    doc = _get_doc_or_404(db, doc_id, tenant_id, kb_id=kb_id)
 
     from sqlalchemy import text
     from ..database import get_pgvector_session
@@ -412,13 +448,14 @@ def list_document_chunks(
 def get_document_outline(
     kb_id: int,
     doc_id: int,
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db),
 ):
-    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
+    doc = _get_doc_or_404(db, doc_id, tenant_id, kb_id=kb_id)
 
-    row = db.query(DocumentOutline).filter(DocumentOutline.document_id == doc_id).first()
+    row = db.query(DocumentOutline).filter(DocumentOutline.tenant_id == tenant_id, DocumentOutline.document_id == doc_id).first()
     if not row:
         return {"document": doc.to_dict(), "items": []}
 
@@ -431,16 +468,13 @@ async def preview_document_chunks(
     kb_id: int,
     doc_id: int,
     req: PreviewChunksRequest,
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """预览某文档在指定规则/参数下的分块结果（dry-run，不写入向量表）。"""
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
+    doc = _get_doc_or_404(db, doc_id, tenant_id, kb_id=kb_id)
 
     if doc.file_type in ("image", "audio", "video"):
         raise HTTPException(status_code=400, detail=f"Preview is not supported for file_type={doc.file_type}")
@@ -523,13 +557,13 @@ async def upload_document(
     req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """上传文档"""
+    tenant_id = _tenant_id_from_ctx(ctx)
     # 检查知识库
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
     
     # 检查文件类型
     if not document_loader.is_supported(file.filename):
@@ -555,7 +589,7 @@ async def upload_document(
         "markdown": "text/markdown",
         "text": "text/plain",
     }
-    file_type = document_loader.get_file_type(file.filename)
+    file_type = document_loader.get_file_type(file.filename) or "unknown"
     content_type = content_type_map.get(file_type, "application/octet-stream")
     
     # 上传到 MinIO
@@ -565,6 +599,7 @@ async def upload_document(
     
     # 创建文档记录
     doc = Document(
+        tenant_id=tenant_id,
         knowledge_base_id=kb_id,
         filename=file.filename,
         file_type=file_type,
@@ -577,7 +612,7 @@ async def upload_document(
     db.refresh(doc)
     
     # 更新知识库文档计数
-    update_kb_document_count(db, kb_id)
+    update_kb_document_count(db, kb_id, tenant_id=tenant_id)
     
     # 入队/后台处理：从 MinIO 下载后处理
     doc.status = "queued"
@@ -596,13 +631,13 @@ async def import_url(
     data: URLImportRequest,
     req: Request,
     background_tasks: BackgroundTasks,
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """从URL导入网页内容"""
+    tenant_id = _tenant_id_from_ctx(ctx)
     # 检查知识库
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    _get_kb_or_404(db, kb_id, tenant_id)
     
     # 抓取网页
     try:
@@ -623,6 +658,7 @@ async def import_url(
     
     # 创建文档记录
     doc = Document(
+        tenant_id=tenant_id,
         knowledge_base_id=kb_id,
         filename=page.title or data.url,
         file_type="webpage",
@@ -636,7 +672,7 @@ async def import_url(
     db.refresh(doc)
     
     # 更新知识库文档计数
-    update_kb_document_count(db, kb_id)
+    update_kb_document_count(db, kb_id, tenant_id=tenant_id)
     
     doc.status = "queued"
     db.commit()
@@ -649,11 +685,14 @@ async def import_url(
 
 
 @router.delete("/documents/{doc_id}")
-def delete_document(doc_id: int, db: Session = Depends(get_mysql_db)):
+def delete_document(
+    doc_id: int,
+    ctx: dict = Depends(require_admin),
+    db: Session = Depends(get_mysql_db),
+):
     """删除文档"""
-    doc = db.query(Document).filter(Document.id == doc_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    doc = _get_doc_or_404(db, doc_id, tenant_id)
     
     # 删除向量
     vector_store.delete_document_vectors(doc_id)
@@ -664,18 +703,21 @@ def delete_document(doc_id: int, db: Session = Depends(get_mysql_db)):
     db.commit()
     
     # 更新知识库文档计数
-    update_kb_document_count(db, kb_id)
+    update_kb_document_count(db, kb_id, tenant_id=doc.tenant_id)
     
     return {"message": "Document deleted"}
 
 
 @router.get("/documents/{doc_id}/chunks")
-def get_document_chunks(doc_id: int, db: Session = Depends(get_mysql_db)):
+def get_document_chunks(
+    doc_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取文档的所有分块"""
     # 检查文档是否存在
-    doc = db.query(Document).filter(Document.id == doc_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    doc = _get_doc_or_404(db, doc_id, tenant_id)
     
     # 从pgvector获取分块
     from sqlalchemy import text
@@ -710,14 +752,17 @@ def get_document_chunks(doc_id: int, db: Session = Depends(get_mysql_db)):
 
 
 @router.get("/documents/{doc_id}/images")
-def get_document_images(doc_id: int, db: Session = Depends(get_mysql_db)):
+def get_document_images(
+    doc_id: int,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取文档关联的图片列表"""
     from ..models import DocumentImage
     
     # 检查文档是否存在
-    doc = db.query(Document).filter(Document.id == doc_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    doc = _get_doc_or_404(db, doc_id, tenant_id)
     
     images = db.query(DocumentImage).filter(
         DocumentImage.document_id == doc_id
@@ -784,12 +829,20 @@ class StreamChatRequest(BaseModel):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(data: ChatRequest):
+async def chat(
+    data: ChatRequest,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """RAG问答"""
+    tenant_id = _tenant_id_from_ctx(ctx)
+    if data.knowledge_base_id is None:
+        raise HTTPException(status_code=400, detail="knowledge_base_id is required")
+    _get_kb_or_404(db, int(data.knowledge_base_id), tenant_id)
     response = await rag_retriever.answer(
         query=data.query,
         knowledge_base_id=data.knowledge_base_id,
-        top_k=data.top_k,
+        top_k=int(data.top_k or 5),
     )
     return ChatResponse(
         answer=response.answer,
@@ -798,7 +851,11 @@ async def chat(data: ChatRequest):
 
 
 @router.post("/chat/stream")
-async def chat_stream(data: StreamChatRequest):
+async def chat_stream(
+    data: StreamChatRequest,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """
     流式RAG问答 (Server-Sent Events)
     
@@ -811,6 +868,10 @@ async def chat_stream(data: StreamChatRequest):
     from ..services.llm_service import llm_service
     import json
     
+    tenant_id = _tenant_id_from_ctx(ctx)
+    if data.knowledge_base_id is not None:
+        _get_kb_or_404(db, int(data.knowledge_base_id), tenant_id)
+
     async def generate():
         try:
             # 获取对话历史（优先使用前端传递的历史）
@@ -834,7 +895,7 @@ async def chat_stream(data: StreamChatRequest):
                 results = await rag_retriever.retrieve(
                     query=data.query,
                     knowledge_base_id=data.knowledge_base_id,
-                    top_k=data.top_k,
+                    top_k=int(data.top_k or 5),
                 )
                 
                 # 2. 发送检索源信息
@@ -975,17 +1036,26 @@ class RetrieveResponse(BaseModel):
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve(data: RetrieveRequest):
+async def retrieve(
+    data: RetrieveRequest,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """
     纯检索API - 仅返回相关文档片段，不调用LLM
     
     适用于外部Agent集成，Agent可以使用自己的LLM处理检索结果
     """
+    tenant_id = _tenant_id_from_ctx(ctx)
+    if data.knowledge_base_id is None:
+        raise HTTPException(status_code=400, detail="knowledge_base_id is required")
+    _get_kb_or_404(db, int(data.knowledge_base_id), tenant_id)
+
     # 获取检索结果（同步调用 -> 异步调用）
     results = await rag_retriever.retrieve(
         query=data.query,
         knowledge_base_id=data.knowledge_base_id,
-        top_k=data.top_k,
+        top_k=int(data.top_k or 5),
         # For the pure retrieval API: keep results precise and deterministic.
         enable_query_expansion=False,
         expand_to_parent=False,
@@ -1020,11 +1090,14 @@ async def build_knowledge_graph(
     kb_id: int,
     req: Request,
     background_tasks: BackgroundTasks,
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """
     触发构建知识图谱任务
     """
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
     request_id = _get_request_id_from_headers(req)
     job_id = await _schedule_job(background_tasks, "build_graph_job", ingest_build_graph, request_id, kb_id)
     return {"message": "Graph build queued" if job_id else "Graph build started", "kb_id": kb_id, "job_id": job_id}
@@ -1037,6 +1110,7 @@ async def _run_graph_build_task(kb_id: int):
         from ..services.document_loader import document_loader
         from ..services.minio_service import minio_service
         from langchain_core.documents import Document as LangChainDocument
+        tenant_id = settings.auth_default_tenant_id
         
         logger.info(f"Starting graph build for KB {kb_id} (from MinIO)")
         
@@ -1045,6 +1119,7 @@ async def _run_graph_build_task(kb_id: int):
         with get_mysql_session() as mysql_db:
             docs = mysql_db.query(Document).filter(
                 Document.knowledge_base_id == kb_id,
+                Document.tenant_id == tenant_id,
                 Document.graph_built == False
             ).all()
             
@@ -1109,7 +1184,7 @@ async def _run_graph_build_task(kb_id: int):
                     
                     # 4. 立即更新状态
                     with get_mysql_session() as update_db:
-                        d = update_db.query(Document).filter(Document.id == doc_id).first()
+                        d = update_db.query(Document).filter(Document.id == doc_id, Document.tenant_id == tenant_id).first()
                         if d:
                             d.graph_built = True
                             update_db.commit()
@@ -1139,6 +1214,7 @@ async def rebuild_vectors(
     kb_id: int,
     req: Request,
     background_tasks: BackgroundTasks,
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """
@@ -1146,11 +1222,10 @@ async def rebuild_vectors(
     
     删除现有向量并重新处理所有文档
     """
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    kb = _get_kb_or_404(db, kb_id, tenant_id)
     
-    doc_count = db.query(Document).filter(Document.knowledge_base_id == kb_id).count()
+    doc_count = db.query(Document).filter(Document.knowledge_base_id == kb_id, Document.tenant_id == tenant_id).count()
     
     request_id = _get_request_id_from_headers(req)
     job_id = await _schedule_job(background_tasks, "rebuild_vectors_job", ingest_rebuild_vectors, request_id, kb_id)
@@ -1169,18 +1244,20 @@ async def _run_rebuild_vectors_task(kb_id: int):
         from ..services.document_loader import document_loader
         from ..services.minio_service import minio_service
         from ..services.chunker import DocumentChunker
+        tenant_id = settings.auth_default_tenant_id
         
         logger.info(f"Starting rebuild vectors for KB {kb_id}")
         
         # 获取所有文档
         doc_infos = []
         with get_mysql_session() as mysql_db:
-            kb = mysql_db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+            kb = mysql_db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id).first()
             kb_chunk_size = kb.chunk_size if kb else 500
             kb_chunk_overlap = kb.chunk_overlap if kb else 50
             
             docs = mysql_db.query(Document).filter(
-                Document.knowledge_base_id == kb_id
+                Document.knowledge_base_id == kb_id,
+                Document.tenant_id == tenant_id,
             ).all()
             
             for doc in docs:
@@ -1248,7 +1325,7 @@ async def _run_rebuild_vectors_task(kb_id: int):
                     ]
                     
                     child_data = [
-                        (c.index, c.content, emb, c.metadata, c.parent_index)
+                        (c.index, c.content, emb, c.metadata, int(c.parent_index) if c.parent_index is not None else 0)
                         for c, emb in zip(child_chunks, child_embeddings)
                     ]
                     
@@ -1258,7 +1335,7 @@ async def _run_rebuild_vectors_task(kb_id: int):
                     # 7. 更新文档状态
                     total_chunks = len(parent_chunks) + len(child_chunks)
                     with get_mysql_session() as update_db:
-                        d = update_db.query(Document).filter(Document.id == doc_id).first()
+                        d = update_db.query(Document).filter(Document.id == doc_id, Document.tenant_id == tenant_id).first()
                         if d:
                             d.chunk_count = total_chunks
                             d.status = "completed"
@@ -1285,10 +1362,18 @@ async def _run_rebuild_vectors_task(kb_id: int):
         logger.error(traceback.format_exc())
 
 @router.post("/graph/retrieve", response_model=RetrieveResponse)
-async def graph_retrieve(data: RetrieveRequest):
+async def graph_retrieve(
+    data: RetrieveRequest,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """
     混合检索/图检索API
     """
+    tenant_id = _tenant_id_from_ctx(ctx)
+    if data.knowledge_base_id is None:
+        raise HTTPException(status_code=400, detail="knowledge_base_id is required")
+    _get_kb_or_404(db, int(data.knowledge_base_id), tenant_id)
     results = await graph_retriever.retrieve(
         query=data.query,
         knowledge_base_id=data.knowledge_base_id,
@@ -1443,6 +1528,7 @@ async def upload_image(
     req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """
@@ -1460,9 +1546,8 @@ async def upload_image(
     import uuid
     
     # 检查知识库
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
     
     # 检查文件类型
     if not image_encoder.is_supported(file.filename):
@@ -1479,6 +1564,7 @@ async def upload_image(
     
     # 创建文档记录（用于关联）
     doc = Document(
+        tenant_id=tenant_id,
         knowledge_base_id=kb_id,
         filename=file.filename,
         file_type="image",
@@ -1510,6 +1596,7 @@ async def upload_audio(
     req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """
@@ -1525,9 +1612,8 @@ async def upload_audio(
     import uuid
     
     # 检查知识库
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
     
     # 检查文件类型
     if not speech_service.is_supported(file.filename):
@@ -1542,6 +1628,7 @@ async def upload_audio(
     
     # 创建文档记录
     doc = Document(
+        tenant_id=tenant_id,
         knowledge_base_id=kb_id,
         filename=file.filename,
         file_type="audio",
@@ -1573,6 +1660,7 @@ async def upload_video(
     req: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    ctx: dict = Depends(require_admin),
     db: Session = Depends(get_mysql_db),
 ):
     """
@@ -1588,9 +1676,8 @@ async def upload_video(
     import uuid
     
     # 检查知识库
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
     
     # 检查文件类型
     if not video_service.is_supported(file.filename):
@@ -1605,6 +1692,7 @@ async def upload_video(
     
     # 创建文档记录
     doc = Document(
+        tenant_id=tenant_id,
         knowledge_base_id=kb_id,
         filename=file.filename,
         file_type="video",
@@ -1912,6 +2000,8 @@ async def multimodal_query(
     kb_id: int,
     query: str = Form(...),
     images: List[UploadFile] = File(default=None),
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
 ):
     """
     多模态问答
@@ -1922,6 +2012,9 @@ async def multimodal_query(
     """
     from ..services.multimodal_retriever import multimodal_retriever
     
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
+
     # 读取上传的图片
     image_data = []
     if images:
@@ -1948,6 +2041,8 @@ async def multimodal_query(
 async def generate_report(
     kb_id: int,
     data: ReportRequest,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
 ):
     """
     基于知识库生成报告
@@ -1957,14 +2052,17 @@ async def generate_report(
     2. 多轮检索收集素材
     3. 生成结构化报告
     """
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
+
     from ..services.report_generator import report_generator
     
     report = await report_generator.generate(
         topic=data.topic,
         knowledge_base_id=kb_id,
-        format=data.format,
-        include_charts=data.include_charts,
-        max_sections=data.max_sections,
+        format=data.format or "markdown",
+        include_charts=bool(data.include_charts) if data.include_charts is not None else True,
+        max_sections=int(data.max_sections or 5),
     )
     
     return ReportResponse(
@@ -1980,6 +2078,8 @@ async def generate_report(
 async def voice_query(
     kb_id: int,
     audio: UploadFile = File(...),
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
 ):
     """
     语音问答
@@ -1988,6 +2088,9 @@ async def voice_query(
     2. 执行 RAG 问答
     3. 返回文字回答
     """
+    tenant_id = _tenant_id_from_ctx(ctx)
+    _get_kb_or_404(db, kb_id, tenant_id)
+
     from ..services.speech_service import speech_service
     
     # 转写语音
@@ -2025,12 +2128,14 @@ class ChatMessageCreate(BaseModel):
 def list_chat_sessions(
     knowledge_base_id: Optional[int] = None,
     limit: int = 50,
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db)
 ):
     """获取会话列表"""
     from ..models import ChatSession
-    
-    query = db.query(ChatSession).order_by(ChatSession.updated_at.desc())
+
+    tenant_id = _tenant_id_from_ctx(ctx)
+    query = db.query(ChatSession).filter(ChatSession.tenant_id == tenant_id).order_by(ChatSession.updated_at.desc())
     if knowledge_base_id:
         query = query.filter(ChatSession.knowledge_base_id == knowledge_base_id)
     
@@ -2041,14 +2146,19 @@ def list_chat_sessions(
 @router.post("/chat-sessions")
 def create_chat_session(
     data: ChatSessionCreate,
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db)
 ):
     """创建新会话"""
     from ..models import ChatSession
     import uuid
     
+    tenant_id = _tenant_id_from_ctx(ctx)
+    if data.knowledge_base_id is not None:
+        _get_kb_or_404(db, data.knowledge_base_id, tenant_id)
     session = ChatSession(
         id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
         knowledge_base_id=data.knowledge_base_id,
         title=data.title or "新对话"
     )
@@ -2060,22 +2170,32 @@ def create_chat_session(
 
 
 @router.get("/chat-sessions/{session_id}")
-def get_chat_session(session_id: str, db: Session = Depends(get_mysql_db)):
+def get_chat_session(
+    session_id: str,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取会话详情"""
     from ..models import ChatSession
     
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    tenant_id = _tenant_id_from_ctx(ctx)
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.tenant_id == tenant_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session.to_dict()
 
 
 @router.delete("/chat-sessions/{session_id}")
-def delete_chat_session(session_id: str, db: Session = Depends(get_mysql_db)):
+def delete_chat_session(
+    session_id: str,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """删除会话"""
     from ..models import ChatSession
     
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    tenant_id = _tenant_id_from_ctx(ctx)
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.tenant_id == tenant_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -2085,11 +2205,16 @@ def delete_chat_session(session_id: str, db: Session = Depends(get_mysql_db)):
 
 
 @router.get("/chat-sessions/{session_id}/messages")
-def get_chat_messages(session_id: str, db: Session = Depends(get_mysql_db)):
+def get_chat_messages(
+    session_id: str,
+    ctx: dict = Depends(require_authenticated),
+    db: Session = Depends(get_mysql_db),
+):
     """获取会话消息列表"""
     from ..models import ChatSession, ChatMessage
     
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    tenant_id = _tenant_id_from_ctx(ctx)
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.tenant_id == tenant_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -2104,13 +2229,15 @@ def get_chat_messages(session_id: str, db: Session = Depends(get_mysql_db)):
 def add_chat_message(
     session_id: str,
     data: ChatMessageCreate,
+    ctx: dict = Depends(require_authenticated),
     db: Session = Depends(get_mysql_db)
 ):
     """添加消息到会话"""
     from ..models import ChatSession, ChatMessage
     import json as _json
     
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    tenant_id = _tenant_id_from_ctx(ctx)
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.tenant_id == tenant_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
