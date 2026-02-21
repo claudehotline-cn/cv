@@ -16,9 +16,9 @@ class TaskService:
     def __init__(self, db: AsyncSession):
         self.db = db
     
-    async def create_task(self, session_id: UUID, meta: Optional[Dict[str, Any]] = None) -> TaskModel:
+    async def create_task(self, session_id: UUID, meta: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None) -> TaskModel:
         """创建新任务"""
-        task = TaskModel(session_id=session_id, status="pending", result=meta)
+        task = TaskModel(session_id=session_id, user_id=user_id, status="pending", result=meta)
         self.db.add(task)
         await self.db.commit()
         await self.db.refresh(task)

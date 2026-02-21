@@ -6,6 +6,7 @@ from uuid import uuid4
 from ..db import get_db
 from ..models.db_models import SessionModel, AgentModel
 from ..core.auth import AuthPrincipal, get_current_user
+from ..services.user_shadow_service import UserShadowService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -17,6 +18,7 @@ async def create_session(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new session for a specific agent."""
+    await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
     # If no agent_id provided, use data_agent as default
     if not agent_id:
         result = await db.execute(select(AgentModel).where(AgentModel.builtin_key == "data_agent"))
@@ -35,6 +37,7 @@ async def create_session(
             raise HTTPException(status_code=404, detail="Agent not found")
 
     new_session = SessionModel(
+        user_id=user.user_id,
         agent_id=agent.id,
         title=title or "New Chat",
         thread_id=uuid4(),
@@ -62,7 +65,7 @@ async def get_session(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    owner_user_id = (session.state or {}).get("owner_user_id") if isinstance(session.state, dict) else None
+    owner_user_id = session.user_id or ((session.state or {}).get("owner_user_id") if isinstance(session.state, dict) else None)
     if user.role != "admin" and owner_user_id and owner_user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -91,7 +94,8 @@ async def list_sessions(
     if user.role != "admin":
         sessions = [
             s for s in sessions
-            if isinstance(s.state, dict) and (s.state.get("owner_user_id") == user.user_id)
+            if (s.user_id == user.user_id)
+            or (isinstance(s.state, dict) and (s.state.get("owner_user_id") == user.user_id))
         ]
     
     return {
@@ -120,7 +124,7 @@ async def delete_session(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    owner_user_id = (session.state or {}).get("owner_user_id") if isinstance(session.state, dict) else None
+    owner_user_id = session.user_id or ((session.state or {}).get("owner_user_id") if isinstance(session.state, dict) else None)
     if user.role != "admin" and owner_user_id and owner_user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     

@@ -16,6 +16,7 @@ from ..services.task_service import TaskService
 from ..models.db_models import SessionModel
 from agent_core.settings import get_settings
 from ..core.auth import AuthPrincipal, get_current_user
+from ..services.user_shadow_service import UserShadowService
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
@@ -23,6 +24,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _session_owner_user_id(session: SessionModel) -> str | None:
+    if session.user_id:
+        return session.user_id
     state = session.state if isinstance(session.state, dict) else {}
     owner = state.get("owner_user_id")
     return str(owner) if owner else None
@@ -46,6 +49,9 @@ async def _get_owned_session_or_404(db: AsyncSession, session_id: UUID, user: Au
 async def _get_owned_task_or_404(task_service: TaskService, db: AsyncSession, task_id: UUID, user: AuthPrincipal):
     task = await task_service.get_task(task_id)
     if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if user.role != "admin" and task.user_id and task.user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Task not found")
 
     session = await _get_owned_session_or_404(db, task.session_id, user)
@@ -108,9 +114,11 @@ async def create_execute_task(
     agent_key = agent.builtin_key if agent else "data_agent"
     
     # 创建任务记录
+    await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
     task_service = TaskService(db)
     task = await task_service.create_task(
         session_id,
+        user_id=user.user_id,
         meta={
             "input_message": request.message,
             "agent_key": agent_key,
