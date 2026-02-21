@@ -165,6 +165,10 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app/agent-audit:/app/agent-core:/app/agent-plugins:/app/app:/app
       - REDIS_URL=redis://langgraph-redis:6379
+      - AUTH_MODE=strict
+      - AUTH_ALLOW_DEV_HEADERS=false
+      - AUTH_INTROSPECTION_URL=http://agent-auth:8000/internal/introspect
+      - AGENT_AUTH_URL=http://agent-auth:8000
       # LLM
       - AGENT_LLM_PROVIDER=vllm
       - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
@@ -215,6 +219,10 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app/agent-audit:/app/agent-core:/app/agent-plugins:/app/app:/app
       - REDIS_URL=redis://langgraph-redis:6379
+      - AUTH_MODE=strict
+      - AUTH_ALLOW_DEV_HEADERS=false
+      - AUTH_INTROSPECTION_URL=http://agent-auth:8000/internal/introspect
+      - AGENT_AUTH_URL=http://agent-auth:8000
       - AGENT_LLM_PROVIDER=vllm
       - AGENT_VLLM_BASE_URL=http://vllm:8000/v1
       - AGENT_OPENAI_MODEL=/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit
