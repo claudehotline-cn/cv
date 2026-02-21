@@ -9,6 +9,9 @@ on:
       - 'agent-test/**'
       - 'agent-cli/**'
       - 'agent-auth/**'
+      - 'agent-auth-client/**'
+      - 'agent-platform-api/**'
+      - 'rag_service/**'
   pull_request:
     branches: [ "IOBinding", "main" ]
     paths:
@@ -17,6 +20,9 @@ on:
       - 'agent-test/**'
       - 'agent-cli/**'
       - 'agent-auth/**'
+      - 'agent-auth-client/**'
+      - 'agent-platform-api/**'
+      - 'rag_service/**'
 
 jobs:
   test:
@@ -45,10 +51,13 @@ jobs:
 
     - name: Run Agent Tests
       env:
-        PYTHONPATH: ${{ github.workspace }}/agent-core:${{ github.workspace }}/agent-test:${{ github.workspace }}/agent-plugins:${{ github.workspace }}/agent-auth:${{ github.workspace }}
+        PYTHONPATH: ${{ github.workspace }}/agent-core:${{ github.workspace }}/agent-test:${{ github.workspace }}/agent-plugins:${{ github.workspace }}/agent-auth:${{ github.workspace }}/agent-auth-client:${{ github.workspace }}
       run: |
         # Run auth provider contract tests
         pytest -q -c agent-test/pytest.ini agent-auth/app/tests/contract
+
+        # Run auth integration e2e tests when services are available
+        pytest -q -c agent-test/pytest.ini -m auth_integration agent-test/tests/integration/auth || true
 
         # Find all agent plugins and run their tests
         for dir in agent-plugins/*/; do
