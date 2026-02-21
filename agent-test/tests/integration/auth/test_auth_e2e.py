@@ -10,8 +10,18 @@ API_BASE = os.getenv("E2E_API_BASE", "http://localhost:18111")
 AUTH_BASE = os.getenv("E2E_AUTH_BASE", "http://localhost:18112")
 RAG_BASE = os.getenv("E2E_RAG_BASE", "http://localhost:18200")
 
+# Container-network defaults for running inside `agent-test` container.
+if os.path.exists("/.dockerenv"):
+    API_BASE = os.getenv("E2E_API_BASE", "http://agent-api:8000")
+    AUTH_BASE = os.getenv("E2E_AUTH_BASE", "http://agent-auth:8000")
+    RAG_BASE = os.getenv("E2E_RAG_BASE", "http://rag-service:8200")
+
 ADMIN_EMAIL = os.getenv("E2E_ADMIN_EMAIL", "admin@cv.example.com")
 ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", "12345678")
+
+USER_A_EMAIL = os.getenv("E2E_USER_A_EMAIL", "e2e_user_a@cv.example.com")
+USER_B_EMAIL = os.getenv("E2E_USER_B_EMAIL", "e2e_user_b@cv.example.com")
+USER_PASSWORD = os.getenv("E2E_USER_PASSWORD", "UserPass123!")
 
 
 def _json(resp):
@@ -32,6 +42,31 @@ def _login(email: str, password: str):
 
 def _auth_headers(token: str):
     return {"Authorization": f"Bearer {token}"}
+
+
+def _ensure_test_user(email: str, password: str, role: str = "user") -> None:
+    # Use public auth API to seed users, works in both host and container runs.
+    # register may be disabled in strict env; in that case user must already exist.
+    reg = requests.post(
+        f"{AUTH_BASE}/auth/register",
+        json={"email": email, "password": password, "username": email.split("@")[0]},
+        timeout=20,
+    )
+
+    if reg.status_code not in (200, 403, 409):
+        raise AssertionError(f"Failed to prepare test user {email}: {_json(reg)}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_auth_test_users():
+    _ensure_test_user(USER_A_EMAIL, USER_PASSWORD, role="user")
+    _ensure_test_user(USER_B_EMAIL, USER_PASSWORD, role="user")
+
+    # Hard ensure passwords are set to expected test secret using auth API change-password flow when possible.
+    for email in (USER_A_EMAIL, USER_B_EMAIL):
+        login = _login(email, USER_PASSWORD)
+        if login.status_code != 200:
+            raise AssertionError(f"Failed to prepare test user {email}: {_json(login)}")
 
 
 @pytest.mark.integration
@@ -114,21 +149,8 @@ def test_logout_then_refresh_invalid():
 @pytest.mark.integration
 @pytest.mark.auth_integration
 def test_user_cannot_access_others_session_task():
-    # Create two dedicated users for isolation
-    u1_email = f"u1-{uuid.uuid4().hex[:8]}@example.com"
-    u2_email = f"u2-{uuid.uuid4().hex[:8]}@example.com"
-    pwd = "UserPass123!"
-
-    # register may be disabled; if disabled, skip this test
-    r1 = requests.post(f"{API_BASE}/auth/register", json={"email": u1_email, "password": pwd}, timeout=20)
-    if r1.status_code == 403:
-        pytest.skip("register disabled in current environment")
-    assert r1.status_code == 200, _json(r1)
-    r2 = requests.post(f"{API_BASE}/auth/register", json={"email": u2_email, "password": pwd}, timeout=20)
-    assert r2.status_code == 200, _json(r2)
-
-    t1 = _json(_login(u1_email, pwd))["access_token"]
-    t2 = _json(_login(u2_email, pwd))["access_token"]
+    t1 = _json(_login(USER_A_EMAIL, USER_PASSWORD))["access_token"]
+    t2 = _json(_login(USER_B_EMAIL, USER_PASSWORD))["access_token"]
 
     s = requests.post(f"{API_BASE}/sessions/", json={}, headers=_auth_headers(t1), timeout=20)
     assert s.status_code == 200, _json(s)

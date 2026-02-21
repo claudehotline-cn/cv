@@ -47,7 +47,7 @@ jobs:
         if [ -f agent-auth/requirements.txt ]; then pip install -r agent-auth/requirements.txt; fi
         # Install other requirements as needed
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        pip install pytest pytest-recording
+        pip install pytest pytest-recording pytest-asyncio
 
     - name: Run Agent Tests
       env:
@@ -56,8 +56,8 @@ jobs:
         # Run auth provider contract tests
         pytest -q -c agent-test/pytest.ini agent-auth/app/tests/contract
 
-        # Run auth integration e2e tests when services are available
-        pytest -q -c agent-test/pytest.ini -m auth_integration agent-test/tests/integration/auth || true
+        # Run auth integration e2e tests (host-network in CI runner)
+        pytest -q -c agent-test/pytest.ini -m auth_integration agent-test/tests/integration/auth
 
         # Find all agent plugins and run their tests
         for dir in agent-plugins/*/; do
