@@ -154,6 +154,10 @@ class SecretsService:
         status: str,
     ) -> SecretRecord:
         s = await self.repository.get_secret_metadata(tenant_id=tenant_id, secret_id=secret_id)
+        if not s and status == "deleted":
+            # allow soft delete for disabled/previously soft-visible records
+            s_any = await self.repository.list_metadata(tenant_id=tenant_id, owner_user_id=None, scope=None)
+            s = next((x for x in s_any if x.id == secret_id), None)
         if not s:
             raise ValueError("Secret not found")
         if not is_admin and s.scope == "user" and s.owner_user_id != user_id:

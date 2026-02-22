@@ -109,7 +109,6 @@ class PostgresSecretRepository(SecretRepository):
             select(SecretModel).where(
                 SecretModel.id == UUID(str(secret_id)),
                 SecretModel.tenant_id == UUID(str(tenant_id)),
-                SecretModel.status != "deleted",
             )
         )
         return _to_secret_metadata(s) if s else None

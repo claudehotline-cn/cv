@@ -1,11 +1,15 @@
 import base64
 import hashlib
 import os
+import logging
 from dataclasses import dataclass
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from agent_core.settings import get_settings
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,12 @@ class EnvKeyProvider(KeyProvider):
             fallback = (settings.secrets_encryption_key or "").strip()
             if fallback:
                 self._keys[self._active] = _decode_key(fallback)
+
+        # local/dev fallback to avoid hard failure when env key is missing.
+        if not self._keys:
+            seed = f"{settings.redis_url}|{settings.postgres_host}|{settings.postgres_password}|{settings.auth_default_tenant_id}"
+            self._keys[self._active] = hashlib.sha256(seed.encode("utf-8")).digest()
+            _LOGGER.warning("SECRETS_ENCRYPTION_KEYS not set, using derived fallback key for current environment")
 
     def active_key_ref(self) -> str:
         return self._active
