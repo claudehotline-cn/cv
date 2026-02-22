@@ -1,0 +1,122 @@
+import { computed, ref } from 'vue'
+import { defineStore } from 'pinia'
+import apiClient, {
+  type AuthAuditOverview,
+  type LimitsResponse,
+  type PaginatedAuthAuditResponse,
+  type QuotaResponse,
+  type SecretItem,
+} from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+
+
+export const useSecurityStore = defineStore('security', () => {
+  const loading = ref(false)
+  const limits = ref<LimitsResponse | null>(null)
+  const quota = ref<QuotaResponse | null>(null)
+  const secrets = ref<SecretItem[]>([])
+  const authAudit = ref<PaginatedAuthAuditResponse | null>(null)
+  const authAuditOverview = ref<AuthAuditOverview | null>(null)
+
+  const hasQuotaPressure = computed(() => {
+    if (!quota.value || quota.value.monthly_token_quota <= 0) return false
+    return quota.value.used_tokens / quota.value.monthly_token_quota >= 0.8
+  })
+
+  async function loadLimitsAndQuota() {
+    loading.value = true
+    try {
+      limits.value = await apiClient.getMyLimits()
+      quota.value = await apiClient.getMyQuota()
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function saveLimits(patch: Record<string, any>) {
+    const auth = useAuthStore()
+    const tenantId = auth.activeTenantId
+    if (!tenantId) throw new Error('No active tenant')
+    limits.value = await apiClient.updateTenantLimits(tenantId, patch)
+  }
+
+  async function saveQuota(patch: { monthly_token_quota?: number; enabled?: boolean }) {
+    const auth = useAuthStore()
+    const tenantId = auth.activeTenantId
+    if (!tenantId) throw new Error('No active tenant')
+    quota.value = await apiClient.updateTenantQuota(tenantId, patch)
+  }
+
+  async function loadSecrets(scope?: 'user' | 'tenant') {
+    loading.value = true
+    try {
+      const res = await apiClient.listSecrets(scope)
+      secrets.value = res.items || []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function createSecret(input: { name: string; value: string; scope: 'user' | 'tenant'; provider?: string }) {
+    await apiClient.createSecret(input)
+    await loadSecrets()
+  }
+
+  async function rotateSecret(secretId: string, value: string) {
+    await apiClient.rotateSecret(secretId, value)
+    await loadSecrets()
+  }
+
+  async function disableSecret(secretId: string) {
+    await apiClient.disableSecret(secretId)
+    await loadSecrets()
+  }
+
+  async function enableSecret(secretId: string) {
+    await apiClient.enableSecret(secretId)
+    await loadSecrets()
+  }
+
+  async function deleteSecret(secretId: string) {
+    await apiClient.deleteSecret(secretId)
+    await loadSecrets()
+  }
+
+  async function reencryptTenantSecrets() {
+    const auth = useAuthStore()
+    const tenantId = auth.activeTenantId
+    if (!tenantId) throw new Error('No active tenant')
+    return apiClient.reencryptTenantSecrets(tenantId)
+  }
+
+  async function loadSecurityAudit(params: Record<string, any> = {}) {
+    loading.value = true
+    try {
+      authAudit.value = await apiClient.listAuthAuditEvents(params)
+      authAuditOverview.value = await apiClient.getAuthAuditOverview({ window_hours: 24 })
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return {
+    loading,
+    limits,
+    quota,
+    secrets,
+    authAudit,
+    authAuditOverview,
+    hasQuotaPressure,
+    loadLimitsAndQuota,
+    saveLimits,
+    saveQuota,
+    loadSecrets,
+    createSecret,
+    rotateSecret,
+    disableSecret,
+    enableSecret,
+    deleteSecret,
+    reencryptTenantSecrets,
+    loadSecurityAudit,
+  }
+})

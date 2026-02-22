@@ -94,11 +94,41 @@ const router = createRouter({
                     component: () => import('./views/audit/AuditRunsView.vue'),
                 },
                 {
+                    path: 'security',
+                    name: 'AuditSecurity',
+                    component: () => import('./views/audit/SecurityAuditView.vue'),
+                },
+                {
                     path: ':requestId',
                     name: 'AuditRunDetail',
                     component: () => import('./views/audit/AuditRunDetailView.vue'),
                 },
             ],
+        },
+        {
+            path: '/settings/security',
+            name: 'SettingsSecurity',
+            component: () => import('./views/settings/SecurityCenterView.vue'),
+        },
+        {
+            path: '/settings/tenant',
+            name: 'SettingsTenant',
+            component: () => import('./views/settings/TenantMembersView.vue'),
+        },
+        {
+            path: '/settings/limits',
+            name: 'SettingsLimits',
+            component: () => import('./views/settings/LimitsQuotaView.vue'),
+        },
+        {
+            path: '/settings/secrets',
+            name: 'SettingsSecrets',
+            component: () => import('./views/settings/SecretsVaultView.vue'),
+        },
+        {
+            path: '/settings/api-keys',
+            name: 'SettingsApiKeys',
+            component: () => import('./views/settings/ApiKeysView.vue'),
         },
         {
             path: '/finance-docs',

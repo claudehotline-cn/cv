@@ -30,6 +30,82 @@ export interface TenantListResponse {
     active_tenant_id?: string
 }
 
+export interface LimitsResponse {
+    tenant_id: string
+    user_id?: string
+    rate_limits: {
+        read: string
+        write: string
+        execute: string
+        user_read: string
+        user_write: string
+        user_execute: string
+        tenant_concurrency_limit: number
+        user_concurrency_limit: number
+        fail_mode: string
+    }
+    quota: {
+        monthly_token_quota: number
+        enabled: boolean
+    }
+}
+
+export interface QuotaResponse {
+    tenant_id: string
+    period: string
+    enabled: boolean
+    monthly_token_quota: number
+    used_tokens: number
+    remaining_tokens: number
+    prompt_tokens: number
+    completion_tokens: number
+    request_count: number
+}
+
+export interface SecretItem {
+    id: string
+    tenant_id: string
+    owner_user_id?: string | null
+    scope: 'user' | 'tenant'
+    name: string
+    provider?: string | null
+    status: 'active' | 'disabled' | 'deleted'
+    current_version: number
+}
+
+export interface AuthAuditEvent {
+    event_id: string
+    event_time: string
+    event_type: string
+    user_id?: string | null
+    email?: string | null
+    actor_type?: string | null
+    actor_id?: string | null
+    ip_addr?: string | null
+    user_agent?: string | null
+    result?: string | null
+    reason_code?: string | null
+    payload: Record<string, any>
+}
+
+export interface PaginatedAuthAuditResponse {
+    items: AuthAuditEvent[]
+    total: number
+    limit: number
+    offset: number
+}
+
+export interface AuthAuditOverview {
+    window_hours: number
+    total_events: number
+    login_success: number
+    login_failed: number
+    login_success_rate: number
+    unique_user_count: number
+    unique_ip_count: number
+    top_failure_reasons: Record<string, number>
+}
+
 const ACTIVE_TENANT_KEY = 'auth.activeTenantId'
 
 function readAccessToken(): string {
@@ -359,6 +435,82 @@ class ApiClient {
         return user
     }
 
+    async createApiKey(name: string): Promise<any> {
+        return this.http.post('/auth/api-keys', { name })
+    }
+
+    async listApiKeys(): Promise<any> {
+        return this.http.get('/auth/api-keys')
+    }
+
+    async revokeApiKey(keyId: string): Promise<any> {
+        return this.http.delete(`/auth/api-keys/${keyId}`)
+    }
+
+    async getMyLimits(): Promise<LimitsResponse> {
+        return this.http.get('/limits/me')
+    }
+
+    async getMyQuota(): Promise<QuotaResponse> {
+        return this.http.get('/quota/me')
+    }
+
+    async getTenantLimits(tenantId: string): Promise<LimitsResponse> {
+        return this.http.get(`/limits/admin/tenants/${tenantId}`)
+    }
+
+    async updateTenantLimits(tenantId: string, patch: Record<string, any>): Promise<LimitsResponse> {
+        return this.http.put(`/limits/admin/tenants/${tenantId}`, patch)
+    }
+
+    async getTenantQuota(tenantId: string): Promise<QuotaResponse> {
+        return this.http.get(`/limits/admin/tenants/${tenantId}/quota`)
+    }
+
+    async updateTenantQuota(tenantId: string, patch: { monthly_token_quota?: number; enabled?: boolean }): Promise<QuotaResponse> {
+        return this.http.put(`/limits/admin/tenants/${tenantId}/quota`, patch)
+    }
+
+    async listSecrets(scope?: 'user' | 'tenant'): Promise<{ items: SecretItem[] }> {
+        return this.http.get('/secrets', { params: scope ? { scope } : undefined })
+    }
+
+    async createSecret(input: { name: string; value: string; scope: 'user' | 'tenant'; provider?: string }): Promise<SecretItem> {
+        return this.http.post('/secrets/', input)
+    }
+
+    async getSecret(secretId: string): Promise<SecretItem> {
+        return this.http.get(`/secrets/${secretId}`)
+    }
+
+    async rotateSecret(secretId: string, value: string): Promise<SecretItem> {
+        return this.http.post(`/secrets/${secretId}/rotate`, { value })
+    }
+
+    async disableSecret(secretId: string): Promise<SecretItem> {
+        return this.http.post(`/secrets/${secretId}/disable`)
+    }
+
+    async enableSecret(secretId: string): Promise<SecretItem> {
+        return this.http.post(`/secrets/${secretId}/enable`)
+    }
+
+    async deleteSecret(secretId: string): Promise<SecretItem> {
+        return this.http.delete(`/secrets/${secretId}`)
+    }
+
+    async adminListTenantSecrets(tenantId: string): Promise<{ items: SecretItem[] }> {
+        return this.http.get(`/secrets/admin/tenants/${tenantId}`)
+    }
+
+    async adminCreateTenantSecret(tenantId: string, input: { name: string; value: string; provider?: string }): Promise<SecretItem> {
+        return this.http.post(`/secrets/admin/tenants/${tenantId}`, { ...input, scope: 'tenant' })
+    }
+
+    async reencryptTenantSecrets(tenantId: string): Promise<{ tenant_id: string; queued: boolean; job_id?: string }> {
+        return this.http.post(`/secrets/admin/tenants/${tenantId}/reencrypt`, {})
+    }
+
     private async fetchWithAuth(url: string, init: RequestInit = {}, retry = true): Promise<Response> {
         const headers = new Headers(init.headers || {})
         headers.set('Content-Type', headers.get('Content-Type') || 'application/json')
@@ -651,6 +803,23 @@ class ApiClient {
 
     async getAuditRunSummary(runId: string): Promise<AuditRunDetail> {
         return this.http.get(`/audit/runs/${runId}/summary`)
+    }
+
+    async listAuthAuditEvents(params: {
+        limit?: number
+        offset?: number
+        event_type?: string
+        user_id?: string
+        result?: string
+        q?: string
+        start_date?: string
+        end_date?: string
+    } = {}): Promise<PaginatedAuthAuditResponse> {
+        return this.http.get('/audit/auth/events', { params: { limit: 50, ...params } })
+    }
+
+    async getAuthAuditOverview(params: { window_hours?: number; user_id?: string } = {}): Promise<AuthAuditOverview> {
+        return this.http.get('/audit/auth/overview', { params })
     }
 
     // RAG (via agent-api /rag gateway)

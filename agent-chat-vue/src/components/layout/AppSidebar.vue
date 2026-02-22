@@ -60,6 +60,15 @@
               </div>
            </template>
          </el-menu-item>
+
+         <el-menu-item index="/audit/security">
+            <template #title>
+              <div class="menu-item-content">
+                 <span class="material-symbols-outlined">shield_lock</span>
+                 <span class="font-medium">Security Audit</span>
+              </div>
+           </template>
+         </el-menu-item>
  
          <el-menu-item index="/finance-docs">
            <template #title>
@@ -83,19 +92,46 @@
         <div class="menu-divider"></div>
         <p class="menu-section-title">Settings</p>
 
-        <el-menu-item index="/settings/general" disabled>
+        <el-menu-item index="/settings/security">
             <template #title>
-             <div class="menu-item-content opacity-60">
-                <span class="material-symbols-outlined">settings</span>
-                <span class="font-medium">General</span>
+             <div class="menu-item-content">
+                <span class="material-symbols-outlined">admin_panel_settings</span>
+                <span class="font-medium">Security Center</span>
              </div>
            </template>
         </el-menu-item>
 
-        <el-menu-item index="/settings/api" disabled>
+        <el-menu-item index="/settings/tenant">
             <template #title>
-             <div class="menu-item-content opacity-60">
-                <span class="material-symbols-outlined">api</span>
+             <div class="menu-item-content">
+                <span class="material-symbols-outlined">groups</span>
+                <span class="font-medium">Tenant & Members</span>
+             </div>
+           </template>
+        </el-menu-item>
+
+        <el-menu-item index="/settings/limits">
+            <template #title>
+             <div class="menu-item-content">
+                <span class="material-symbols-outlined">speed</span>
+                <span class="font-medium">Limits & Quota</span>
+             </div>
+           </template>
+        </el-menu-item>
+
+        <el-menu-item index="/settings/secrets">
+            <template #title>
+             <div class="menu-item-content">
+                <span class="material-symbols-outlined">key</span>
+                <span class="font-medium">Secrets Vault</span>
+             </div>
+           </template>
+        </el-menu-item>
+
+        <el-menu-item index="/settings/api-keys">
+            <template #title>
+             <div class="menu-item-content">
+                <span class="material-symbols-outlined">vpn_key</span>
                 <span class="font-medium">API Keys</span>
              </div>
            </template>
@@ -156,7 +192,13 @@ const chatStore = useChatStore()
 const activeRoute = computed(() => {
   const p = route.path
   if (p.startsWith('/agents')) return '/agents'
+  if (p.startsWith('/audit/security')) return '/audit/security'
   if (p.startsWith('/audit')) return '/audit'
+  if (p.startsWith('/settings/security')) return '/settings/security'
+  if (p.startsWith('/settings/tenant')) return '/settings/tenant'
+  if (p.startsWith('/settings/limits')) return '/settings/limits'
+  if (p.startsWith('/settings/secrets')) return '/settings/secrets'
+  if (p.startsWith('/settings/api-keys')) return '/settings/api-keys'
   return p
 })
 
