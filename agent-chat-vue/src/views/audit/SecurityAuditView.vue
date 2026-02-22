@@ -9,9 +9,9 @@
           range-separator="to"
           start-placeholder="Start time"
           end-placeholder="End time"
-          style="width: 360px"
+          class="filter-control filter-date"
         />
-        <el-select v-model="eventType" placeholder="Event Type" clearable style="width: 220px">
+        <el-select v-model="eventType" placeholder="Event Type" clearable class="filter-control">
           <el-option label="All" value="" />
           <el-option label="Auth Login Success" value="auth_login_succeeded" />
           <el-option label="Auth Login Failed" value="auth_login_failed" />
@@ -27,15 +27,15 @@
           <el-option label="Rate Limit Exceeded" value="rate_limit_exceeded" />
           <el-option label="Quota Exceeded" value="quota_exceeded" />
         </el-select>
-        <el-select v-model="result" placeholder="Result" clearable style="width: 160px">
+        <el-select v-model="result" placeholder="Result" clearable class="filter-control filter-short">
           <el-option label="All" value="" />
           <el-option label="Success" value="success" />
           <el-option label="Failed" value="failed" />
         </el-select>
-        <el-input v-model="email" clearable placeholder="User email" style="width: 200px" />
-        <el-input v-model="userId" clearable placeholder="User ID" style="width: 180px" />
-        <el-input v-model="ipAddr" clearable placeholder="IP" style="width: 140px" />
-        <el-select v-model="selectedTenantId" placeholder="Tenant" clearable style="width: 280px">
+        <el-input v-model="email" clearable placeholder="User email" class="filter-control" />
+        <el-input v-model="userId" clearable placeholder="User ID" class="filter-control" />
+        <el-input v-model="ipAddr" clearable placeholder="IP" class="filter-control filter-short" />
+        <el-select v-model="selectedTenantId" placeholder="Tenant" clearable class="filter-control filter-tenant">
           <el-option
             v-for="tenant in auth.tenantOptions"
             :key="tenant.id"
@@ -43,7 +43,7 @@
             :value="tenant.id"
           />
         </el-select>
-        <el-button type="primary" @click="load">Query</el-button>
+        <el-button type="primary" class="filter-submit" @click="load">Query</el-button>
       </div>
     </section>
 
@@ -174,9 +174,27 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.audit-security { padding: 24px; }
-.head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
-.filters { display: flex; align-items: center; gap: 8px; }
+.audit-security { padding: 24px; max-width: 1280px; margin: 0 auto; }
+.head { display: grid; gap: 12px; margin-bottom: 16px; }
+.filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.filter-control { width: 220px; }
+.filter-short { width: 160px; }
+.filter-date { width: 380px; }
+.filter-tenant { width: 320px; }
 .overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .payload { white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+@media (max-width: 1000px) {
+  .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filter-date,
+  .filter-tenant { width: 100%; }
+}
+
+@media (max-width: 768px) {
+  .audit-security { padding: 16px; }
+  .overview { grid-template-columns: 1fr; }
+  .filter-control,
+  .filter-short,
+  .filter-submit { width: 100%; }
+}
 </style>

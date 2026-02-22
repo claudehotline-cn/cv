@@ -1,44 +1,73 @@
 <template>
   <div class="settings-page" v-loading="security.loading">
-    <div class="head">
-      <div>
-        <h1>Security Center</h1>
-        <p class="subtitle">Central place for tenant security, limits, secrets and security audit.</p>
+    <div class="page-header">
+      <div class="header-content">
+        <h1 class="page-title">Security Center</h1>
+        <p class="page-description">Central place for tenant security, limits, secrets and security audit.</p>
       </div>
-      <el-button type="primary" plain @click="refresh">Refresh</el-button>
+      <el-button :icon="RefreshIcon" circle title="Refresh" @click="refresh" />
     </div>
 
-    <el-alert v-if="security.error" :title="security.error" type="error" :closable="false" style="margin-bottom: 16px;" />
+    <transition name="el-fade-in-linear">
+      <el-alert v-if="security.error" :title="security.error" type="error" :closable="false" show-icon class="alert-box" />
+    </transition>
 
-    <div class="grid">
-      <el-card>
-        <template #header>Tenant</template>
-        <p>{{ auth.activeTenantId || '-' }}</p>
-        <p>Role: {{ auth.user?.tenant_role || '-' }}</p>
-      </el-card>
-      <el-card>
-        <template #header>Quota</template>
-        <p>Used: {{ security.quota?.used_tokens ?? 0 }}</p>
-        <p>Remaining: {{ security.quota?.remaining_tokens ?? 0 }}</p>
-        <el-tag v-if="security.hasQuotaPressure" type="warning" size="small">Usage > 80%</el-tag>
-      </el-card>
-      <el-card>
-        <template #header>Secrets</template>
-        <p>Count: {{ security.secrets.length }}</p>
-      </el-card>
-      <el-card>
-        <template #header>Security Events (24h)</template>
-        <p>Total: {{ security.authAuditOverview?.total_events ?? 0 }}</p>
-      </el-card>
-    </div>
+    <el-row :gutter="20" class="metrics-grid">
+      <el-col :xs="24" :sm="12" :lg="6" class="metric-col">
+        <el-card shadow="hover" class="metric-card">
+          <div class="card-title">Tenant Active</div>
+          <el-tooltip :content="auth.activeTenantId || ''" placement="top">
+            <div class="metric-value truncate">{{ auth.activeTenantId || '-' }}</div>
+          </el-tooltip>
+          <div class="metric-extra">Role: <el-tag size="small" type="info" style="margin-left: 6px;">{{ auth.user?.tenant_role || '-' }}</el-tag></div>
+        </el-card>
+      </el-col>
+      
+      <el-col :xs="24" :sm="12" :lg="6" class="metric-col">
+        <el-card shadow="hover" class="metric-card">
+          <div class="card-title">Quota Usage</div>
+          <div class="metric-value">{{ security.quota?.used_tokens?.toLocaleString() ?? 0 }}</div>
+          <div class="metric-extra">
+            <span>Remaining: {{ security.quota?.remaining_tokens?.toLocaleString() ?? 0 }}</span>
+            <el-tag v-if="security.hasQuotaPressure" type="warning" size="small" style="margin-left: 8px;">Usage > 80%</el-tag>
+          </div>
+        </el-card>
+      </el-col>
 
-    <el-card style="margin-top: 16px;">
-      <template #header>Quick Actions</template>
-      <div class="actions">
-        <el-button @click="go('/settings/tenant')">Tenant & Members</el-button>
-        <el-button @click="go('/settings/limits')">Limits & Quota</el-button>
-        <el-button @click="go('/settings/secrets')">Secrets Vault</el-button>
-        <el-button @click="go('/audit/security')">Security Audit</el-button>
+      <el-col :xs="24" :sm="12" :lg="6" class="metric-col">
+        <el-card shadow="hover" class="metric-card">
+          <div class="card-title">Secrets</div>
+          <div class="metric-value">{{ security.secrets.length }}</div>
+          <div class="metric-extra">Active secret entries</div>
+        </el-card>
+      </el-col>
+
+      <el-col :xs="24" :sm="12" :lg="6" class="metric-col">
+        <el-card shadow="hover" class="metric-card">
+          <div class="card-title">Security Events (24h)</div>
+          <div class="metric-value">{{ security.authAuditOverview?.total_events?.toLocaleString() ?? 0 }}</div>
+          <div class="metric-extra">Observed in recent window</div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-card shadow="never" class="actions-card">
+      <template #header>
+        <div class="actions-header">Quick Actions</div>
+      </template>
+      <div class="quick-actions">
+        <el-button size="large" @click="go('/settings/tenant')" class="action-btn">
+          <span class="action-btn-text">Tenant & Members</span>
+        </el-button>
+        <el-button size="large" @click="go('/settings/limits')" class="action-btn">
+          <span class="action-btn-text">Limits & Quota</span>
+        </el-button>
+        <el-button size="large" @click="go('/settings/secrets')" class="action-btn">
+          <span class="action-btn-text">Secrets Vault</span>
+        </el-button>
+        <el-button size="large" @click="go('/audit/security')" class="action-btn">
+          <span class="action-btn-text">Security Audit</span>
+        </el-button>
       </div>
     </el-card>
   </div>
@@ -47,6 +76,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { Refresh as RefreshIcon } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSecurityStore } from '@/stores/security'
 
@@ -72,9 +102,137 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.settings-page { padding: 24px; }
-.head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 12px; }
-.subtitle { color: var(--text-secondary); margin: 0; }
-.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-page {
+  padding: 32px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 32px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.header-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.page-description {
+  margin: 0;
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+}
+
+.alert-box {
+  margin-bottom: 24px;
+}
+
+.metrics-grid {
+  margin-bottom: 24px;
+}
+
+.metric-col {
+  margin-bottom: 20px;
+}
+
+.metric-card {
+  height: 100%;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+.metric-card :deep(.el-card__body) {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.card-title {
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.metric-value {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-extra {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  display: flex;
+  align-items: center;
+  margin-top: auto;
+}
+
+.actions-card {
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.actions-header {
+  font-weight: 500;
+  font-size: 16px;
+}
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.action-btn {
+  width: 100%;
+  height: 60px;
+  justify-content: flex-start;
+  padding: 0 20px;
+  border-radius: 8px;
+}
+
+.action-btn-text {
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .settings-page {
+    padding: 16px;
+  }
+  
+  .page-header {
+    flex-direction: column;
+  }
+  
+  .page-header .el-button {
+    width: 100%;
+  }
+
+  .quick-actions {
+    grid-template-columns: 1fr;
+  }
+}
 </style>
