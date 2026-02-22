@@ -3,10 +3,17 @@
     <div class="head">
       <h1>Secrets Vault</h1>
       <div class="actions">
+        <el-select v-model="scopeFilter" style="width: 140px" @change="load">
+          <el-option label="All" value="" />
+          <el-option label="User" value="user" />
+          <el-option label="Tenant" value="tenant" />
+        </el-select>
         <el-button type="warning" @click="onReencrypt">Re-encrypt Tenant Secrets</el-button>
         <el-button type="primary" @click="createDialog = true">Create Secret</el-button>
       </div>
     </div>
+
+    <el-alert v-if="security.error" :title="security.error" type="error" :closable="false" style="margin-bottom: 12px;" />
 
     <el-table :data="security.secrets" stripe>
       <el-table-column prop="name" label="Name" />
@@ -60,6 +67,7 @@ import { ElMessage } from 'element-plus'
 import { useSecurityStore } from '@/stores/security'
 
 const security = useSecurityStore()
+const scopeFilter = ref('')
 
 const createDialog = ref(false)
 const rotateDialog = ref(false)
@@ -98,8 +106,12 @@ async function onReencrypt() {
   ElMessage.success(`Re-encrypt queued: ${result.job_id || 'ok'}`)
 }
 
+async function load() {
+  await security.loadSecrets((scopeFilter.value || undefined) as 'user' | 'tenant' | undefined)
+}
+
 onMounted(async () => {
-  await security.loadSecrets()
+  await load()
 })
 </script>
 

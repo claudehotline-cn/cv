@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 
 export const useSecurityStore = defineStore('security', () => {
   const loading = ref(false)
+  const error = ref<string>('')
   const limits = ref<LimitsResponse | null>(null)
   const quota = ref<QuotaResponse | null>(null)
   const secrets = ref<SecretItem[]>([])
@@ -25,9 +26,13 @@ export const useSecurityStore = defineStore('security', () => {
 
   async function loadLimitsAndQuota() {
     loading.value = true
+    error.value = ''
     try {
       limits.value = await apiClient.getMyLimits()
       quota.value = await apiClient.getMyQuota()
+    } catch (e: any) {
+      error.value = e?.response?.data?.detail || e?.message || 'Failed to load limits/quota'
+      throw e
     } finally {
       loading.value = false
     }
@@ -49,9 +54,13 @@ export const useSecurityStore = defineStore('security', () => {
 
   async function loadSecrets(scope?: 'user' | 'tenant') {
     loading.value = true
+    error.value = ''
     try {
       const res = await apiClient.listSecrets(scope)
       secrets.value = res.items || []
+    } catch (e: any) {
+      error.value = e?.response?.data?.detail || e?.message || 'Failed to load secrets'
+      throw e
     } finally {
       loading.value = false
     }
@@ -91,9 +100,13 @@ export const useSecurityStore = defineStore('security', () => {
 
   async function loadSecurityAudit(params: Record<string, any> = {}) {
     loading.value = true
+    error.value = ''
     try {
       authAudit.value = await apiClient.listAuthAuditEvents(params)
       authAuditOverview.value = await apiClient.getAuthAuditOverview({ window_hours: 24 })
+    } catch (e: any) {
+      error.value = e?.response?.data?.detail || e?.message || 'Failed to load security audit'
+      throw e
     } finally {
       loading.value = false
     }
@@ -101,6 +114,7 @@ export const useSecurityStore = defineStore('security', () => {
 
   return {
     loading,
+    error,
     limits,
     quota,
     secrets,

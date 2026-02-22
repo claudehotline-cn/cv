@@ -106,29 +106,35 @@ const router = createRouter({
             ],
         },
         {
-            path: '/settings/security',
-            name: 'SettingsSecurity',
-            component: () => import('./views/settings/SecurityCenterView.vue'),
-        },
-        {
-            path: '/settings/tenant',
-            name: 'SettingsTenant',
-            component: () => import('./views/settings/TenantMembersView.vue'),
-        },
-        {
-            path: '/settings/limits',
-            name: 'SettingsLimits',
-            component: () => import('./views/settings/LimitsQuotaView.vue'),
-        },
-        {
-            path: '/settings/secrets',
-            name: 'SettingsSecrets',
-            component: () => import('./views/settings/SecretsVaultView.vue'),
-        },
-        {
-            path: '/settings/api-keys',
-            name: 'SettingsApiKeys',
-            component: () => import('./views/settings/ApiKeysView.vue'),
+            path: '/settings',
+            component: () => import('./views/settings/SettingsLayout.vue'),
+            children: [
+                {
+                    path: 'security',
+                    name: 'SettingsSecurity',
+                    component: () => import('./views/settings/SecurityCenterView.vue'),
+                },
+                {
+                    path: 'tenant',
+                    name: 'SettingsTenant',
+                    component: () => import('./views/settings/TenantMembersView.vue'),
+                },
+                {
+                    path: 'limits',
+                    name: 'SettingsLimits',
+                    component: () => import('./views/settings/LimitsQuotaView.vue'),
+                },
+                {
+                    path: 'secrets',
+                    name: 'SettingsSecrets',
+                    component: () => import('./views/settings/SecretsVaultView.vue'),
+                },
+                {
+                    path: 'api-keys',
+                    name: 'SettingsApiKeys',
+                    component: () => import('./views/settings/ApiKeysView.vue'),
+                },
+            ],
         },
         {
             path: '/finance-docs',
