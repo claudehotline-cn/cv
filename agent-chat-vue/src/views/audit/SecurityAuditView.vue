@@ -35,7 +35,14 @@
         <el-input v-model="email" clearable placeholder="User email" style="width: 200px" />
         <el-input v-model="userId" clearable placeholder="User ID" style="width: 180px" />
         <el-input v-model="ipAddr" clearable placeholder="IP" style="width: 140px" />
-        <el-input :model-value="auth.activeTenantId || '-'" readonly placeholder="Tenant" style="width: 220px" />
+        <el-select v-model="selectedTenantId" placeholder="Tenant" clearable style="width: 280px">
+          <el-option
+            v-for="tenant in auth.tenantOptions"
+            :key="tenant.id"
+            :label="`${tenant.name} (${tenant.id})`"
+            :value="tenant.id"
+          />
+        </el-select>
         <el-button type="primary" @click="load">Query</el-button>
       </div>
     </section>
@@ -75,7 +82,7 @@
         <el-descriptions-item label="Event Type">{{ selectedEvent.event_type }}</el-descriptions-item>
         <el-descriptions-item label="User">{{ selectedEvent.user_id || '-' }}</el-descriptions-item>
         <el-descriptions-item label="Actor">{{ selectedEvent.actor_id || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="Tenant">{{ auth.activeTenantId || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="Tenant">{{ selectedTenantId || auth.activeTenantId || '-' }}</el-descriptions-item>
         <el-descriptions-item label="Result">{{ selectedEvent.result || '-' }}</el-descriptions-item>
         <el-descriptions-item label="Reason">{{ selectedEvent.reason_code || '-' }}</el-descriptions-item>
         <el-descriptions-item label="IP">{{ selectedEvent.ip_addr || '-' }}</el-descriptions-item>
@@ -110,8 +117,11 @@ const userId = ref('')
 const email = ref('')
 const ipAddr = ref('')
 const timeRange = ref<[Date, Date] | null>(null)
+const selectedTenantId = ref('')
 const detailVisible = ref(false)
 const selectedEvent = ref<any>(null)
+
+const currentTenantOverride = ref<string | null>(null)
 
 async function load() {
   const params: Record<string, any> = { limit: 50 }
@@ -122,7 +132,21 @@ async function load() {
   if (ipAddr.value) params.ip_addr = ipAddr.value
   if (timeRange.value?.[0]) params.start_date = timeRange.value[0].toISOString()
   if (timeRange.value?.[1]) params.end_date = timeRange.value[1].toISOString()
-  await security.loadSecurityAudit(params)
+  const previousTenant = auth.activeTenantId
+  const targetTenant = selectedTenantId.value || previousTenant
+  if (targetTenant && targetTenant !== previousTenant) {
+    currentTenantOverride.value = previousTenant
+    auth.switchTenant(targetTenant)
+  }
+
+  try {
+    await security.loadSecurityAudit(params)
+  } finally {
+    if (currentTenantOverride.value) {
+      auth.switchTenant(currentTenantOverride.value)
+      currentTenantOverride.value = null
+    }
+  }
 }
 
 function eventRequestId(row: any): string | null {
@@ -140,7 +164,13 @@ function openEvent(row: any) {
   detailVisible.value = true
 }
 
-onMounted(load)
+onMounted(async () => {
+  if (!auth.tenantOptions.length) {
+    await auth.loadTenants()
+  }
+  selectedTenantId.value = auth.activeTenantId
+  await load()
+})
 </script>
 
 <style scoped>
