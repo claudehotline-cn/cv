@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from ..db import get_db
-from ..models.db_models import SessionModel, AgentModel
+from ..models.db_models import SessionModel, AgentModel, AgentVersionModel
 from ..core.agent_registry import registry
 from ..utils.stream_parser import QwenStreamParser
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -217,7 +217,14 @@ async def chat_stream(
         
     plugin = registry.get_plugin(agent_key)
     graph = plugin.get_graph()
-    
+
+    # Resolve agent config: prefer published version, fallback to agents.config
+    agent_config = session.agent.config
+    if session.agent.published_version_id:
+        pub_ver = await db.get(AgentVersionModel, session.agent.published_version_id)
+        if pub_ver:
+            agent_config = pub_ver.config
+
     # Use global event bus to avoid event loop conflicts
     event_bus = request.app.state.event_bus
     
@@ -252,6 +259,7 @@ async def chat_stream(
             "agent_key": agent_key,
             "agent_id": str(session.agent.id),
             "agent_name": session.agent.name,
+            "agent_config": agent_config,
         },
     }
     config["audit_emitter"] = emitter
@@ -291,6 +299,13 @@ async def resume_chat(
     plugin = registry.get_plugin(agent_key)
     graph = plugin.get_graph()
 
+    # Resolve agent config: prefer published version, fallback to agents.config
+    agent_config = session.agent.config
+    if session.agent.published_version_id:
+        pub_ver = await db.get(AgentVersionModel, session.agent.published_version_id)
+        if pub_ver:
+            agent_config = pub_ver.config
+
     # Use global event bus for audit
     event_bus = http_request.app.state.event_bus
 
@@ -323,6 +338,7 @@ async def resume_chat(
             "agent_key": agent_key,
             "agent_id": str(session.agent.id),
             "agent_name": session.agent.name,
+            "agent_config": agent_config,
         },
     }
     config["audit_emitter"] = emitter

@@ -39,16 +39,33 @@
                 <el-icon><Connection /></el-icon>
                 {{ agent.config?.model || 'gpt-4o' }}
               </span>
+              <el-tag
+                v-if="agent.published_version"
+                type="success"
+                size="small"
+                effect="plain"
+                class="version-tag"
+              >
+                v{{ agent.published_version.version }} Published
+              </el-tag>
+              <el-tag
+                v-if="agent.draft_version"
+                type="warning"
+                size="small"
+                effect="plain"
+                class="version-tag"
+              >
+                v{{ agent.draft_version.version }} Draft
+              </el-tag>
             </div>
 
             <div class="card-actions">
-              <el-button 
-                size="small" 
+              <el-button
+                size="small"
                 round
                 @click="$router.push(`/custom-agents/${agent.id}`)"
-                :disabled="agent.type === 'builtin'"
               >
-                编辑
+                {{ agent.type === 'builtin' ? '版本管理' : '编辑' }}
               </el-button>
               <el-popconfirm 
                 v-if="agent.type !== 'builtin'"
@@ -235,6 +252,18 @@ function getGradient(name: string) {
   background: rgba(255, 255, 255, 0.05);
   padding: 4px 8px;
   border-radius: 6px;
+}
+
+.agent-meta {
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.version-tag {
+  font-size: 11px;
 }
 
 .card-actions {

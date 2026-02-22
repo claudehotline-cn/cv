@@ -164,6 +164,69 @@ async def init_db():
             )
         """))
 
+        # --- Agent Versions ---
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS agent_versions (
+                id UUID PRIMARY KEY,
+                agent_id UUID NOT NULL,
+                version INT NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'draft',
+                config JSONB NOT NULL DEFAULT '{}',
+                change_summary TEXT,
+                created_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                published_at TIMESTAMPTZ,
+                CONSTRAINT uq_agent_versions_agent_version UNIQUE (agent_id, version),
+                CONSTRAINT fk_agent_versions_agent FOREIGN KEY (agent_id) REFERENCES agents(id),
+                CONSTRAINT fk_agent_versions_created_by FOREIGN KEY (created_by) REFERENCES platform_users(user_id)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_versions_agent_id ON agent_versions(agent_id)"))
+        await conn.execute(text("ALTER TABLE agents ADD COLUMN IF NOT EXISTS published_version_id UUID"))
+        await conn.execute(text("ALTER TABLE agents ADD COLUMN IF NOT EXISTS draft_version_id UUID"))
+
+        # --- Prompt Templates & Versions ---
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS prompt_templates (
+                id UUID PRIMARY KEY,
+                tenant_id UUID,
+                key VARCHAR(200) NOT NULL,
+                name VARCHAR(200) NOT NULL,
+                description TEXT,
+                category VARCHAR(50),
+                published_version_id UUID,
+                draft_version_id UUID,
+                created_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_prompt_templates_tenant_key UNIQUE (tenant_id, key),
+                CONSTRAINT fk_prompt_templates_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+                CONSTRAINT fk_prompt_templates_created_by FOREIGN KEY (created_by) REFERENCES platform_users(user_id)
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                id UUID PRIMARY KEY,
+                template_id UUID NOT NULL,
+                version INT NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'draft',
+                content TEXT NOT NULL,
+                variables_schema JSONB,
+                change_summary TEXT,
+                created_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                published_at TIMESTAMPTZ,
+                CONSTRAINT uq_prompt_versions_template_version UNIQUE (template_id, version),
+                CONSTRAINT fk_prompt_versions_template FOREIGN KEY (template_id) REFERENCES prompt_templates(id),
+                CONSTRAINT fk_prompt_versions_created_by FOREIGN KEY (created_by) REFERENCES platform_users(user_id)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_prompt_versions_template_id ON prompt_versions(template_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_prompt_templates_tenant_id ON prompt_templates(tenant_id)"))
+        # Partial unique index for builtin prompts (tenant_id IS NULL)
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_templates_builtin_key ON prompt_templates(key) WHERE tenant_id IS NULL"))
+
         await conn.execute(text("""
             DO $$
             BEGIN

@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     )
 
     installed_agents: list[str] = Field(
-        default=["data_agent"],
+        default=["data_agent", "article_agent"],
         description="List of installed agent plugins",
         alias="INSTALLED_AGENTS",
     )

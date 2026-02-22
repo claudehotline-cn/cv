@@ -52,6 +52,15 @@
            </template>
         </el-menu-item>
 
+        <el-menu-item index="/agents/prompts">
+           <template #title>
+              <div class="menu-item-content">
+                 <span class="material-symbols-outlined">edit_note</span>
+                 <span class="font-medium">Prompt 管理</span>
+              </div>
+           </template>
+        </el-menu-item>
+
          <el-menu-item index="/audit">
             <template #title>
               <div class="menu-item-content">

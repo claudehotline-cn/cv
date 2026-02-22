@@ -66,3 +66,6 @@ legacy/agent-langchain/.venv-langgraph/
 
 # Logs
 logs/
+
+# Local worktrees
+.worktrees/

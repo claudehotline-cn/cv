@@ -598,6 +598,35 @@ class ApiClient {
         return this.http.get(`/agents/${agentId}/config-schema`)
     }
 
+    // Agent Version 操作
+    async listAgentVersions(agentId: string, params?: { status?: string; limit?: number; offset?: number }): Promise<any[]> {
+        return this.http.get(`/agents/${agentId}/versions/`, { params })
+    }
+
+    async getAgentVersion(agentId: string, version: number): Promise<any> {
+        return this.http.get(`/agents/${agentId}/versions/${version}`)
+    }
+
+    async createAgentDraft(agentId: string, body: { config: Record<string, any>; change_summary?: string; base_version?: number }): Promise<any> {
+        return this.http.post(`/agents/${agentId}/versions/`, body)
+    }
+
+    async updateAgentDraft(agentId: string, version: number, body: { config?: Record<string, any>; change_summary?: string }): Promise<any> {
+        return this.http.put(`/agents/${agentId}/versions/${version}`, body)
+    }
+
+    async publishAgentVersion(agentId: string, version: number): Promise<any> {
+        return this.http.post(`/agents/${agentId}/versions/${version}/publish`)
+    }
+
+    async rollbackAgentVersion(agentId: string, version: number): Promise<any> {
+        return this.http.post(`/agents/${agentId}/versions/${version}/rollback`)
+    }
+
+    async diffAgentVersions(agentId: string, v1: number, v2: number): Promise<any> {
+        return this.http.get(`/agents/${agentId}/versions/${v1}/diff/${v2}`)
+    }
+
     // Session 操作
     async createSession(title?: string, agentId?: string): Promise<any> {
         return this.http.post('/sessions/', {
@@ -1167,6 +1196,48 @@ class ApiClient {
 
         fetchStream()
         return () => controller.abort()
+    }
+
+    // ─── Prompt Management ───────────────────────────────────────────
+
+    async listPrompts(params?: { category?: string; key?: string; limit?: number; offset?: number }): Promise<any> {
+        return this.http.get('/prompts', { params })
+    }
+
+    async getPrompt(templateId: string): Promise<any> {
+        return this.http.get(`/prompts/${templateId}`)
+    }
+
+    async createPrompt(input: { key: string; name: string; description?: string; category?: string; content?: string; variables_schema?: Record<string, any> }): Promise<any> {
+        return this.http.post('/prompts', input)
+    }
+
+    async updatePrompt(templateId: string, patch: { name?: string; description?: string; category?: string }): Promise<any> {
+        return this.http.put(`/prompts/${templateId}`, patch)
+    }
+
+    async listPromptVersions(templateId: string, params?: { status?: string }): Promise<any> {
+        return this.http.get(`/prompts/${templateId}/versions`, { params })
+    }
+
+    async createPromptDraft(templateId: string, input: { content: string; variables_schema?: Record<string, any>; change_summary?: string; base_version?: number }): Promise<any> {
+        return this.http.post(`/prompts/${templateId}/versions`, input)
+    }
+
+    async updatePromptDraft(templateId: string, version: number, input: { content?: string; variables_schema?: Record<string, any>; change_summary?: string }): Promise<any> {
+        return this.http.put(`/prompts/${templateId}/versions/${version}`, input)
+    }
+
+    async publishPromptVersion(templateId: string, version: number): Promise<any> {
+        return this.http.post(`/prompts/${templateId}/versions/${version}/publish`, {})
+    }
+
+    async rollbackPromptVersion(templateId: string, version: number): Promise<any> {
+        return this.http.post(`/prompts/${templateId}/versions/${version}/rollback`, {})
+    }
+
+    async previewPrompt(templateId: string, input: { content?: string; variables?: Record<string, string>; version?: number }): Promise<any> {
+        return this.http.post(`/prompts/${templateId}/preview`, input)
     }
 }
 

@@ -59,9 +59,28 @@
                 <el-icon><Connection /></el-icon>
                 {{ agent.config?.model || 'gpt-4o' }}
               </span>
-              <el-button type="primary" round size="small" class="action-btn">
-                对话 <el-icon class="el-icon--right"><ArrowRight /></el-icon>
-              </el-button>
+              <div class="footer-actions">
+                <el-button
+                  round size="small" class="version-btn"
+                  @click.stop="router.push(`/agents/${agent.id}/versions`)"
+                >
+                  版本管理
+                </el-button>
+                <el-button type="primary" round size="small" class="action-btn">
+                  对话 <el-icon class="el-icon--right"><ArrowRight /></el-icon>
+                </el-button>
+              </div>
+            </div>
+
+            <div v-if="agent.published_version || agent.draft_version" class="version-badges" @click.stop>
+              <el-tag
+                v-if="agent.published_version"
+                type="success" size="small" effect="plain"
+              >v{{ agent.published_version.version }} Published</el-tag>
+              <el-tag
+                v-if="agent.draft_version"
+                type="warning" size="small" effect="plain"
+              >v{{ agent.draft_version.version }} Draft</el-tag>
             </div>
           </div>
         </div>
@@ -288,6 +307,29 @@ function getGradient(name: string) {
   justify-content: space-between;
   align-items: center;
   margin-top: auto;
+}
+
+.footer-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.version-btn {
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: all 0.3s ease;
+}
+
+.agent-card:hover .version-btn {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.version-badges {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .model-tag {

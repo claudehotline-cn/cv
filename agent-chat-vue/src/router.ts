@@ -24,6 +24,23 @@ const router = createRouter({
                     name: 'Agents',
                     component: () => import('./views/AgentMarketplace.vue'),
                 },
+                {
+                    path: ':id/versions',
+                    name: 'AgentVersions',
+                    component: () => import('./views/custom-agents/AgentEdit.vue'),
+                },
+
+                // Prompt Management
+                {
+                    path: 'prompts',
+                    name: 'PromptList',
+                    component: () => import('./views/prompts/PromptList.vue'),
+                },
+                {
+                    path: 'prompts/:id',
+                    name: 'PromptEdit',
+                    component: () => import('./views/prompts/PromptEdit.vue'),
+                },
 
                 // Agent Builder Wizard (rendered inside Agents layout)
                 { path: 'create', redirect: '/agents/create/identity' },
