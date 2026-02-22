@@ -235,6 +235,8 @@ class Settings(BaseSettings):
     rate_limit_user_execute: str = Field(default="20/min", alias="RATE_LIMIT_USER_EXECUTE")
     concurrency_limit_tenant_execute: int = Field(default=20, alias="CONCURRENCY_LIMIT_TENANT_EXECUTE")
     concurrency_limit_user_execute: int = Field(default=5, alias="CONCURRENCY_LIMIT_USER_EXECUTE")
+    quota_default_monthly_tokens: int = Field(default=50000000, alias="QUOTA_DEFAULT_MONTHLY_TOKENS")
+    quota_enforce_enabled: bool = Field(default=True, alias="QUOTA_ENFORCE_ENABLED")
 
     @property
     def postgres_uri(self) -> str:

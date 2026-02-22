@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, or_
 from agent_core.settings import get_settings
+from app.services.quota_service import QuotaService
 from app.models.db_models import (
     AgentRunModel,
     AgentSpanModel,
@@ -541,6 +542,16 @@ class AuditPersistenceService:
             values["error_code"] = payload.get("error_class")
 
         await self.db.execute(stmt.values(**values))
+
+        if event_type == "job_completed":
+            run = await self.db.get(AgentRunModel, request_id)
+            if run and run.tenant_id:
+                usage = payload.get("token_usage") if isinstance(payload, dict) else {}
+                if isinstance(usage, dict):
+                    prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+                    completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+                    if prompt_tokens > 0 or completion_tokens > 0:
+                        await QuotaService(self.db).consume_tokens(str(run.tenant_id), prompt_tokens, completion_tokens)
 
     async def _handle_span_start(self, request_id: UUID, span_id: UUID | None, event_type: str, payload: Dict[str, Any], event: Dict[str, Any]):
         """Create AgentSpanModel."""
