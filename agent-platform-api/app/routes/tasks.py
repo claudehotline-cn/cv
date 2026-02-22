@@ -18,6 +18,12 @@ from agent_core.settings import get_settings
 from ..core.auth import AuthPrincipal, get_current_user
 from ..services.tenant_shadow_service import TenantShadowService
 from ..services.user_shadow_service import UserShadowService
+from ..core.governance import (
+    GovernanceKeys,
+    enforce_rate_limit,
+    acquire_execute_concurrency,
+    release_execute_concurrency,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
@@ -138,6 +144,16 @@ async def create_execute_task(
     
     tenant_id = _tenant_uuid(user)
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
+    tenant_id_str = str(tenant_id)
+    governance_keys = GovernanceKeys(tenant_id=tenant_id_str, user_id=user.user_id)
+    await enforce_rate_limit(governance_keys, "execute")
+    acquired, scope = await acquire_execute_concurrency(governance_keys)
+    if not acquired:
+        raise HTTPException(
+            status_code=429,
+            detail={"detail": "concurrency_limit_exceeded", "scope": scope, "bucket": "execute"},
+        )
+    enqueued = False
 
     # 验证 session 存在且归属当前用户
     session = await _get_owned_session_or_404(db, session_id, user, tenant_id)
@@ -177,17 +193,27 @@ async def create_execute_task(
     
     # 入队 ARQ 任务
     redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    await redis_pool.enqueue_job(
-        "agent_execute_task",
-        str(task.id),
-        str(session_id),
-        agent_key,
-        request.message,
-        request.config,
-        user.user_id,
-        task_thread_id,  # thread_id
-    )
-    await redis_pool.close()
+    try:
+        await redis_pool.enqueue_job(
+            "agent_execute_task",
+            str(task.id),
+            str(session_id),
+            agent_key,
+            request.message,
+            request.config,
+            user.user_id,
+            tenant_id_str,
+            task_thread_id,  # thread_id
+        )
+        enqueued = True
+    except Exception:
+        await release_execute_concurrency(governance_keys)
+        raise
+    finally:
+        await redis_pool.close()
+
+    if not enqueued:
+        await release_execute_concurrency(governance_keys)
 
     # Emit job_queued audit event (for trace tree root)
     try:
@@ -360,6 +386,16 @@ async def resume_task(
 
     tenant_id = _tenant_uuid(user)
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
+    tenant_id_str = str(tenant_id)
+    governance_keys = GovernanceKeys(tenant_id=tenant_id_str, user_id=user.user_id)
+    await enforce_rate_limit(governance_keys, "execute")
+    acquired, scope = await acquire_execute_concurrency(governance_keys)
+    if not acquired:
+        raise HTTPException(
+            status_code=429,
+            detail={"detail": "concurrency_limit_exceeded", "scope": scope, "bucket": "execute"},
+        )
+    enqueued = False
     task_service = TaskService(db)
     task, _ = await _get_owned_task_or_404(task_service, db, task_id, user, tenant_id)
 
@@ -368,18 +404,28 @@ async def resume_task(
     thread_id = meta.get("thread_id") or str(task_id)
 
     redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    await redis_pool.enqueue_job(
-        "agent_resume_task",
-        str(task_id),
-        str(task.session_id),
-        agent_key,
-        request.decision,
-        request.feedback,
-        None,  # config
-        user.user_id,
-        thread_id,
-    )
-    await redis_pool.close()
+    try:
+        await redis_pool.enqueue_job(
+            "agent_resume_task",
+            str(task_id),
+            str(task.session_id),
+            agent_key,
+            request.decision,
+            request.feedback,
+            None,  # config
+            user.user_id,
+            tenant_id_str,
+            thread_id,
+        )
+        enqueued = True
+    except Exception:
+        await release_execute_concurrency(governance_keys)
+        raise
+    finally:
+        await redis_pool.close()
+
+    if not enqueued:
+        await release_execute_concurrency(governance_keys)
 
     # Best-effort audit event for the user action
     try:

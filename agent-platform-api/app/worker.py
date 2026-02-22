@@ -11,6 +11,7 @@ from arq import ArqRedis
 from arq.connections import RedisSettings
 
 from agent_core.settings import get_settings
+from app.core.governance import GovernanceKeys, release_execute_concurrency
 from app.utils.interrupts import extract_interrupt_data
 from app.utils.session_memory import format_recent_messages_for_prompt
 
@@ -34,6 +35,7 @@ async def agent_execute_task(
     input_message: str,
     config: Dict[str, Any] = None,
     user_id: str = "default",
+    tenant_id: str = "00000000-0000-0000-0000-000000000001",
     thread_id: str = None
 ) -> Dict[str, Any]:
     """执行 Agent 任务
@@ -333,6 +335,10 @@ async def agent_execute_task(
             return {"error": str(e)}
         finally:
             try:
+                await release_execute_concurrency(GovernanceKeys(tenant_id=tenant_id, user_id=user_id))
+            except Exception:
+                pass
+            try:
                 await event_bus.close()
             except Exception:
                 pass
@@ -352,6 +358,7 @@ async def agent_resume_task(
     feedback: str = "",
     config: Dict[str, Any] = None,
     user_id: str = "default",
+    tenant_id: str = "00000000-0000-0000-0000-000000000001",
     thread_id: str = None,
 ) -> Dict[str, Any]:
     """Resume an interrupted async task (HITL)."""
@@ -563,6 +570,10 @@ async def agent_resume_task(
             )
             return {"error": str(e)}
         finally:
+            try:
+                await release_execute_concurrency(GovernanceKeys(tenant_id=tenant_id, user_id=user_id))
+            except Exception:
+                pass
             try:
                 await event_bus.close()
             except Exception:

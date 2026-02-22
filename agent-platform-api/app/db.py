@@ -83,6 +83,53 @@ async def init_db():
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_auth_audit_events_tenant_id ON auth_audit_events(tenant_id)"))
 
         await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenant_rate_limit_policies (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL UNIQUE,
+                read_limit VARCHAR(20) NOT NULL DEFAULT '300/min',
+                write_limit VARCHAR(20) NOT NULL DEFAULT '120/min',
+                execute_limit VARCHAR(20) NOT NULL DEFAULT '60/min',
+                user_read_limit VARCHAR(20) NOT NULL DEFAULT '120/min',
+                user_write_limit VARCHAR(20) NOT NULL DEFAULT '60/min',
+                user_execute_limit VARCHAR(20) NOT NULL DEFAULT '20/min',
+                tenant_concurrency_limit INT NOT NULL DEFAULT 20,
+                user_concurrency_limit INT NOT NULL DEFAULT 5,
+                fail_mode VARCHAR(20) NOT NULL DEFAULT 'open',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_tenant_rate_limit_policies_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenant_quota_policies (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL UNIQUE,
+                monthly_token_quota BIGINT NOT NULL DEFAULT 50000000,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_tenant_quota_policies_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenant_quota_usages (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                period VARCHAR(7) NOT NULL,
+                prompt_tokens BIGINT NOT NULL DEFAULT 0,
+                completion_tokens BIGINT NOT NULL DEFAULT 0,
+                total_tokens BIGINT NOT NULL DEFAULT 0,
+                request_count BIGINT NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_tenant_quota_usages_tenant_period UNIQUE (tenant_id, period),
+                CONSTRAINT fk_tenant_quota_usages_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+            )
+        """))
+
+        await conn.execute(text("""
             DO $$
             BEGIN
                 IF NOT EXISTS (

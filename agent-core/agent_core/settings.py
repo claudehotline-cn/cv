@@ -216,6 +216,26 @@ class Settings(BaseSettings):
         alias="AUTH_DEFAULT_TENANT_ID",
     )
 
+    # Platform API rate limiting / quota settings
+    rate_limit_backend: str = Field(
+        default="redis",
+        description="Rate limit backend: redis | memory",
+        alias="RATE_LIMIT_BACKEND",
+    )
+    rate_limit_fail_mode: str = Field(
+        default="open",
+        description="Rate limiter fail mode: open | closed",
+        alias="RATE_LIMIT_FAIL_MODE",
+    )
+    rate_limit_tenant_read: str = Field(default="300/min", alias="RATE_LIMIT_TENANT_READ")
+    rate_limit_tenant_write: str = Field(default="120/min", alias="RATE_LIMIT_TENANT_WRITE")
+    rate_limit_tenant_execute: str = Field(default="60/min", alias="RATE_LIMIT_TENANT_EXECUTE")
+    rate_limit_user_read: str = Field(default="120/min", alias="RATE_LIMIT_USER_READ")
+    rate_limit_user_write: str = Field(default="60/min", alias="RATE_LIMIT_USER_WRITE")
+    rate_limit_user_execute: str = Field(default="20/min", alias="RATE_LIMIT_USER_EXECUTE")
+    concurrency_limit_tenant_execute: int = Field(default=20, alias="CONCURRENCY_LIMIT_TENANT_EXECUTE")
+    concurrency_limit_user_execute: int = Field(default=5, alias="CONCURRENCY_LIMIT_USER_EXECUTE")
+
     @property
     def postgres_uri(self) -> str:
         """PostgreSQL Connection URI"""
