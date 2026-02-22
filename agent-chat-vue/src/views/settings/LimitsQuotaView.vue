@@ -6,6 +6,13 @@
     </div>
 
     <el-alert v-if="security.error" :title="security.error" type="error" :closable="false" style="margin-bottom: 16px;" />
+    <el-alert
+      v-if="limitErrorDetail"
+      :title="limitErrorDetail"
+      type="warning"
+      :closable="false"
+      style="margin-bottom: 16px;"
+    />
 
     <el-card style="margin-bottom: 16px;">
       <template #header>Rate Limits</template>
@@ -16,6 +23,9 @@
         <div>User Read: {{ security.limits?.rate_limits.user_read }}</div>
         <div>User Write: {{ security.limits?.rate_limits.user_write }}</div>
         <div>User Execute: {{ security.limits?.rate_limits.user_execute }}</div>
+        <div>Tenant Concurrency: {{ security.limits?.rate_limits.tenant_concurrency_limit }}</div>
+        <div>User Concurrency: {{ security.limits?.rate_limits.user_concurrency_limit }}</div>
+        <div>Fail Mode: {{ security.limits?.rate_limits.fail_mode || '-' }}</div>
       </div>
     </el-card>
 
@@ -28,14 +38,14 @@
         <div>Remaining: {{ security.quota?.remaining_tokens }}</div>
       </div>
 
-      <div class="quota-actions" v-if="auth.isAdmin" style="margin-top: 12px; display: flex; gap: 8px;">
+      <div class="quota-actions" v-if="auth.canManageTenantSecurity" style="margin-top: 12px; display: flex; gap: 8px;">
         <el-input-number v-model="quotaForm.monthly_token_quota" :min="0" :step="100000" />
         <el-switch v-model="quotaForm.enabled" active-text="Enabled" inactive-text="Disabled" />
         <el-button type="primary" @click="saveQuota">Save Quota</el-button>
       </div>
     </el-card>
 
-    <el-card v-if="auth.isAdmin" style="margin-top: 16px;">
+    <el-card v-if="auth.canManageTenantSecurity" style="margin-top: 16px;">
       <template #header>Update Execute Limits</template>
       <div class="limits-form">
         <el-input v-model="limitForm.execute_limit" placeholder="tenant execute, e.g. 60/min" />
@@ -49,13 +59,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useSecurityStore } from '@/stores/security'
 
 const auth = useAuthStore()
 const security = useSecurityStore()
+const limitErrorDetail = ref('')
 
 const quotaForm = reactive({
   monthly_token_quota: 0,
@@ -70,6 +81,7 @@ const limitForm = reactive({
 })
 
 async function refresh() {
+  limitErrorDetail.value = ''
   await security.loadLimitsAndQuota()
   quotaForm.monthly_token_quota = security.quota?.monthly_token_quota ?? 0
   quotaForm.enabled = security.quota?.enabled ?? true
@@ -80,21 +92,53 @@ async function refresh() {
 }
 
 async function saveQuota() {
-  await security.saveQuota({
-    monthly_token_quota: quotaForm.monthly_token_quota,
-    enabled: quotaForm.enabled,
-  })
-  ElMessage.success('Quota updated')
+  try {
+    await security.saveQuota({
+      monthly_token_quota: quotaForm.monthly_token_quota,
+      enabled: quotaForm.enabled,
+    })
+    limitErrorDetail.value = ''
+    ElMessage.success('Quota updated')
+  } catch (e: any) {
+    limitErrorDetail.value = formatLimitError(e)
+  }
 }
 
 async function saveLimits() {
-  await security.saveLimits({
-    execute_limit: limitForm.execute_limit,
-    user_execute_limit: limitForm.user_execute_limit,
-    tenant_concurrency_limit: limitForm.tenant_concurrency_limit,
-    user_concurrency_limit: limitForm.user_concurrency_limit,
-  })
-  ElMessage.success('Limits updated')
+  try {
+    await security.saveLimits({
+      execute_limit: limitForm.execute_limit,
+      user_execute_limit: limitForm.user_execute_limit,
+      tenant_concurrency_limit: limitForm.tenant_concurrency_limit,
+      user_concurrency_limit: limitForm.user_concurrency_limit,
+    })
+    limitErrorDetail.value = ''
+    ElMessage.success('Limits updated')
+  } catch (e: any) {
+    limitErrorDetail.value = formatLimitError(e)
+  }
+}
+
+function formatLimitError(e: any): string {
+  const status = e?.response?.status
+  const detail = e?.response?.data?.detail
+  if (status !== 429) return ''
+
+  if (detail?.detail === 'rate_limit_exceeded' || detail?.bucket || detail?.scope) {
+    const bucket = detail?.bucket || '-'
+    const scope = detail?.scope || '-'
+    const retry = detail?.retry_after ?? '-'
+    return `Rate limit exceeded: scope=${scope}, bucket=${bucket}, retry_after=${retry}s`
+  }
+
+  if (detail?.detail === 'quota_exceeded') {
+    const quotaType = detail?.quota_type || 'monthly_token_quota'
+    const remaining = detail?.remaining_tokens ?? detail?.remaining ?? '-'
+    return `Quota exceeded: type=${quotaType}, remaining=${remaining}`
+  }
+
+  if (typeof detail === 'string') return detail
+  return 'Request was throttled (429)'
 }
 
 onMounted(async () => {

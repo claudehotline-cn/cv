@@ -14,6 +14,13 @@ export const useAuthStore = defineStore('auth', () => {
   const activeTenantId = ref(apiClient.getActiveTenantId())
   const tenantList = ref<TenantOption[]>([])
   const tenantOptions = computed<TenantOption[]>(() => tenantList.value)
+  const activeTenantRole = computed<'owner' | 'admin' | 'member' | null>(() => {
+    const active = tenantList.value.find((t) => t.id === activeTenantId.value)
+    return (active?.role as 'owner' | 'admin' | 'member' | undefined) || user.value?.tenant_role || null
+  })
+  const canManageTenantSecurity = computed(() => {
+    return isAdmin.value || activeTenantRole.value === 'owner' || activeTenantRole.value === 'admin'
+  })
 
   function ensureActiveTenant() {
     if (tenantList.value.length === 0) {
@@ -98,6 +105,8 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     isAdmin,
     activeTenantId,
+    activeTenantRole,
+    canManageTenantSecurity,
     tenantOptions,
     loadTenants,
     bootstrap,

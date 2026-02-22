@@ -30,6 +30,21 @@ export interface TenantListResponse {
     active_tenant_id?: string
 }
 
+export interface TenantMemberItem {
+    tenant_id: string
+    user_id: string
+    name: string
+    email?: string | null
+    role: 'owner' | 'admin' | 'member'
+    status: 'active' | 'inactive'
+    created_at?: string
+}
+
+export interface TenantMemberListResponse {
+    tenant_id: string
+    items: TenantMemberItem[]
+}
+
 export interface LimitsResponse {
     tenant_id: string
     user_id?: string
@@ -71,12 +86,14 @@ export interface SecretItem {
     provider?: string | null
     status: 'active' | 'disabled' | 'deleted'
     current_version: number
+    updated_at?: string
 }
 
 export interface AuthAuditEvent {
     event_id: string
     event_time: string
     event_type: string
+    request_id?: string | null
     user_id?: string | null
     email?: string | null
     actor_type?: string | null
@@ -430,6 +447,29 @@ class ApiClient {
         return res
     }
 
+    async listTenantMembers(tenantId: string): Promise<TenantMemberListResponse> {
+        return this.http.get(`/auth/tenants/${tenantId}/members`)
+    }
+
+    async inviteTenantMember(
+        tenantId: string,
+        input: { user_id?: string; email?: string; role?: 'owner' | 'admin' | 'member' },
+    ): Promise<TenantMemberItem> {
+        return this.http.post(`/auth/tenants/${tenantId}/members/invite`, input)
+    }
+
+    async updateTenantMemberRole(
+        tenantId: string,
+        memberUserId: string,
+        role: 'owner' | 'admin' | 'member',
+    ): Promise<TenantMemberItem> {
+        return this.http.patch(`/auth/tenants/${tenantId}/members/${memberUserId}`, { role })
+    }
+
+    async removeTenantMember(tenantId: string, memberUserId: string): Promise<{ removed: boolean }> {
+        return this.http.delete(`/auth/tenants/${tenantId}/members/${memberUserId}`)
+    }
+
     async register(input: { email: string; password: string; username?: string | null }): Promise<AuthUser> {
         const user = await this.http.post<any, AuthUser>('/auth/register', input)
         return user
@@ -472,7 +512,7 @@ class ApiClient {
     }
 
     async listSecrets(scope?: 'user' | 'tenant'): Promise<{ items: SecretItem[] }> {
-        return this.http.get('/secrets', { params: scope ? { scope } : undefined })
+        return this.http.get('/secrets/', { params: scope ? { scope } : undefined })
     }
 
     async createSecret(input: { name: string; value: string; scope: 'user' | 'tenant'; provider?: string }): Promise<SecretItem> {
@@ -810,8 +850,9 @@ class ApiClient {
         offset?: number
         event_type?: string
         user_id?: string
+        email?: string
+        ip_addr?: string
         result?: string
-        q?: string
         start_date?: string
         end_date?: string
     } = {}): Promise<PaginatedAuthAuditResponse> {

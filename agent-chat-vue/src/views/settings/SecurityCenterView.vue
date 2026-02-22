@@ -55,7 +55,7 @@ const security = useSecurityStore()
 const router = useRouter()
 
 async function refresh() {
-  await Promise.all([
+  await Promise.allSettled([
     security.loadLimitsAndQuota(),
     security.loadSecrets(),
     security.loadSecurityAudit(),

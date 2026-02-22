@@ -8,8 +8,8 @@
           <el-option label="User" value="user" />
           <el-option label="Tenant" value="tenant" />
         </el-select>
-        <el-button type="warning" @click="onReencrypt">Re-encrypt Tenant Secrets</el-button>
-        <el-button type="primary" @click="createDialog = true">Create Secret</el-button>
+        <el-button v-if="auth.canManageTenantSecurity" type="warning" @click="onReencrypt">Re-encrypt Tenant Secrets</el-button>
+        <el-button type="primary" @click="onClickCreate">Create Secret</el-button>
       </div>
     </div>
 
@@ -21,12 +21,16 @@
       <el-table-column prop="provider" label="Provider" width="140" />
       <el-table-column prop="status" label="Status" width="120" />
       <el-table-column prop="current_version" label="Version" width="100" />
+      <el-table-column prop="updated_at" label="Updated At" width="180" />
       <el-table-column label="Actions" width="320">
         <template #default="{ row }">
-          <el-button size="small" @click="openRotate(row.id)">Rotate</el-button>
-          <el-button v-if="row.status === 'active'" size="small" @click="security.disableSecret(row.id)">Disable</el-button>
-          <el-button v-else size="small" @click="security.enableSecret(row.id)">Enable</el-button>
-          <el-button size="small" type="danger" @click="security.deleteSecret(row.id)">Delete</el-button>
+          <template v-if="auth.canManageTenantSecurity || row.scope === 'user'">
+            <el-button size="small" @click="openRotate(row.id)">Rotate</el-button>
+            <el-button v-if="row.status === 'active'" size="small" @click="security.disableSecret(row.id)">Disable</el-button>
+            <el-button v-else size="small" @click="security.enableSecret(row.id)">Enable</el-button>
+            <el-button size="small" type="danger" @click="security.deleteSecret(row.id)">Delete</el-button>
+          </template>
+          <el-tag v-else size="small" type="info">Read only</el-tag>
         </template>
       </el-table-column>
     </el-table>
@@ -65,8 +69,10 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useSecurityStore } from '@/stores/security'
+import { useAuthStore } from '@/stores/auth'
 
 const security = useSecurityStore()
+const auth = useAuthStore()
 const scopeFilter = ref('')
 
 const createDialog = ref(false)
@@ -82,6 +88,10 @@ const createForm = reactive({
 })
 
 async function onCreate() {
+  if (createForm.scope === 'tenant' && !auth.canManageTenantSecurity) {
+    ElMessage.error('Only tenant admin/owner can create tenant scope secrets')
+    return
+  }
   await security.createSecret({ ...createForm })
   createDialog.value = false
   createForm.name = ''
@@ -106,12 +116,23 @@ async function onReencrypt() {
   ElMessage.success(`Re-encrypt queued: ${result.job_id || 'ok'}`)
 }
 
+function onClickCreate() {
+  if (!auth.canManageTenantSecurity) {
+    createForm.scope = 'user'
+  }
+  createDialog.value = true
+}
+
 async function load() {
   await security.loadSecrets((scopeFilter.value || undefined) as 'user' | 'tenant' | undefined)
 }
 
 onMounted(async () => {
-  await load()
+  try {
+    await load()
+  } catch {
+    // error state is already tracked by store
+  }
 })
 </script>
 

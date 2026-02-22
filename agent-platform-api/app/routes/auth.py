@@ -1,9 +1,9 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, func
 from fastapi import APIRouter, Body, Header, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from agent_auth_client import AuthClient
@@ -11,10 +11,13 @@ from agent_core.settings import get_settings
 
 from ..core.auth import AuthPrincipal, get_current_user
 from ..db import get_db
-from ..models.db_models import TenantMembershipModel, TenantModel
+from ..models.db_models import PlatformUserModel, TenantMembershipModel, TenantModel
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+ALLOWED_TENANT_ROLES = {"owner", "admin", "member"}
 
 
 def _auth_base_url() -> str:
@@ -146,4 +149,238 @@ async def list_my_tenants(
     return {
         "items": items,
         "active_tenant_id": active_tenant_id,
+    }
+
+
+def _normalize_tenant_role(value: Optional[str]) -> str:
+    role = (value or "").strip().lower()
+    if role not in ALLOWED_TENANT_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid tenant role")
+    return role
+
+
+async def _get_active_membership(db: AsyncSession, tenant_uuid: UUID, user_id: str) -> Optional[TenantMembershipModel]:
+    return await db.scalar(
+        select(TenantMembershipModel).where(
+            TenantMembershipModel.tenant_id == tenant_uuid,
+            TenantMembershipModel.user_id == user_id,
+            TenantMembershipModel.status == "active",
+        )
+    )
+
+
+async def _ensure_tenant_access(
+    db: AsyncSession,
+    user: AuthPrincipal,
+    tenant_id: str,
+    *,
+    require_manager: bool,
+) -> UUID:
+    try:
+        tenant_uuid = UUID(str(tenant_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
+
+    tenant = await db.scalar(
+        select(TenantModel).where(
+            TenantModel.id == tenant_uuid,
+            TenantModel.status == "active",
+        )
+    )
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    membership = await _get_active_membership(db, tenant_uuid, user.user_id)
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Tenant membership required")
+
+    if require_manager and membership.role not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Tenant admin required")
+
+    return tenant_uuid
+
+
+def _member_name(email: Optional[str], user_id: str) -> str:
+    if email and "@" in email:
+        return email.split("@", 1)[0]
+    return user_id
+
+
+@router.get("/tenants/{tenant_id}/members")
+async def list_tenant_members(
+    tenant_id: str,
+    user: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_uuid = await _ensure_tenant_access(db, user, tenant_id, require_manager=False)
+
+    stmt = (
+        select(TenantMembershipModel, PlatformUserModel)
+        .join(PlatformUserModel, PlatformUserModel.user_id == TenantMembershipModel.user_id)
+        .where(TenantMembershipModel.tenant_id == tenant_uuid)
+        .order_by(TenantMembershipModel.created_at.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    return {
+        "tenant_id": str(tenant_uuid),
+        "items": [
+            {
+                "user_id": membership.user_id,
+                "name": _member_name(platform_user.email, membership.user_id),
+                "email": platform_user.email,
+                "role": membership.role,
+                "status": membership.status,
+                "created_at": membership.created_at,
+            }
+            for membership, platform_user in rows
+        ],
+    }
+
+
+@router.post("/tenants/{tenant_id}/members/invite")
+async def invite_tenant_member(
+    tenant_id: str,
+    body: Dict[str, Any] = Body(...),
+    user: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_uuid = await _ensure_tenant_access(db, user, tenant_id, require_manager=True)
+
+    role = _normalize_tenant_role(body.get("role") or "member")
+    target_user_id = str(body.get("user_id") or "").strip()
+    target_email = str(body.get("email") or "").strip().lower()
+    if not target_user_id and not target_email:
+        raise HTTPException(status_code=400, detail="user_id or email is required")
+
+    target_user: Optional[PlatformUserModel] = None
+    if target_user_id:
+        target_user = await db.scalar(select(PlatformUserModel).where(PlatformUserModel.user_id == target_user_id))
+    elif target_email:
+        target_user = await db.scalar(select(PlatformUserModel).where(func.lower(PlatformUserModel.email) == target_email))
+
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="Target user not found")
+
+    target_user_id = target_user.user_id
+    membership = await db.scalar(
+        select(TenantMembershipModel).where(
+            TenantMembershipModel.tenant_id == tenant_uuid,
+            TenantMembershipModel.user_id == target_user_id,
+        )
+    )
+    if membership is None:
+        membership = TenantMembershipModel(
+            tenant_id=tenant_uuid,
+            user_id=target_user_id,
+            role=role,
+            status="active",
+        )
+        db.add(membership)
+    else:
+        membership.role = role
+        membership.status = "active"
+
+    await db.commit()
+    await db.refresh(membership)
+    return {
+        "tenant_id": str(tenant_uuid),
+        "user_id": membership.user_id,
+        "name": _member_name(target_user.email, membership.user_id),
+        "email": target_user.email,
+        "role": membership.role,
+        "status": membership.status,
+        "created_at": membership.created_at,
+    }
+
+
+async def _ensure_not_last_owner(
+    db: AsyncSession,
+    tenant_uuid: UUID,
+    member_user_id: str,
+) -> None:
+    owner_count = await db.scalar(
+        select(func.count(TenantMembershipModel.id)).where(
+            TenantMembershipModel.tenant_id == tenant_uuid,
+            TenantMembershipModel.status == "active",
+            TenantMembershipModel.role == "owner",
+        )
+    )
+    member = await db.scalar(
+        select(TenantMembershipModel).where(
+            TenantMembershipModel.tenant_id == tenant_uuid,
+            TenantMembershipModel.user_id == member_user_id,
+            TenantMembershipModel.status == "active",
+        )
+    )
+    if member and member.role == "owner" and (owner_count or 0) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot modify the last active owner")
+
+
+@router.patch("/tenants/{tenant_id}/members/{member_user_id}")
+async def update_tenant_member_role(
+    tenant_id: str,
+    member_user_id: str,
+    body: Dict[str, Any] = Body(...),
+    user: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_uuid = await _ensure_tenant_access(db, user, tenant_id, require_manager=True)
+    role = _normalize_tenant_role(body.get("role"))
+
+    membership = await db.scalar(
+        select(TenantMembershipModel).where(
+            TenantMembershipModel.tenant_id == tenant_uuid,
+            TenantMembershipModel.user_id == member_user_id,
+            TenantMembershipModel.status == "active",
+        )
+    )
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    if membership.role != role:
+        if membership.role == "owner" and role != "owner":
+            await _ensure_not_last_owner(db, tenant_uuid, member_user_id)
+        membership.role = role
+        await db.commit()
+        await db.refresh(membership)
+
+    platform_user = await db.scalar(select(PlatformUserModel).where(PlatformUserModel.user_id == member_user_id))
+    return {
+        "tenant_id": str(tenant_uuid),
+        "user_id": membership.user_id,
+        "name": _member_name(platform_user.email if platform_user else None, membership.user_id),
+        "email": platform_user.email if platform_user else None,
+        "role": membership.role,
+        "status": membership.status,
+        "created_at": membership.created_at,
+    }
+
+
+@router.delete("/tenants/{tenant_id}/members/{member_user_id}")
+async def remove_tenant_member(
+    tenant_id: str,
+    member_user_id: str,
+    user: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_uuid = await _ensure_tenant_access(db, user, tenant_id, require_manager=True)
+
+    membership = await db.scalar(
+        select(TenantMembershipModel).where(
+            TenantMembershipModel.tenant_id == tenant_uuid,
+            TenantMembershipModel.user_id == member_user_id,
+            TenantMembershipModel.status == "active",
+        )
+    )
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    await _ensure_not_last_owner(db, tenant_uuid, member_user_id)
+    membership.status = "inactive"
+    await db.commit()
+
+    return {
+        "tenant_id": str(tenant_uuid),
+        "user_id": member_user_id,
+        "removed": True,
     }
