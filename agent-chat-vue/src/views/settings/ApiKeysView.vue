@@ -16,6 +16,21 @@
       </el-table-column>
     </el-table>
 
+    <el-alert
+      v-if="newSecretValue"
+      title="Save this key now. It may not be shown again."
+      type="warning"
+      :closable="false"
+      style="margin-top: 12px;"
+    >
+      <template #default>
+        <div class="new-key-row">
+          <el-input :model-value="newSecretValue" readonly />
+          <el-button @click="copyNewKey">Copy</el-button>
+        </div>
+      </template>
+    </el-alert>
+
     <el-dialog v-model="createDialog" title="Create API Key" width="480px">
       <el-form label-position="top">
         <el-form-item label="Name"><el-input v-model="keyName" /></el-form-item>
@@ -30,12 +45,14 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import apiClient from '@/api/client'
 
 const loading = ref(false)
 const keys = ref<any[]>([])
 const createDialog = ref(false)
 const keyName = ref('')
+const newSecretValue = ref('')
 
 async function load() {
   loading.value = true
@@ -48,7 +65,8 @@ async function load() {
 }
 
 async function onCreate() {
-  await apiClient.createApiKey(keyName.value)
+  const created = await apiClient.createApiKey(keyName.value)
+  newSecretValue.value = created?.secret || created?.key || ''
   createDialog.value = false
   keyName.value = ''
   await load()
@@ -59,10 +77,17 @@ async function onRevoke(keyId: string) {
   await load()
 }
 
+async function copyNewKey() {
+  if (!newSecretValue.value) return
+  await navigator.clipboard.writeText(newSecretValue.value)
+  ElMessage.success('Copied')
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
 .settings-page { padding: 24px; }
 .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.new-key-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 </style>
