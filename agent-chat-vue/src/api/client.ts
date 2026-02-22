@@ -1239,6 +1239,59 @@ class ApiClient {
     async previewPrompt(templateId: string, input: { content?: string; variables?: Record<string, string>; version?: number }): Promise<any> {
         return this.http.post(`/prompts/${templateId}/preview`, input)
     }
+
+    async createPromptABTest(templateId: string, input: {
+        name: string
+        variant_a_version: number
+        variant_b_version: number
+        traffic_split: number
+    }): Promise<any> {
+        return this.http.post(`/prompts/${templateId}/ab-tests`, input)
+    }
+
+    async getPromptABTest(templateId: string, testId: string): Promise<any> {
+        return this.http.get(`/prompts/${templateId}/ab-tests/${testId}`)
+    }
+
+    async completePromptABTest(templateId: string, testId: string, input: { winner_version?: number }): Promise<any> {
+        return this.http.post(`/prompts/${templateId}/ab-tests/${testId}/complete`, input)
+    }
+
+    async listAgentEvalDatasets(agentId: string): Promise<any> {
+        return this.http.get(`/agents/${agentId}/eval/datasets`)
+    }
+
+    async createAgentEvalDataset(agentId: string, input: { name: string; description?: string }): Promise<any> {
+        return this.http.post(`/agents/${agentId}/eval/datasets`, input)
+    }
+
+    async listAgentEvalCases(agentId: string, datasetId: string, params?: { limit?: number; offset?: number }): Promise<any> {
+        return this.http.get(`/agents/${agentId}/eval/datasets/${datasetId}/cases`, { params })
+    }
+
+    async importAgentEvalCases(agentId: string, datasetId: string, input: { cases: Array<Record<string, any>> }): Promise<any> {
+        return this.http.post(`/agents/${agentId}/eval/datasets/${datasetId}/import`, input)
+    }
+
+    async createAgentEvalRun(agentId: string, input: { dataset_id: string; config?: Record<string, any> }): Promise<any> {
+        return this.http.post(`/agents/${agentId}/eval/runs`, input)
+    }
+
+    async listAgentEvalRuns(agentId: string, params?: { limit?: number; offset?: number }): Promise<any> {
+        return this.http.get(`/agents/${agentId}/eval/runs`, { params })
+    }
+
+    async getAgentEvalRun(agentId: string, runId: string): Promise<any> {
+        return this.http.get(`/agents/${agentId}/eval/runs/${runId}`)
+    }
+
+    async listAgentEvalResults(agentId: string, runId: string, params?: { limit?: number; offset?: number }): Promise<any> {
+        return this.http.get(`/agents/${agentId}/eval/runs/${runId}/results`, { params })
+    }
+
+    async compareAgentEvalRuns(agentId: string, runId1: string, runId2: string): Promise<any> {
+        return this.http.get(`/agents/${agentId}/eval/runs/${runId1}/compare/${runId2}`)
+    }
 }
 
 export const apiClient = new ApiClient()

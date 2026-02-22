@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
-from ..models.db_models import PromptTemplateModel, PromptVersionModel
+from ..models.db_models import PromptTemplateModel, PromptVersionModel, PromptABTestModel
 from ..core.auth import AuthPrincipal, get_current_user, require_admin
 from ..core.prompt_resolver import preview_render
 
@@ -49,6 +49,17 @@ class PreviewRequest(BaseModel):
     content: Optional[str] = None
     variables: Optional[Dict[str, str]] = None
     version: Optional[int] = None
+
+
+class PromptABTestCreate(BaseModel):
+    name: str
+    variant_a_version: int
+    variant_b_version: int
+    traffic_split: float = 0.5
+
+
+class PromptABTestComplete(BaseModel):
+    winner_version: Optional[int] = None
 
 
 # --- Helpers ---
@@ -390,3 +401,153 @@ async def preview_prompt(
 
     rendered = await preview_render(content, body.variables)
     return {"rendered": rendered, "original": content}
+
+
+# --- 11. Create A/B test ---
+
+@router.post("/{template_id}/ab-tests")
+async def create_ab_test(
+    template_id: str,
+    body: PromptABTestCreate,
+    _: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    tmpl = await _get_template_or_404(template_id, db)
+
+    if body.traffic_split <= 0 or body.traffic_split >= 1:
+        raise HTTPException(status_code=400, detail="traffic_split must be between 0 and 1")
+
+    var_a = await _get_version_or_404(template_id, body.variant_a_version, db)
+    var_b = await _get_version_or_404(template_id, body.variant_b_version, db)
+
+    if var_a.id == var_b.id:
+        raise HTTPException(status_code=400, detail="variant_a_version and variant_b_version must be different")
+
+    running_stmt = select(PromptABTestModel).where(
+        PromptABTestModel.template_id == tmpl.id,
+        PromptABTestModel.status == "running",
+    )
+    running = (await db.execute(running_stmt)).scalar_one_or_none()
+    if running:
+        raise HTTPException(status_code=400, detail="A running A/B test already exists for this template")
+
+    ab = PromptABTestModel(
+        template_id=tmpl.id,
+        name=body.name,
+        status="running",
+        variant_a_id=var_a.id,
+        variant_b_id=var_b.id,
+        traffic_split=body.traffic_split,
+        metrics={},
+    )
+    db.add(ab)
+    await db.commit()
+    await db.refresh(ab)
+    return {
+        "id": str(ab.id),
+        "template_id": str(ab.template_id),
+        "name": ab.name,
+        "status": ab.status,
+        "variant_a_id": str(ab.variant_a_id),
+        "variant_b_id": str(ab.variant_b_id),
+        "traffic_split": ab.traffic_split,
+        "metrics": ab.metrics,
+        "winner_version_id": str(ab.winner_version_id) if ab.winner_version_id else None,
+        "created_at": ab.created_at.isoformat() if ab.created_at else None,
+        "ended_at": ab.ended_at.isoformat() if ab.ended_at else None,
+    }
+
+
+# --- 12. Get A/B test detail ---
+
+@router.get("/{template_id}/ab-tests/{test_id}")
+async def get_ab_test(
+    template_id: str,
+    test_id: str,
+    _: AuthPrincipal = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tmpl = await _get_template_or_404(template_id, db)
+    ab_stmt = select(PromptABTestModel).where(
+        PromptABTestModel.id == test_id,
+        PromptABTestModel.template_id == tmpl.id,
+    )
+    ab = (await db.execute(ab_stmt)).scalar_one_or_none()
+    if not ab:
+        raise HTTPException(status_code=404, detail="A/B test not found")
+
+    return {
+        "id": str(ab.id),
+        "template_id": str(ab.template_id),
+        "name": ab.name,
+        "status": ab.status,
+        "variant_a_id": str(ab.variant_a_id),
+        "variant_b_id": str(ab.variant_b_id),
+        "traffic_split": ab.traffic_split,
+        "metrics": ab.metrics,
+        "winner_version_id": str(ab.winner_version_id) if ab.winner_version_id else None,
+        "created_at": ab.created_at.isoformat() if ab.created_at else None,
+        "ended_at": ab.ended_at.isoformat() if ab.ended_at else None,
+    }
+
+
+# --- 13. Complete A/B test ---
+
+@router.post("/{template_id}/ab-tests/{test_id}/complete")
+async def complete_ab_test(
+    template_id: str,
+    test_id: str,
+    body: PromptABTestComplete,
+    _: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    tmpl = await _get_template_or_404(template_id, db)
+    ab_stmt = select(PromptABTestModel).where(
+        PromptABTestModel.id == test_id,
+        PromptABTestModel.template_id == tmpl.id,
+    )
+    ab = (await db.execute(ab_stmt)).scalar_one_or_none()
+    if not ab:
+        raise HTTPException(status_code=404, detail="A/B test not found")
+
+    if ab.status != "running":
+        raise HTTPException(status_code=400, detail="Only running A/B tests can be completed")
+
+    winner_id = None
+    if body.winner_version is not None:
+        winner = await _get_version_or_404(template_id, body.winner_version, db)
+        if winner.id not in {ab.variant_a_id, ab.variant_b_id}:
+            raise HTTPException(status_code=400, detail="winner_version must be one of the A/B variants")
+        winner_id = winner.id
+
+    ab.status = "completed"
+    ab.winner_version_id = winner_id
+    ab.ended_at = datetime.now(timezone.utc)
+
+    if winner_id:
+        winner = await db.get(PromptVersionModel, winner_id)
+        if winner:
+            if tmpl.published_version_id:
+                old_pub = await db.get(PromptVersionModel, tmpl.published_version_id)
+                if old_pub and old_pub.status == "published" and old_pub.id != winner.id:
+                    old_pub.status = "archived"
+            winner.status = "published"
+            winner.published_at = datetime.now(timezone.utc)
+            tmpl.published_version_id = winner.id
+
+    await db.commit()
+    await db.refresh(ab)
+
+    return {
+        "id": str(ab.id),
+        "template_id": str(ab.template_id),
+        "name": ab.name,
+        "status": ab.status,
+        "variant_a_id": str(ab.variant_a_id),
+        "variant_b_id": str(ab.variant_b_id),
+        "traffic_split": ab.traffic_split,
+        "metrics": ab.metrics,
+        "winner_version_id": str(ab.winner_version_id) if ab.winner_version_id else None,
+        "created_at": ab.created_at.isoformat() if ab.created_at else None,
+        "ended_at": ab.ended_at.isoformat() if ab.ended_at else None,
+    }

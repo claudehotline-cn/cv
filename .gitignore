@@ -69,3 +69,7 @@ logs/
 
 # Local worktrees
 .worktrees/
+
+# Keep platform DB models tracked (models/ ignore is too broad)
+!agent-platform-api/app/models/
+!agent-platform-api/app/models/db_models.py

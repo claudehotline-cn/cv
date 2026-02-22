@@ -39,6 +39,7 @@
           </template>
         </div>
         <div class="right">
+          <el-button v-if="isEdit" @click="goEval">评测</el-button>
           <el-button @click="showHistory = !showHistory" :icon="Clock">
             版本历史
           </el-button>
@@ -230,6 +231,11 @@ function goBack() {
   } else {
     router.push('/custom-agents')
   }
+}
+
+function goEval() {
+  if (!isEdit.value) return
+  router.push(`/agents/${String(route.params.id)}/eval`)
 }
 const isLoading = ref(false)
 const isSaving = ref(false)

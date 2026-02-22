@@ -5,6 +5,7 @@ falling back to builtin hardcoded constants.
 from __future__ import annotations
 
 import importlib
+import hashlib
 import logging
 import re
 from typing import Dict, Optional
@@ -14,7 +15,7 @@ from jinja2 import BaseLoader, Environment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db_models import PromptTemplateModel, PromptVersionModel
+from app.models.db_models import PromptTemplateModel, PromptVersionModel, PromptABTestModel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +85,8 @@ class PromptResolver:
         tenant_id: Optional[str],
         key: str,
         variables: Optional[Dict[str, str]] = None,
+        ab_test_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> str:
         """
         Resolve prompt by key:
@@ -93,21 +96,56 @@ class PromptResolver:
         """
         content: Optional[str] = None
 
-        stmt = (
-            select(PromptVersionModel.content)
-            .join(PromptTemplateModel, PromptTemplateModel.published_version_id == PromptVersionModel.id)
-            .where(PromptTemplateModel.key == key)
-        )
-
+        tmpl_stmt = select(PromptTemplateModel).where(PromptTemplateModel.key == key)
         if tenant_id:
-            stmt = stmt.where(PromptTemplateModel.tenant_id == tenant_id)
+            tmpl_stmt = tmpl_stmt.where(PromptTemplateModel.tenant_id == tenant_id)
         else:
-            stmt = stmt.where(PromptTemplateModel.tenant_id.is_(None))
+            tmpl_stmt = tmpl_stmt.where(PromptTemplateModel.tenant_id.is_(None))
 
-        result = await db.execute(stmt)
-        row = result.scalar_one_or_none()
-        if row:
-            content = row
+        tmpl_result = await db.execute(tmpl_stmt)
+        tmpl = tmpl_result.scalar_one_or_none()
+
+        if tmpl:
+            selected_version_id = tmpl.published_version_id
+
+            selected_ab: Optional[PromptABTestModel] = None
+            if ab_test_id:
+                ab_stmt = select(PromptABTestModel).where(
+                    PromptABTestModel.id == ab_test_id,
+                    PromptABTestModel.template_id == tmpl.id,
+                    PromptABTestModel.status == "running",
+                )
+                ab_result = await db.execute(ab_stmt)
+                selected_ab = ab_result.scalar_one_or_none()
+            else:
+                ab_stmt = (
+                    select(PromptABTestModel)
+                    .where(
+                        PromptABTestModel.template_id == tmpl.id,
+                        PromptABTestModel.status == "running",
+                    )
+                    .order_by(PromptABTestModel.created_at.desc())
+                    .limit(1)
+                )
+                ab_result = await db.execute(ab_stmt)
+                selected_ab = ab_result.scalar_one_or_none()
+
+            if selected_ab:
+                bucket_seed = user_id or "anonymous"
+                digest = hashlib.md5(bucket_seed.encode("utf-8")).hexdigest()
+                ratio = int(digest[:8], 16) / float(0xFFFFFFFF)
+                if ratio < float(selected_ab.traffic_split):
+                    selected_version_id = selected_ab.variant_a_id
+                else:
+                    selected_version_id = selected_ab.variant_b_id
+
+            if selected_version_id:
+                version_result = await db.execute(
+                    select(PromptVersionModel.content).where(PromptVersionModel.id == selected_version_id)
+                )
+                row = version_result.scalar_one_or_none()
+                if row:
+                    content = row
 
         if content is None:
             content = cls.BUILTIN_PROMPTS.get(key)
@@ -140,8 +178,10 @@ async def resolve(
     tenant_id: Optional[str],
     key: str,
     variables: Optional[Dict[str, str]] = None,
+    ab_test_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> str:
-    return await PromptResolver.resolve(db, tenant_id, key, variables)
+    return await PromptResolver.resolve(db, tenant_id, key, variables, ab_test_id, user_id)
 
 
 async def preview_render(content: str, variables: Optional[Dict[str, str]] = None) -> str:
