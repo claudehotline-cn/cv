@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Iterable
 from sqlalchemy.ext.asyncio import AsyncSession
+from agent_core.settings import get_settings
 
 from ..core.secrets_crypto import AesGcmCryptoProvider
 from ..ports.secrets import SecretRepository
+from .secrets_repository_mysql import MySQLSecretRepository
 from .secrets_repository_pg import PostgresSecretRepository
 
 
@@ -25,7 +27,14 @@ class SecretsService:
     def __init__(self, db: AsyncSession, repository: SecretRepository | None = None):
         self.db = db
         self.crypto = AesGcmCryptoProvider()
-        self.repository = repository or PostgresSecretRepository(db)
+        if repository is not None:
+            self.repository = repository
+        else:
+            backend = (get_settings().secrets_store_backend or "postgres").strip().lower()
+            if backend == "mysql":
+                self.repository = MySQLSecretRepository()
+            else:
+                self.repository = PostgresSecretRepository(db)
 
     @staticmethod
     def _aad(tenant_id: str, secret_id: str, version: int, name: str, scope: str) -> bytes:

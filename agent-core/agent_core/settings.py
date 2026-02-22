@@ -253,6 +253,11 @@ class Settings(BaseSettings):
         description="Active key reference for new secret encryption",
         alias="SECRETS_ACTIVE_KEY_REF",
     )
+    secrets_store_backend: str = Field(
+        default="postgres",
+        description="Secrets storage backend: postgres | mysql",
+        alias="SECRETS_STORE_BACKEND",
+    )
 
     @property
     def postgres_uri(self) -> str:
