@@ -170,3 +170,30 @@ def test_task_secret_injection_and_audit_redaction_e2e() -> None:
     assert "SHOULD_BE_REDACTED" not in text
     assert "LEAK_ME_NOT" not in text
     assert "sk-live-secret-xyz" not in text
+
+
+def test_reencrypt_background_job_queued() -> None:
+    token = _login_admin()
+    user_id = _current_user_id(token)
+    tenant_id = str(uuid.uuid4())
+    _provision_membership(user_id, tenant_id, role="owner")
+    h = _headers(token, tenant_id)
+
+    # Ensure there is at least one secret for this tenant
+    create_secret = requests.post(
+        f"{API_BASE_URL}/secrets/",
+        headers=h,
+        json={"name": "rotation_key", "value": "sk-rotate-001", "scope": "tenant", "provider": "openai"},
+        timeout=30,
+    )
+    # owner with tenant scope may be forbidden depending on role mapping; tolerate duplicate/forbidden in shared env
+    assert create_secret.status_code in (200, 400, 403), create_secret.text
+
+    reencrypt = requests.post(
+        f"{API_BASE_URL}/secrets/admin/tenants/{tenant_id}/reencrypt",
+        headers=h,
+        timeout=30,
+    )
+    assert reencrypt.status_code == 200, reencrypt.text
+    payload = reencrypt.json()
+    assert payload.get("queued") is True

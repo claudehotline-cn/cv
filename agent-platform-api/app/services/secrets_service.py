@@ -213,3 +213,48 @@ class SecretsService:
             if value is not None:
                 resolved[name] = value
         return resolved
+
+    async def reencrypt_tenant_secrets(self, *, tenant_id: str) -> dict[str, int]:
+        """Re-encrypt all non-deleted secrets for a tenant with current active key.
+
+        Creates a new version per secret and bumps current_version.
+        """
+        rows = await self.repository.list_metadata(tenant_id=tenant_id, owner_user_id=None, scope=None)
+        scanned = 0
+        rotated = 0
+        failed = 0
+
+        for s in rows:
+            scanned += 1
+            try:
+                cur_ver = await self.repository.get_version(secret_id=s.id, version=s.current_version)
+                if not cur_ver:
+                    failed += 1
+                    continue
+                aad_old = self._aad(s.tenant_id, s.id, s.current_version, s.name, s.scope)
+                plain = self.crypto.decrypt(cur_ver.key_ref, cur_ver.nonce, cur_ver.ciphertext, aad_old)
+
+                next_version = int(s.current_version) + 1
+                aad_new = self._aad(s.tenant_id, s.id, next_version, s.name, s.scope)
+                blob = self.crypto.encrypt(plain, aad_new)
+                await self.repository.append_version(
+                    secret_id=s.id,
+                    version=next_version,
+                    crypto_alg=blob.crypto_alg,
+                    key_ref=blob.key_ref,
+                    nonce=blob.nonce_b64,
+                    ciphertext=blob.ciphertext_b64,
+                    enc_meta={"aad": "tenant|secret|version|name|scope", "rotation": "reencrypt"},
+                    fingerprint=blob.fingerprint,
+                )
+                await self.repository.set_current_version(secret_id=s.id, version=next_version)
+                rotated += 1
+            except Exception:
+                failed += 1
+
+        await self.db.commit()
+        return {
+            "scanned": scanned,
+            "rotated": rotated,
+            "failed": failed,
+        }

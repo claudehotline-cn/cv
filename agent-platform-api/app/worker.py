@@ -607,6 +607,21 @@ async def save_audit_log_to_db(events: Any):
     except Exception as e:
         _LOGGER.error(f"Failed to persist audit log: {e}")
 
+
+async def secrets_reencrypt_tenant(ctx: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
+    """Background job: re-encrypt all secrets for a tenant to active key_ref."""
+    from app.db import AsyncSessionLocal
+    from app.services.secrets_service import SecretsService
+
+    _LOGGER.info("[Worker] Re-encrypt tenant secrets start tenant_id=%s", tenant_id)
+    async with AsyncSessionLocal() as db:
+        result = await SecretsService(db).reencrypt_tenant_secrets(tenant_id=str(tenant_id))
+        _LOGGER.info("[Worker] Re-encrypt tenant secrets done tenant_id=%s result=%s", tenant_id, result)
+        return {
+            "tenant_id": tenant_id,
+            **result,
+        }
+
 async def startup(ctx: Dict[str, Any]):
     """Worker 启动钩子"""
     global _audit_worker_task, _audit_worker_instance
@@ -660,7 +675,7 @@ class WorkerSettings:
     """ARQ Worker 配置"""
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     
-    functions = [agent_execute_task, agent_resume_task]
+    functions = [agent_execute_task, agent_resume_task, secrets_reencrypt_tenant]
     on_startup = startup
     on_shutdown = shutdown
     

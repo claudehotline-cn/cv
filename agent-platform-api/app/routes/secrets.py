@@ -5,9 +5,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.auth import AuthPrincipal, get_current_user, require_admin
+from agent_core.settings import get_settings
 from ..db import get_db
 from ..services.secrets_service import SecretsService
 from ..services.tenant_shadow_service import TenantShadowService
+from arq import create_pool
+from arq.connections import RedisSettings
 
 
 router = APIRouter(prefix="/secrets", tags=["secrets"])
@@ -22,6 +25,10 @@ class CreateSecretRequest(BaseModel):
 
 class RotateSecretRequest(BaseModel):
     value: str = Field(min_length=1)
+
+
+class ReencryptTenantSecretsRequest(BaseModel):
+    tenant_id: Optional[str] = None
 
 
 def _is_tenant_admin(user: AuthPrincipal) -> bool:
@@ -231,3 +238,22 @@ async def admin_create_tenant_secret(
         return rec.__dict__
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/admin/tenants/{tenant_id}/reencrypt")
+async def admin_reencrypt_tenant_secrets(
+    tenant_id: str,
+    _: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    _ = db
+    redis = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+    try:
+        job = await redis.enqueue_job("secrets_reencrypt_tenant", str(tenant_id))
+    finally:
+        await redis.close()
+    return {
+        "tenant_id": tenant_id,
+        "queued": True,
+        "job_id": getattr(job, "job_id", None),
+    }
