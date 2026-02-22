@@ -90,6 +90,35 @@ class QuotaService:
             },
         }
 
+    async def get_effective_execute_policy(self, tenant_id: str) -> dict:
+        tenant_uuid = UUID(str(tenant_id))
+        await self.ensure_defaults(str(tenant_uuid))
+        policy = await self.db.scalar(
+            select(TenantRateLimitPolicyModel).where(TenantRateLimitPolicyModel.tenant_id == tenant_uuid)
+        )
+        return {
+            "tenant_execute_limit": policy.execute_limit,
+            "user_execute_limit": policy.user_execute_limit,
+            "tenant_concurrency_limit": int(policy.tenant_concurrency_limit),
+            "user_concurrency_limit": int(policy.user_concurrency_limit),
+        }
+
+    async def get_effective_rw_policy(self, tenant_id: str, bucket: str) -> dict:
+        tenant_uuid = UUID(str(tenant_id))
+        await self.ensure_defaults(str(tenant_uuid))
+        policy = await self.db.scalar(
+            select(TenantRateLimitPolicyModel).where(TenantRateLimitPolicyModel.tenant_id == tenant_uuid)
+        )
+        if bucket == "write":
+            return {
+                "tenant_limit": policy.write_limit,
+                "user_limit": policy.user_write_limit,
+            }
+        return {
+            "tenant_limit": policy.read_limit,
+            "user_limit": policy.user_read_limit,
+        }
+
     async def get_quota(self, tenant_id: str) -> dict:
         tenant_uuid = UUID(str(tenant_id))
         await self.ensure_defaults(str(tenant_uuid))

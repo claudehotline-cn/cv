@@ -173,9 +173,25 @@ async def _require_rag_governance(req: Request, db: AsyncSession = Depends(get_d
     if not tenant_id or not user_id:
         raise HTTPException(status_code=401, detail="Tenant context required")
 
-    await QuotaService(db).check_quota_or_raise(tenant_id)
+    quota_service = QuotaService(db)
+    await quota_service.check_quota_or_raise(tenant_id)
     bucket = _bucket_from_request(req)
-    await enforce_rate_limit(GovernanceKeys(tenant_id=tenant_id, user_id=user_id), bucket)
+    if bucket == "execute":
+        policy = await quota_service.get_effective_execute_policy(tenant_id)
+        await enforce_rate_limit(
+            GovernanceKeys(tenant_id=tenant_id, user_id=user_id),
+            bucket,
+            tenant_limit_expr=policy["tenant_execute_limit"],
+            user_limit_expr=policy["user_execute_limit"],
+        )
+    else:
+        rw_policy = await quota_service.get_effective_rw_policy(tenant_id, bucket)
+        await enforce_rate_limit(
+            GovernanceKeys(tenant_id=tenant_id, user_id=user_id),
+            bucket,
+            tenant_limit_expr=rw_policy["tenant_limit"],
+            user_limit_expr=rw_policy["user_limit"],
+        )
 
 
 async def _require_rag_authenticated(req: Request) -> None:

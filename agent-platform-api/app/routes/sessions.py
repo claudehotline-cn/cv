@@ -9,6 +9,8 @@ from ..core.auth import AuthPrincipal, get_current_user
 from ..services.user_shadow_service import UserShadowService
 from ..services.tenant_shadow_service import TenantShadowService
 from agent_core.settings import get_settings
+from ..core.governance import GovernanceKeys, enforce_rate_limit
+from ..services.quota_service import QuotaService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -37,6 +39,14 @@ async def create_session(
     tenant_id = _tenant_uuid(user)
     await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
+    governance_keys = GovernanceKeys(tenant_id=str(tenant_id), user_id=user.user_id)
+    rw_policy = await QuotaService(db).get_effective_rw_policy(str(tenant_id), "write")
+    await enforce_rate_limit(
+        governance_keys,
+        "write",
+        tenant_limit_expr=rw_policy["tenant_limit"],
+        user_limit_expr=rw_policy["user_limit"],
+    )
     # If no agent_id provided, use data_agent as default
     if not agent_id:
         result = await db.execute(select(AgentModel).where(AgentModel.builtin_key == "data_agent"))
@@ -81,6 +91,14 @@ async def get_session(
 ):
     tenant_id = _tenant_uuid(user)
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
+    governance_keys = GovernanceKeys(tenant_id=str(tenant_id), user_id=user.user_id)
+    rw_policy = await QuotaService(db).get_effective_rw_policy(str(tenant_id), "read")
+    await enforce_rate_limit(
+        governance_keys,
+        "read",
+        tenant_limit_expr=rw_policy["tenant_limit"],
+        user_limit_expr=rw_policy["user_limit"],
+    )
     res = await db.execute(
         select(SessionModel).where(
             SessionModel.id == session_id,
@@ -115,6 +133,14 @@ async def list_sessions(
 
     tenant_id = _tenant_uuid(user)
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
+    governance_keys = GovernanceKeys(tenant_id=str(tenant_id), user_id=user.user_id)
+    rw_policy = await QuotaService(db).get_effective_rw_policy(str(tenant_id), "read")
+    await enforce_rate_limit(
+        governance_keys,
+        "read",
+        tenant_limit_expr=rw_policy["tenant_limit"],
+        user_limit_expr=rw_policy["user_limit"],
+    )
     stmt = (
         select(SessionModel)
         .where(SessionModel.tenant_id == tenant_id)
@@ -154,6 +180,14 @@ async def delete_session(
     """Delete a session."""
     tenant_id = _tenant_uuid(user)
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
+    governance_keys = GovernanceKeys(tenant_id=str(tenant_id), user_id=user.user_id)
+    rw_policy = await QuotaService(db).get_effective_rw_policy(str(tenant_id), "write")
+    await enforce_rate_limit(
+        governance_keys,
+        "write",
+        tenant_limit_expr=rw_policy["tenant_limit"],
+        user_limit_expr=rw_policy["user_limit"],
+    )
     res = await db.execute(
         select(SessionModel).where(
             SessionModel.id == session_id,

@@ -36,11 +36,16 @@ def _user_limit_expr(bucket: Bucket) -> str:
     return settings.rate_limit_user_execute
 
 
-async def enforce_rate_limit(keys: GovernanceKeys, bucket: Bucket) -> None:
+async def enforce_rate_limit(
+    keys: GovernanceKeys,
+    bucket: Bucket,
+    tenant_limit_expr: str | None = None,
+    user_limit_expr: str | None = None,
+) -> None:
     tenant_key = f"tenant:{keys.tenant_id}:{bucket}"
     user_key = f"user:{keys.tenant_id}:{keys.user_id}:{bucket}"
 
-    ok_tenant, retry_tenant = await consume_or_allow(tenant_key, _tenant_limit_expr(bucket))
+    ok_tenant, retry_tenant = await consume_or_allow(tenant_key, tenant_limit_expr or _tenant_limit_expr(bucket))
     if not ok_tenant:
         raise HTTPException(
             status_code=429,
@@ -52,7 +57,7 @@ async def enforce_rate_limit(keys: GovernanceKeys, bucket: Bucket) -> None:
             },
         )
 
-    ok_user, retry_user = await consume_or_allow(user_key, _user_limit_expr(bucket))
+    ok_user, retry_user = await consume_or_allow(user_key, user_limit_expr or _user_limit_expr(bucket))
     if not ok_user:
         raise HTTPException(
             status_code=429,
@@ -65,16 +70,20 @@ async def enforce_rate_limit(keys: GovernanceKeys, bucket: Bucket) -> None:
         )
 
 
-async def acquire_execute_concurrency(keys: GovernanceKeys) -> tuple[bool, str]:
+async def acquire_execute_concurrency(
+    keys: GovernanceKeys,
+    tenant_limit: int | None = None,
+    user_limit: int | None = None,
+) -> tuple[bool, str]:
     settings = get_settings()
     tenant_key = f"tenant:{keys.tenant_id}:execute"
     user_key = f"user:{keys.tenant_id}:{keys.user_id}:execute"
 
-    ok_tenant, _ = await acquire_concurrency(tenant_key, settings.concurrency_limit_tenant_execute)
+    ok_tenant, _ = await acquire_concurrency(tenant_key, tenant_limit or settings.concurrency_limit_tenant_execute)
     if not ok_tenant:
         return False, "tenant"
 
-    ok_user, _ = await acquire_concurrency(user_key, settings.concurrency_limit_user_execute)
+    ok_user, _ = await acquire_concurrency(user_key, user_limit or settings.concurrency_limit_user_execute)
     if not ok_user:
         await release_concurrency(tenant_key)
         return False, "user"

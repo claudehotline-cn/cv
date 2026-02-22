@@ -25,8 +25,9 @@ def test_tasks_execute_enqueues_tenant_id_and_governance_checks() -> None:
     assert fn is not None
 
     text = ast.get_source_segment(src, fn) or ""
-    assert "enforce_rate_limit(governance_keys, \"execute\")" in text
-    assert "acquire_execute_concurrency(governance_keys)" in text
+    assert "enforce_rate_limit(" in text
+    assert "\"execute\"" in text
+    assert "acquire_execute_concurrency(" in text
     assert "release_execute_concurrency(governance_keys)" in text
     assert "tenant_id_str" in text
 

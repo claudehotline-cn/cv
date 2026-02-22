@@ -54,6 +54,10 @@ def test_tasks_and_audit_hook_quota_flow() -> None:
     assert "check_quota_or_raise" in tasks_src
     assert "consume_tokens" in audit_src
 
+    sessions_src = (repo / "agent-platform-api/app/routes/sessions.py").read_text(encoding="utf-8")
+    assert "get_effective_rw_policy" in sessions_src
+    assert "enforce_rate_limit" in sessions_src
+
 
 def test_rag_governance_hooks_present() -> None:
     rag_src = (_repo_root() / "agent-platform-api/app/routes/rag.py").read_text(encoding="utf-8")

@@ -147,9 +147,20 @@ async def create_execute_task(
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
     tenant_id_str = str(tenant_id)
     governance_keys = GovernanceKeys(tenant_id=tenant_id_str, user_id=user.user_id)
-    await QuotaService(db).check_quota_or_raise(tenant_id_str)
-    await enforce_rate_limit(governance_keys, "execute")
-    acquired, scope = await acquire_execute_concurrency(governance_keys)
+    quota_service = QuotaService(db)
+    await quota_service.check_quota_or_raise(tenant_id_str)
+    execute_policy = await quota_service.get_effective_execute_policy(tenant_id_str)
+    await enforce_rate_limit(
+        governance_keys,
+        "execute",
+        tenant_limit_expr=execute_policy["tenant_execute_limit"],
+        user_limit_expr=execute_policy["user_execute_limit"],
+    )
+    acquired, scope = await acquire_execute_concurrency(
+        governance_keys,
+        tenant_limit=execute_policy["tenant_concurrency_limit"],
+        user_limit=execute_policy["user_concurrency_limit"],
+    )
     if not acquired:
         raise HTTPException(
             status_code=429,
@@ -390,9 +401,20 @@ async def resume_task(
     await _ensure_tenant_membership_or_403(db, user, tenant_id)
     tenant_id_str = str(tenant_id)
     governance_keys = GovernanceKeys(tenant_id=tenant_id_str, user_id=user.user_id)
-    await QuotaService(db).check_quota_or_raise(tenant_id_str)
-    await enforce_rate_limit(governance_keys, "execute")
-    acquired, scope = await acquire_execute_concurrency(governance_keys)
+    quota_service = QuotaService(db)
+    await quota_service.check_quota_or_raise(tenant_id_str)
+    execute_policy = await quota_service.get_effective_execute_policy(tenant_id_str)
+    await enforce_rate_limit(
+        governance_keys,
+        "execute",
+        tenant_limit_expr=execute_policy["tenant_execute_limit"],
+        user_limit_expr=execute_policy["user_execute_limit"],
+    )
+    acquired, scope = await acquire_execute_concurrency(
+        governance_keys,
+        tenant_limit=execute_policy["tenant_concurrency_limit"],
+        user_limit=execute_policy["user_concurrency_limit"],
+    )
     if not acquired:
         raise HTTPException(
             status_code=429,
