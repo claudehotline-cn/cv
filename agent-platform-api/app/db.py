@@ -227,6 +227,100 @@ async def init_db():
         # Partial unique index for builtin prompts (tenant_id IS NULL)
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_templates_builtin_key ON prompt_templates(key) WHERE tenant_id IS NULL"))
 
+        # --- Prompt A/B Tests ---
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS prompt_ab_tests (
+                id UUID PRIMARY KEY,
+                template_id UUID NOT NULL,
+                name VARCHAR(200) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'running',
+                variant_a_id UUID NOT NULL,
+                variant_b_id UUID NOT NULL,
+                traffic_split REAL NOT NULL DEFAULT 0.5,
+                metrics JSONB NOT NULL DEFAULT '{}',
+                winner_version_id UUID,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                ended_at TIMESTAMPTZ,
+                CONSTRAINT fk_prompt_ab_tests_template FOREIGN KEY (template_id) REFERENCES prompt_templates(id),
+                CONSTRAINT fk_prompt_ab_tests_variant_a FOREIGN KEY (variant_a_id) REFERENCES prompt_versions(id),
+                CONSTRAINT fk_prompt_ab_tests_variant_b FOREIGN KEY (variant_b_id) REFERENCES prompt_versions(id),
+                CONSTRAINT fk_prompt_ab_tests_winner FOREIGN KEY (winner_version_id) REFERENCES prompt_versions(id)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_prompt_ab_tests_template_id ON prompt_ab_tests(template_id)"))
+
+        # --- Eval Core ---
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS eval_datasets (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                agent_id UUID NOT NULL,
+                name VARCHAR(200) NOT NULL,
+                description TEXT,
+                created_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_eval_datasets_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+                CONSTRAINT fk_eval_datasets_agent FOREIGN KEY (agent_id) REFERENCES agents(id),
+                CONSTRAINT fk_eval_datasets_created_by FOREIGN KEY (created_by) REFERENCES platform_users(user_id)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_eval_datasets_tenant_id ON eval_datasets(tenant_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_eval_datasets_agent_id ON eval_datasets(agent_id)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS eval_cases (
+                id UUID PRIMARY KEY,
+                dataset_id UUID NOT NULL,
+                input JSONB NOT NULL,
+                expected_output JSONB,
+                tags JSONB NOT NULL DEFAULT '[]',
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_eval_cases_dataset FOREIGN KEY (dataset_id) REFERENCES eval_datasets(id) ON DELETE CASCADE
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_eval_cases_dataset_id ON eval_cases(dataset_id)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS eval_runs (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                dataset_id UUID NOT NULL,
+                agent_id UUID NOT NULL,
+                agent_version INT NOT NULL,
+                prompt_version_snapshot JSONB,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                config JSONB NOT NULL DEFAULT '{}',
+                summary JSONB,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_eval_runs_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+                CONSTRAINT fk_eval_runs_dataset FOREIGN KEY (dataset_id) REFERENCES eval_datasets(id),
+                CONSTRAINT fk_eval_runs_agent FOREIGN KEY (agent_id) REFERENCES agents(id)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_eval_runs_agent_id ON eval_runs(agent_id)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS eval_results (
+                id UUID PRIMARY KEY,
+                run_id UUID NOT NULL,
+                case_id UUID NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                actual_output JSONB,
+                trajectory JSONB,
+                scores JSONB NOT NULL DEFAULT '{}',
+                error_message TEXT,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                CONSTRAINT fk_eval_results_run FOREIGN KEY (run_id) REFERENCES eval_runs(id) ON DELETE CASCADE,
+                CONSTRAINT fk_eval_results_case FOREIGN KEY (case_id) REFERENCES eval_cases(id)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_eval_results_run_id ON eval_results(run_id)"))
+
         await conn.execute(text("""
             DO $$
             BEGIN

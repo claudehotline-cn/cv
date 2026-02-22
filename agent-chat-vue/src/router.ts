@@ -29,6 +29,11 @@ const router = createRouter({
                     name: 'AgentVersions',
                     component: () => import('./views/custom-agents/AgentEdit.vue'),
                 },
+                {
+                    path: ':id/eval',
+                    name: 'AgentEval',
+                    component: () => import('./views/custom-agents/AgentEval.vue'),
+                },
 
                 // Prompt Management
                 {
