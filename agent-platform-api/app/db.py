@@ -130,6 +130,41 @@ async def init_db():
         """))
 
         await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS secrets (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                owner_user_id VARCHAR(100),
+                scope VARCHAR(20) NOT NULL DEFAULT 'user',
+                name VARCHAR(200) NOT NULL,
+                provider VARCHAR(50),
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                current_version INT NOT NULL DEFAULT 1,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_secrets_tenant_scope_owner_name UNIQUE (tenant_id, scope, owner_user_id, name),
+                CONSTRAINT fk_secrets_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+                CONSTRAINT fk_secrets_owner FOREIGN KEY (owner_user_id) REFERENCES platform_users(user_id)
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS secret_versions (
+                id UUID PRIMARY KEY,
+                secret_id UUID NOT NULL,
+                version INT NOT NULL,
+                crypto_alg VARCHAR(50) NOT NULL DEFAULT 'aes_gcm_v1',
+                key_ref VARCHAR(100) NOT NULL,
+                nonce TEXT NOT NULL,
+                ciphertext TEXT NOT NULL,
+                enc_meta JSONB,
+                fingerprint VARCHAR(64),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_secret_versions_secret_version UNIQUE (secret_id, version),
+                CONSTRAINT fk_secret_versions_secret FOREIGN KEY (secret_id) REFERENCES secrets(id)
+            )
+        """))
+
+        await conn.execute(text("""
             DO $$
             BEGIN
                 IF NOT EXISTS (

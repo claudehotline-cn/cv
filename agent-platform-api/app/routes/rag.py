@@ -18,6 +18,9 @@ from ..db import get_db
 from ..models.db_models import TenantMembershipModel
 from ..core.governance import GovernanceKeys, enforce_rate_limit
 from ..services.quota_service import QuotaService
+from ..services.secrets_service import SecretsService
+from ..services.secrets_injector import RuntimeSecretInjector
+from ..db import AsyncSessionLocal
 
 
 def _is_strict_auth_mode() -> bool:
@@ -257,6 +260,24 @@ async def _proxy_json(
 ):
     url = _rag_base_url() + path
     ctx = _dev_user_ctx(req)
+    body = json_body
+    if isinstance(json_body, dict) and "secret_refs" in json_body:
+        refs = json_body.get("secret_refs")
+        body = dict(json_body)
+        body.pop("secret_refs", None)
+        if isinstance(refs, list) and refs:
+            tenant_id = str(ctx.get("tenant_id") or "")
+            user_id = str(ctx.get("user_id") or "")
+            if tenant_id and user_id:
+                async with AsyncSessionLocal() as db:
+                    injector = RuntimeSecretInjector(SecretsService(db))
+                    resolved = await injector.resolve(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        secret_refs=refs,
+                    )
+                    body = injector.inject(runtime_config=body, resolved=resolved)
+
     headers: Dict[str, str] = {}
     auth_header = (req.headers.get("Authorization") or "").strip()
     if auth_header:
@@ -270,7 +291,7 @@ async def _proxy_json(
         headers["X-Tenant-Role"] = ctx["tenant_role"]
 
     async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.request(method, url, json=json_body, params=params, headers=headers)
+        r = await client.request(method, url, json=body, params=params, headers=headers)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, or_
 from agent_core.settings import get_settings
 from app.services.quota_service import QuotaService
+from app.core.secrets_redaction import redact_payload
 from app.models.db_models import (
     AgentRunModel,
     AgentSpanModel,
@@ -79,6 +80,8 @@ class AuditPersistenceService:
             payload = json.loads(payload_json)
         except:
             payload = {}
+        if isinstance(payload, dict):
+            payload = redact_payload(payload)
 
         tenant_id = self._resolve_tenant_id(event, payload)
             

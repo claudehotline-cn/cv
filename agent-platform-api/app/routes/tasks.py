@@ -25,6 +25,8 @@ from ..core.governance import (
     release_execute_concurrency,
 )
 from ..services.quota_service import QuotaService
+from ..services.secrets_service import SecretsService
+from ..services.secrets_injector import RuntimeSecretInjector
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
@@ -103,6 +105,7 @@ class ExecuteRequest(BaseModel):
     """执行任务请求"""
     message: str
     config: Optional[dict] = None
+    secret_refs: Optional[list[str]] = None
 
 
 class TaskResponse(BaseModel):
@@ -178,6 +181,16 @@ async def create_execute_task(
     )
     agent = agent_result.scalar_one_or_none()
     agent_key = agent.builtin_key if agent else "data_agent"
+
+    exec_config = dict(request.config or {})
+    if request.secret_refs:
+        injector = RuntimeSecretInjector(SecretsService(db))
+        resolved = await injector.resolve(
+            tenant_id=tenant_id_str,
+            user_id=user.user_id,
+            secret_refs=request.secret_refs,
+        )
+        exec_config = injector.inject(runtime_config=exec_config, resolved=resolved)
     
     # 创建任务记录
     await UserShadowService(db).ensure_user(user.user_id, user.email, user.role)
@@ -213,7 +226,7 @@ async def create_execute_task(
             str(session_id),
             agent_key,
             request.message,
-            request.config,
+            exec_config,
             user.user_id,
             tenant_id_str,
             task_thread_id,  # thread_id

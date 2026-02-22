@@ -238,6 +238,22 @@ class Settings(BaseSettings):
     quota_default_monthly_tokens: int = Field(default=50000000, alias="QUOTA_DEFAULT_MONTHLY_TOKENS")
     quota_enforce_enabled: bool = Field(default=True, alias="QUOTA_ENFORCE_ENABLED")
 
+    secrets_encryption_key: str = Field(
+        default="",
+        description="Base64 urlsafe 32-byte key for AES-GCM secrets encryption",
+        alias="SECRETS_ENCRYPTION_KEY",
+    )
+    secrets_encryption_keys: str = Field(
+        default="",
+        description="Key ring as 'key_ref:base64urlkey,key_ref2:base64urlkey2'",
+        alias="SECRETS_ENCRYPTION_KEYS",
+    )
+    secrets_active_key_ref: str = Field(
+        default="default",
+        description="Active key reference for new secret encryption",
+        alias="SECRETS_ACTIVE_KEY_REF",
+    )
+
     @property
     def postgres_uri(self) -> str:
         """PostgreSQL Connection URI"""
