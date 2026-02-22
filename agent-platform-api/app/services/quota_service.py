@@ -118,6 +118,41 @@ class QuotaService:
             "request_count": usage.request_count if usage else 0,
         }
 
+    async def update_limits(self, tenant_id: str, updates: dict) -> dict:
+        tenant_uuid = UUID(str(tenant_id))
+        await self.ensure_defaults(str(tenant_uuid))
+        policy = await self.db.scalar(
+            select(TenantRateLimitPolicyModel).where(TenantRateLimitPolicyModel.tenant_id == tenant_uuid)
+        )
+        for field in (
+            "read_limit",
+            "write_limit",
+            "execute_limit",
+            "user_read_limit",
+            "user_write_limit",
+            "user_execute_limit",
+            "tenant_concurrency_limit",
+            "user_concurrency_limit",
+            "fail_mode",
+        ):
+            if field in updates:
+                setattr(policy, field, updates[field])
+        await self.db.commit()
+        return await self.get_limits(str(tenant_uuid))
+
+    async def update_quota(self, tenant_id: str, updates: dict) -> dict:
+        tenant_uuid = UUID(str(tenant_id))
+        await self.ensure_defaults(str(tenant_uuid))
+        quota = await self.db.scalar(
+            select(TenantQuotaPolicyModel).where(TenantQuotaPolicyModel.tenant_id == tenant_uuid)
+        )
+        if "monthly_token_quota" in updates:
+            quota.monthly_token_quota = int(updates["monthly_token_quota"])
+        if "enabled" in updates:
+            quota.enabled = bool(updates["enabled"])
+        await self.db.commit()
+        return await self.get_quota(str(tenant_uuid))
+
     async def check_quota_or_raise(self, tenant_id: str) -> None:
         if not self.settings.quota_enforce_enabled:
             return

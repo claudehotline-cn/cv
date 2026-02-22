@@ -3,7 +3,7 @@ import os
 import uuid
 import asyncio
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Body
@@ -16,6 +16,8 @@ from agent_core.settings import get_settings
 
 from ..db import get_db
 from ..models.db_models import TenantMembershipModel
+from ..core.governance import GovernanceKeys, enforce_rate_limit
+from ..services.quota_service import QuotaService
 
 
 def _is_strict_auth_mode() -> bool:
@@ -152,6 +154,30 @@ async def _require_tenant_membership(req: Request, db: AsyncSession = Depends(ge
         raise HTTPException(status_code=403, detail="Tenant membership required")
 
 
+def _bucket_from_request(req: Request) -> Literal["read", "write", "execute"]:
+    method = (req.method or "GET").upper()
+    path = (req.url.path or "").lower()
+    if "/retrieve" in path or "/evaluate" in path or "/execute" in path or "/rebuild-vectors" in path or "/build-graph" in path:
+        return "execute"
+    if method in ("POST", "PUT", "PATCH", "DELETE"):
+        return "write"
+    return "read"
+
+
+async def _require_rag_governance(req: Request, db: AsyncSession = Depends(get_db)) -> None:
+    ctx = _dev_user_ctx(req)
+    _require_authenticated(ctx)
+    _require_tenant_context(ctx)
+    tenant_id = str(ctx.get("tenant_id") or "")
+    user_id = str(ctx.get("user_id") or "")
+    if not tenant_id or not user_id:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+
+    await QuotaService(db).check_quota_or_raise(tenant_id)
+    bucket = _bucket_from_request(req)
+    await enforce_rate_limit(GovernanceKeys(tenant_id=tenant_id, user_id=user_id), bucket)
+
+
 async def _require_rag_authenticated(req: Request) -> None:
     ctx = _dev_user_ctx(req)
     _require_authenticated(ctx)
@@ -161,7 +187,7 @@ async def _require_rag_authenticated(req: Request) -> None:
 router = APIRouter(
     prefix="/rag",
     tags=["rag"],
-    dependencies=[Depends(_require_rag_authenticated), Depends(_require_tenant_membership)],
+    dependencies=[Depends(_require_rag_authenticated), Depends(_require_tenant_membership), Depends(_require_rag_governance)],
 )
 
 

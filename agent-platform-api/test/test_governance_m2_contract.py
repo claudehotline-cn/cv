@@ -27,10 +27,22 @@ def test_limits_routes_and_quota_service_exist() -> None:
     limits_src = limits_path.read_text(encoding="utf-8")
     quota_src = quota_path.read_text(encoding="utf-8")
 
-    for route in ("/me", "/quota/me", "/admin/tenants/{tenant_id}", "/admin/tenants/{tenant_id}/quota"):
+    for route in (
+        "/me",
+        "/quota/me",
+        "/admin/tenants/{tenant_id}",
+        "/admin/tenants/{tenant_id}/quota",
+    ):
         assert route in limits_src
 
+    assert "@router.put(\"/admin/tenants/{tenant_id}\")" in limits_src
+    assert "@router.put(\"/admin/tenants/{tenant_id}/quota\")" in limits_src
+    assert "@quota_router.get(\"/me\")" in limits_src
+
     for fn in ("ensure_defaults", "get_limits", "get_quota", "check_quota_or_raise", "consume_tokens"):
+        assert f"def {fn}" in quota_src or f"async def {fn}" in quota_src
+
+    for fn in ("update_limits", "update_quota"):
         assert f"def {fn}" in quota_src or f"async def {fn}" in quota_src
 
 
@@ -41,3 +53,10 @@ def test_tasks_and_audit_hook_quota_flow() -> None:
 
     assert "check_quota_or_raise" in tasks_src
     assert "consume_tokens" in audit_src
+
+
+def test_rag_governance_hooks_present() -> None:
+    rag_src = (_repo_root() / "agent-platform-api/app/routes/rag.py").read_text(encoding="utf-8")
+    assert "_require_rag_governance" in rag_src
+    assert "enforce_rate_limit" in rag_src
+    assert "check_quota_or_raise" in rag_src

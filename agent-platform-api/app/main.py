@@ -56,6 +56,7 @@ app.include_router(audit.router)
 app.include_router(rag.router)
 app.include_router(auth.router)
 app.include_router(limits.router)
+app.include_router(limits.quota_router)
 
 # CORS
 app.add_middleware(
