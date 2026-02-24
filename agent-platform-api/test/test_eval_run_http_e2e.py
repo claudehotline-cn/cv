@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI
 
 import app.routes.eval as eval_routes
-from app.db import AsyncSessionLocal, init_db
+from app.db import AsyncSessionLocal, engine, init_db
 from app.models.db_models import AgentModel, PlatformUserModel, TenantMembershipModel, TenantModel
 from app.routes.eval import router as eval_router
 
@@ -21,6 +21,7 @@ def _auth_headers(user_id: str, tenant_id: str) -> dict[str, str]:
 
 @pytest.mark.asyncio
 async def test_eval_run_http_e2e(monkeypatch):
+    await engine.dispose()
     await init_db()
 
     tenant_id = uuid.uuid4()

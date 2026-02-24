@@ -2,7 +2,7 @@ import pytest
 from uuid import UUID, uuid4
 
 from app.core.auth import AuthPrincipal
-from app.db import AsyncSessionLocal, init_db
+from app.db import AsyncSessionLocal, engine, init_db
 from sqlalchemy import select
 
 from app.models.db_models import (
@@ -26,6 +26,7 @@ from app.routes.eval import (
 
 @pytest.mark.asyncio
 async def test_create_eval_dataset_contract():
+    await engine.dispose()
     await init_db()
 
     tenant_id = uuid4()
@@ -65,6 +66,7 @@ async def test_create_eval_dataset_contract():
 
 @pytest.mark.asyncio
 async def test_create_eval_run_executes_cases_and_persists_results(monkeypatch):
+    await engine.dispose()
     await init_db()
 
     tenant_id = uuid4()
