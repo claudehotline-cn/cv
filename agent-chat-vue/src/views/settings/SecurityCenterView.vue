@@ -65,6 +65,9 @@
         <el-button size="large" @click="go('/settings/secrets')" class="action-btn">
           <span class="action-btn-text">Secrets Vault</span>
         </el-button>
+        <el-button size="large" @click="go('/settings/cache-metrics')" class="action-btn">
+          <span class="action-btn-text">Cache Metrics</span>
+        </el-button>
         <el-button size="large" @click="go('/audit/security')" class="action-btn">
           <span class="action-btn-text">Security Audit</span>
         </el-button>

@@ -7,8 +7,21 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.types import UserDefinedType
 
 from ..db import Base
+
+
+class Vector(UserDefinedType):
+    cache_ok = True
+
+    def __init__(self, dimensions: int) -> None:
+        self.dimensions = dimensions
+
+    def get_col_spec(self, **kwargs) -> str:
+        _ = kwargs
+        return f"vector({self.dimensions})"
+
 
 class AgentModel(Base):
     __tablename__ = "agents"
@@ -507,6 +520,45 @@ class EvalResultModel(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TenantGuardrailPolicyModel(Base):
+    __tablename__ = "tenant_guardrail_policies"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="monitor")
+    config: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class GuardrailEventModel(Base):
+    __tablename__ = "guardrail_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    request_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("agent_runs.request_id"), nullable=True, index=True)
+    direction: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SemanticCacheEntryModel(Base):
+    __tablename__ = "semantic_cache_entries"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(String(100), nullable=False, default="default")
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response: Mapped[str] = mapped_column(Text, nullable=False)
+    cache_metadata: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default={})
+    embedding: Mapped[Optional[Any]] = mapped_column(Vector(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 Index("idx_auth_audit_event_time", AuthAuditEventModel.event_time.desc())

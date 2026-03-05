@@ -123,6 +123,45 @@ export interface AuthAuditOverview {
     top_failure_reasons: Record<string, number>
 }
 
+export interface GuardrailPolicyResponse {
+    tenant_id: string
+    enabled: boolean
+    mode: 'monitor' | 'enforce' | string
+    config: Record<string, any>
+    created_at?: string
+    updated_at?: string
+}
+
+export interface CacheStatsResponse {
+    tenant_id: string
+    total_entries: number
+    total_hits: number
+}
+
+export interface CacheEntryItem {
+    id: string
+    tenant_id: string
+    namespace: string
+    prompt_hash: string
+    response: string
+    metadata: Record<string, any>
+    created_at?: string
+    updated_at?: string
+}
+
+export interface CacheEntryListResponse {
+    items: CacheEntryItem[]
+    total: number
+    limit: number
+    offset: number
+}
+
+export interface CacheInvalidateResponse {
+    tenant_id: string
+    namespace?: string | null
+    deleted: number
+}
+
 const ACTIVE_TENANT_KEY = 'auth.activeTenantId'
 
 function readAccessToken(): string {
@@ -493,6 +532,28 @@ class ApiClient {
 
     async getMyQuota(): Promise<QuotaResponse> {
         return this.http.get('/quota/me')
+    }
+
+    async getMyGuardrails(): Promise<GuardrailPolicyResponse> {
+        return this.http.get('/guardrails/me')
+    }
+
+    async getCacheStatsMe(): Promise<CacheStatsResponse> {
+        return this.http.get('/cache/me/stats')
+    }
+
+    async listTenantCacheEntries(
+        tenantId: string,
+        params?: { limit?: number; offset?: number; namespace?: string }
+    ): Promise<CacheEntryListResponse> {
+        return this.http.get(`/admin/tenants/${tenantId}/cache/entries`, { params })
+    }
+
+    async invalidateTenantCache(
+        tenantId: string,
+        payload?: { namespace?: string }
+    ): Promise<CacheInvalidateResponse> {
+        return this.http.post(`/admin/tenants/${tenantId}/cache/invalidate`, payload || {})
     }
 
     async getTenantLimits(tenantId: string): Promise<LimitsResponse> {

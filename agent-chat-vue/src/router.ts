@@ -137,6 +137,11 @@ const router = createRouter({
                     component: () => import('./views/settings/SecurityCenterView.vue'),
                 },
                 {
+                    path: 'cache-metrics',
+                    name: 'SettingsCacheMetrics',
+                    component: () => import('./views/settings/CacheMetricsView.vue'),
+                },
+                {
                     path: 'tenant',
                     name: 'SettingsTenant',
                     component: () => import('./views/settings/TenantMembersView.vue'),

@@ -1,17 +1,17 @@
 from functools import lru_cache
 from typing import Dict, Optional
 
-from pydantic import Field, ConfigDict
-from pydantic_settings import BaseSettings
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Runtime configuration for Agent Core."""
     
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False
+        case_sensitive=False,
     )
 
     # LLM / provider settings
@@ -62,6 +62,50 @@ class Settings(BaseSettings):
         default="redis://redis:6379",
         description="Redis Connection URL",
         alias="REDIS_URL",
+    )
+
+    # Observability / Telemetry Settings
+    otel_enabled: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry metrics/tracing",
+        alias="OTEL_ENABLED",
+    )
+    otel_exporter_otlp_endpoint: str = Field(
+        default="http://jaeger:4317",
+        description="OTLP exporter endpoint",
+        alias="OTEL_EXPORTER_OTLP_ENDPOINT",
+    )
+    otel_service_name: str = Field(
+        default="agent-platform",
+        description="Service name used for OTel resource",
+        alias="OTEL_SERVICE_NAME",
+    )
+    otel_sample_rate: float = Field(
+        default=1.0,
+        description="Trace sampling ratio between 0 and 1",
+        alias="OTEL_SAMPLE_RATE",
+    )
+    otel_fail_mode: str = Field(
+        default="open",
+        description="OTel failure behavior: open | closed",
+        alias="OTEL_FAIL_MODE",
+    )
+
+    # Semantic Cache Settings
+    semantic_cache_enabled: bool = Field(
+        default=True,
+        description="Enable semantic cache adapter",
+        alias="SEMANTIC_CACHE_ENABLED",
+    )
+    semantic_cache_similarity_threshold: float = Field(
+        default=0.35,
+        description="Maximum pgvector cosine distance for semantic cache hit",
+        alias="SEMANTIC_CACHE_SIMILARITY_THRESHOLD",
+    )
+    semantic_cache_ttl_seconds: int = Field(
+        default=3600,
+        description="TTL for semantic cache entries",
+        alias="SEMANTIC_CACHE_TTL_SECONDS",
     )
 
     # Task Queue Settings

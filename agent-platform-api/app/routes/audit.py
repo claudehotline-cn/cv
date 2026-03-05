@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, String, func, or_, and_
 
 from ..db import get_db
-from ..models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel, AuthAuditEventModel, SessionModel
+from ..models.db_models import AgentRunModel, AuditEventModel, AgentSpanModel, AuthAuditEventModel, GuardrailEventModel, SessionModel
 from ..core.auth import AuthPrincipal, get_current_user, require_admin
 
 router = APIRouter(prefix="/audit", tags=["audit"])
@@ -100,6 +100,24 @@ class AuthAuditOverviewResponse(BaseModel):
     unique_user_count: int
     unique_ip_count: int
     top_failure_reasons: Dict[str, int]
+
+
+class GuardrailAuditEventView(BaseModel):
+    id: str
+    tenant_id: str
+    request_id: Optional[str]
+    direction: str
+    action: str
+    reason_code: Optional[str]
+    payload: Dict[str, Any]
+    created_at: datetime
+
+
+class PaginatedGuardrailAuditResponse(BaseModel):
+    items: List[GuardrailAuditEventView]
+    total: int
+    limit: int
+    offset: int
 
 
 LLM_EVENT_TYPES = {"llm_called", "llm_output_received", "llm_failed"}
@@ -284,6 +302,29 @@ def _parse_float(v: Any) -> float:
         return 0.0
 
 
+def _normalize_tenant_id_query_or_400(tenant_id: str) -> str:
+    raw = (tenant_id or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Invalid tenant_id")
+    try:
+        return str(UUID(raw))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid tenant_id") from exc
+
+
+def _resolve_guardrail_tenant_scope_or_403(user: AuthPrincipal, tenant_id: Optional[str]) -> str:
+    current_tenant_id = str(UUID(_tenant_id_or_401(user)))
+
+    if tenant_id is None:
+        return current_tenant_id
+
+    requested_tenant_id = _normalize_tenant_id_query_or_400(tenant_id)
+    if requested_tenant_id != current_tenant_id:
+        raise HTTPException(status_code=403, detail="Cross-tenant query is not allowed")
+
+    return requested_tenant_id
+
+
 @router.get("/auth/events", response_model=PaginatedAuthAuditResponse)
 async def list_auth_audit_events(
     limit: int = 50,
@@ -344,6 +385,52 @@ async def list_auth_audit_events(
     ]
 
     return PaginatedAuthAuditResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/guardrails")
+async def list_guardrail_audit_events(
+    limit: int = 50,
+    offset: int = 0,
+    tenant_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+    action: Optional[str] = None,
+    reason: Optional[str] = None,
+    user: AuthPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    scoped_tenant_id = _resolve_guardrail_tenant_scope_or_403(user, tenant_id)
+
+    stmt = select(GuardrailEventModel).where(GuardrailEventModel.tenant_id.cast(String) == scoped_tenant_id)
+    if request_id:
+        stmt = stmt.where(GuardrailEventModel.request_id.cast(String) == request_id)
+    if action:
+        stmt = stmt.where(GuardrailEventModel.action == action)
+    if reason:
+        stmt = stmt.where(GuardrailEventModel.reason_code.ilike(f"%{reason}%"))
+
+    total_stmt = select(func.count()).select_from(stmt.subquery())
+    total_res = await db.execute(total_stmt)
+    total = int(total_res.scalar_one() or 0)
+
+    rows_stmt = stmt.order_by(desc(GuardrailEventModel.created_at)).limit(limit).offset(offset)
+    rows_res = await db.execute(rows_stmt)
+    rows = rows_res.scalars().all()
+
+    items = [
+        GuardrailAuditEventView(
+            id=str(row.id),
+            tenant_id=str(row.tenant_id),
+            request_id=str(row.request_id) if row.request_id else None,
+            direction=row.direction,
+            action=row.action,
+            reason_code=row.reason_code,
+            payload=row.payload or {},
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+    return PaginatedGuardrailAuditResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/auth/overview", response_model=AuthAuditOverviewResponse)

@@ -1,0 +1,11 @@
+{
+  "include": [
+    "app",
+    "test"
+  ],
+  "extraPaths": [
+    ".",
+    "../agent-core"
+  ],
+  "reportMissingImports": "error"
+}

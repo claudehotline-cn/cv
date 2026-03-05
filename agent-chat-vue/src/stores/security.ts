@@ -2,6 +2,8 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import apiClient, {
   type AuthAuditOverview,
+  type CacheEntryItem,
+  type CacheStatsResponse,
   type LimitsResponse,
   type PaginatedAuthAuditResponse,
   type QuotaResponse,
@@ -18,6 +20,10 @@ export const useSecurityStore = defineStore('security', () => {
   const secrets = ref<SecretItem[]>([])
   const authAudit = ref<PaginatedAuthAuditResponse | null>(null)
   const authAuditOverview = ref<AuthAuditOverview | null>(null)
+  const cacheStats = ref<CacheStatsResponse | null>(null)
+  const cacheEntries = ref<CacheEntryItem[]>([])
+  const cacheLoading = ref(false)
+  const cacheError = ref<string>('')
 
   const hasQuotaPressure = computed(() => {
     if (!quota.value || quota.value.monthly_token_quota <= 0) return false
@@ -112,6 +118,56 @@ export const useSecurityStore = defineStore('security', () => {
     }
   }
 
+  async function loadCacheStats() {
+    cacheLoading.value = true
+    cacheError.value = ''
+    try {
+      cacheStats.value = await apiClient.getCacheStatsMe()
+    } catch (e: any) {
+      cacheError.value = e?.response?.data?.detail || e?.message || 'Failed to load cache stats'
+      throw e
+    } finally {
+      cacheLoading.value = false
+    }
+  }
+
+  async function loadCacheEntries(params: { limit?: number; offset?: number; namespace?: string } = {}) {
+    const auth = useAuthStore()
+    const tenantId = auth.activeTenantId
+    if (!tenantId) throw new Error('No active tenant')
+
+    cacheLoading.value = true
+    cacheError.value = ''
+    try {
+      const res = await apiClient.listTenantCacheEntries(tenantId, params)
+      cacheEntries.value = res.items || []
+    } catch (e: any) {
+      cacheError.value = e?.response?.data?.detail || e?.message || 'Failed to load cache entries'
+      throw e
+    } finally {
+      cacheLoading.value = false
+    }
+  }
+
+  async function invalidateCache(namespace?: string) {
+    const auth = useAuthStore()
+    const tenantId = auth.activeTenantId
+    if (!tenantId) throw new Error('No active tenant')
+
+    cacheLoading.value = true
+    cacheError.value = ''
+    try {
+      const payload = namespace ? { namespace } : undefined
+      await apiClient.invalidateTenantCache(tenantId, payload)
+      await Promise.all([loadCacheStats(), loadCacheEntries({ namespace })])
+    } catch (e: any) {
+      cacheError.value = e?.response?.data?.detail || e?.message || 'Failed to invalidate cache'
+      throw e
+    } finally {
+      cacheLoading.value = false
+    }
+  }
+
   return {
     loading,
     error,
@@ -120,6 +176,10 @@ export const useSecurityStore = defineStore('security', () => {
     secrets,
     authAudit,
     authAuditOverview,
+    cacheStats,
+    cacheEntries,
+    cacheLoading,
+    cacheError,
     hasQuotaPressure,
     loadLimitsAndQuota,
     saveLimits,
@@ -132,5 +192,8 @@ export const useSecurityStore = defineStore('security', () => {
     deleteSecret,
     reencryptTenantSecrets,
     loadSecurityAudit,
+    loadCacheStats,
+    loadCacheEntries,
+    invalidateCache,
   }
 })

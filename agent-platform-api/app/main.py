@@ -10,13 +10,16 @@ logging.getLogger("httpx").setLevel(logging.WARNING)  # Suppress httpx debug noi
 
 from app.db import init_db, AsyncSessionLocal
 from app.core.agent_registry import registry
+from app.composition_root import build_phase2_container
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     print("Agent Platform API Starting...")
     await init_db()
-    
+
+    app.state.phase2 = build_phase2_container()
+
     # Initialize async checkpointer/store for LangGraph
     from agent_core.store import get_async_checkpointer, get_async_store, cleanup_stores
     await get_async_checkpointer()
@@ -46,7 +49,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-from app.routes import agents, sessions, chat, tasks, audit, rag, auth, limits, secrets, agent_versions, prompts, eval
+from app.routes import agents, sessions, chat, tasks, audit, rag, auth, limits, secrets, agent_versions, prompts, eval, guardrails, cache_admin
 
 app.include_router(agents.router)
 app.include_router(agent_versions.router)
@@ -61,6 +64,8 @@ app.include_router(limits.quota_router)
 app.include_router(secrets.router)
 app.include_router(prompts.router)
 app.include_router(eval.router)
+app.include_router(guardrails.router)
+app.include_router(cache_admin.router)
 
 # CORS
 app.add_middleware(
