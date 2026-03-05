@@ -541,7 +541,7 @@ services:
     ipc: host
     command:
       - "--model"
-      - "/data/models/Qwen3-Omni-30B-A3B-Thinking-AWQ-4bit"
+      - "/data/models/Qwen3.5-9B-AWQ-4bit"
       - "--host"
       - "0.0.0.0"
       - "--port"
@@ -553,7 +553,7 @@ services:
       - "--max-model-len"
       - "16384"
       - "--gpu-memory-utilization"
-      - "0.65"
+      - "0.70"
       - "--max-num-seqs"
       - "16"
       - "--kv-cache-dtype"
