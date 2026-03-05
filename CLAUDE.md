@@ -37,6 +37,16 @@ This repository is a multi-service monorepo for Agent Platform, including backen
   - `agent-platform-api/app/core/prompt_resolver.py`
   - `agent-platform-api/app/models/db_models.py`
 - Prompt builtin sync is performed by `agent-platform-api/app/core/agent_registry.py` during startup.
+- Phase2 cache/guardrails API runbook entry points:
+  - `GET /cache/me/stats`
+  - `POST /admin/tenants/{tenant_id}/cache/invalidate`
+  - `GET /guardrails/me`
+
+## Phase2 Runbook Notes
+- Keep docs contract in sync: `agent-platform-api/test/test_phase2_docs_contract.py`.
+- Production readiness updates should be reflected in `docs/production_readiness.md`.
+- Platform/API owns HTTP auth/tenant scope and route contracts; `agent-core` owns reusable runtime settings/ports/adapters.
+- OTel rollout baseline: use `OTEL_ENABLED` with fail-open policy (`OTEL_FAIL_MODE=open`) unless environment requires stricter mode.
 
 ## W3 In-Flight Work
 - Add Prompt A/B and Eval core schema/API flow.

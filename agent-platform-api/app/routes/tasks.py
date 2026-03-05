@@ -3,7 +3,8 @@
 import asyncio
 import json
 import logging
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -27,10 +28,165 @@ from ..core.governance import (
 from ..services.quota_service import QuotaService
 from ..services.secrets_service import SecretsService
 from ..services.secrets_injector import RuntimeSecretInjector
+from ..platform_core.policy import PolicyDecision
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
 _LOGGER = logging.getLogger(__name__)
+
+
+class _NoopSemanticCache:
+    async def lookup(self, _key: Any) -> None:
+        return None
+
+    async def store(self, _key: Any, _value: Any) -> None:
+        return None
+
+
+class _NoopSpan:
+    def __enter__(self) -> "_NoopSpan":
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> bool:
+        return False
+
+
+class _NoopTelemetry:
+    def start_span(self, _name: str, attributes: dict[str, str] | None = None) -> _NoopSpan:
+        _ = attributes
+        return _NoopSpan()
+
+    def increment(self, _name: str, value: int = 1, attributes: dict[str, str] | None = None) -> None:
+        _ = (value, attributes)
+
+
+@dataclass
+class _Phase2ExecuteContext:
+    telemetry: Any
+    semantic_cache: Any
+    pre_input_check: Any = None
+    post_output_check: Any = None
+    cacheable: bool | None = False
+
+
+@dataclass
+class _Phase2Request:
+    tenant_id: str | None
+    namespace: str
+    model_key: str
+    query_text: str
+
+
+async def _run_with_phase2_orchestrator(
+    *,
+    req: Request,
+    user: AuthPrincipal,
+    namespace: str,
+    model_key: str,
+    query_text: str,
+    executor: Callable[[Any], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    phase2 = req.app.state.phase2
+    guardrails = getattr(phase2, "guardrails", None)
+    semantic_cache = getattr(phase2, "semantic_cache", None)
+    telemetry = getattr(phase2, "telemetry", None)
+    request_model = _Phase2Request(
+        tenant_id=user.tenant_id,
+        namespace=namespace,
+        model_key=model_key,
+        query_text=query_text,
+    )
+
+    async def _pre_input_check(request: Any, _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_input(
+            tenant_id=request.tenant_id,
+            text=request.query_text,
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        safe_action = action if action in {"allow", "block", "redact"} else "allow"
+        if safe_action == "block":
+            return PolicyDecision(
+                action="block",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        if safe_action == "redact":
+            return PolicyDecision(
+                action="redact",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        return PolicyDecision(
+            action="allow",
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    async def _post_output_check(request: Any, payload: dict[str, Any], _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_output(
+            tenant_id=request.tenant_id,
+            text=str(payload),
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        safe_action = action if action in {"allow", "block", "redact"} else "allow"
+        if safe_action == "block":
+            return PolicyDecision(
+                action="block",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        if safe_action == "redact":
+            sanitized_text = getattr(decision, "sanitized_text", None)
+            sanitized_payload = None
+            if isinstance(sanitized_text, str):
+                sanitized_payload = dict(payload)
+                if "answer" in sanitized_payload:
+                    sanitized_payload["answer"] = sanitized_text
+                else:
+                    sanitized_payload["content"] = sanitized_text
+            return PolicyDecision(
+                action="redact",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+                sanitized_payload=sanitized_payload,
+            )
+        return PolicyDecision(
+            action="allow",
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    result = await req.app.state.phase2.orchestrator(
+        request_model,
+        _Phase2ExecuteContext(
+            telemetry=telemetry or _NoopTelemetry(),
+            semantic_cache=semantic_cache or _NoopSemanticCache(),
+            pre_input_check=_pre_input_check,
+            post_output_check=_post_output_check,
+        ),
+        executor,
+    )
+    status = result.get("status")
+    if status == "blocked":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "orchestrator_blocked",
+                "reason_code": result.get("reason_code"),
+            },
+        )
+    payload = result.get("payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=500, detail="Invalid orchestrator payload")
+    return payload
 
 
 def _tenant_uuid(user: AuthPrincipal) -> UUID:
@@ -218,25 +374,37 @@ async def create_execute_task(
     )
     
     # 入队 ARQ 任务
-    redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    async def _enqueue_executor(_ctx: Any) -> dict[str, Any]:
+        redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        try:
+            await redis_pool.enqueue_job(
+                "agent_execute_task",
+                str(task.id),
+                str(session_id),
+                agent_key,
+                request.message,
+                exec_config,
+                user.user_id,
+                tenant_id_str,
+                task_thread_id,  # thread_id
+            )
+            return {"enqueued": True}
+        finally:
+            await redis_pool.close()
+
     try:
-        await redis_pool.enqueue_job(
-            "agent_execute_task",
-            str(task.id),
-            str(session_id),
-            agent_key,
-            request.message,
-            exec_config,
-            user.user_id,
-            tenant_id_str,
-            task_thread_id,  # thread_id
+        enqueue_result = await _run_with_phase2_orchestrator(
+            req=req,
+            user=user,
+            namespace="tasks.execute",
+            model_key=agent_key,
+            query_text=request.message,
+            executor=_enqueue_executor,
         )
-        enqueued = True
+        enqueued = bool(enqueue_result.get("enqueued"))
     except Exception:
         await release_execute_concurrency(governance_keys)
         raise
-    finally:
-        await redis_pool.close()
 
     if not enqueued:
         await release_execute_concurrency(governance_keys)
@@ -441,26 +609,38 @@ async def resume_task(
     agent_key = meta.get("agent_key") or "data_agent"
     thread_id = meta.get("thread_id") or str(task_id)
 
-    redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    async def _resume_executor(_ctx: Any) -> dict[str, Any]:
+        redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        try:
+            await redis_pool.enqueue_job(
+                "agent_resume_task",
+                str(task_id),
+                str(task.session_id),
+                agent_key,
+                request.decision,
+                request.feedback,
+                None,  # config
+                user.user_id,
+                tenant_id_str,
+                thread_id,
+            )
+            return {"enqueued": True}
+        finally:
+            await redis_pool.close()
+
     try:
-        await redis_pool.enqueue_job(
-            "agent_resume_task",
-            str(task_id),
-            str(task.session_id),
-            agent_key,
-            request.decision,
-            request.feedback,
-            None,  # config
-            user.user_id,
-            tenant_id_str,
-            thread_id,
+        enqueue_result = await _run_with_phase2_orchestrator(
+            req=req,
+            user=user,
+            namespace="tasks.resume",
+            model_key=agent_key,
+            query_text=f"{request.decision}\n{request.feedback}",
+            executor=_resume_executor,
         )
-        enqueued = True
+        enqueued = bool(enqueue_result.get("enqueued"))
     except Exception:
         await release_execute_concurrency(governance_keys)
         raise
-    finally:
-        await redis_pool.close()
 
     if not enqueued:
         await release_execute_concurrency(governance_keys)

@@ -2,21 +2,180 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 import os
-from typing import Any, Dict
+from typing import Any, Awaitable, Callable, Dict
 from uuid import UUID, uuid4
 
 from arq import ArqRedis
 from arq.connections import RedisSettings
 
 from agent_core.settings import get_settings
+from app.composition_root import build_phase2_container
 from app.core.governance import GovernanceKeys, release_execute_concurrency
 from app.utils.interrupts import extract_interrupt_data
 from app.utils.session_memory import format_recent_messages_for_prompt
+from app.platform_core.policy import PolicyDecision
 
 _LOGGER = logging.getLogger("agent_platform.worker")
 settings = get_settings()
+_phase2_container = build_phase2_container()
+
+
+class _NoopSemanticCache:
+    async def lookup(self, _key: Any) -> None:
+        return None
+
+    async def store(self, _key: Any, _value: Any) -> None:
+        return None
+
+
+class _NoopSpan:
+    def __enter__(self) -> "_NoopSpan":
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> bool:
+        return False
+
+
+class _NoopTelemetry:
+    def start_span(self, _name: str, attributes: dict[str, str] | None = None) -> _NoopSpan:
+        _ = attributes
+        return _NoopSpan()
+
+    def increment(self, _name: str, value: int = 1, attributes: dict[str, str] | None = None) -> None:
+        _ = (value, attributes)
+
+
+@dataclass
+class _Phase2ExecuteContext:
+    telemetry: Any
+    semantic_cache: Any
+    pre_input_check: Any = None
+    post_output_check: Any = None
+    cacheable: bool | None = False
+
+
+@dataclass
+class _Phase2Request:
+    tenant_id: str | None
+    namespace: str
+    model_key: str
+    query_text: str
+
+
+@dataclass
+class _WorkerPhase2State:
+    orchestrator: Any
+
+
+phase2 = _WorkerPhase2State(orchestrator=_phase2_container.orchestrator)
+
+
+async def _run_with_phase2_orchestrator(
+    *,
+    tenant_id: str,
+    namespace: str,
+    model_key: str,
+    query_text: str,
+    executor: Callable[[Any], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    guardrails = getattr(_phase2_container, "guardrails", None)
+    semantic_cache = getattr(_phase2_container, "semantic_cache", None)
+    telemetry = getattr(_phase2_container, "telemetry", None)
+    request_model = _Phase2Request(
+        tenant_id=tenant_id,
+        namespace=namespace,
+        model_key=model_key,
+        query_text=query_text,
+    )
+
+    async def _pre_input_check(request: Any, _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_input(
+            tenant_id=request.tenant_id,
+            text=request.query_text,
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        safe_action = action if action in {"allow", "block", "redact"} else "allow"
+        if safe_action == "block":
+            return PolicyDecision(
+                action="block",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        if safe_action == "redact":
+            return PolicyDecision(
+                action="redact",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        return PolicyDecision(
+            action="allow",
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    async def _post_output_check(request: Any, payload: dict[str, Any], _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_output(
+            tenant_id=request.tenant_id,
+            text=str(payload),
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        safe_action = action if action in {"allow", "block", "redact"} else "allow"
+        if safe_action == "block":
+            return PolicyDecision(
+                action="block",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        if safe_action == "redact":
+            sanitized_text = getattr(decision, "sanitized_text", None)
+            sanitized_payload = None
+            if isinstance(sanitized_text, str):
+                sanitized_payload = dict(payload)
+                if "answer" in sanitized_payload:
+                    sanitized_payload["answer"] = sanitized_text
+                else:
+                    sanitized_payload["content"] = sanitized_text
+            return PolicyDecision(
+                action="redact",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+                sanitized_payload=sanitized_payload,
+            )
+        return PolicyDecision(
+            action="allow",
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    result = await phase2.orchestrator(
+        request_model,
+        _Phase2ExecuteContext(
+            telemetry=telemetry or _NoopTelemetry(),
+            semantic_cache=semantic_cache or _NoopSemanticCache(),
+            pre_input_check=_pre_input_check,
+            post_output_check=_post_output_check,
+        ),
+        executor,
+    )
+    status = result.get("status")
+    if status == "blocked":
+        raise RuntimeError(f"Orchestrator blocked request: reason_code={result.get('reason_code')}")
+    payload = result.get("payload")
+    if not isinstance(payload, dict):
+        raise RuntimeError("Invalid orchestrator payload")
+    return payload
+
 
 print("DEBUG: [Worker] Module app.worker imported", flush=True)
 try:
@@ -145,8 +304,7 @@ async def agent_execute_task(
                 return {"cancelled": True}
             
             # 执行 Agent（内部流式，仅用于驱动进度，不向前端输出 chunk）
-            progress = 20
-            
+
             # Inject task_id and user_id into config
             config = config or {}
             config["audit_emitter"] = audit_emitter
@@ -219,31 +377,44 @@ async def agent_execute_task(
                 )
             messages.append({"role": "user", "content": input_message})
 
-            async for _chunk in graph.astream(
-                {"messages": messages},
-                config=config
-            ):
-                # 更新进度（简单递增，最多到 90）
-                new_progress = min(90, progress + 5)
-                if new_progress != progress:
-                    progress = new_progress
-                    await task_service.update_progress(UUID(task_id), progress, "执行中...")
-                    await emit_task_event(
-                        "task_progress",
-                        {"status": "running", "progress": progress, "message": "执行中..."},
-                    )
-                    await emit_job_event("job_progress", {"progress": progress, "message": "执行中..."})
-                
-                # 检查取消
-                if await task_service.is_cancel_requested(UUID(task_id)):
-                    await task_service.update_status(
-                        UUID(task_id), 
-                        status="cancelled",
-                        completed_at=datetime.utcnow()
-                    )
-                    await emit_task_event("task_cancelled", {"status": "cancelled", "progress": 100, "message": "已取消"})
-                    await emit_job_event("job_cancelled", {"reason": "user_requested"})
-                    return {"cancelled": True}
+            async def _execute_stream(_ctx: Any) -> dict[str, Any]:
+                progress = 20
+                async for _chunk in graph.astream(
+                    {"messages": messages},
+                    config=config
+                ):
+                    # 更新进度（简单递增，最多到 90）
+                    new_progress = min(90, progress + 5)
+                    if new_progress != progress:
+                        progress = new_progress
+                        await task_service.update_progress(UUID(task_id), progress, "执行中...")
+                        await emit_task_event(
+                            "task_progress",
+                            {"status": "running", "progress": progress, "message": "执行中..."},
+                        )
+                        await emit_job_event("job_progress", {"progress": progress, "message": "执行中..."})
+
+                    # 检查取消
+                    if await task_service.is_cancel_requested(UUID(task_id)):
+                        await task_service.update_status(
+                            UUID(task_id),
+                            status="cancelled",
+                            completed_at=datetime.utcnow()
+                        )
+                        await emit_task_event("task_cancelled", {"status": "cancelled", "progress": 100, "message": "已取消"})
+                        await emit_job_event("job_cancelled", {"reason": "user_requested"})
+                        return {"cancelled": True}
+                return {"cancelled": False}
+
+            stream_result = await _run_with_phase2_orchestrator(
+                tenant_id=tenant_id,
+                namespace="worker.execute",
+                model_key=agent_key,
+                query_text=input_message,
+                executor=_execute_stream,
+            )
+            if bool(stream_result.get("cancelled")):
+                return {"cancelled": True}
 
             # HITL: check if execution ended due to an interrupt (waiting for approval)
             interrupt_data = None
@@ -482,19 +653,31 @@ async def agent_resume_task(
                 resume=[{"type": decision, "message": feedback}],
             )
 
-            async for _chunk in graph.astream(resume_input, config=config):
-                if await task_service.is_cancel_requested(UUID(task_id)):
-                    await task_service.update_status(
-                        UUID(task_id),
-                        status="cancelled",
-                        completed_at=datetime.utcnow(),
-                    )
-                    await emit_task_event(
-                        "task_cancelled",
-                        {"status": "cancelled", "progress": 100, "message": "已取消"},
-                    )
-                    await emit_job_event("job_cancelled", {"reason": "user_requested"})
-                    return {"cancelled": True}
+            async def _resume_stream(_ctx: Any) -> dict[str, Any]:
+                async for _chunk in graph.astream(resume_input, config=config):
+                    if await task_service.is_cancel_requested(UUID(task_id)):
+                        await task_service.update_status(
+                            UUID(task_id),
+                            status="cancelled",
+                            completed_at=datetime.utcnow(),
+                        )
+                        await emit_task_event(
+                            "task_cancelled",
+                            {"status": "cancelled", "progress": 100, "message": "已取消"},
+                        )
+                        await emit_job_event("job_cancelled", {"reason": "user_requested"})
+                        return {"cancelled": True}
+                return {"cancelled": False}
+
+            resume_result = await _run_with_phase2_orchestrator(
+                tenant_id=tenant_id,
+                namespace="worker.resume",
+                model_key=agent_key,
+                query_text=f"{decision}\n{feedback}",
+                executor=_resume_stream,
+            )
+            if bool(resume_result.get("cancelled")):
+                return {"cancelled": True}
 
             interrupt_data = None
             try:

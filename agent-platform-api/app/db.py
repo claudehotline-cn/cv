@@ -29,6 +29,7 @@ async def get_db():
 
 async def init_db():
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
 
         # Lightweight schema migration for auth ownership FK model.
@@ -248,6 +249,56 @@ async def init_db():
             )
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_prompt_ab_tests_template_id ON prompt_ab_tests(template_id)"))
+
+        # --- Phase2 Guardrails + Semantic Cache ---
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenant_guardrail_policies (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL UNIQUE,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                mode VARCHAR(20) NOT NULL DEFAULT 'monitor',
+                config JSONB NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_tenant_guardrail_policies_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS guardrail_events (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                request_id UUID,
+                direction VARCHAR(20) NOT NULL,
+                action VARCHAR(20) NOT NULL,
+                reason_code VARCHAR(100),
+                payload JSONB NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_guardrail_events_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+                CONSTRAINT fk_guardrail_events_request FOREIGN KEY (request_id) REFERENCES agent_runs(request_id)
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS semantic_cache_entries (
+                id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                namespace VARCHAR(100) NOT NULL DEFAULT 'default',
+                prompt_hash VARCHAR(64) NOT NULL,
+                response TEXT NOT NULL,
+                metadata JSONB NOT NULL DEFAULT '{}',
+                embedding vector(1024),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT fk_semantic_cache_entries_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+            )
+        """))
+
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_guardrail_events_tenant_id ON guardrail_events(tenant_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_guardrail_events_request_id ON guardrail_events(request_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_guardrail_events_created_at ON guardrail_events(created_at DESC)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_semantic_cache_entries_lookup ON semantic_cache_entries(tenant_id, namespace, prompt_hash)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_semantic_cache_entries_embedding ON semantic_cache_entries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"))
 
         # --- Eval Core ---
         await conn.execute(text("""

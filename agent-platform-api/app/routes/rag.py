@@ -3,7 +3,8 @@ import os
 import uuid
 import asyncio
 import json
-from typing import Any, Dict, Optional, Literal
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, Optional, Literal, cast
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Body
@@ -21,6 +22,7 @@ from ..services.quota_service import QuotaService
 from ..services.secrets_service import SecretsService
 from ..services.secrets_injector import RuntimeSecretInjector
 from ..db import AsyncSessionLocal
+from ..platform_core.policy import PolicyDecision
 
 
 def _is_strict_auth_mode() -> bool:
@@ -210,6 +212,148 @@ router = APIRouter(
 )
 
 
+class _NoopSemanticCache:
+    async def lookup(self, _key: Any) -> None:
+        return None
+
+    async def store(self, _key: Any, _value: Any) -> None:
+        return None
+
+
+class _NoopSpan:
+    def __enter__(self) -> "_NoopSpan":
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> bool:
+        return False
+
+
+class _NoopTelemetry:
+    def start_span(self, _name: str, attributes: dict[str, str] | None = None) -> _NoopSpan:
+        _ = attributes
+        return _NoopSpan()
+
+    def increment(self, _name: str, value: int = 1, attributes: dict[str, str] | None = None) -> None:
+        _ = (value, attributes)
+
+
+@dataclass
+class _Phase2ExecuteContext:
+    telemetry: Any
+    semantic_cache: Any
+    pre_input_check: Any = None
+    post_output_check: Any = None
+    cacheable: bool | None = False
+
+
+@dataclass
+class _Phase2Request:
+    tenant_id: str | None
+    namespace: str
+    model_key: str
+    query_text: str
+
+
+async def _run_with_phase2_orchestrator(
+    *,
+    req: Request,
+    namespace: str,
+    model_key: str,
+    query_text: str,
+    executor: Callable[[Any], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    phase2 = req.app.state.phase2
+    guardrails = getattr(phase2, "guardrails", None)
+    semantic_cache = getattr(phase2, "semantic_cache", None)
+    telemetry = getattr(phase2, "telemetry", None)
+    tenant_id = (_dev_user_ctx(req).get("tenant_id") or settings.auth_default_tenant_id)
+    request_model = _Phase2Request(
+        tenant_id=tenant_id,
+        namespace=namespace,
+        model_key=model_key,
+        query_text=query_text,
+    )
+
+    async def _pre_input_check(request: Any, _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_input(
+            tenant_id=request.tenant_id,
+            text=request.query_text,
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        safe_action = action if action in {"allow", "block", "redact"} else "allow"
+        return PolicyDecision(
+            action=cast(Literal["allow", "block", "redact"], safe_action),
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    async def _post_output_check(request: Any, payload: dict[str, Any], _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_output(
+            tenant_id=request.tenant_id,
+            text=str(payload),
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        safe_action = action if action in {"allow", "block", "redact"} else "allow"
+        if safe_action == "block":
+            return PolicyDecision(
+                action="block",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        if safe_action == "redact":
+            sanitized_text = getattr(decision, "sanitized_text", None)
+            sanitized_payload = None
+            if isinstance(sanitized_text, str):
+                sanitized_payload = dict(payload)
+                if "answer" in sanitized_payload:
+                    sanitized_payload["answer"] = sanitized_text
+                else:
+                    sanitized_payload["content"] = sanitized_text
+            return PolicyDecision(
+                action="redact",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+                sanitized_payload=sanitized_payload,
+            )
+        return PolicyDecision(
+            action="allow",
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    result = await req.app.state.phase2.orchestrator(
+        request_model,
+        _Phase2ExecuteContext(
+            telemetry=telemetry or _NoopTelemetry(),
+            semantic_cache=semantic_cache or _NoopSemanticCache(),
+            pre_input_check=_pre_input_check,
+            post_output_check=_post_output_check,
+        ),
+        executor,
+    )
+    status = result.get("status")
+    if status == "blocked":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "orchestrator_blocked",
+                "reason_code": result.get("reason_code"),
+            },
+        )
+    payload = result.get("payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=500, detail="Invalid orchestrator payload")
+    return payload
+
+
 def _request_id(req: Request) -> str:
     raw = (req.headers.get("X-Request-Id") or "").strip()
     if raw:
@@ -258,43 +402,62 @@ async def _proxy_json(
     json_body: Any = None,
     params: Optional[Dict[str, Any]] = None,
 ):
-    url = _rag_base_url() + path
-    ctx = _dev_user_ctx(req)
-    body = json_body
-    if isinstance(json_body, dict) and "secret_refs" in json_body:
-        refs = json_body.get("secret_refs")
-        body = dict(json_body)
-        body.pop("secret_refs", None)
-        if isinstance(refs, list) and refs:
-            tenant_id = str(ctx.get("tenant_id") or "")
-            user_id = str(ctx.get("user_id") or "")
-            if tenant_id and user_id:
-                async with AsyncSessionLocal() as db:
-                    injector = RuntimeSecretInjector(SecretsService(db))
-                    resolved = await injector.resolve(
-                        tenant_id=tenant_id,
-                        user_id=user_id,
-                        secret_refs=refs,
-                    )
-                    body = injector.inject(runtime_config=body, resolved=resolved)
+    async def _executor(_ctx: Any) -> dict[str, Any]:
+        url = _rag_base_url() + path
+        ctx = _dev_user_ctx(req)
+        body = json_body
+        if isinstance(json_body, dict) and "secret_refs" in json_body:
+            refs = json_body.get("secret_refs")
+            body = dict(json_body)
+            body.pop("secret_refs", None)
+            if isinstance(refs, list) and refs:
+                tenant_id = str(ctx.get("tenant_id") or "")
+                user_id = str(ctx.get("user_id") or "")
+                if tenant_id and user_id:
+                    async with AsyncSessionLocal() as db:
+                        injector = RuntimeSecretInjector(SecretsService(db))
+                        resolved = await injector.resolve(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            secret_refs=refs,
+                        )
+                        body = injector.inject(runtime_config=body, resolved=resolved)
 
-    headers: Dict[str, str] = {}
-    auth_header = (req.headers.get("Authorization") or "").strip()
-    if auth_header:
-        headers["Authorization"] = auth_header
-    if request_id:
-        headers["X-Request-Id"] = request_id
-    headers["X-User-Id"] = ctx.get("user_id", "anonymous")
-    headers["X-User-Role"] = ctx.get("role", "user")
-    headers["X-Tenant-Id"] = ctx.get("tenant_id") or settings.auth_default_tenant_id
-    if ctx.get("tenant_role"):
-        headers["X-Tenant-Role"] = ctx["tenant_role"]
+        headers: Dict[str, str] = {}
+        auth_header = (req.headers.get("Authorization") or "").strip()
+        if auth_header:
+            headers["Authorization"] = auth_header
+        if request_id:
+            headers["X-Request-Id"] = request_id
+        headers["X-User-Id"] = ctx.get("user_id", "anonymous")
+        headers["X-User-Role"] = ctx.get("role", "user")
+        headers["X-Tenant-Id"] = ctx.get("tenant_id") or settings.auth_default_tenant_id
+        if ctx.get("tenant_role"):
+            headers["X-Tenant-Role"] = ctx["tenant_role"]
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.request(method, url, json=body, params=params, headers=headers)
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.request(method, url, json=body, params=params, headers=headers)
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            response_json = r.json()
+            return {"__raw__": response_json}
+
+    out = await _run_with_phase2_orchestrator(
+        req=req,
+        namespace="rag.proxy",
+        model_key=f"{method}:{path}",
+        query_text=json.dumps(json_body, ensure_ascii=False, default=str)
+        if json_body is not None
+        else json.dumps(params or {}, ensure_ascii=False, default=str),
+        executor=_executor,
+    )
+    if isinstance(out, dict):
+        if len(out) == 1 and "__raw__" in out:
+            return out["__raw__"]
+        out_copy = dict(out)
+        out_copy.pop("__raw__", None)
+        return out_copy
+    return out
 
 
 async def _proxy_multipart(
@@ -564,8 +727,32 @@ async def upload_document(req: Request, kb_id: int, file: UploadFile = File(...)
         span_id=rid,
         payload={"action": "doc_upload", "kb_id": kb_id, "filename": file.filename, "queue": "rag:queue"},
     )
+    async def _executor(_ctx: Any) -> dict[str, Any]:
+        out = await _proxy_multipart(
+            path=f"/api/knowledge-bases/{kb_id}/documents/upload",
+            req=req,
+            request_id=rid,
+            file=file,
+        )
+        return {"__raw__": out}
+
     try:
-        out = await _proxy_multipart(path=f"/api/knowledge-bases/{kb_id}/documents/upload", req=req, request_id=rid, file=file)
+        orchestrated = await _run_with_phase2_orchestrator(
+            req=req,
+            namespace="rag.proxy",
+            model_key=f"POST:/api/knowledge-bases/{kb_id}/documents/upload",
+            query_text=file.filename or "upload",
+            executor=_executor,
+        )
+        if isinstance(orchestrated, dict):
+            if len(orchestrated) == 1 and "__raw__" in orchestrated:
+                out = orchestrated["__raw__"]
+            else:
+                out_copy = dict(orchestrated)
+                out_copy.pop("__raw__", None)
+                out = out_copy
+        else:
+            out = orchestrated
     except Exception as e:
         await _emit_audit(
             req=req,

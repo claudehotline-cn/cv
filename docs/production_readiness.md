@@ -1,6 +1,8 @@
 # 企业级 Agent 平台：生产就绪方案
 
-基于对当前 `agent-platform` 架构的分析，为了解决可观测性、权限管理、人在回路（HITL）及稳定性等挑战，我们制定了以下综合技术方案。
+基于对当前 `agent-platform` 架构的分析，为解决可观测性、权限管理、人在回路（HITL）及稳定性等挑战，本文整理了 Phase2 相关方案与运行要点。
+
+> 说明：当前落地口径以第 5 节「Phase2 运维 Runbook（Cache / Guardrails / OTel）」为准。
 
 ## 1. 架构概览 (增强版)
 
@@ -100,7 +102,9 @@ sequenceDiagram
 
 ### B. 人在回路 (HITL)
 
-*...（保持不变）...*
+- 目标：将敏感工具调用纳入可审批流程，降低高风险操作误触发。
+- 机制：基于中间件拦截高风险 Tool Call，并通过审批后再恢复执行。
+- 落地口径：涉及上线参数与接口操作时，以第 5 节 Runbook 为准。
 
 ### C. 深度可观测性 (Deep Observability)
 
@@ -175,7 +179,7 @@ sequenceDiagram
     - Agent 内部细粒度发布 `agent:progress` 事件 (Step 1/10)。
     -后端 API 层 (SSE Gateway) 订阅此频道，并实时推送给前端。
 
-## 4. 实施路线图
+## 4. 实施路线图（历史规划归档，非当前状态）
 
 ### 第一阶段：安全与审计 (第1周)
 - [ ] 在 `agent_core` 中实现 `PolicyMiddleware`。
@@ -195,7 +199,7 @@ sequenceDiagram
 
 ## 4. 架构设计的 SOLID 原则分析
 
-本方案严格遵循 SOLID 软件设计原则，以确保系统的可扩展性与可维护性：
+本方案参考 SOLID 软件设计原则对架构进行拆分与约束；相关条目用于说明设计意图，不代表全部能力已在当前版本完整落地：
 
 ### 单一职责原则 (SRP)
 - **设计体现**: 将安全 (`PolicyMiddleware`)、控制 (`SensitiveToolMiddleware`) 和 观测 (`TokenCostCallback`) 拆分为独立的中间件或回调。
@@ -216,3 +220,53 @@ sequenceDiagram
 ### 依赖倒置原则 (DIP)
 - **设计体现**: 上层 Agent 业务逻辑不直接依赖底层实现（如 OpenAI 或 Postgres），而是依赖于抽象接口（`BaseChatModel`, `AsyncSaver`）。
 - **收益**: 通过依赖注入（如在 `graph.py` 中注入 `model` 和 `checkpointer`），实现了纯离线的单元测试能力，彻底解耦了基础设施与业务逻辑。
+
+## 5. Phase2 运维 Runbook（Cache / Guardrails / OTel）
+
+### 5.1 配置基线（上线前）
+- OpenTelemetry 开关：`OTEL_ENABLED=true`（先在灰度环境开启）。
+- 导出端点：`OTEL_EXPORTER_OTLP_ENDPOINT` 指向可用 Collector/Jaeger OTLP 入口。
+- 服务名与采样率：`OTEL_SERVICE_NAME`、`OTEL_SAMPLE_RATE` 与环境标准一致。
+- 故障策略：推荐 `OTEL_FAIL_MODE=open`，避免观测后端故障影响主链路。
+- Cache 开关：`SEMANTIC_CACHE_ENABLED=true`，并核对 `SEMANTIC_CACHE_SIMILARITY_THRESHOLD`、`SEMANTIC_CACHE_TTL_SECONDS`。
+
+### 5.2 Phase2 关键接口与职责
+- 租户自助缓存观测：`GET /cache/me/stats`（当前租户缓存条目数与命中数）。
+- 平台管理员缓存清理：`POST /admin/tenants/{tenant_id}/cache/invalidate`（按租户/可选 namespace 失效）。
+- 租户自助护栏查看：`GET /guardrails/me`（当前租户护栏策略快照）。
+- 平台管理员护栏配置：`GET/PUT /admin/tenants/{tenant_id}/guardrails`。
+
+### 5.3 Smoke 检查（最小命令集）
+```bash
+export API="http://localhost:18111"
+export USER_ID="u-demo"
+export TENANT_ID="00000000-0000-0000-0000-000000000001"
+
+# 1) Cache 观测
+curl -fsS "$API/cache/me/stats" \
+  -H "X-User-Id: $USER_ID" \
+  -H "X-User-Role: admin" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  -H "X-Tenant-Role: owner"
+
+# 2) Cache 失效（全租户）
+curl -fsS -X POST "$API/admin/tenants/$TENANT_ID/cache/invalidate" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: $USER_ID" \
+  -H "X-User-Role: admin" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  -H "X-Tenant-Role: owner" \
+  -d '{}'
+
+# 3) Guardrails 快照
+curl -fsS "$API/guardrails/me" \
+  -H "X-User-Id: $USER_ID" \
+  -H "X-User-Role: admin" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  -H "X-Tenant-Role: owner"
+```
+
+### 5.4 回滚/降级建议
+- OTel exporter 不可用：保持 `OTEL_ENABLED=true`，优先使用 `OTEL_FAIL_MODE=open` 降级为“观测失败不阻断请求”。
+- Guardrails 误杀排障：将租户策略 `mode` 调整为 `monitor`（必要时临时 `enabled=false`）后复测。
+- Cache 质量异常：先查看 `/cache/me/stats` 命中变化，再按 namespace 执行失效并观察恢复曲线。

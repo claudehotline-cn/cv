@@ -1,30 +1,184 @@
 import json
 import logging
-import traceback
-from typing import AsyncGenerator
+from dataclasses import dataclass
+from typing import Any, AsyncGenerator, Awaitable, Callable
 from fastapi import APIRouter, Depends, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from uuid import UUID
 
 from ..db import get_db
-from ..models.db_models import SessionModel, AgentModel, AgentVersionModel
+from ..models.db_models import SessionModel, AgentVersionModel
 from ..core.agent_registry import registry
 from ..utils.stream_parser import QwenStreamParser
-from langchain_core.messages import HumanMessage, ToolMessage
-from agent_core.events import RedisEventBus, AuditEmitter
-from agent_core.settings import get_settings
+from langchain_core.messages import HumanMessage
+from agent_core.events import AuditEmitter
 from agent_core.audit import AuditCallbackHandler
 from ..utils.interrupts import extract_interrupt_data
 from ..utils.session_memory import extract_recent_messages
 from ..core.auth import AuthPrincipal, get_current_user
+from ..platform_core.policy import PolicyDecision
+from ..services.tenant_shadow_service import TenantShadowService
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
 _LOGGER = logging.getLogger(__name__)
 
-async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[str, None]:
+
+class _NoopSemanticCache:
+    async def lookup(self, _key: Any) -> None:
+        return None
+
+    async def store(self, _key: Any, _value: Any) -> None:
+        return None
+
+
+class _NoopSpan:
+    def __enter__(self) -> "_NoopSpan":
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> bool:
+        return False
+
+
+class _NoopTelemetry:
+    def start_span(self, _name: str, attributes: dict[str, str] | None = None) -> _NoopSpan:
+        _ = attributes
+        return _NoopSpan()
+
+    def increment(self, _name: str, value: int = 1, attributes: dict[str, str] | None = None) -> None:
+        _ = (value, attributes)
+
+
+@dataclass
+class _Phase2ExecuteContext:
+    telemetry: Any
+    semantic_cache: Any
+    pre_input_check: Any = None
+    post_output_check: Any = None
+    cacheable: bool | None = False
+
+
+@dataclass
+class _Phase2Request:
+    tenant_id: str | None
+    namespace: str
+    model_key: str
+    query_text: str
+
+
+async def _run_with_phase2_orchestrator(
+    *,
+    orchestrator: Callable[[Any, Any, Callable[[Any], Awaitable[dict[str, Any]]]], Awaitable[dict[str, Any]]],
+    telemetry: Any,
+    tenant_id: str | None,
+    namespace: str,
+    model_key: str,
+    query_text: str,
+    executor: Callable[[Any], Awaitable[dict[str, Any]]],
+    guardrails: Any | None = None,
+    semantic_cache: Any | None = None,
+) -> dict[str, Any]:
+    request_model = _Phase2Request(
+        tenant_id=tenant_id,
+        namespace=namespace,
+        model_key=model_key,
+        query_text=query_text,
+    )
+
+    async def _pre_input_check(request: Any, _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_input(
+            tenant_id=request.tenant_id,
+            text=request.query_text,
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        if action == "block":
+            return PolicyDecision(
+                action="block",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        if action == "redact":
+            return PolicyDecision(
+                action="redact",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        return PolicyDecision(
+            action="allow",
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    async def _post_output_check(request: Any, payload: dict[str, Any], _ctx: Any) -> PolicyDecision:
+        if guardrails is None:
+            return PolicyDecision(action="allow")
+        decision = await guardrails.evaluate_output(
+            tenant_id=request.tenant_id,
+            text=str(payload),
+        )
+        action = str(getattr(decision, "action", "allow") or "allow")
+        if action == "require_approval":
+            action = "block"
+        if action == "block":
+            return PolicyDecision(
+                action="block",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+            )
+        if action == "redact":
+            sanitized_text = getattr(decision, "sanitized_text", None)
+            sanitized_payload = None
+            if isinstance(sanitized_text, str):
+                sanitized_payload = dict(payload)
+                if "answer" in sanitized_payload:
+                    sanitized_payload["answer"] = sanitized_text
+                else:
+                    sanitized_payload["content"] = sanitized_text
+            return PolicyDecision(
+                action="redact",
+                reason_code=getattr(decision, "reason_code", None),
+                payload=getattr(decision, "payload", None),
+                sanitized_payload=sanitized_payload,
+            )
+        return PolicyDecision(
+            action="allow",
+            reason_code=getattr(decision, "reason_code", None),
+            payload=getattr(decision, "payload", None),
+        )
+
+    result = await orchestrator(
+        request_model,
+        _Phase2ExecuteContext(
+            telemetry=telemetry or _NoopTelemetry(),
+            semantic_cache=semantic_cache or _NoopSemanticCache(),
+            pre_input_check=_pre_input_check,
+            post_output_check=_post_output_check,
+        ),
+        executor,
+    )
+    status = result.get("status")
+    if status == "blocked":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "orchestrator_blocked",
+                "reason_code": result.get("reason_code"),
+            },
+        )
+    payload = result.get("payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=500, detail="Invalid orchestrator payload")
+    return payload
+
+
+async def event_generator(graph, inputs: Any, config: dict[str, Any]) -> AsyncGenerator[str, None]:
     """Generate SSE events from LangGraph stream."""
     
     subgraph_parsers: dict = {}
@@ -196,6 +350,55 @@ async def event_generator(graph, inputs: dict, config: dict) -> AsyncGenerator[s
         _LOGGER.error(f"Stream error: {e}\n{traceback.format_exc()}")
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
+def _tenant_uuid_or_401(user: AuthPrincipal) -> UUID:
+    tenant_id = (user.tenant_id or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+    try:
+        return UUID(tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
+
+
+def _session_owner_user_id(session: SessionModel) -> str | None:
+    if session.user_id:
+        return session.user_id
+    state = session.state if isinstance(session.state, dict) else {}
+    owner = state.get("owner_user_id")
+    return str(owner) if owner else None
+
+
+async def _get_owned_session_or_404(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    user: AuthPrincipal,
+) -> SessionModel:
+    tenant_uuid = _tenant_uuid_or_401(user)
+    if not await TenantShadowService(db).has_active_membership(tenant_uuid, user.user_id):
+        raise HTTPException(status_code=403, detail="Tenant membership required")
+
+    stmt = (
+        select(SessionModel)
+        .options(selectinload(SessionModel.agent))
+        .where(
+            SessionModel.id == session_id,
+            SessionModel.tenant_id == tenant_uuid,
+        )
+    )
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if user.role != "admin":
+        owner_user_id = _session_owner_user_id(session)
+        if not owner_user_id or owner_user_id != user.user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+    return session
+
+
 @router.post("/{session_id}/chat")
 async def chat_stream(
     session_id: str,
@@ -204,18 +407,15 @@ async def chat_stream(
     user: AuthPrincipal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(SessionModel).options(selectinload(SessionModel.agent)).where(SessionModel.id == session_id)
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await _get_owned_session_or_404(db, session_id=session_id, user=user)
         
     agent_key = session.agent.builtin_key
     if not agent_key or not registry.get_plugin(agent_key):
         raise HTTPException(status_code=500, detail=f"Agent plugin '{agent_key}' not loaded")
         
     plugin = registry.get_plugin(agent_key)
+    if plugin is None:
+        raise HTTPException(status_code=500, detail=f"Agent plugin '{agent_key}' not loaded")
     graph = plugin.get_graph()
 
     # Resolve agent config: prefer published version, fallback to agents.config
@@ -265,8 +465,38 @@ async def chat_stream(
     config["audit_emitter"] = emitter
 
     inputs = {"messages": [HumanMessage(content=message)]}
+
+    phase2 = request.app.state.phase2
+    phase2_guardrails = getattr(phase2, "guardrails", None)
+    phase2_semantic_cache = getattr(phase2, "semantic_cache", None)
+
+    async def _executor(_ctx: Any) -> dict[str, Any]:
+        return {
+            "graph": graph,
+            "inputs": inputs,
+            "config": config,
+        }
+
+    orchestrated = await _run_with_phase2_orchestrator(
+        orchestrator=request.app.state.phase2.orchestrator,
+        telemetry=phase2.telemetry,
+        guardrails=phase2_guardrails,
+        semantic_cache=phase2_semantic_cache,
+        tenant_id=user.tenant_id,
+        namespace="chat.stream",
+        model_key=agent_key,
+        query_text=message,
+        executor=_executor,
+    )
+
+    graph_to_run = orchestrated.get("graph")
+    inputs_to_run = orchestrated.get("inputs")
+    config_to_run = orchestrated.get("config")
+    if graph_to_run is None or config_to_run is None:
+        raise HTTPException(status_code=500, detail="Invalid orchestrator payload")
+
     return StreamingResponse(
-        event_generator(graph, inputs, config),
+        event_generator(graph_to_run, inputs_to_run or inputs, config_to_run),
         media_type="text/event-stream"
     )
 
@@ -284,19 +514,16 @@ async def resume_chat(
     db: AsyncSession = Depends(get_db)
 ):
     from langgraph.types import Command
-    
-    stmt = select(SessionModel).options(selectinload(SessionModel.agent)).where(SessionModel.id == session_id)
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = await _get_owned_session_or_404(db, session_id=session_id, user=user)
         
     agent_key = session.agent.builtin_key
     if not agent_key or not registry.get_plugin(agent_key):
         raise HTTPException(status_code=500, detail=f"Agent plugin '{agent_key}' not loaded")
         
     plugin = registry.get_plugin(agent_key)
+    if plugin is None:
+        raise HTTPException(status_code=500, detail=f"Agent plugin '{agent_key}' not loaded")
     graph = plugin.get_graph()
 
     # Resolve agent config: prefer published version, fallback to agents.config
@@ -345,8 +572,37 @@ async def resume_chat(
 
     decisions = [{"type": request.decision, "message": request.feedback}]
     resume_input = Command(resume=decisions)
-    
+
+    phase2 = http_request.app.state.phase2
+    phase2_guardrails = getattr(phase2, "guardrails", None)
+    phase2_semantic_cache = getattr(phase2, "semantic_cache", None)
+
+    async def _executor(_ctx: Any) -> dict[str, Any]:
+        return {
+            "graph": graph,
+            "inputs": resume_input,
+            "config": config,
+        }
+
+    orchestrated = await _run_with_phase2_orchestrator(
+        orchestrator=http_request.app.state.phase2.orchestrator,
+        telemetry=phase2.telemetry,
+        guardrails=phase2_guardrails,
+        semantic_cache=phase2_semantic_cache,
+        tenant_id=user.tenant_id,
+        namespace="chat.resume",
+        model_key=agent_key,
+        query_text=f"{request.decision}\n{request.feedback}",
+        executor=_executor,
+    )
+
+    graph_to_run = orchestrated.get("graph")
+    inputs_to_run = orchestrated.get("inputs")
+    config_to_run = orchestrated.get("config")
+    if graph_to_run is None or config_to_run is None:
+        raise HTTPException(status_code=500, detail="Invalid orchestrator payload")
+
     return StreamingResponse(
-        event_generator(graph, resume_input, config),
+        event_generator(graph_to_run, inputs_to_run or resume_input, config_to_run),
         media_type="text/event-stream"
     )
