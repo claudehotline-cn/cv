@@ -13,13 +13,36 @@ class AgentRegistry:
     def __init__(self):
         self.plugins = load_plugins()
 
+    async def _get_builtin_agent(self, session: AsyncSession, key: str) -> AgentModel | None:
+        result = await session.execute(select(AgentModel).where(AgentModel.builtin_key == key))
+        matches = result.scalars().all()
+        if not matches:
+            return None
+
+        matches.sort(
+            key=lambda agent: (
+                agent.published_version_id is None,
+                agent.created_at or datetime.max.replace(tzinfo=timezone.utc),
+                str(agent.id),
+            )
+        )
+        selected = matches[0]
+
+        if len(matches) > 1:
+            _LOGGER.warning(
+                "Found %s builtin agent rows for %s; using id=%s and leaving legacy duplicates untouched",
+                len(matches),
+                key,
+                selected.id,
+            )
+
+        return selected
+
     async def sync_plugins(self, session: AsyncSession):
         """Ensure all loaded plugins exist in DB as builtin agents."""
         for key, agent in self.plugins.items():
             config = agent.get_config()
-            stmt = select(AgentModel).where(AgentModel.builtin_key == key)
-            result = await session.execute(stmt)
-            existing = result.scalar_one_or_none()
+            existing = await self._get_builtin_agent(session, key)
 
             if not existing:
                 _LOGGER.info(f"Registering new builtin agent: {key}")

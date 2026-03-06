@@ -50,28 +50,50 @@ class PgVectorSemanticCacheAdapter:
         model_key = self._extract_model_key(key)
 
         async with self._session_factory() as session:
-            result = await session.execute(
-                text(
-                    """
-                    SELECT id, response, metadata
-                    FROM semantic_cache_entries
-                    WHERE tenant_id::text = :tenant_id
-                      AND namespace = :namespace
-                      AND prompt_hash = :prompt_hash
-                      AND (:model_key IS NULL OR COALESCE(metadata->>'model_key', '') = :model_key)
-                      AND created_at >= NOW() - make_interval(secs => :ttl_seconds)
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                    """
-                ),
-                {
-                    "tenant_id": tenant_id,
-                    "namespace": namespace,
-                    "prompt_hash": prompt_hash,
-                    "model_key": model_key,
-                    "ttl_seconds": int(self._ttl_seconds),
-                },
-            )
+            if model_key is None:
+                result = await session.execute(
+                    text(
+                        """
+                        SELECT id, response, metadata
+                        FROM semantic_cache_entries
+                        WHERE tenant_id::text = :tenant_id
+                          AND namespace = :namespace
+                          AND prompt_hash = :prompt_hash
+                          AND created_at >= NOW() - make_interval(secs => :ttl_seconds)
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "namespace": namespace,
+                        "prompt_hash": prompt_hash,
+                        "ttl_seconds": int(self._ttl_seconds),
+                    },
+                )
+            else:
+                result = await session.execute(
+                    text(
+                        """
+                        SELECT id, response, metadata
+                        FROM semantic_cache_entries
+                        WHERE tenant_id::text = :tenant_id
+                          AND namespace = :namespace
+                          AND prompt_hash = :prompt_hash
+                          AND COALESCE(metadata->>'model_key', '') = :model_key
+                          AND created_at >= NOW() - make_interval(secs => :ttl_seconds)
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "namespace": namespace,
+                        "prompt_hash": prompt_hash,
+                        "model_key": model_key,
+                        "ttl_seconds": int(self._ttl_seconds),
+                    },
+                )
             row = result.mappings().first()
 
             if row is None:
@@ -177,30 +199,54 @@ class PgVectorSemanticCacheAdapter:
         if embedding_literal is None:
             return None
 
-        result = await session.execute(
-            text(
-                """
-                SELECT id, response, metadata
-                FROM semantic_cache_entries
-                WHERE tenant_id::text = :tenant_id
-                  AND namespace = :namespace
-                  AND (:model_key IS NULL OR COALESCE(metadata->>'model_key', '') = :model_key)
-                  AND embedding IS NOT NULL
-                  AND created_at >= NOW() - make_interval(secs => :ttl_seconds)
-                  AND (embedding <=> CAST(:embedding AS vector)) <= :similarity_threshold
-                ORDER BY embedding <=> CAST(:embedding AS vector) ASC
-                LIMIT 1
-                """
-            ),
-            {
-                "tenant_id": tenant_id,
-                "namespace": namespace,
-                "model_key": model_key,
-                "embedding": embedding_literal,
-                "ttl_seconds": int(self._ttl_seconds),
-                "similarity_threshold": float(self._similarity_threshold),
-            },
-        )
+        if model_key is None:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT id, response, metadata
+                    FROM semantic_cache_entries
+                    WHERE tenant_id::text = :tenant_id
+                      AND namespace = :namespace
+                      AND embedding IS NOT NULL
+                      AND created_at >= NOW() - make_interval(secs => :ttl_seconds)
+                      AND (embedding <=> CAST(:embedding AS vector)) <= :similarity_threshold
+                    ORDER BY embedding <=> CAST(:embedding AS vector) ASC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "namespace": namespace,
+                    "embedding": embedding_literal,
+                    "ttl_seconds": int(self._ttl_seconds),
+                    "similarity_threshold": float(self._similarity_threshold),
+                },
+            )
+        else:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT id, response, metadata
+                    FROM semantic_cache_entries
+                    WHERE tenant_id::text = :tenant_id
+                      AND namespace = :namespace
+                      AND COALESCE(metadata->>'model_key', '') = :model_key
+                      AND embedding IS NOT NULL
+                      AND created_at >= NOW() - make_interval(secs => :ttl_seconds)
+                      AND (embedding <=> CAST(:embedding AS vector)) <= :similarity_threshold
+                    ORDER BY embedding <=> CAST(:embedding AS vector) ASC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "namespace": namespace,
+                    "model_key": model_key,
+                    "embedding": embedding_literal,
+                    "ttl_seconds": int(self._ttl_seconds),
+                    "similarity_threshold": float(self._similarity_threshold),
+                },
+            )
         return result.mappings().first()
 
     async def _increment_hit_count(self, session: Any, cache_id: Any) -> None:
