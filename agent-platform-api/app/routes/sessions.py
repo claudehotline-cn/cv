@@ -49,11 +49,15 @@ async def create_session(
     )
     # If no agent_id provided, use data_agent as default
     if not agent_id:
-        result = await db.execute(select(AgentModel).where(AgentModel.builtin_key == "data_agent"))
-        agent = result.scalar_one_or_none()
+        result = await db.execute(
+            select(AgentModel)
+            .where(AgentModel.builtin_key == "data_agent")
+            .order_by(AgentModel.published_version_id.is_(None), AgentModel.created_at.asc(), AgentModel.id.asc())
+        )
+        agent = result.scalars().first()
         if not agent:
             # Fallback to first available agent
-            result = await db.execute(select(AgentModel).limit(1))
+            result = await db.execute(select(AgentModel).order_by(AgentModel.created_at.asc(), AgentModel.id.asc()).limit(1))
             agent = result.scalar_one_or_none()
         if not agent:
             raise HTTPException(status_code=400, detail="No agents available. Please create an agent first.")

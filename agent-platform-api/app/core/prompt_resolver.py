@@ -10,8 +10,13 @@ import logging
 import re
 from typing import Dict, Optional
 
-import jinja2
-from jinja2 import BaseLoader, Environment
+try:
+    import jinja2
+    from jinja2 import BaseLoader, Environment
+except ModuleNotFoundError:
+    jinja2 = None
+    BaseLoader = None
+    Environment = None
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +29,11 @@ class PromptResolver:
     """Prompt template registry + renderer."""
 
     BUILTIN_PROMPTS: Dict[str, str] = {}
-    _jinja_env = Environment(loader=BaseLoader(), undefined=jinja2.Undefined)
+    _jinja_env = (
+        Environment(loader=BaseLoader(), undefined=jinja2.Undefined)
+        if Environment is not None and BaseLoader is not None and jinja2 is not None
+        else None
+    )
 
     @classmethod
     def _collect_module_prompts(cls, module_path: str, key_prefix: str):
@@ -68,6 +77,8 @@ class PromptResolver:
 
         # 2) Jinja2 style: {{ var }}
         try:
+            if cls._jinja_env is None:
+                raise RuntimeError("Jinja2 is not installed")
             tmpl = cls._jinja_env.from_string(result)
             result = tmpl.render(**variables)
         except Exception as e:
